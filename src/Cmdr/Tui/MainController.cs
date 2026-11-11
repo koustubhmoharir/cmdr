@@ -37,6 +37,10 @@ internal sealed class MainController : IDisposable
     private bool _loadErrorsShown;
     private string? _shownHints;
 
+    // Groups collapsed in the list. UI state only: not saved, and not part of the session. Compared by identity.
+    private readonly HashSet<GroupEntry> _collapsed = new(ReferenceEqualityComparer.Instance);
+
+    // The rows shown: the session's rows without the commands of collapsed groups.
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private object? _shownKey;
     private string? _outputTitle;
@@ -56,7 +60,7 @@ internal sealed class MainController : IDisposable
     {
         _app = app;
         _session = session;
-        _source = new CommandListSource(_selection);
+        _source = new CommandListSource(_selection, _collapsed);
     }
 
     /// <summary>The main window. Valid after construction.</summary>
@@ -156,6 +160,18 @@ internal sealed class MainController : IDisposable
                 _list.SetNeedsDraw();
             }
 
+            return true;
+        }
+
+        if (key == Key.CursorLeft)
+        {
+            CollapseOrFocusHeader(focused);
+            return true;
+        }
+
+        if (key == Key.CursorRight)
+        {
+            ExpandHeader(focused);
             return true;
         }
 
@@ -271,23 +287,51 @@ internal sealed class MainController : IDisposable
         }
     }
 
-    /// <summary>Ctrl+click on a row toggles its mark. Called after the click has moved focus to the row.</summary>
-    public void OnCtrlClick()
+    /// <summary>
+    /// Ctrl+click toggles the mark of the row clicked (an index into the shown rows). Without a row, the focused row is used.
+    /// Group headers have no mark.
+    /// </summary>
+    public void OnCtrlClick(int rowIndex)
     {
-        if (FocusedRow is CommandRow command)
+        int index = rowIndex >= 0 ? rowIndex : FocusedIndex;
+        if (index >= 0 && index < _rows.Count && _rows[index] is CommandRow command)
         {
             _selection.Toggle(command.Entry);
             _list.SetNeedsDraw();
         }
     }
 
+    /// <summary>Index into the shown rows of the focused row, or -1 when nothing is focused.</summary>
+    private int FocusedIndex => _list.SelectedItem is { } line ? _source.Lines.LineToRow(line) : -1;
+
     private ListRow? FocusedRow
     {
         get
         {
-            int? index = _list.SelectedItem;
-            return index is { } i && i >= 0 && i < _rows.Count ? _rows[i] : null;
+            int i = FocusedIndex;
+            return i >= 0 && i < _rows.Count ? _rows[i] : null;
         }
+    }
+
+    /// <summary>Focuses the shown row at the index (its main line) and reveals it. -1 clears the focus.</summary>
+    private void FocusRowIndex(int rowIndex)
+    {
+        int line = _source.Lines.RowToLine(rowIndex);
+        _list.SelectedItem = line >= 0 ? line : null;
+        _list.RevealFocusedBlock();
+    }
+
+    private int IndexOfKey(object? key)
+    {
+        for (int i = 0; i < _rows.Count; i++)
+        {
+            if (ReferenceEquals(KeyOf(_rows[i]), key))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private IReadOnlyList<CommandEntry> TargetsOf(ListRow? focused) =>
@@ -424,35 +468,33 @@ internal sealed class MainController : IDisposable
     private void RebuildRows()
     {
         object? focusKey = KeyOf(FocusedRow);
-        int previousIndex = _list.SelectedItem ?? 0;
+        int previousIndex = Math.Max(FocusedIndex, 0);
 
-        _rows = _session.BuildRows();
+        // Collapsed state of removed groups is dropped; a focused command of a collapsed group gives the focus to its header.
+        _collapsed.RemoveWhere(group => !_session.Groups.Any(existing => ReferenceEquals(existing, group)));
+        if (focusKey is CommandEntry entry && _collapsed.Contains(entry.Group))
+        {
+            focusKey = entry.Group;
+        }
+
+        _rows = VisibleRows(_session.BuildRows());
         _source.Rows = _rows;
         _selection.Prune();
 
-        int index = -1;
-        if (focusKey is not null)
-        {
-            for (int i = 0; i < _rows.Count; i++)
-            {
-                if (ReferenceEquals(KeyOf(_rows[i]), focusKey))
-                {
-                    index = i;
-                    break;
-                }
-            }
-        }
-
+        int index = focusKey is null ? -1 : IndexOfKey(focusKey);
         if (index < 0 && _rows.Count > 0)
         {
             index = Math.Clamp(previousIndex, 0, _rows.Count - 1);
         }
 
-        _list.SelectedItem = index >= 0 ? index : null;
-        _list.EnsureSelectedItemVisible();
+        FocusRowIndex(index);
         _listFrame.Title = BuildTitle();
         UpdateFocusedViews();
     }
+
+    /// <summary>The rows shown: the commands of collapsed groups are left out.</summary>
+    private IReadOnlyList<ListRow> VisibleRows(IReadOnlyList<ListRow> all) =>
+        all.Where(row => row is not CommandRow command || !_collapsed.Contains(command.Entry.Group)).ToList();
 
     /// <summary>Points the details and output views at the focused row. Called when the focus moves or the rows change.</summary>
     private void UpdateFocusedViews()
@@ -494,17 +536,43 @@ internal sealed class MainController : IDisposable
     private string BuildTitle() =>
         Path.GetFileName(_session.ConfigPath) + (_session.IsDirty ? " *" : string.Empty);
 
+    /// <summary>Left: collapses an expanded group header, or the group of a command (focus moves to its header). Otherwise nothing.</summary>
+    private void CollapseOrFocusHeader(ListRow? focused)
+    {
+        switch (focused)
+        {
+            case GroupRow group when !_collapsed.Contains(group.Group):
+                _collapsed.Add(group.Group);
+                RebuildRows();
+                break;
+
+            case CommandRow command:
+                // RebuildRows moves the focus of a command in a collapsed group to its header.
+                _collapsed.Add(command.Entry.Group);
+                RebuildRows();
+                break;
+        }
+    }
+
+    /// <summary>Right: expands a collapsed group header; the focus stays on it. Otherwise nothing.</summary>
+    private void ExpandHeader(ListRow? focused)
+    {
+        if (focused is GroupRow group && _collapsed.Remove(group.Group))
+        {
+            RebuildRows();
+        }
+    }
+
     private bool ExtendMarks(int delta)
     {
-        int from = _list.SelectedItem ?? -1;
+        int from = FocusedIndex;
         int to = from + delta;
         if (from < 0 || to < 0 || to >= _rows.Count)
         {
             return true;
         }
 
-        _list.SelectedItem = to;
-        _list.EnsureSelectedItemVisible();
+        FocusRowIndex(to);
         UpdateFocusedViews();
 
         if (_rows[to] is not CommandRow target)
@@ -900,15 +968,17 @@ internal sealed class MainController : IDisposable
     /// <summary>Moves the focus to the row of a group or command, if it is in the list.</summary>
     private void FocusKey(object key)
     {
-        for (int i = 0; i < _rows.Count; i++)
+        // A command in a collapsed group is not shown; its header is focused instead.
+        if (key is CommandEntry entry && _collapsed.Contains(entry.Group))
         {
-            if (ReferenceEquals(KeyOf(_rows[i]), key))
-            {
-                _list.SelectedItem = i;
-                _list.EnsureSelectedItemVisible();
-                UpdateFocusedViews();
-                return;
-            }
+            key = entry.Group;
+        }
+
+        int index = IndexOfKey(key);
+        if (index >= 0)
+        {
+            FocusRowIndex(index);
+            UpdateFocusedViews();
         }
     }
 

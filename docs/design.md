@@ -130,8 +130,10 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
 └─────────────────────────────────────┘└────────────────────────────────────────┘
 ```
 
-- Left: command list (multi-select), status glyph, start time, elapsed / stopping-for / exit code.
-  Refreshed every second.
+- Left: command list (multi-select), titled with the config file name (`*` when modified). Each command
+  takes two lines: mark, status glyph and the full name; below it (dimmed) start time and elapsed /
+  stopping-for / exit code / leftovers. Groups collapse with ←/→ (UI state only, not saved); a collapsed
+  header shows a summary such as `2 running · 1 failed`. Refreshed every second.
 - Right: description strip + colored output view for the focused command. Tail-follows by
   default; scrolling up pauses following, End resumes.
 - Output view is a custom view: mouse drag = character selection, Shift+↑/↓ = line selection.
@@ -146,6 +148,7 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Space / Shift+↑↓ / Ctrl+click | multi-select (within one group) |
 | Ctrl+A | toggle select all in the focused group |
 | Alt+↑ / Alt+↓ | move command within its group |
+| ← / → | collapse / expand group (← on a command collapses its group and focuses the header) |
 | Enter | if any target is stopping or has leftovers: force kill those (start nothing); else start the startable targets |
 | Esc | graceful stop (with confirmation) |
 | Ctrl+C | graceful stop (no confirmation) |

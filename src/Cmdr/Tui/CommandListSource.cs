@@ -8,35 +8,45 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace Cmdr.Tui;
 
 /// <summary>
-/// Renders the rows of the command list. Marks come from <see cref="Selection"/>, not from ListView, which never draws marks.
-/// Status comes from <see cref="StatusFormatter"/> at draw time. UI thread only.
+/// Renders the command list. Items of the ListView are display lines (see <see cref="DisplayLines"/>): a group header is one
+/// line, a command is a main line and a detail line. Marks come from <see cref="Selection"/>, not from ListView, which never
+/// draws marks. Status comes from <see cref="StatusFormatter"/> at draw time. UI thread only.
 /// </summary>
 internal sealed class CommandListSource : IListDataSource
 {
     private static readonly Color GlyphWarning = new(0xE5, 0xA5, 0x0A);
 
+    private readonly IReadOnlySet<GroupEntry> _collapsed;
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
+    private DisplayLines _lines = DisplayLines.Build(Array.Empty<ListRow>());
 
-    public CommandListSource(Selection selection)
+    /// <param name="selection">The marks shown on command rows.</param>
+    /// <param name="collapsed">The groups whose headers show a summary. Owned by the caller; read at draw time.</param>
+    public CommandListSource(Selection selection, IReadOnlySet<GroupEntry> collapsed)
     {
         Selection = selection;
+        _collapsed = collapsed;
     }
 
     /// <summary>The marks shown on command rows.</summary>
     public Selection Selection { get; }
 
-    /// <summary>The rows shown. Setting them redraws the whole list.</summary>
+    /// <summary>The display lines of the rows shown. Changes with <see cref="Rows"/>.</summary>
+    public DisplayLines Lines => _lines;
+
+    /// <summary>The rows shown. Setting them rebuilds the display lines and redraws the whole list.</summary>
     public IReadOnlyList<ListRow> Rows
     {
         get => _rows;
         set
         {
             _rows = value;
+            _lines = DisplayLines.Build(value);
             CollectionChanged?.Invoke(this, new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
     }
 
-    public int Count => _rows.Count;
+    public int Count => _lines.Count;
 
     public int MaxItemLength => 80;
 
@@ -53,25 +63,39 @@ internal sealed class CommandListSource : IListDataSource
 
     public bool RenderMark(ListView listView, int item, int row, bool isMarked, bool markMultiple) => false;
 
-    public IList ToList() => _rows.ToList();
+    public IList ToList() => _lines.Lines.Select(line => (object)_rows[line.RowIndex]).ToList();
 
     public void Render(ListView listView, bool selected, int item, int col, int row, int width, int viewportX)
     {
-        Attribute baseAttr = listView.GetAttributeForRole(selected ? VisualRole.Focus : VisualRole.Normal);
+        if (item < 0 || item >= _lines.Count)
+        {
+            return;
+        }
+
+        DisplayLine line = _lines.Lines[item];
+
+        // Both lines of the focused command are drawn as focused.
+        bool focused = selected || line.RowIndex == _lines.LineToRow(listView.SelectedItem ?? -1);
+        Attribute baseAttr = listView.GetAttributeForRole(focused ? VisualRole.Focus : VisualRole.Normal);
         listView.Move(col, row);
         listView.SetAttribute(baseAttr);
 
-        switch (_rows[item])
+        switch (_rows[line.RowIndex])
         {
             case GroupRow group:
-                listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold));
-                listView.AddStr(RowLayout.FormatGroupRow(width, group.Group.Name, group.Group.Mode, group.Group.IsSequenceRunning));
+                RenderGroup(listView, baseAttr, group.Group, col, row, width);
+                break;
+
+            case CommandRow command when line.IsDetail:
+                StatusText detailStatus = StatusOf(command.Entry);
+                listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
+                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.NameColumn, detailStatus));
                 break;
 
             case CommandRow command:
                 CommandEntry entry = command.Entry;
-                StatusText status = StatusFormatter.Format(entry.Process.Snapshot, entry.IsQueued, DateTimeOffset.Now);
-                CommandRowText text = RowLayout.FormatCommandRow(width, Selection.IsMarked(entry), status, entry.Spec.Name);
+                StatusText status = StatusOf(entry);
+                CommandMainText text = RowLayout.FormatCommandMain(width, Selection.IsMarked(entry), status.Glyph, entry.Spec.Name);
 
                 listView.AddStr(text.Text);
                 if (text.GlyphColumn >= 0)
@@ -89,6 +113,20 @@ internal sealed class CommandListSource : IListDataSource
     public void Dispose()
     {
     }
+
+    private void RenderGroup(ListView listView, Attribute baseAttr, GroupEntry group, int col, int row, int width)
+    {
+        bool collapsed = _collapsed.Contains(group);
+        string summary = collapsed
+            ? GroupSummary.Compose(group.Commands.Select(command => StatusOf(command).Kind))
+            : string.Empty;
+
+        listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold));
+        listView.AddStr(RowLayout.FormatGroupRow(width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary));
+    }
+
+    private static StatusText StatusOf(CommandEntry entry) =>
+        StatusFormatter.Format(entry.Process.Snapshot, entry.IsQueued, DateTimeOffset.Now);
 
     private static Color GlyphColor(StatusKind kind, Color normal) => kind switch
     {

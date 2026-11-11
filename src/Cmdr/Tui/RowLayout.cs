@@ -3,70 +3,105 @@ using Cmdr.Core.Session;
 
 namespace Cmdr.Tui;
 
-/// <summary>The text of a command row and the column of its status glyph (-1 when the glyph is not visible).</summary>
-internal readonly record struct CommandRowText(string Text, int GlyphColumn);
+/// <summary>
+/// The text of the main line of a command: the full line (exactly the requested width, or empty for width 0), the column of
+/// the status glyph and the column of the name (-1 when that part is not visible).
+/// </summary>
+internal readonly record struct CommandMainText(string Text, int GlyphColumn, int NameColumn);
 
 /// <summary>Pure text layout of the command list. Every result is exactly the requested width (or empty for width 0).</summary>
 internal static class RowLayout
 {
-    /// <summary>Column of the status glyph in a command row: "  " + mark + " " + glyph.</summary>
+    /// <summary>Column of the status glyph in a command's main line: "  " + mark + " " + glyph.</summary>
     public const int GlyphColumn = 4;
 
-    private const int PrefixWidth = 6;
-    private const int StartedWidth = 8;
-    private const int DetailMaxWidth = 24;
-    private const int NameMinWidth = 8;
+    /// <summary>Column of the name in a command's main line, and the indent of its detail line.</summary>
+    public const int NameColumn = 6;
+
     private const string Marked = "■";
     private const string Unmarked = " ";
+    private const string NoValue = "—";
+    private const string NotStartedText = "not started";
 
     /// <summary>
-    /// Formats a command row: <c>"  &lt;mark&gt; &lt;glyph&gt; &lt;name…&gt; &lt;started&gt; &lt;detail&gt;"</c>. The name is truncated with an
-    /// ellipsis; the detail is right-aligned at the end of the row. When there is no room for the time columns, only the name is shown.
+    /// Formats the main line of a command: <c>"  &lt;mark&gt; &lt;glyph&gt; &lt;name…&gt;"</c>. The name uses all remaining width and is
+    /// truncated with an ellipsis only when it does not fit. Narrow widths drop the name first, then the glyph.
     /// </summary>
-    public static CommandRowText FormatCommandRow(int width, bool marked, StatusText status, string name)
+    public static CommandMainText FormatCommandMain(int width, bool marked, string glyph, string name)
     {
+        ArgumentNullException.ThrowIfNull(glyph);
         ArgumentNullException.ThrowIfNull(name);
 
         if (width <= 0)
         {
-            return new CommandRowText(string.Empty, -1);
+            return new CommandMainText(string.Empty, -1, -1);
         }
 
-        string prefix = "  " + (marked ? Marked : Unmarked) + " " + status.Glyph + " ";
-        if (width < PrefixWidth)
+        string prefix = "  " + (marked ? Marked : Unmarked) + " " + glyph + " ";
+        int glyphColumn = width > GlyphColumn ? GlyphColumn : -1;
+        if (width <= NameColumn)
         {
-            int glyphColumn = width > GlyphColumn ? GlyphColumn : -1;
-            return new CommandRowText(TextWidth.Fit(prefix, width), glyphColumn);
+            return new CommandMainText(TextWidth.Fit(prefix, width), glyphColumn, -1);
         }
 
-        int avail = width - PrefixWidth;
-        string body;
-        if (avail < 1 + StartedWidth + 1 + NameMinWidth)
+        string body = prefix + TextWidth.Fit(name, width - NameColumn);
+        return new CommandMainText(body, glyphColumn, NameColumn);
+    }
+
+    /// <summary>
+    /// Formats the detail line of a command: the start time and the detail text, separated by two spaces, indented by
+    /// <paramref name="indent"/> columns. A command that was never started reads "not started". Exactly <paramref name="width"/> wide.
+    /// </summary>
+    public static string FormatCommandDetail(int width, int indent, StatusText status)
+    {
+        if (width <= 0)
         {
-            body = TextWidth.Fit(name, avail);
-        }
-        else
-        {
-            int detailWidth = Math.Min(DetailMaxWidth, avail - 1 - StartedWidth - 1 - NameMinWidth);
-            int nameWidth = avail - 1 - StartedWidth - 1 - detailWidth;
-            body = TextWidth.Fit(name, nameWidth)
-                + " " + TextWidth.Fit(status.Started, StartedWidth)
-                + " " + TextWidth.FitRight(status.Detail, detailWidth);
+            return string.Empty;
         }
 
-        return new CommandRowText(prefix + body, GlyphColumn);
+        int shift = Math.Clamp(indent, 0, width);
+        int room = width - shift;
+        string body = room > 0 ? TextWidth.Fit(DetailBody(status), room) : string.Empty;
+        return new string(' ', shift) + body;
     }
 
     /// <summary>
     /// Formats a group header: <c>"▾ &lt;name&gt;  [parallel|sequential]"</c>, followed by <c>"  ▶ sequence running"</c> while a
-    /// sequence runs. Truncated and padded to <paramref name="width"/>.
+    /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. Truncated and padded to
+    /// <paramref name="width"/>.
     /// </summary>
-    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning)
+    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary)
     {
         ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(summary);
 
         string modeText = mode == GroupMode.Sequential ? "sequential" : "parallel";
-        string text = "▾ " + name + "  [" + modeText + "]" + (sequenceRunning ? "  ▶ sequence running" : string.Empty);
+        // The summary of a collapsed header comes before the sequence marker, so that it is the part that stays visible when narrow.
+        string text = (collapsed ? "▸ " : "▾ ") + name + "  [" + modeText + "]"
+            + (collapsed && summary.Length > 0 ? "  " + summary : string.Empty)
+            + (sequenceRunning ? "  ▶ sequence running" : string.Empty);
         return TextWidth.Fit(text, width);
+    }
+
+    /// <summary>The detail text without indent: the start time and detail when there are any, otherwise the kind's own text.</summary>
+    private static string DetailBody(StatusText status)
+    {
+        if (status.Kind == StatusKind.Idle)
+        {
+            return NotStartedText;
+        }
+
+        var parts = new List<string>(2);
+        if (!string.IsNullOrEmpty(status.Started) && status.Started != NoValue)
+        {
+            parts.Add(status.Started);
+        }
+
+        if (!string.IsNullOrEmpty(status.Detail))
+        {
+            parts.Add(status.Detail);
+        }
+
+        return string.Join("  ", parts);
     }
 }
