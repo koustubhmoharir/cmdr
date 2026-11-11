@@ -37,7 +37,11 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     }
 
     /// <inheritdoc />
-    public ProcessStartInfo CreateStartInfo(LaunchSpec spec)
+    /// <remarks>
+    /// Resolves the program the way Windows would with PATHEXT applied, so shims such as <c>pnpm.cmd</c> launch.
+    /// A resolved batch file runs through the command interpreter; see <see cref="WindowsCommandResolver.PlanLaunch"/>.
+    /// </remarks>
+    public PreparedLaunch Prepare(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
 
@@ -55,13 +59,40 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
 
-        foreach (string arg in spec.Args)
+        // The overlay goes first so that PATH, PATHEXT and ComSpec are the effective values of this child.
+        EnvironmentOverlay.Apply(psi.Environment, spec.Env);
+
+        string? resolved = WindowsCommandResolver.Resolve(
+            spec.Program,
+            spec.WorkingDirectory,
+            FindEnvironmentValue(psi.Environment, "PATH"),
+            FindEnvironmentValue(psi.Environment, "PATHEXT"),
+            File.Exists);
+
+        WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch(
+            spec.Program,
+            resolved,
+            FindEnvironmentValue(psi.Environment, "ComSpec"),
+            spec.Args);
+
+        psi.FileName = plan.FileName;
+        if (plan.Arguments is not null)
         {
-            psi.ArgumentList.Add(arg);
+            // Raw, because the escaping is already done; ArgumentList would quote it a second time.
+            psi.Arguments = plan.Arguments;
+        }
+        else
+        {
+            foreach (string arg in plan.ArgumentList)
+            {
+                psi.ArgumentList.Add(arg);
+            }
         }
 
-        EnvironmentOverlay.Apply(psi.Environment, spec.Env);
-        return psi;
+        // Ctrl+C on a batch file makes cmd.exe ask "Terminate batch job (Y/N)?" and wait on stdin. The answer is
+        // written after the interrupt. Caveat: a child that reads stdin itself (before cmd asks) could consume the
+        // "Y" instead; in that case the batch job stays at the prompt and force kill is needed.
+        return new PreparedLaunch(psi, plan.InputAfterInterrupt);
     }
 
     /// <inheritdoc />
@@ -138,6 +169,20 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         }
 
         throw new Win32Exception(error);
+    }
+
+    /// <summary>Case-insensitive lookup: Windows environment variable names are case-insensitive, and "Path" is common.</summary>
+    private static string? FindEnvironmentValue(IDictionary<string, string?> environment, string name)
+    {
+        foreach (KeyValuePair<string, string?> entry in environment)
+        {
+            if (string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return entry.Value;
+            }
+        }
+
+        return null;
     }
 
     private static void KillUntracked(Process process)

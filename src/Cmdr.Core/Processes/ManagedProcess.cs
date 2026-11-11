@@ -32,6 +32,7 @@ public sealed class ManagedProcess : IDisposable
     private TaskCompletionSource? _runExited;
     private StopMethod _stopMethod;
     private string? _stopInput;
+    private string? _inputAfterInterrupt;
     private int _runId;
     private Timer? _leftoverTimer;
     private bool _disposed;
@@ -117,6 +118,7 @@ public sealed class ManagedProcess : IDisposable
         IProcessGroup? group;
         StreamWriter? stdin;
         string? input;
+        string? inputAfterInterrupt;
         StopMethod method;
         bool stateChanged;
 
@@ -137,6 +139,7 @@ public sealed class ManagedProcess : IDisposable
             group = _group;
             stdin = _stdin;
             input = _stopInput;
+            inputAfterInterrupt = _inputAfterInterrupt;
             method = _stopMethod;
 
             Output.WriteSystem(method == StopMethod.CtrlC ? "stop requested (Ctrl+C)" : "stop requested (input)");
@@ -145,7 +148,11 @@ public sealed class ManagedProcess : IDisposable
         // Signals and pipe writes happen outside the lock: a write can block if the child is not reading stdin.
         if (method == StopMethod.CtrlC)
         {
-            SignalGroup(group, g => g.Interrupt(), "stop failed");
+            bool interrupted = SignalGroup(group, g => g.Interrupt(), "stop failed");
+            if (interrupted && inputAfterInterrupt is not null)
+            {
+                WriteStopInput(stdin, inputAfterInterrupt);
+            }
         }
         else
         {
@@ -287,11 +294,14 @@ public sealed class ManagedProcess : IDisposable
         Output.BeginRun(now);
 
         Process? process = null;
+        string? inputAfterInterrupt = null;
         try
         {
+            PreparedLaunch launch = _platform.Prepare(spec);
+            inputAfterInterrupt = launch.InputAfterInterrupt;
             process = new Process
             {
-                StartInfo = _platform.CreateStartInfo(spec),
+                StartInfo = launch.StartInfo,
                 EnableRaisingEvents = true,
             };
 
@@ -325,6 +335,7 @@ public sealed class ManagedProcess : IDisposable
 
         _process = process;
         _group = group;
+        _inputAfterInterrupt = inputAfterInterrupt;
         _stdin = process.StandardInput;
         _stdin.AutoFlush = true;
         _stdOutPump = PumpAsync(process.StandardOutput, isStdErr: false);
@@ -482,20 +493,23 @@ public sealed class ManagedProcess : IDisposable
         _stdErrPump = null;
     }
 
-    private void SignalGroup(IProcessGroup? group, Action<IProcessGroup> signal, string failurePrefix)
+    /// <summary>Delivers a signal to the group. Returns true if it was delivered without error.</summary>
+    private bool SignalGroup(IProcessGroup? group, Action<IProcessGroup> signal, string failurePrefix)
     {
         if (group is null)
         {
-            return;
+            return false;
         }
 
         try
         {
             signal(group);
+            return true;
         }
         catch (Win32Exception ex)
         {
             Output.WriteSystem($"{failurePrefix}: {ex.Message}");
+            return false;
         }
     }
 

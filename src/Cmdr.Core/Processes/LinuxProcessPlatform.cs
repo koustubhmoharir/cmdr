@@ -11,7 +11,7 @@ namespace Cmdr.Core.Processes;
 internal sealed class LinuxProcessPlatform : IProcessPlatform
 {
     /// <inheritdoc />
-    public ProcessStartInfo CreateStartInfo(LaunchSpec spec)
+    public PreparedLaunch Prepare(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
 
@@ -36,7 +36,7 @@ internal sealed class LinuxProcessPlatform : IProcessPlatform
         }
 
         EnvironmentOverlay.Apply(psi.Environment, spec.Env);
-        return psi;
+        return new PreparedLaunch(psi, InputAfterInterrupt: null);
     }
 
     /// <inheritdoc />
