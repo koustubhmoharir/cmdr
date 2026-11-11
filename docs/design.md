@@ -23,6 +23,7 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 ```json
 {
   "bufferLines": 10000,
+  "logsDir": "logs",
   "groups": [
     {
       "name": "build",
@@ -64,8 +65,8 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
   command names unique within their group.
 - `args` is an array, passed via `ProcessStartInfo.ArgumentList` (no quoting issues).
 - `env`: values overlay the inherited environment; `null` removes a variable.
-- Relative `cwd` and `log.path` resolve against the config file's directory.
-  Default log path: `logs/<group>/<command>.log`.
+- Relative `cwd` and `logsDir` resolve against the config file's directory; `logsDir` defaults to `logs`.
+- Relative `log.path` resolves against `logsDir`. Default log path: `<logsDir>/<group>/<command>.log`.
 - Default `stop.method` is `ctrlC`. Default `bufferLines` is 10000.
 - Explicit save only (Ctrl+S). Unsaved changes are marked `*` in the title; quit prompts.
 
