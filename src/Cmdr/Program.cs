@@ -1,5 +1,8 @@
 using System.Globalization;
+using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
+using Cmdr.Core.Session;
+using Cmdr.Tui;
 
 return Run(args);
 
@@ -22,6 +25,27 @@ static int Run(string[] args)
         return CtrlCHelper.Run(pid);
     }
 
-    Console.WriteLine("cmdr: TUI not implemented yet");
+    if (args is not [var configPath])
+    {
+        Console.Error.WriteLine("usage: cmdr <config.json>");
+        return 2;
+    }
+
+    Session session;
+    try
+    {
+        session = Session.Load(configPath);
+    }
+    catch (ConfigException ex)
+    {
+        Console.Error.WriteLine($"cmdr: {ex.Message}");
+        return 1;
+    }
+
+    using (session)
+    {
+        TuiHost.Run(session);
+    }
+
     return 0;
 }
