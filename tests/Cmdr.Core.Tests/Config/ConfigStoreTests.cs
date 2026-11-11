@@ -13,7 +13,7 @@ public class ConfigStoreTests
         CmdrConfig config = ConfigStore.Load(dir.File("missing.json"));
 
         Assert.Equal(10000, config.BufferLines);
-        Assert.Empty(config.Commands);
+        Assert.Empty(config.Groups);
     }
 
     [Fact]
@@ -24,29 +24,44 @@ public class ConfigStoreTests
         var original = new CmdrConfig
         {
             BufferLines = 500,
-            Commands =
+            Groups =
             {
-                new CommandSpec
+                new GroupSpec
                 {
-                    Name = "web",
-                    Description = "Frontend dev server.\nNeeds the api running first.\r\nLine three.",
-                    Program = "pnpm",
-                    Args = { "start", "--port", "3000" },
-                    Cwd = "../web",
-                    Env = new Dictionary<string, string?>
+                    Name = "servers",
+                    Description = "Dev servers.",
+                    Mode = GroupMode.Parallel,
+                    Commands =
                     {
-                        ["FORCE_COLOR"] = "1",
-                        ["SOME_VAR"] = null,
+                        new CommandSpec
+                        {
+                            Name = "web",
+                            Description = "Frontend dev server.\nNeeds the api running first.\r\nLine three.",
+                            Program = "pnpm",
+                            Args = { "start", "--port", "3000" },
+                            Cwd = "../web",
+                            Env = new Dictionary<string, string?>
+                            {
+                                ["FORCE_COLOR"] = "1",
+                                ["SOME_VAR"] = null,
+                            },
+                            Stop = new StopSpec { Method = StopMethod.CtrlC },
+                            Log = new LogSpec { Enabled = true, Path = "logs/web.log" },
+                        },
+                        new CommandSpec
+                        {
+                            Name = "tool",
+                            Program = "/opt/tool/run",
+                            Cwd = ".",
+                            Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
+                        },
                     },
-                    Stop = new StopSpec { Method = StopMethod.CtrlC },
-                    Log = new LogSpec { Enabled = true, Path = "logs/web.log" },
                 },
-                new CommandSpec
+                new GroupSpec
                 {
-                    Name = "tool",
-                    Program = "/opt/tool/run",
-                    Cwd = ".",
-                    Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
+                    Name = "build",
+                    Mode = GroupMode.Sequential,
+                    Commands = { new CommandSpec { Name = "web", Program = "dotnet" } },
                 },
             },
         };
@@ -55,9 +70,15 @@ public class ConfigStoreTests
         CmdrConfig loaded = ConfigStore.Load(path);
 
         Assert.Equal(500, loaded.BufferLines);
-        Assert.Equal(2, loaded.Commands.Count);
+        Assert.Equal(2, loaded.Groups.Count);
 
-        CommandSpec web = loaded.Commands[0];
+        GroupSpec servers = loaded.Groups[0];
+        Assert.Equal("servers", servers.Name);
+        Assert.Equal("Dev servers.", servers.Description);
+        Assert.Equal(GroupMode.Parallel, servers.Mode);
+        Assert.Equal(2, servers.Commands.Count);
+
+        CommandSpec web = servers.Commands[0];
         Assert.Equal("web", web.Name);
         Assert.Equal("Frontend dev server.\nNeeds the api running first.\r\nLine three.", web.Description);
         Assert.Equal("pnpm", web.Program);
@@ -71,7 +92,7 @@ public class ConfigStoreTests
         Assert.True(web.Log.Enabled);
         Assert.Equal("logs/web.log", web.Log.Path);
 
-        CommandSpec tool = loaded.Commands[1];
+        CommandSpec tool = servers.Commands[1];
         Assert.Null(tool.Description);
         Assert.Null(tool.Log.Path);
         Assert.False(tool.Log.Enabled);
@@ -79,6 +100,11 @@ public class ConfigStoreTests
         Assert.Empty(tool.Env);
         Assert.Equal(StopMethod.Input, tool.Stop.Method);
         Assert.Equal("q\n", tool.Stop.Input);
+
+        GroupSpec build = loaded.Groups[1];
+        Assert.Null(build.Description);
+        Assert.Equal(GroupMode.Sequential, build.Mode);
+        Assert.Equal("web", Assert.Single(build.Commands).Name);
     }
 
     [Fact]
@@ -88,20 +114,27 @@ public class ConfigStoreTests
         string path = dir.File("cmdr.json");
         var config = new CmdrConfig
         {
-            Commands =
+            Groups =
             {
-                new CommandSpec
+                new GroupSpec
                 {
-                    Name = "a",
-                    Program = "p",
-                    Env = new Dictionary<string, string?> { ["GONE"] = null },
-                },
-                new CommandSpec
-                {
-                    Name = "b",
-                    Program = "q",
-                    Stop = new StopSpec { Method = StopMethod.Input, Input = "exit\n" },
-                    Log = new LogSpec { Enabled = true, Path = "x.log" },
+                    Name = "g",
+                    Commands =
+                    {
+                        new CommandSpec
+                        {
+                            Name = "a",
+                            Program = "p",
+                            Env = new Dictionary<string, string?> { ["GONE"] = null },
+                        },
+                        new CommandSpec
+                        {
+                            Name = "b",
+                            Program = "q",
+                            Stop = new StopSpec { Method = StopMethod.Input, Input = "exit\n" },
+                            Log = new LogSpec { Enabled = true, Path = "x.log" },
+                        },
+                    },
                 },
             },
         };
@@ -110,14 +143,18 @@ public class ConfigStoreTests
         string text = File.ReadAllText(path);
 
         Assert.Contains("\"bufferLines\"", text);
-        Assert.Contains("\"commands\"", text);
+        Assert.Contains("\"groups\"", text);
         Assert.Contains("\"ctrlC\"", text);
         Assert.Contains("\"input\"", text);
         Assert.Contains("\"GONE\": null", text);
         Assert.Contains("\n  ", text); // indented
 
         using JsonDocument doc = JsonDocument.Parse(text);
-        JsonElement first = doc.RootElement.GetProperty("commands")[0];
+        JsonElement group = doc.RootElement.GetProperty("groups")[0];
+        Assert.False(group.TryGetProperty("description", out _));
+        Assert.Equal("parallel", group.GetProperty("mode").GetString());
+
+        JsonElement first = group.GetProperty("commands")[0];
         Assert.False(first.TryGetProperty("description", out _));
         Assert.False(first.TryGetProperty("cwd", out _));
         Assert.Equal("ctrlC", first.GetProperty("stop").GetProperty("method").GetString());
@@ -125,23 +162,27 @@ public class ConfigStoreTests
         Assert.False(first.GetProperty("log").TryGetProperty("path", out _));
         Assert.Equal(JsonValueKind.Null, first.GetProperty("env").GetProperty("GONE").ValueKind);
 
-        JsonElement second = doc.RootElement.GetProperty("commands")[1];
+        JsonElement second = group.GetProperty("commands")[1];
         Assert.Equal("input", second.GetProperty("stop").GetProperty("method").GetString());
         Assert.Equal("exit\n", second.GetProperty("stop").GetProperty("input").GetString());
         Assert.Equal("x.log", second.GetProperty("log").GetProperty("path").GetString());
     }
 
     [Fact]
-    public void Load_MinimalCommand_AppliesDefaults()
+    public void Load_MinimalGroupAndCommand_AppliesDefaults()
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        File.WriteAllText(path, """{ "commands": [ { "name": "a", "program": "p" } ] }""");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g", "commands": [ { "name": "a", "program": "p" } ] } ] }""");
 
         CmdrConfig config = ConfigStore.Load(path);
 
         Assert.Equal(10000, config.BufferLines);
-        CommandSpec cmd = Assert.Single(config.Commands);
+        GroupSpec group = Assert.Single(config.Groups);
+        Assert.Equal("g", group.Name);
+        Assert.Null(group.Description);
+        Assert.Equal(GroupMode.Parallel, group.Mode);
+        CommandSpec cmd = Assert.Single(group.Commands);
         Assert.Equal("a", cmd.Name);
         Assert.Equal("p", cmd.Program);
         Assert.Null(cmd.Description);
@@ -164,7 +205,19 @@ public class ConfigStoreTests
         CmdrConfig config = ConfigStore.Load(path);
 
         Assert.Equal(10000, config.BufferLines);
-        Assert.Empty(config.Commands);
+        Assert.Empty(config.Groups);
+    }
+
+    [Fact]
+    public void Load_IgnoresLegacyTopLevelCommands()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "commands": [ { "name": "a", "program": "p" } ] }""");
+
+        CmdrConfig config = ConfigStore.Load(path);
+
+        Assert.Empty(config.Groups);
     }
 
     [Fact]
@@ -178,13 +231,19 @@ public class ConfigStoreTests
               "bufferLines": 42,
               "futureSetting": { "nested": [1, 2, 3], },
               /* block comment */
-              "commands": [
+              "groups": [
                 {
-                  "name": "a",
-                  "program": "p",
-                  "args": ["x", "y",],
-                  "somethingNew": true,
-                  "stop": { "method": "ctrlC", }, // trailing comment
+                  "name": "g",
+                  "somethingNew": 1,
+                  "commands": [
+                    {
+                      "name": "a",
+                      "program": "p",
+                      "args": ["x", "y",],
+                      "somethingNew": true,
+                      "stop": { "method": "ctrlC", }, // trailing comment
+                    },
+                  ],
                 },
               ],
             }
@@ -193,14 +252,14 @@ public class ConfigStoreTests
         CmdrConfig config = ConfigStore.Load(path);
 
         Assert.Equal(42, config.BufferLines);
-        CommandSpec cmd = Assert.Single(config.Commands);
+        CommandSpec cmd = Assert.Single(Assert.Single(config.Groups).Commands);
         Assert.Equal(new[] { "x", "y" }, cmd.Args);
         Assert.Equal(StopMethod.CtrlC, cmd.Stop.Method);
     }
 
     [Theory]
-    [InlineData("""{ "commands": [ { "name": "a", "program": "p", "stop": { "method": "ctrlc" } } ] }""")]
-    [InlineData("""{ "commands": [ { "name": "a", "program": "p", "stop": { "method": 3 } } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "commands": [ { "name": "a", "program": "p", "stop": { "method": "ctrlc" } } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "commands": [ { "name": "a", "program": "p", "stop": { "method": 3 } } ] } ] }""")]
     public void Load_InvalidStopMethod_ThrowsConfigException(string json)
     {
         using var dir = new TempDir();
@@ -216,7 +275,7 @@ public class ConfigStoreTests
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        File.WriteAllText(path, "{\n  \"bufferLines\": 5,\n  \"commands\": [\n    oops\n  ]\n}");
+        File.WriteAllText(path, "{\n  \"bufferLines\": 5,\n  \"groups\": [\n    oops\n  ]\n}");
 
         ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
 
@@ -242,10 +301,10 @@ public class ConfigStoreTests
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
         File.WriteAllText(path, """
-            { "commands": [ { "name": "a", "program": "p", "args": null, "env": null, "stop": null, "log": null } ] }
+            { "groups": [ { "name": "g", "commands": [ { "name": "a", "program": "p", "args": null, "env": null, "stop": null, "log": null } ] } ] }
             """);
 
-        CommandSpec cmd = Assert.Single(ConfigStore.Load(path).Commands);
+        CommandSpec cmd = Assert.Single(Assert.Single(ConfigStore.Load(path).Groups).Commands);
 
         Assert.NotNull(cmd.Args);
         Assert.Empty(cmd.Args);
@@ -256,14 +315,74 @@ public class ConfigStoreTests
     }
 
     [Fact]
-    public void Load_NullCommandEntry_ThrowsConfigException()
+    public void Load_NullGroups_BecomeEmpty()
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        File.WriteAllText(path, """{ "commands": [ null ] }""");
+        File.WriteAllText(path, """{ "groups": null }""");
+
+        CmdrConfig config = ConfigStore.Load(path);
+
+        Assert.NotNull(config.Groups);
+        Assert.Empty(config.Groups);
+    }
+
+    [Fact]
+    public void Load_NullGroupCommands_BecomeEmpty()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g", "commands": null } ] }""");
+
+        GroupSpec group = Assert.Single(ConfigStore.Load(path).Groups);
+
+        Assert.NotNull(group.Commands);
+        Assert.Empty(group.Commands);
+    }
+
+    [Fact]
+    public void Load_NullGroupName_BecomesEmptyString()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": null } ] }""");
+
+        Assert.Equal("", Assert.Single(ConfigStore.Load(path).Groups).Name);
+    }
+
+    [Fact]
+    public void Load_NullGroupEntry_ThrowsConfigExceptionWithIndex()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "a" }, null ] }""");
 
         ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
         Assert.Contains(path, ex.Message);
+        Assert.Contains("groups[1]", ex.Message);
+    }
+
+    [Fact]
+    public void Load_NullCommandEntry_ThrowsConfigExceptionWithGroupAndCommandIndex()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "a" }, { "name": "b", "commands": [ null ] } ] }""");
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains(path, ex.Message);
+        Assert.Contains("groups[1].commands[0]", ex.Message);
+    }
+
+    [Fact]
+    public void Load_NullCommandArg_ThrowsConfigExceptionWithPath()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "a", "commands": [ { "name": "x", "args": ["ok", null] } ] } ] }""");
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains("groups[0].commands[0].args[1]", ex.Message);
     }
 
     [Fact]
@@ -298,7 +417,7 @@ public class ConfigStoreTests
         string path = dir.File("cmdr.json");
         var config = new CmdrConfig
         {
-            Commands = { new CommandSpec { Name = "héllo ✓", Program = "p" } },
+            Groups = { new GroupSpec { Name = "grüppe ✓", Commands = { new CommandSpec { Name = "héllo ✓", Program = "p" } } } },
         };
 
         ConfigStore.Save(config, path);
@@ -306,6 +425,8 @@ public class ConfigStoreTests
 
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF);
         Assert.Equal((byte)'\n', bytes[^1]);
-        Assert.Equal("héllo ✓", ConfigStore.Load(path).Commands[0].Name);
+        CmdrConfig loaded = ConfigStore.Load(path);
+        Assert.Equal("grüppe ✓", loaded.Groups[0].Name);
+        Assert.Equal("héllo ✓", loaded.Groups[0].Commands[0].Name);
     }
 }

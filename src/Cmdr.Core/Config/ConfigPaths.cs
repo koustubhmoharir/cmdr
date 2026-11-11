@@ -19,11 +19,13 @@ public static class ConfigPaths
 
     /// <summary>
     /// Resolves the log file path. If <see cref="LogSpec.Path"/> is set, it is resolved like
-    /// <see cref="ResolveCwd"/>. Otherwise the path is <c>&lt;configDir&gt;/logs/&lt;safe name&gt;.log</c>,
-    /// where unsafe filename characters are replaced by '_' and a blank name becomes "command".
+    /// <see cref="ResolveCwd"/>. Otherwise the path is
+    /// <c>&lt;configDir&gt;/logs/&lt;safe group name&gt;/&lt;safe command name&gt;.log</c>, where unsafe filename
+    /// characters are replaced by '_'; a blank group name becomes "group" and a blank command name "command".
     /// </summary>
-    public static string ResolveLogPath(CommandSpec cmd, string configDir)
+    public static string ResolveLogPath(GroupSpec group, CommandSpec cmd, string configDir)
     {
+        ArgumentNullException.ThrowIfNull(group);
         ArgumentNullException.ThrowIfNull(cmd);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
 
@@ -32,15 +34,16 @@ public static class ConfigPaths
             return Path.GetFullPath(Path.Combine(configDir, cmd.Log.Path));
         }
 
-        string fileName = SafeFileName(cmd.Name) + ".log";
-        return Path.GetFullPath(Path.Combine(configDir, "logs", fileName));
+        string groupDir = SafeFileName(group.Name, "group");
+        string fileName = SafeFileName(cmd.Name, "command") + ".log";
+        return Path.GetFullPath(Path.Combine(configDir, "logs", groupDir, fileName));
     }
 
-    private static string SafeFileName(string name)
+    private static string SafeFileName(string name, string fallback)
     {
         if (string.IsNullOrWhiteSpace(name))
         {
-            return "command";
+            return fallback;
         }
 
         char[] invalid = Path.GetInvalidFileNameChars();
@@ -53,6 +56,9 @@ public static class ConfigPaths
                 : c;
         }
 
-        return new string(chars);
+        string safe = new(chars);
+
+        // "." and ".." would be read as directory references and escape the logs folder.
+        return safe.Trim('.').Length == 0 ? safe.Replace('.', '_') : safe;
     }
 }

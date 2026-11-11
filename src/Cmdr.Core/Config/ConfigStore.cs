@@ -81,28 +81,40 @@ public static class ConfigStore
     // properties null. Replace them with defaults; reject null list entries outright.
     private static void Normalize(CmdrConfig config, string path)
     {
-        config.Commands ??= new List<CommandSpec>();
+        config.Groups ??= new List<GroupSpec>();
 
-        for (int i = 0; i < config.Commands.Count; i++)
+        for (int g = 0; g < config.Groups.Count; g++)
         {
-            CommandSpec? cmd = config.Commands[i];
-            if (cmd is null)
+            GroupSpec? group = config.Groups[g];
+            if (group is null)
             {
-                throw new ConfigException($"Configuration file '{path}': commands[{i}] must be an object, not null.");
+                throw new ConfigException($"Configuration file '{path}': groups[{g}] must be an object, not null.");
             }
 
-            cmd.Name ??= "";
-            cmd.Program ??= "";
-            cmd.Env ??= new Dictionary<string, string?>();
-            cmd.Stop ??= new StopSpec();
-            cmd.Log ??= new LogSpec();
-            cmd.Args ??= new List<string>();
+            group.Name ??= "";
+            group.Commands ??= new List<CommandSpec>();
 
-            for (int a = 0; a < cmd.Args.Count; a++)
+            for (int c = 0; c < group.Commands.Count; c++)
             {
-                if (cmd.Args[a] is null)
+                CommandSpec? cmd = group.Commands[c];
+                if (cmd is null)
                 {
-                    throw new ConfigException($"Configuration file '{path}': commands[{i}].args[{a}] must be a string, not null.");
+                    throw new ConfigException($"Configuration file '{path}': groups[{g}].commands[{c}] must be an object, not null.");
+                }
+
+                cmd.Name ??= "";
+                cmd.Program ??= "";
+                cmd.Env ??= new Dictionary<string, string?>();
+                cmd.Stop ??= new StopSpec();
+                cmd.Log ??= new LogSpec();
+                cmd.Args ??= new List<string>();
+
+                for (int a = 0; a < cmd.Args.Count; a++)
+                {
+                    if (cmd.Args[a] is null)
+                    {
+                        throw new ConfigException($"Configuration file '{path}': groups[{g}].commands[{c}].args[{a}] must be a string, not null.");
+                    }
                 }
             }
         }

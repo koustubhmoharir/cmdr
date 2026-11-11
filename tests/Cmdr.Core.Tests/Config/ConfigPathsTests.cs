@@ -48,9 +48,10 @@ public class ConfigPathsTests
     public void ResolveLogPath_ExplicitRelative_ResolvesAgainstConfigDir()
     {
         using var dir = new TempDir();
+        var group = new GroupSpec { Name = "servers" };
         var cmd = new CommandSpec { Name = "web", Log = new LogSpec { Enabled = true, Path = Path.Combine("logs", "w.log") } };
 
-        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs", "w.log"), ConfigPaths.ResolveLogPath(cmd, dir.Path));
+        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs", "w.log"), ConfigPaths.ResolveLogPath(group, cmd, dir.Path));
     }
 
     [Fact]
@@ -58,20 +59,40 @@ public class ConfigPathsTests
     {
         using var dir = new TempDir();
         string absolute = Path.Combine(dir.Path, "x", "..", "out.log");
+        var group = new GroupSpec { Name = "servers" };
         var cmd = new CommandSpec { Name = "web", Log = new LogSpec { Path = absolute } };
 
-        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "out.log")), ConfigPaths.ResolveLogPath(cmd, Path.Combine(dir.Path, "cfg")));
+        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "out.log")), ConfigPaths.ResolveLogPath(group, cmd, Path.Combine(dir.Path, "cfg")));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public void ResolveLogPath_NoExplicitPath_UsesLogsDirAndName(string? logPath)
+    public void ResolveLogPath_NoExplicitPath_UsesLogsDirGroupAndName(string? logPath)
     {
         using var dir = new TempDir();
+        var group = new GroupSpec { Name = "servers" };
         var cmd = new CommandSpec { Name = "web", Log = new LogSpec { Path = logPath } };
 
-        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs", "web.log"), ConfigPaths.ResolveLogPath(cmd, dir.Path));
+        Assert.Equal(
+            Path.Combine(Path.GetFullPath(dir.Path), "logs", "servers", "web.log"),
+            ConfigPaths.ResolveLogPath(group, cmd, dir.Path));
+    }
+
+    [Fact]
+    public void ResolveLogPath_DefaultPath_DiffersPerGroup_ForSameCommandName()
+    {
+        using var dir = new TempDir();
+        var build = new GroupSpec { Name = "build" };
+        var servers = new GroupSpec { Name = "servers" };
+        var cmd = new CommandSpec { Name = "web" };
+
+        string a = ConfigPaths.ResolveLogPath(build, cmd, dir.Path);
+        string b = ConfigPaths.ResolveLogPath(servers, cmd, dir.Path);
+
+        Assert.NotEqual(a, b);
+        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs", "build", "web.log"), a);
+        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs", "servers", "web.log"), b);
     }
 
     [Theory]
@@ -79,29 +100,65 @@ public class ConfigPathsTests
     [InlineData("   ", "command")]
     [InlineData("my/app\\v1: x\ty", "my_app_v1__x_y")]
     [InlineData("a b", "a_b")]
-    public void ResolveLogPath_DefaultName_IsSanitized(string name, string expectedBase)
+    public void ResolveLogPath_DefaultCommandName_IsSanitized(string name, string expectedBase)
     {
         using var dir = new TempDir();
+        var group = new GroupSpec { Name = "servers" };
         var cmd = new CommandSpec { Name = name };
 
-        string expected = Path.Combine(Path.GetFullPath(dir.Path), "logs", expectedBase + ".log");
-        Assert.Equal(expected, ConfigPaths.ResolveLogPath(cmd, dir.Path));
+        string expected = Path.Combine(Path.GetFullPath(dir.Path), "logs", "servers", expectedBase + ".log");
+        Assert.Equal(expected, ConfigPaths.ResolveLogPath(group, cmd, dir.Path));
+    }
+
+    [Theory]
+    [InlineData("", "group")]
+    [InlineData("   ", "group")]
+    [InlineData("my/app\\v1: x\ty", "my_app_v1__x_y")]
+    [InlineData("a b", "a_b")]
+    public void ResolveLogPath_DefaultGroupName_IsSanitized(string groupName, string expectedDir)
+    {
+        using var dir = new TempDir();
+        var group = new GroupSpec { Name = groupName };
+        var cmd = new CommandSpec { Name = "web" };
+
+        string expected = Path.Combine(Path.GetFullPath(dir.Path), "logs", expectedDir, "web.log");
+        Assert.Equal(expected, ConfigPaths.ResolveLogPath(group, cmd, dir.Path));
     }
 
     [Fact]
     public void ResolveLogPath_DefaultName_ReplacesInvalidFileNameChars()
     {
         using var dir = new TempDir();
-        string name = "x" + string.Concat(Path.GetInvalidFileNameChars()) + "y";
-        var cmd = new CommandSpec { Name = name };
+        string invalid = string.Concat(Path.GetInvalidFileNameChars());
+        var group = new GroupSpec { Name = "g" + invalid + "h" };
+        var cmd = new CommandSpec { Name = "x" + invalid + "y" };
 
-        string resolved = ConfigPaths.ResolveLogPath(cmd, dir.Path);
+        string resolved = ConfigPaths.ResolveLogPath(group, cmd, dir.Path);
 
-        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs"), Path.GetDirectoryName(resolved));
+        string groupDir = Path.GetFileName(Path.GetDirectoryName(resolved)!);
+        Assert.Equal(Path.Combine(Path.GetFullPath(dir.Path), "logs"), Path.GetDirectoryName(Path.GetDirectoryName(resolved)));
+        Assert.StartsWith("g", groupDir);
+        Assert.EndsWith("h", groupDir);
+        Assert.Equal(-1, groupDir.IndexOfAny(Path.GetInvalidFileNameChars()));
+
         string fileName = Path.GetFileName(resolved);
         Assert.Equal(".log", Path.GetExtension(fileName));
         Assert.Equal(-1, fileName.IndexOfAny(Path.GetInvalidFileNameChars()));
         Assert.StartsWith("x", fileName);
         Assert.EndsWith("y.log", fileName);
+    }
+
+    [Theory]
+    [InlineData(".", "_")]
+    [InlineData("..", "__")]
+    public void ResolveLogPath_DotOnlyNamesStayInsideLogsFolder(string name, string expected)
+    {
+        string configDir = Path.Combine(Path.GetTempPath(), "cmdr-cfg");
+        var group = new GroupSpec { Name = name };
+        var cmd = new CommandSpec { Name = name };
+
+        string path = ConfigPaths.ResolveLogPath(group, cmd, configDir);
+
+        Assert.Equal(Path.Combine(configDir, "logs", expected, expected + ".log"), path);
     }
 }
