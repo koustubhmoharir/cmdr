@@ -77,9 +77,8 @@ internal sealed class CommandListSource : IListDataSource
                 if (text.GlyphColumn >= 0)
                 {
                     Color glyphColor = GlyphColor(status.Kind, baseAttr.Foreground);
-                    TextStyle style = status.Kind == StatusKind.Success ? TextStyle.Faint : TextStyle.None;
                     listView.Move(col + text.GlyphColumn, row);
-                    listView.SetAttribute(new Attribute(glyphColor, baseAttr.Background, style));
+                    listView.SetAttribute(new Attribute(glyphColor, baseAttr.Background, TextStyle.None));
                     listView.AddStr(status.Glyph);
                 }
 
@@ -93,12 +92,13 @@ internal sealed class CommandListSource : IListDataSource
 
     private static Color GlyphColor(StatusKind kind, Color normal) => kind switch
     {
-        StatusKind.Running => ColorName16.Green,
-        StatusKind.Stopping => ColorName16.Yellow,
-        StatusKind.Success => ColorName16.Green,
-        StatusKind.Failure => ColorName16.Red,
+        // Bright variants: the normal ones (especially green) have poor contrast on dark backgrounds.
+        StatusKind.Running => ColorName16.BrightGreen,
+        StatusKind.Stopping => ColorName16.BrightYellow,
+        StatusKind.Success => ColorName16.BrightGreen,
+        StatusKind.Failure => ColorName16.BrightRed,
         StatusKind.Warning => GlyphWarning,
-        StatusKind.Queued => ColorName16.Cyan,
+        StatusKind.Queued => ColorName16.BrightCyan,
         _ => normal,
     };
 }

@@ -77,7 +77,7 @@ internal sealed class MainController : IDisposable
         _details = new DetailsView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _output = new OutputView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
-        _listFrame = new FrameView { Title = "Commands", X = 0, Y = 0, Height = Dim.Fill(1) };
+        _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0, Height = Dim.Fill(1) };
         _listFrame.Width = Dim.Func(view => Math.Max(32, (view?.SuperView?.Viewport.Width ?? 0) * 40 / 100), _listFrame);
         _listFrame.Add(_list);
 
@@ -90,7 +90,7 @@ internal sealed class MainController : IDisposable
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
         ShowHints();
 
-        _window = new MainWindow(this) { Title = BuildTitle(), X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _window.Add(_listFrame, _detailsFrame, _outputFrame, _status);
 
         _session.EntryChanged += OnEntryChanged;
@@ -450,7 +450,7 @@ internal sealed class MainController : IDisposable
 
         _list.SelectedItem = index >= 0 ? index : null;
         _list.EnsureSelectedItemVisible();
-        _window.Title = BuildTitle();
+        _listFrame.Title = BuildTitle();
         UpdateFocusedViews();
     }
 
@@ -492,7 +492,7 @@ internal sealed class MainController : IDisposable
     }
 
     private string BuildTitle() =>
-        "cmdr — " + Path.GetFileName(_session.ConfigPath) + (_session.IsDirty ? " *" : string.Empty);
+        Path.GetFileName(_session.ConfigPath) + (_session.IsDirty ? " *" : string.Empty);
 
     private bool ExtendMarks(int delta)
     {
