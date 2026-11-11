@@ -105,7 +105,7 @@ internal static class TextWidth
         return sb.ToString();
     }
 
-    private static int Width(Rune rune)
+    internal static int Width(Rune rune)
     {
         if (Rune.IsControl(rune))
         {

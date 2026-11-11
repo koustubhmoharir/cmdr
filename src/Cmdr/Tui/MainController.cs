@@ -21,7 +21,7 @@ namespace Cmdr.Tui;
 internal sealed class MainController : IDisposable
 {
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
-    private const string Hints = "Enter Start/Kill  Esc Stop  F5 Restart  Space Mark  ^A All  L Log  ^Q Quit";
+    private const string Hints = "Enter Start/Kill  Esc Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^Q Quit";
 
     private readonly IApplication _app;
     private readonly Session _session;
@@ -165,6 +165,12 @@ internal sealed class MainController : IDisposable
                 _list.SetNeedsDraw();
             }
 
+            return true;
+        }
+
+        if (key == Key.C)
+        {
+            CopyCommandLine(focused);
             return true;
         }
 
@@ -575,6 +581,35 @@ internal sealed class MainController : IDisposable
         }
 
         UpdateFocusedViews();
+    }
+
+    /// <summary>Copies the command line of a command row, quoted for this platform. Group rows do nothing.</summary>
+    private void CopyCommandLine(ListRow? focused)
+    {
+        if (focused is not CommandRow command)
+        {
+            return;
+        }
+
+        var spec = command.Entry.Spec;
+        string line = CommandLineFormatter.Format(spec.Program, spec.Args, OperatingSystem.IsWindows());
+        CopyToClipboard(line, "Copied command line");
+    }
+
+    /// <summary>
+    /// Writes the text to the system clipboard with OSC 52 and shows <paramref name="successMessage"/>. Text over
+    /// <see cref="Osc52.MaxBytes"/> is not copied.
+    /// </summary>
+    public void CopyToClipboard(string text, string successMessage)
+    {
+        if (!Osc52.Fits(text))
+        {
+            ShowMessage("Selection too large to copy");
+            return;
+        }
+
+        _app.Driver?.WriteRaw(Osc52.Build(text));
+        ShowMessage(successMessage);
     }
 
     private void MoveCommand(ListRow? focused, int delta)
