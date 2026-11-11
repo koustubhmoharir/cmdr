@@ -132,3 +132,19 @@ Edits to a running command apply on next start.
 
 Quit with running commands offers: stop gracefully and wait (force kill still available),
 force kill all, or cancel. The Windows Job Object kills children if cmdr dies regardless.
+
+## Implementation notes (from investigation)
+
+- Terminal.Gui **2.5.0** (stable). Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
+  Default quit key is Esc; adding Ctrl+Q does not remove it — the Esc binding must be removed
+  (or Esc intercepted in `OnKeyDown`) since Esc means "stop" here.
+- Ctrl+C arrives as a normal key (ISIG disabled), so it can be bound.
+- OSC52 is written via `app.Driver.WriteRaw(...)`; never `Console.Out` directly.
+- Custom view: `OnDrawingContent`, `Move/AddStr/SetAttribute`; `Attribute`/`Color` support 24-bit RGB
+  and `TextStyle` flags. Scrolling via `SetContentSize` + `Viewport`.
+- UI-thread marshalling: `app.Invoke(Action)`; periodic refresh: `app.AddTimeout`.
+- `setsid` execs in place (pid == pgid == sid). Non-interactive `sh` makes background jobs
+  ignore SIGINT — expected; that is what force kill is for.
+- **Leader exit vs. pipe EOF:** with async output reading, `Process.WaitForExit()` (no timeout)
+  blocks until stdout/stderr EOF, which never comes while an orphaned child holds the pipe.
+  Use the `Exited` event / `HasExited` for leader exit; track output EOF separately.
