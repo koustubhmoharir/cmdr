@@ -239,8 +239,12 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Stops the leader/leftover tracking and closes the process handle and output log. Does not kill anything.
+    /// Stops the leader/leftover tracking and closes the process handle and output log.
     /// </summary>
+    /// <remarks>
+    /// Does not kill anything on Linux. On Windows, disposing the group closes its job object, which kills any processes
+    /// still in it (KILL_ON_JOB_CLOSE); this is intentional.
+    /// </remarks>
     public void Dispose()
     {
         lock (_sync)
@@ -304,8 +308,23 @@ public sealed class ManagedProcess : IDisposable
             return;
         }
 
+        IProcessGroup group;
+        try
+        {
+            // The platform kills the leader itself if attaching fails, so no untracked process is left running.
+            // _process is not yet set, so the Exited handler ignores this run.
+            group = _platform.Attach(process);
+        }
+        catch (Exception ex)
+        {
+            process.Dispose();
+            _snapshot = new ProcessSnapshot(ProcessState.FailedToStart, null, null, null, null, null, ex.Message, 0);
+            Output.EndRun($"failed to start: {ex.Message}");
+            return;
+        }
+
         _process = process;
-        _group = _platform.Attach(process);
+        _group = group;
         _stdin = process.StandardInput;
         _stdin.AutoFlush = true;
         _stdOutPump = PumpAsync(process.StandardOutput, isStdErr: false);

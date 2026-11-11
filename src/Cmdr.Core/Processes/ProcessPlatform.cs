@@ -8,8 +8,18 @@ internal static class ProcessPlatform
     /// <summary>The platform implementation for this operating system.</summary>
     public static IProcessPlatform Current => s_current;
 
-    private static IProcessPlatform Create() =>
-        OperatingSystem.IsLinux()
-            ? new LinuxProcessPlatform()
-            : new UnsupportedProcessPlatform();
+    private static IProcessPlatform Create()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            return new LinuxProcessPlatform();
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            return new WindowsProcessPlatform();
+        }
+
+        return new UnsupportedProcessPlatform();
+    }
 }
