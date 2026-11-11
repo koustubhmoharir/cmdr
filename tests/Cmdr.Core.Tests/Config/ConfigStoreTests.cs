@@ -429,4 +429,19 @@ public class ConfigStoreTests
         Assert.Equal("grüppe ✓", loaded.Groups[0].Name);
         Assert.Equal("héllo ✓", loaded.Groups[0].Commands[0].Name);
     }
+
+    [Fact]
+    public void LogsDir_RoundTripsAndIsOmittedWhenNull()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+
+        ConfigStore.Save(new CmdrConfig(), path);
+        Assert.DoesNotContain("logsDir", File.ReadAllText(path));
+        Assert.Null(ConfigStore.Load(path).LogsDir);
+
+        ConfigStore.Save(new CmdrConfig { LogsDir = "../logs" }, path);
+        Assert.Contains("\"logsDir\": \"../logs\"", File.ReadAllText(path));
+        Assert.Equal("../logs", ConfigStore.Load(path).LogsDir);
+    }
 }

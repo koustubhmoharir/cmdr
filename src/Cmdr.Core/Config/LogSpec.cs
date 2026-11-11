@@ -9,8 +9,8 @@ public class LogSpec
     public bool Enabled { get; set; } = false;
 
     /// <summary>
-    /// Log file path. Relative paths resolve against the config directory.
-    /// When null or empty, a default path under "logs/" is used (see <see cref="ConfigPaths.ResolveLogPath"/>).
+    /// Log file path. Relative paths resolve against the logs directory.
+    /// When null or empty, a default path inside the logs directory is used (see <see cref="ConfigPaths.ResolveLogPath"/>).
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Path { get; set; }

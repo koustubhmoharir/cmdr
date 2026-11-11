@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Cmdr.Core.Config;
 
 /// <summary>Root of the cmdr configuration file.</summary>
@@ -5,6 +7,13 @@ public class CmdrConfig
 {
     /// <summary>Maximum number of output lines kept per command in memory.</summary>
     public int BufferLines { get; set; } = 10000;
+
+    /// <summary>
+    /// Directory for log files; relative paths resolve against the config directory. Null means <c>logs</c>
+    /// (see <see cref="ConfigPaths.ResolveLogsDir"/>).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LogsDir { get; set; }
 
     /// <summary>Command groups managed by cmdr, in display order.</summary>
     public List<GroupSpec> Groups { get; set; } = new();

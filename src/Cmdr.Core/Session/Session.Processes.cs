@@ -232,7 +232,7 @@ public sealed partial class Session
         ConfigPaths.ResolveLogPath(
             new GroupSpec { Name = entry.Group.Name, Description = entry.Group.Description, Mode = entry.Group.Mode },
             entry.Spec,
-            ConfigDir);
+            LogsDir);
 
     /// <summary>Creates a sequence over the entries and starts it in the background. Returns a message if one is already running.</summary>
     private string? StartSequence(GroupEntry group, IReadOnlyList<CommandEntry> entries)

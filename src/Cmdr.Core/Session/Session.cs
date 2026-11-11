@@ -25,6 +25,8 @@ public sealed partial class Session : IDisposable
         ConfigPath = configPath;
         ConfigDir = Path.GetDirectoryName(configPath)!;
         BufferLines = config.BufferLines;
+        LogsDirSetting = config.LogsDir;
+        LogsDir = ConfigPaths.ResolveLogsDir(config, ConfigDir);
         LoadErrors = config.Validate();
 
         // An invalid buffer size is reported through LoadErrors; the processes still need a usable buffer.
@@ -55,6 +57,12 @@ public sealed partial class Session : IDisposable
 
     /// <summary>Maximum number of output lines kept per command.</summary>
     public int BufferLines { get; }
+
+    /// <summary>The <c>logsDir</c> value as written in the config file (null when not set).</summary>
+    public string? LogsDirSetting { get; }
+
+    /// <summary>Resolved directory for log files.</summary>
+    public string LogsDir { get; }
 
     /// <summary>Groups in file order. The list is owned by the session and changes with edits.</summary>
     public IReadOnlyList<GroupEntry> Groups => _groups;
@@ -213,7 +221,7 @@ public sealed partial class Session : IDisposable
     /// <summary>Builds a configuration from the current state. The result shares no objects with the session.</summary>
     public CmdrConfig BuildConfig()
     {
-        var config = new CmdrConfig { BufferLines = BufferLines };
+        var config = new CmdrConfig { BufferLines = BufferLines, LogsDir = LogsDirSetting };
         foreach (GroupEntry group in _groups)
         {
             config.Groups.Add(new GroupSpec
