@@ -48,39 +48,11 @@ internal sealed class LinuxProcessGroup : IProcessGroup
                 continue;
             }
 
-            string stat;
-            try
-            {
-                stat = File.ReadAllText(Path.Combine(dir, "stat"));
-            }
-            catch (IOException)
-            {
-                continue; // Exited during the scan.
-            }
-            catch (UnauthorizedAccessException)
+            if (!TryReadStat(Path.Combine(dir, "stat"), out char state, out int pgrp) || pgrp != _pgid)
             {
                 continue;
             }
 
-            int close = stat.LastIndexOf(')');
-            if (close < 0)
-            {
-                continue;
-            }
-
-            string[] fields = stat.Substring(close + 1).Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length < 3)
-            {
-                continue;
-            }
-
-            // fields[0] is state (field 3), fields[1] is ppid (field 4), fields[2] is pgrp (field 5).
-            if (!int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out int pgrp) || pgrp != _pgid)
-            {
-                continue;
-            }
-
-            char state = fields[0][0];
             if (state is 'Z' or 'X')
             {
                 continue;
@@ -98,6 +70,12 @@ internal sealed class LinuxProcessGroup : IProcessGroup
         // Nothing to release: the group is identified by its id only. Does not signal anything.
     }
 
+    /// <summary>
+    /// Returns the process group id of <paramref name="pid"/> from <c>/proc/[pid]/stat</c>, or null if the process is gone.
+    /// </summary>
+    internal static int? ReadProcessGroupId(int pid) =>
+        TryReadStat($"/proc/{pid}/stat", out _, out int pgrp) ? pgrp : null;
+
     private void Signal(int signal)
     {
         if (LinuxNative.Kill(-_pgid, signal) == 0)
@@ -106,10 +84,61 @@ internal sealed class LinuxProcessGroup : IProcessGroup
         }
 
         int error = Marshal.GetLastPInvokeError();
-        if (error != ErrorNoSuchProcess)
+        if (error == ErrorNoSuchProcess)
         {
-            throw new Win32Exception(error);
+            // The group does not exist (yet): setsid may not have run. Signal the leader directly; ESRCH there
+            // means it is gone too.
+            if (LinuxNative.Kill(_pgid, signal) == 0)
+            {
+                return;
+            }
+
+            error = Marshal.GetLastPInvokeError();
+            if (error == ErrorNoSuchProcess)
+            {
+                return;
+            }
         }
+
+        throw new Win32Exception(error);
+    }
+
+    /// <summary>
+    /// Parses state (field 3) and pgrp (field 5) from a stat file. The command name (field 2) may contain spaces and
+    /// parentheses, so fields are read after the last ')'. Returns false if the process vanished or the file is malformed.
+    /// </summary>
+    private static bool TryReadStat(string statPath, out char state, out int pgrp)
+    {
+        state = '\0';
+        pgrp = 0;
+
+        string stat;
+        try
+        {
+            stat = File.ReadAllText(statPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false; // Exited during the read, or not readable.
+        }
+
+        int close = stat.LastIndexOf(')');
+        if (close < 0)
+        {
+            return false;
+        }
+
+        string[] fields = stat.Substring(close + 1).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        // fields[0] is state (field 3), fields[1] is ppid (field 4), fields[2] is pgrp (field 5).
+        if (fields.Length < 3 || fields[0].Length == 0
+            || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out pgrp))
+        {
+            return false;
+        }
+
+        state = fields[0][0];
+        return true;
     }
 
     private static bool IsAllDigits(string text)

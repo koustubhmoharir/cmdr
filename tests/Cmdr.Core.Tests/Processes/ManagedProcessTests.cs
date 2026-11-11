@@ -316,7 +316,9 @@ public class ManagedProcessTests
         p.Changed += q => seen.Enqueue(q.Snapshot.State);
         try
         {
-            p.Start(Sh("exit 0", dir.Path));
+            // Changed carries no state; handlers read the current snapshot. The process must outlive Start's own
+            // Changed notification for "Running" to be observable.
+            p.Start(Sh("sleep 0.3", dir.Path));
             WaitForExited(p);
 
             ProcessState[] states = seen.ToArray();
@@ -354,6 +356,33 @@ public class ManagedProcessTests
         finally
         {
             Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void StopImmediatelyAfterStartIsNotLost()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        // Regression: Process.Start returns before setsid has created the group; a group signal sent in that
+        // window used to fail with ESRCH and be dropped silently.
+        using var dir = new TempDir();
+        for (int i = 0; i < 20; i++)
+        {
+            var p = new ManagedProcess(100);
+            try
+            {
+                p.Start(new LaunchSpec("sleep", new[] { "30" }, dir.Path, new Dictionary<string, string?>(), StopMethod.CtrlC, null));
+                p.RequestStop();
+                WaitForExited(p, TimeSpan.FromSeconds(5));
+            }
+            finally
+            {
+                Cleanup(p);
+            }
         }
     }
 }
