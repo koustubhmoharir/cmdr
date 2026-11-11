@@ -23,33 +23,63 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 ```json
 {
   "bufferLines": 10000,
-  "commands": [
+  "groups": [
     {
-      "name": "web",
-      "description": "Frontend dev server.\nNeeds the api running first.",
-      "program": "pnpm",
-      "args": ["start"],
-      "cwd": "../web",
-      "env": { "FORCE_COLOR": "1", "SOME_VAR": null },
-      "stop": { "method": "ctrlC" },
-      "log": { "enabled": false, "path": "logs/web.log" }
+      "name": "build",
+      "description": "optional",
+      "mode": "sequential",
+      "commands": [
+        { "name": "restore", "program": "dotnet", "args": ["restore"] },
+        { "name": "build", "program": "dotnet", "args": ["build"] }
+      ]
     },
     {
-      "name": "tool",
-      "program": "/opt/tool/run",
-      "args": [],
-      "cwd": ".",
-      "stop": { "method": "input", "input": "q\n" }
+      "name": "servers",
+      "mode": "parallel",
+      "commands": [
+        {
+          "name": "web",
+          "description": "Frontend dev server.\nNeeds the api running first.",
+          "program": "pnpm",
+          "args": ["start"],
+          "cwd": "../web",
+          "env": { "FORCE_COLOR": "1", "SOME_VAR": null },
+          "stop": { "method": "ctrlC" },
+          "log": { "enabled": false, "path": "logs/web.log" }
+        },
+        {
+          "name": "tool",
+          "program": "/opt/tool/run",
+          "cwd": ".",
+          "stop": { "method": "input", "input": "q\n" }
+        }
+      ]
     }
   ]
 }
 ```
 
+- Every command belongs to a group; groups and commands are shown in file order.
+- Group `mode`: `parallel` (default) or `sequential`. Group names unique (case-insensitive);
+  command names unique within their group.
 - `args` is an array, passed via `ProcessStartInfo.ArgumentList` (no quoting issues).
 - `env`: values overlay the inherited environment; `null` removes a variable.
 - Relative `cwd` and `log.path` resolve against the config file's directory.
+  Default log path: `logs/<group>/<command>.log`.
 - Default `stop.method` is `ctrlC`. Default `bufferLines` is 10000.
 - Explicit save only (Ctrl+S). Unsaved changes are marked `*` in the title; quit prompts.
+
+### Groups and sequences
+
+- Selection (marks) is confined to one group; marking in another group clears the previous marks.
+  Actions apply to the marked commands, else the focused command; on a focused group header they
+  apply to the whole group.
+- Sequential group, Enter: the selected commands run one after another in file order; each starts
+  after the previous leader exits with code 0. Non-zero exit or failure to start cancels the rest
+  (like `&&`). Waiting commands show `queued`. Leftover processes do not block the sequence.
+- Stopping (Esc/Ctrl+C) any command of a running sequence stops the current command and cancels
+  the queue. Only one sequence per group at a time. F5 stops running selected commands, then
+  reruns the selection in sequence.
 
 ## Process supervision
 
@@ -108,12 +138,13 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
 
 ### Keys
 
-Selection-based actions apply to all selected commands (or the focused one if none selected).
+Selection-based actions apply to all selected commands (or the focused one if none selected; on a group header, the whole group).
 
 | Key | Action |
 |---|---|
-| Space / Shift+↑↓ / Ctrl+click | multi-select |
-| Ctrl+A | toggle select all |
+| Space / Shift+↑↓ / Ctrl+click | multi-select (within one group) |
+| Ctrl+A | toggle select all in the focused group |
+| Alt+↑ / Alt+↓ | move command within its group |
 | Enter | per item: start if not running; force kill if stopping |
 | Esc | graceful stop (with confirmation) |
 | Ctrl+C | graceful stop (no confirmation) |
@@ -126,7 +157,8 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Ctrl+S | save config |
 | Ctrl+Q | quit |
 
-Edit dialog: name, description (multi-line), program, args (multi-line, one per line), cwd,
+Group dialog: name, description, mode. Groups can be added, renamed, deleted (with confirmation).
+Command edit dialog: group (to move between groups), name, description (multi-line), program, args (multi-line, one per line), cwd,
 env (multi-line `KEY=VALUE`), stop method + input, log enabled + path.
 Edits to a running command apply on next start.
 
