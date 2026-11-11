@@ -146,7 +146,7 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Space / Shift+↑↓ / Ctrl+click | multi-select (within one group) |
 | Ctrl+A | toggle select all in the focused group |
 | Alt+↑ / Alt+↓ | move command within its group |
-| Enter | per item: start if not running; force kill if stopping |
+| Enter | if any target is stopping or has leftovers: force kill those (start nothing); else start the startable targets |
 | Esc | graceful stop (with confirmation) |
 | Ctrl+C | graceful stop (no confirmation) |
 | F5 | restart (with confirmation) |

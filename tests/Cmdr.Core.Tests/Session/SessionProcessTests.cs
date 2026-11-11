@@ -38,6 +38,38 @@ public class SessionProcessTests
     }
 
     [Fact]
+    public void Activate_WithStoppingTarget_OnlyKillsAndStartsNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group(
+            "g",
+            GroupMode.Parallel,
+            Sh("stubborn", "trap '' INT; while :; do sleep 0.1; done"),
+            Sh("idle", "exit 0")));
+        try
+        {
+            CommandEntry stubborn = session.Groups[0].Commands[0];
+            CommandEntry idle = session.Groups[0].Commands[1];
+
+            Assert.Null(session.Activate(new[] { stubborn }));
+            WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Running, "stubborn running", stubborn.Process);
+            Assert.Null(session.Stop(new[] { stubborn }));
+            WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Stopping, "stubborn stopping", stubborn.Process);
+
+            Assert.Null(session.Activate(new[] { stubborn, idle }));
+
+            WaitForExited(stubborn.Process);
+            Assert.Equal(ProcessState.NotStarted, idle.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
     public void Activate_SequentialGroup_RunsCommandsInOrderAndClearsQueue()
     {
         if (!OperatingSystem.IsLinux()) return;

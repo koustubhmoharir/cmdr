@@ -6,9 +6,9 @@ namespace Cmdr.Core.Session;
 public sealed partial class Session
 {
     /// <summary>
-    /// Enter: force-kills stopping commands and commands that exited with leftover processes, then starts the others
-    /// that can start. Parallel groups start each command now; sequential groups start a sequence of them in file order.
-    /// Running commands are left alone.
+    /// Enter: if any target is stopping or exited with leftover processes, force-kills those and starts nothing.
+    /// Otherwise starts the targets that can start: parallel groups start each command now; sequential groups start a
+    /// sequence of them in file order. Running commands are left alone.
     /// </summary>
     /// <returns>A message when something was not done, otherwise null.</returns>
     /// <exception cref="ArgumentException">The targets are not all in the same group.</exception>
@@ -20,20 +20,19 @@ public sealed partial class Session
             return null;
         }
 
-        var startable = new List<CommandEntry>();
-        foreach (CommandEntry entry in targets)
+        // Killing takes precedence: if any target is stopping or has leftovers, Enter only kills those and starts nothing.
+        List<CommandEntry> killable = targets.Where(IsKillable).ToList();
+        if (killable.Count > 0)
         {
-            ProcessSnapshot snapshot = entry.Process.Snapshot;
-            if (snapshot.State == ProcessState.Stopping || (snapshot.State == ProcessState.Exited && snapshot.LeftoverCount > 0))
+            foreach (CommandEntry entry in killable)
             {
                 entry.Process.ForceKill();
             }
-            else if (entry.Process.CanStart)
-            {
-                startable.Add(entry);
-            }
+
+            return null;
         }
 
+        List<CommandEntry> startable = targets.Where(e => e.Process.CanStart).ToList();
         if (startable.Count == 0)
         {
             return null;
@@ -314,6 +313,12 @@ public sealed partial class Session
         }
 
         return group;
+    }
+
+    private static bool IsKillable(CommandEntry entry)
+    {
+        ProcessSnapshot snapshot = entry.Process.Snapshot;
+        return snapshot.State == ProcessState.Stopping || (snapshot.State == ProcessState.Exited && snapshot.LeftoverCount > 0);
     }
 
     private static bool IsRunningOrStopping(CommandEntry entry)
