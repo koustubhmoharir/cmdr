@@ -148,3 +148,12 @@ force kill all, or cancel. The Windows Job Object kills children if cmdr dies re
 - **Leader exit vs. pipe EOF:** with async output reading, `Process.WaitForExit()` (no timeout)
   blocks until stdout/stderr EOF, which never comes while an orphaned child holds the pipe.
   Use the `Exited` event / `HasExited` for leader exit; track output EOF separately.
+
+### Windows: batch files (.cmd/.bat)
+
+`pnpm`, `npm`, `yarn` etc. are `.cmd` shims that CreateProcess cannot run directly. On Windows the
+program is resolved against the effective `PATH`/`PATHEXT` (cwd first). If it resolves to a
+`.cmd`/`.bat`, it is launched as `%ComSpec% /d /s /c "<escaped command line>"` using cross-spawn's
+escaping rules. Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin,
+so after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin.
+Caveat: a child that reads stdin could consume the answer first.
