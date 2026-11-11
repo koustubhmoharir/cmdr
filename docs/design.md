@@ -193,3 +193,41 @@ program is resolved against the effective `PATH`/`PATHEXT` (cwd first). If it re
 escaping rules. Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin,
 so after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin.
 Caveat: a child that reads stdin could consume the answer first.
+
+## Nested groups (tree)
+
+A group's `items` array holds commands and groups in file order (an item with `program` is a command,
+an item with `items` is a group). The top level remains `groups` (groups only). `items` replaces
+`commands`.
+
+```json
+{
+  "name": "nav", "mode": "sequential",
+  "cwd": "../SheetKraft/CodeKraft/golang",
+  "env": {
+    "TMP": "${cwd}/nav/temp",
+    "PATH": "/srv/devshare/artifacts/SheetKraft/bin/XldrHelper/debug${pathsep}${PATH}"
+  },
+  "items": [
+    { "name": "meta",  "program": "go", "args": ["run", "./ckiecho/cmd/ckbuild", "--meta", "--incremental", "./nav"] },
+    { "name": "build", "program": "go", "args": ["build", "-tags=debug", "-o", "nav/__debug_bin", "./nav"] },
+    { "name": "run",   "program": "nav/__debug_bin", "args": ["--allow-upgrade"] }
+  ]
+}
+```
+
+- Groups may set `cwd` and `env`; descendants inherit them. A relative `cwd` resolves against the
+  parent's effective cwd (top-level groups: the config directory).
+- Environment is built outermost first: inherited process env → each ancestor group's `env` → the
+  command's `env`. Each level's values are expanded against the environment as it was *before* that
+  level (so `${PATH}` refers to the parent's value). `null` removes a variable.
+- Expansion in env values: `${NAME}` (empty if undefined), `${cwd}` (effective cwd of the item that
+  defines the env), `${configDir}`, `${pathsep}` (`:` / `;`), `$$` → `$`.
+- Names are unique (case-insensitive) among siblings. Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log`.
+- Running: a parallel group starts all children at once; a sequential group runs children in order. A
+  command child succeeds on exit code 0; a group child succeeds when all of its runs finished
+  successfully. Any failure cancels the remainder of the enclosing sequence(s). Esc/Ctrl+C/F5 on a
+  group act on everything below it; Enter on a group kills if anything below is stopping/has leftovers,
+  else runs the group.
+- List: nested groups are indented and collapsible; collapsed headers summarize all descendants. Marks
+  are limited to sibling commands of one group.
