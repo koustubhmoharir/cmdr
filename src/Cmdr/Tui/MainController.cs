@@ -1,5 +1,6 @@
 using System.IO;
 using System.Threading;
+using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Terminal.Gui.App;
@@ -21,7 +22,10 @@ namespace Cmdr.Tui;
 internal sealed class MainController : IDisposable
 {
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
-    private const string Hints = "Enter Start/Kill  Esc Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^Q Quit";
+    // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
+    // "^Q Quit" stays visible at the right edge when the bar is narrow.
+    private const string HintsRest = "Esc/^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save";
+    private const string HintsRight = "  ^Q Quit";
 
     private readonly IApplication _app;
     private readonly Session _session;
@@ -30,6 +34,8 @@ internal sealed class MainController : IDisposable
     private readonly CommandListSource _source;
     private int _refreshPending;
     private volatile bool _closed;
+    private bool _loadErrorsShown;
+    private string? _shownHints;
 
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private object? _shownKey;
@@ -117,6 +123,12 @@ internal sealed class MainController : IDisposable
             return true;
         }
 
+        if (key == Key.S.WithCtrl)
+        {
+            Save();
+            return true;
+        }
+
         return false;
     }
 
@@ -171,6 +183,30 @@ internal sealed class MainController : IDisposable
         if (key == Key.C)
         {
             CopyCommandLine(focused);
+            return true;
+        }
+
+        if (key == Key.N.WithCtrl)
+        {
+            AddCommand(focused);
+            return true;
+        }
+
+        if (key == Key.G.WithCtrl)
+        {
+            AddGroup();
+            return true;
+        }
+
+        if (key == Key.F2)
+        {
+            EditFocused(focused);
+            return true;
+        }
+
+        if (key == Key.Delete)
+        {
+            DeleteFocused(focused);
             return true;
         }
 
@@ -332,6 +368,18 @@ internal sealed class MainController : IDisposable
             return false;
         }
 
+        if (!_loadErrorsShown)
+        {
+            // Shown once, after the first frame, so that the message box has a screen behind it.
+            _loadErrorsShown = true;
+            if (_session.LoadErrors.Count > 0)
+            {
+                string text = "The configuration has errors:\n" + string.Join("\n", _session.LoadErrors)
+                    + "\n\nFix them here or in the file; Ctrl+S reports them again.";
+                MessageBox.ErrorQuery(_app, "Configuration", text, "_OK");
+            }
+        }
+
         object? key = KeyOf(FocusedRow);
         if (!ReferenceEquals(key, _shownKey))
         {
@@ -340,6 +388,12 @@ internal sealed class MainController : IDisposable
 
         _output.Tick();
         UpdateOutputTitle();
+
+        // The Enter hint depends on the targets, their states and marks; it is recomputed on every tick.
+        if (_message is null)
+        {
+            ShowHints();
+        }
 
         if (_message is not null && DateTimeOffset.UtcNow >= _messageUntil)
         {
@@ -631,30 +685,230 @@ internal sealed class MainController : IDisposable
 
     private void RequestQuit()
     {
-        IReadOnlyList<CommandEntry> active = _session.ActiveEntries;
-        if (active.Count == 0 && !_session.IsDirty)
+        var quit = new QuitFlow(_app, _session, Save);
+        if (quit.Run())
         {
+            // The quit steps have closed their dialogs, so the current session is the main window.
             _app.RequestStop();
+        }
+    }
+
+    /// <summary>Saves the configuration. Errors are shown in a message box. Returns true when saved.</summary>
+    private bool Save()
+    {
+        string file = Path.GetFileName(_session.ConfigPath);
+        try
+        {
+            _session.Save();
+        }
+        catch (InvalidOperationException ex)
+        {
+            MessageBox.ErrorQuery(_app, "Save", "Nothing was saved. Fix these first:\n" + ex.Message, "_OK");
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.ErrorQuery(_app, "Save", $"Could not save {file}:\n" + ex.Message, "_OK");
+            return false;
+        }
+
+        ShowMessage("Saved " + file);
+        return true;
+    }
+
+    /// <summary>Ctrl+N: a command in the focused row's group. Without groups there is nowhere to put it.</summary>
+    private void AddCommand(ListRow? focused)
+    {
+        if (_session.Groups.Count == 0)
+        {
+            ShowMessage("Create a group first (Ctrl+G)");
             return;
         }
 
-        // TODO(step 7): replaced by the full quit flow (stop gracefully and wait, save, cancel).
-        var reasons = new List<string>();
-        if (active.Count > 0)
-        {
-            reasons.Add($"{active.Count} command(s) are still running or have leftover processes.");
-        }
+        GroupEntry group = focused is null ? _session.Groups[0] : GroupOf(focused);
+        CommandEntry? added = null;
+        using var dialog = new CommandDialog(
+            _app,
+            _session,
+            "Add command",
+            group,
+            new CommandSpec(),
+            editing: null,
+            commit: (target, spec) =>
+            {
+                try
+                {
+                    added = _session.AddCommand(target, spec);
+                    return null;
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                    return ex.Message;
+                }
+            });
 
-        if (_session.IsDirty)
+        if (RunDialog(dialog) && added is not null)
         {
-            reasons.Add("There are unsaved changes.");
+            FocusKey(added);
         }
+    }
 
-        string message = string.Join(" ", reasons) + "\nQuit anyway (force kill)?";
-        if (MessageBox.Query(_app, "Quit", message, "Quit anyway (force kill)", "Cancel") == 0)
+    private void AddGroup()
+    {
+        GroupEntry? added = null;
+        using var dialog = new GroupDialog(
+            _app,
+            _session,
+            "Add group",
+            editing: null,
+            name: string.Empty,
+            description: null,
+            mode: GroupMode.Parallel,
+            commit: (name, description, mode) =>
+            {
+                try
+                {
+                    added = _session.AddGroup(name, description, mode);
+                    return null;
+                }
+                catch (ArgumentException ex)
+                {
+                    return ex.Message;
+                }
+            });
+
+        if (RunDialog(dialog) && added is not null)
         {
-            _session.ForceKillAll();
-            _app.RequestStop();
+            FocusKey(added);
+        }
+    }
+
+    private void EditFocused(ListRow? focused)
+    {
+        switch (focused)
+        {
+            case CommandRow command:
+                EditCommand(command.Entry);
+                break;
+            case GroupRow group:
+                EditGroup(group.Group);
+                break;
+        }
+    }
+
+    private void EditCommand(CommandEntry entry)
+    {
+        using var dialog = new CommandDialog(
+            _app,
+            _session,
+            "Edit command",
+            entry.Group,
+            entry.Spec,
+            editing: entry,
+            commit: (target, spec) =>
+            {
+                try
+                {
+                    _session.UpdateCommand(entry, spec, target);
+                    return null;
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                    return ex.Message;
+                }
+            });
+
+        bool running = entry.IsActive;
+        if (RunDialog(dialog))
+        {
+            FocusKey(entry);
+            if (running)
+            {
+                ShowMessage("Changes apply on next start.");
+            }
+        }
+    }
+
+    private void EditGroup(GroupEntry group)
+    {
+        using var dialog = new GroupDialog(
+            _app,
+            _session,
+            "Edit group",
+            editing: group,
+            name: group.Name,
+            description: group.Description,
+            mode: group.Mode,
+            commit: (name, description, mode) =>
+            {
+                try
+                {
+                    _session.UpdateGroup(group, name, description, mode);
+                    return null;
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                    return ex.Message;
+                }
+            });
+
+        if (RunDialog(dialog))
+        {
+            FocusKey(group);
+        }
+    }
+
+    /// <summary>Delete: asks first. The session refuses to remove running, queued or sequenced commands; that is shown as an error.</summary>
+    private void DeleteFocused(ListRow? focused)
+    {
+        try
+        {
+            switch (focused)
+            {
+                case CommandRow command:
+                    if (MessageBox.Query(_app, "Delete", $"Delete command '{command.Entry.Spec.Name}'?", "_Yes", "_No") == 0)
+                    {
+                        _session.RemoveCommand(command.Entry);
+                    }
+
+                    break;
+
+                case GroupRow group:
+                    int count = group.Group.Commands.Count;
+                    string text = $"Delete group '{group.Group.Name}' and its {count} command(s)?";
+                    if (MessageBox.Query(_app, "Delete", text, "_Yes", "_No") == 0)
+                    {
+                        _session.RemoveGroup(group.Group);
+                    }
+
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            MessageBox.ErrorQuery(_app, "Delete", ex.Message, "_OK");
+        }
+    }
+
+    /// <summary>Runs an add or edit dialog. Returns true when it committed.</summary>
+    private bool RunDialog(Dialog<bool> dialog)
+    {
+        _app.Run(dialog);
+        return dialog.Result == true;
+    }
+
+    /// <summary>Moves the focus to the row of a group or command, if it is in the list.</summary>
+    private void FocusKey(object key)
+    {
+        for (int i = 0; i < _rows.Count; i++)
+        {
+            if (ReferenceEquals(KeyOf(_rows[i]), key))
+            {
+                _list.SelectedItem = i;
+                _list.EnsureSelectedItemVisible();
+                UpdateFocusedViews();
+                return;
+            }
         }
     }
 
@@ -665,5 +919,29 @@ internal sealed class MainController : IDisposable
         _status.Show(text, message: true);
     }
 
-    private void ShowHints() => _status.Show(Hints, message: false);
+    /// <summary>Shows the hints unless the text is already shown.</summary>
+    private void ShowHints()
+    {
+        string left = HintLeft();
+        if (left == _shownHints)
+        {
+            return;
+        }
+
+        _shownHints = left;
+        _status.Show(left, message: false, right: HintsRight);
+    }
+
+    /// <summary>The hint text left of "^Q Quit": "Enter Start" / "Enter Kill" for the current targets, when Enter does something.</summary>
+    private string HintLeft()
+    {
+        IReadOnlyList<CommandEntry> targets = TargetsOf(FocusedRow);
+        var enterTargets = targets
+            .Select(e => new EnterTarget(e.Process.Snapshot.State, e.Process.Snapshot.LeftoverCount, e.Process.CanStart))
+            .ToList();
+        bool sequenceRunning = targets.Count > 0 && targets[0].Group.Mode == GroupMode.Sequential && targets[0].Group.IsSequenceRunning;
+
+        string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
+        return (enter is null ? string.Empty : "Enter " + enter + "  ") + HintsRest;
+    }
 }
