@@ -1,0 +1,10 @@
+<Project>
+
+  <!-- The product version, maintained by hand. Printed by cmdr's version option. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <!-- Keep the informational version plain (no "+<commit>" suffix). -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+</Project>

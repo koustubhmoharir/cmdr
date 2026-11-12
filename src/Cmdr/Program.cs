@@ -25,9 +25,16 @@ static int Run(string[] args)
         return CtrlCHelper.Run(pid);
     }
 
+    if (args is ["--version"])
+    {
+        Console.WriteLine("cmdr " + Version());
+        return 0;
+    }
+
     if (args is not [var configPath])
     {
         Console.Error.WriteLine("usage: cmdr <config.json>");
+        Console.Error.WriteLine("       cmdr --version");
         return 2;
     }
 
@@ -49,3 +56,10 @@ static int Run(string[] args)
 
     return 0;
 }
+
+// The version set in Directory.Build.props.
+static string Version() =>
+    typeof(TuiHost).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), inherit: false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .FirstOrDefault()?.InformationalVersion ?? "unknown";
