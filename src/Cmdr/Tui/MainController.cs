@@ -807,8 +807,8 @@ internal sealed class MainController : IDisposable
         UpdateFocusedViews();
     }
 
-    /// <summary>Copies the command line of a command row, quoted for this platform. Group rows do nothing.</summary>
-    private void CopyCommandLine(ListRow? focused)
+    /// <summary>Copies the command line of a command row, quoted for this platform. Group rows do nothing. Used by the list and the details strip.</summary>
+    public void CopyCommandLine(ListRow? focused)
     {
         if (focused is not CommandRow command)
         {

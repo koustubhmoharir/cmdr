@@ -3,6 +3,9 @@ using Terminal.Gui.Text;
 
 namespace Cmdr.Tui;
 
+/// <summary>A wrapped line of styled spans: its UTF-16 range <c>[Start, End)</c> in the cleaned plain text, and its spans.</summary>
+internal sealed record WrappedSpans<T>(int Start, int End, IReadOnlyList<(string Text, T Style)> Spans);
+
 /// <summary>Column-based text measuring and fitting. Widths follow Terminal.Gui's rune widths, so wide characters count as two columns.</summary>
 internal static class TextWidth
 {
@@ -108,7 +111,14 @@ internal static class TextWidth
     /// </summary>
     public static IReadOnlyList<IReadOnlyList<(string Text, T Style)>> WrapSpans<T>(
         IReadOnlyList<(string Text, T Style)> spans,
-        int width)
+        int width) =>
+        WrapSpanRanges(spans, width).Select(line => line.Spans).ToList();
+
+    /// <summary>
+    /// The breaks of <see cref="WrapSpans{T}"/>, with the range of the cleaned plain text that each line shows: its UTF-16
+    /// offsets <c>[Start, End)</c>. The spaces dropped at a break lie between one line's End and the next line's Start.
+    /// </summary>
+    internal static List<WrappedSpans<T>> WrapSpanRanges<T>(IReadOnlyList<(string Text, T Style)> spans, int width)
     {
         ArgumentNullException.ThrowIfNull(spans);
 
@@ -124,15 +134,19 @@ internal static class TextWidth
 
         var cells = new List<(string Text, int Width)>();
         var styles = new List<T>();
+        var offsets = new List<int>(); // The UTF-16 offset of each cell, then the end of the text.
         int offset = 0;
         foreach (Rune rune in Clean(plain).EnumerateRunes())
         {
             cells.Add((rune.ToString(), Width(rune)));
             styles.Add(styleAt[offset]);
+            offsets.Add(offset);
             offset += rune.Utf16SequenceLength;
         }
 
-        var lines = new List<IReadOnlyList<(string Text, T Style)>>();
+        offsets.Add(offset);
+
+        var lines = new List<WrappedSpans<T>>();
         foreach ((int start, int end) in WrapRanges(cells, width))
         {
             var line = new List<(string Text, T Style)>();
@@ -146,7 +160,7 @@ internal static class TextWidth
                 }
             }
 
-            lines.Add(line);
+            lines.Add(new WrappedSpans<T>(offsets[start], offsets[end], line));
         }
 
         return lines;

@@ -184,6 +184,9 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
   shows the range, e.g. `go-apps / nav / run  (1–4 of 11 ↓)`, with ↑/↓/↕ for content out of view.
 - The output view tail-follows by default; scrolling up pauses following, End resumes. Lines wrap to the view width, by cell like a terminal (nothing is dropped; copy gives the original line), and the wheel scrolls by screen rows.
 - Output view is a custom view: mouse drag = character selection, Shift+↑/↓ = line selection.
+- Info strip: mouse drag = character selection (kept across refreshes of the same row; cleared by Esc
+  or another row). `c` there copies the selection, else the command line. A line wrapped over several
+  rows is copied as one line (spaces dropped at the breaks are restored).
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written to the terminal.
 
 ### Keys
@@ -202,7 +205,7 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Ctrl+C | graceful stop (no confirmation) |
 | F5 | restart (with confirmation) |
 | L | toggle log file |
-| c | copy: command line (list focused, platform-quoted) / selection or current line (output focused) |
+| c | copy: command line (list focused, platform-quoted) / selection, else command line (info focused) / selection or current line (output focused) |
 | Ctrl+N | add command |
 | F2 | edit command |
 | Del | delete command (with confirmation) |

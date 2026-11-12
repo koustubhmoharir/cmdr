@@ -58,16 +58,29 @@ internal static class DetailsText
     /// Wraps each line to <paramref name="width"/> columns, keeping the styles: a span may continue on the next line. The plain
     /// text is wrapped exactly as <see cref="TextWidth.Wrap(string, int)"/> wraps it. Non-positive widths give no lines.
     /// </summary>
-    public static IReadOnlyList<DetailsLine> Wrap(IReadOnlyList<DetailsLine> lines, int width)
+    public static IReadOnlyList<DetailsLine> Wrap(IReadOnlyList<DetailsLine> lines, int width) =>
+        WrapRows(lines, width).Select(row => row.Line).ToList();
+
+    /// <summary>
+    /// The display rows of <see cref="Wrap"/>, each with the logical line it is from and the range of that line's text it shows,
+    /// so that a selection made on the rows can be copied from the logical lines (see <see cref="DetailsSelection"/>).
+    /// </summary>
+    public static IReadOnlyList<DetailsRow> WrapRows(IReadOnlyList<DetailsLine> lines, int width)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        return lines
-            .SelectMany(line => TextWidth.WrapSpans(
-                line.Spans.Select(span => (span.Text, span.Style)).ToList(),
-                width))
-            .Select(spans => new DetailsLine(spans.Select(span => new DetailsSpan(span.Text, span.Style)).ToList()))
-            .ToList();
+        var rows = new List<DetailsRow>();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            IReadOnlyList<(string Text, DetailsStyle Style)> spans = lines[i].Spans.Select(span => (span.Text, span.Style)).ToList();
+            foreach (WrappedSpans<DetailsStyle> wrapped in TextWidth.WrapSpanRanges(spans, width))
+            {
+                var line = new DetailsLine(wrapped.Spans.Select(span => new DetailsSpan(span.Text, span.Style)).ToList());
+                rows.Add(new DetailsRow(i, wrapped.Start, wrapped.End, line));
+            }
+        }
+
+        return rows;
     }
 
     /// <summary>The plain text of each line, without styles.</summary>
