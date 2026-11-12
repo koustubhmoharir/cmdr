@@ -23,11 +23,22 @@ internal static class RowLayout
     private const string NoValue = "—";
     private const string NotStartedText = "not started";
 
+    /// <summary>Columns of indentation per nesting depth. Depth 0 (a top-level group) has none.</summary>
+    public const int IndentPerDepth = 2;
+
+    /// <summary>The indentation in columns of an item at the given depth.</summary>
+    public static int IndentOf(int depth) => IndentPerDepth * Math.Max(0, depth);
+
+    /// <summary>Column of the name in a command's detail line, for a command whose group is at <paramref name="depth"/>.</summary>
+    public static int CommandDetailIndent(int depth) => NameColumn + IndentOf(depth);
+
     /// <summary>
-    /// Formats the main line of a command: <c>"  &lt;mark&gt; &lt;glyph&gt; &lt;name…&gt;"</c>. The name uses all remaining width and is
-    /// truncated with an ellipsis only when it does not fit. Narrow widths drop the name first, then the glyph.
+    /// Formats the main line of a command: <c>"&lt;indent&gt;  &lt;mark&gt; &lt;glyph&gt; &lt;name…&gt;"</c>, where the indent is
+    /// <see cref="IndentOf"/> the depth of the command's group. The name uses all remaining width and is truncated with an
+    /// ellipsis only when it does not fit. Narrow widths drop the name first, then the glyph. The returned columns are
+    /// relative to the start of the line.
     /// </summary>
-    public static CommandMainText FormatCommandMain(int width, bool marked, string glyph, string name)
+    public static CommandMainText FormatCommandMain(int width, bool marked, string glyph, string name, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(glyph);
         ArgumentNullException.ThrowIfNull(name);
@@ -37,15 +48,19 @@ internal static class RowLayout
             return new CommandMainText(string.Empty, -1, -1);
         }
 
-        string prefix = "  " + (marked ? Marked : Unmarked) + " " + glyph + " ";
-        int glyphColumn = width > GlyphColumn ? GlyphColumn : -1;
-        if (width <= NameColumn)
+        int shift = IndentOf(depth);
+        int glyphColumn = GlyphColumn + shift;
+        int nameColumn = NameColumn + shift;
+        string prefix = new string(' ', shift) + "  " + (marked ? Marked : Unmarked) + " " + glyph + " ";
+        if (width <= nameColumn)
         {
-            return new CommandMainText(TextWidth.Fit(prefix, width), glyphColumn, -1);
+            // Name hidden. When even the indent does not fit, the line is blank; otherwise it is the prefix, cut to the width.
+            string head = width <= shift ? new string(' ', width) : TextWidth.Fit(prefix, width);
+            return new CommandMainText(head, width > glyphColumn ? glyphColumn : -1, -1);
         }
 
-        string body = prefix + TextWidth.Fit(name, width - NameColumn);
-        return new CommandMainText(body, glyphColumn, NameColumn);
+        string body = prefix + TextWidth.Fit(name, width - nameColumn);
+        return new CommandMainText(body, glyphColumn, nameColumn);
     }
 
     /// <summary>
@@ -67,10 +82,10 @@ internal static class RowLayout
 
     /// <summary>
     /// Formats a group header: <c>"▾ &lt;name&gt;  [parallel|sequential]"</c>, followed by <c>"  ▶ sequence running"</c> while a
-    /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. Truncated and padded to
-    /// <paramref name="width"/>.
+    /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. The header is indented by
+    /// <see cref="IndentOf"/> <paramref name="depth"/>. Truncated and padded to <paramref name="width"/>.
     /// </summary>
-    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary)
+    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(summary);
@@ -80,7 +95,14 @@ internal static class RowLayout
         string text = (collapsed ? "▸ " : "▾ ") + name + "  [" + modeText + "]"
             + (collapsed && summary.Length > 0 ? "  " + summary : string.Empty)
             + (sequenceRunning ? "  ▶ sequence running" : string.Empty);
-        return TextWidth.Fit(text, width);
+
+        int shift = IndentOf(depth);
+        if (width <= shift)
+        {
+            return new string(' ', Math.Max(width, 0));
+        }
+
+        return new string(' ', shift) + TextWidth.Fit(text, width - shift);
     }
 
     /// <summary>The detail text without indent: the start time and detail when there are any, otherwise the kind's own text.</summary>

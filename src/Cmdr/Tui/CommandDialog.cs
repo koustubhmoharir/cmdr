@@ -32,6 +32,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly Session _session;
     private readonly CommandEntry? _editing;
     private readonly GroupEntry _initialGroup;
+    private readonly IReadOnlyList<GroupOption> _groupOptions;
     private readonly Func<GroupEntry, CommandSpec, string?> _commit;
 
     private readonly DropDownList _group;
@@ -68,21 +69,21 @@ internal sealed class CommandDialog : Dialog<bool>
         _editing = editing;
         _commit = commit;
         _initialGroup = initialGroup;
+        _groupOptions = GroupOptions.TargetChoices(session.AllGroups);
 
         Title = title;
         Width = DialogWidth;
         Height = DialogHeight;
 
-        // Left column: where the command runs.
+        // Left column: where the command runs. Every group is listed by its path, depth-first.
+        int initialIndex = Math.Max(0, _groupOptions.ToList().FindIndex(option => ReferenceEquals(option.Group, initialGroup)));
         _group = new DropDownList
         {
             X = 12,
             Y = 0,
             Width = LeftWidth - 12,
-            // The dropdown lists top-level groups; a nested group being edited is listed too, so that it stays selected.
-            Source = new ListWrapper<string>(new ObservableCollection<string>(
-                session.Groups.Select(g => g.Name).Concat(session.Groups.Contains(initialGroup) ? Array.Empty<string>() : new[] { initialGroup.Name }))),
-            Value = initialGroup.Name,
+            Source = new ListWrapper<string>(new ObservableCollection<string>(GroupOptions.Labels(_groupOptions))),
+            Value = _groupOptions[initialIndex].Label,
         };
 
         _name = Field(12, 1, LeftWidth - 12, initial.Name);
@@ -152,12 +153,15 @@ internal sealed class CommandDialog : Dialog<bool>
         cancel.IsDefault = false;
     }
 
-    private IReadOnlyList<GroupEntry> Groups => _session.Groups;
-
-    /// <summary>The group named in the dropdown. Group names are unique, so the text identifies it.</summary>
-    private GroupEntry SelectedGroup => _group.Value == _initialGroup.Name
-        ? _initialGroup
-        : Groups.FirstOrDefault(g => g.Name == _group.Value) ?? Groups[0];
+    /// <summary>The group chosen in the dropdown, by its label (which identifies its option). The initial group when the choice cannot be found.</summary>
+    private GroupEntry SelectedGroup
+    {
+        get
+        {
+            int index = GroupOptions.IndexOfLabel(_groupOptions, _group.Value);
+            return index >= 0 ? _groupOptions[index].Group ?? _initialGroup : _initialGroup;
+        }
+    }
 
     private static Label Caption(string text, int x, int y) => new() { Text = text, X = x, Y = y };
 
@@ -177,8 +181,9 @@ internal sealed class CommandDialog : Dialog<bool>
 
     private void UpdateLogHint()
     {
+        // The group and all its ancestors, outermost first: the default log folder has one level per group.
         string path = ConfigPaths.ResolveLogPath(
-            new[] { new GroupSpec { Name = SelectedGroup.Name } },
+            GroupTree.SpecChain(SelectedGroup),
             new CommandSpec { Name = _name.Text },
             _session.LogsDir);
         _logHint.Text = "Default: " + Path.GetRelativePath(_session.ConfigDir, path);
@@ -214,9 +219,8 @@ internal sealed class CommandDialog : Dialog<bool>
         GroupEntry target = SelectedGroup;
         CommandFormValues values = ReadValues();
 
-        IEnumerable<string> names = target.Commands
-            .Where(c => !ReferenceEquals(c, _editing))
-            .Select(c => c.Spec.Name);
+        // Names are unique among the items of the target group: its commands and its nested groups together.
+        IReadOnlyList<string> names = GroupForm.SiblingNames(target.Items, _editing);
         IReadOnlyList<string> errors = CommandForm.Validate(values, names);
         if (errors.Count > 0)
         {

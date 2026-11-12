@@ -147,8 +147,8 @@ Selection-based actions apply to all selected commands (or the focused one if no
 |---|---|
 | Space / Shift+↑↓ / Ctrl+click | multi-select (within one group) |
 | Ctrl+A | toggle select all in the focused group |
-| Alt+↑ / Alt+↓ | move command within its group |
-| ← / → | collapse / expand group (← on a command collapses its group and focuses the header) |
+| Alt+↑ / Alt+↓ | move a command or group (with its subtree) among its siblings |
+| ← / → | collapse / expand group (← on a command collapses its group and focuses the header; ← on a collapsed header focuses its parent header) |
 | Enter | if any target is stopping or has leftovers: force kill those (start nothing); else start the startable targets |
 | Esc | graceful stop (with confirmation) |
 | Ctrl+C | graceful stop (no confirmation) |
@@ -161,8 +161,10 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Ctrl+S | save config |
 | Ctrl+Q | quit |
 
-Group dialog: name, description, mode. Groups can be added, renamed, deleted (with confirmation).
-Command edit dialog: group (to move between groups), name, description (multi-line), program, args (multi-line, one per line), cwd,
+Group dialog: parent (top level or any group by path, excluding itself and its descendants), name, description,
+mode, cwd, env. Ctrl+G defaults the parent to the focused group's parent. Groups can be added, renamed, moved,
+deleted (with confirmation). Nested rows are indented 2 columns per level.
+Command edit dialog: group (any group, by path; to move between groups), name, description (multi-line), program, args (multi-line, one per line), cwd,
 env (multi-line `KEY=VALUE`), stop method + input, log enabled + path.
 Edits to a running command apply on next start.
 

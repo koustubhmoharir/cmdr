@@ -89,13 +89,13 @@ internal sealed class CommandListSource : IListDataSource
             case CommandRow command when line.IsDetail:
                 StatusText detailStatus = StatusOf(command.Entry);
                 listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
-                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.NameColumn, detailStatus));
+                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.CommandDetailIndent(command.Entry.Group.Depth), detailStatus));
                 break;
 
             case CommandRow command:
                 CommandEntry entry = command.Entry;
                 StatusText status = StatusOf(entry);
-                CommandMainText text = RowLayout.FormatCommandMain(width, Selection.IsMarked(entry), status.Glyph, entry.Spec.Name);
+                CommandMainText text = RowLayout.FormatCommandMain(width, Selection.IsMarked(entry), status.Glyph, entry.Spec.Name, entry.Group.Depth);
 
                 listView.AddStr(text.Text);
                 if (text.GlyphColumn >= 0)
@@ -117,12 +117,13 @@ internal sealed class CommandListSource : IListDataSource
     private void RenderGroup(ListView listView, Attribute baseAttr, GroupEntry group, int col, int row, int width)
     {
         bool collapsed = _collapsed.Contains(group);
+        // A collapsed header summarises every command below it, not only the direct ones.
         string summary = collapsed
-            ? GroupSummary.Compose(group.Commands.Select(command => StatusOf(command).Kind))
+            ? GroupSummary.Compose(group.AllCommands.Select(command => StatusOf(command).Kind))
             : string.Empty;
 
         listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold));
-        listView.AddStr(RowLayout.FormatGroupRow(width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary));
+        listView.AddStr(RowLayout.FormatGroupRow(width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, group.Depth));
     }
 
     private static StatusText StatusOf(CommandEntry entry) =>

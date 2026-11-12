@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Terminal.Gui.App;
@@ -11,72 +12,93 @@ using Terminal.Gui.Views;
 namespace Cmdr.Tui;
 
 /// <summary>
-/// Add or edit a group. OK validates the name (errors are shown and the dialog stays open), then calls the commit
-/// function; a message from commit also keeps it open. Esc or Cancel leaves the session unchanged.
+/// Add or edit a group. OK validates the fields (errors are shown and the dialog stays open), then calls the commit
+/// function with the chosen parent (null for top level); a message from commit also keeps it open. Esc or Cancel leaves the
+/// session unchanged.
 /// </summary>
+/// <remarks>
+/// Two columns of fields so that the dialog fits an 80x24 terminal. <see cref="Result"/> is true when the group was committed.
+/// </remarks>
 internal sealed class GroupDialog : Dialog<bool>
 {
+    private const int DialogWidth = 70;
+    private const int DialogHeight = 14;
+    private const int LeftWidth = 32;
+    private const int RightX = 36;
+    private const int RightWidth = 32;
+    private const int FieldX = 12;
+    private const int FieldWidth = 56;
+
     private readonly IApplication _app;
     private readonly Session _session;
     private readonly GroupEntry? _editing;
-    private readonly Func<string, string?, GroupMode, string?> _commit;
+    private readonly IReadOnlyList<GroupOption> _parentOptions;
+    private readonly Func<GroupEntry?, GroupSettings, string?> _commit;
 
+    private readonly DropDownList _parent;
     private readonly TextField _name;
-    private readonly TextView _description;
     private readonly OptionSelector<GroupMode> _mode;
+    private readonly TextField _cwd;
+    private readonly TextView _description;
+    private readonly TextView _env;
 
     /// <param name="app">The application, for the message boxes.</param>
-    /// <param name="session">Supplies the existing group names.</param>
+    /// <param name="session">Supplies the groups for the parent choices and the sibling names.</param>
     /// <param name="title">The dialog title, e.g. "Add group".</param>
-    /// <param name="editing">The group being edited (excluded from the name check), or null when adding.</param>
-    /// <param name="name">Initial name.</param>
-    /// <param name="description">Initial description.</param>
-    /// <param name="mode">Initial mode.</param>
-    /// <param name="commit">Applies the group to the session. Returns an error message, or null on success.</param>
+    /// <param name="editing">The group being edited (excluded from the name check and from the parent choices with its descendants), or null when adding.</param>
+    /// <param name="initialParent">The parent selected at the start; null for top level.</param>
+    /// <param name="initial">The values shown at the start. A new group uses an empty name and no cwd or env.</param>
+    /// <param name="commit">Applies the group to the session under the chosen parent. Returns an error message, or null on success.</param>
     public GroupDialog(
         IApplication app,
         Session session,
         string title,
         GroupEntry? editing,
-        string name,
-        string? description,
-        GroupMode mode,
-        Func<string, string?, GroupMode, string?> commit)
+        GroupEntry? initialParent,
+        GroupSettings initial,
+        Func<GroupEntry?, GroupSettings, string?> commit)
     {
         _app = app;
         _session = session;
         _editing = editing;
         _commit = commit;
+        _parentOptions = GroupOptions.ParentChoices(session.AllGroups, editing);
 
         Title = title;
-        Width = 62;
-        Height = 13;
+        Width = DialogWidth;
+        Height = DialogHeight;
 
-        _name = new TextField { X = 12, Y = 0, Width = 46, Text = name };
-        _description = new TextView
+        int initialIndex = Math.Max(0, _parentOptions.ToList().FindIndex(option => ReferenceEquals(option.Group, initialParent)));
+        _parent = new DropDownList
         {
-            X = 0,
-            Y = 2,
-            Width = 58,
-            Height = 3,
-            Multiline = true,
-            TabKeyAddsTab = false,
-            Text = description ?? string.Empty,
+            X = FieldX,
+            Y = 0,
+            Width = FieldWidth,
+            Source = new ListWrapper<string>(new ObservableCollection<string>(GroupOptions.Labels(_parentOptions))),
+            Value = _parentOptions[initialIndex].Label,
         };
+
+        _name = Field(FieldX, 1, FieldWidth, initial.Name);
         _mode = new OptionSelector<GroupMode>
         {
-            X = 12,
-            Y = 6,
+            X = FieldX,
+            Y = 2,
             Width = 40,
             Height = 1,
             Orientation = Terminal.Gui.ViewBase.Orientation.Horizontal,
-            Value = mode,
+            Value = initial.Mode,
         };
+        _cwd = Field(FieldX, 3, FieldWidth, initial.Cwd ?? string.Empty);
+        _description = Area(0, 5, LeftWidth, 4, initial.Description ?? string.Empty);
+        _env = Area(RightX, 5, RightWidth, 4, EnvText.Format(initial.Env ?? new Dictionary<string, string?>()));
 
         Add(
-            new Label { Text = "Name", X = 0, Y = 0 }, _name,
-            new Label { Text = "Description", X = 0, Y = 1 }, _description,
-            new Label { Text = "Mode", X = 0, Y = 6 }, _mode);
+            Caption("Parent", 0, 0), _parent,
+            Caption("Name", 0, 1), _name,
+            Caption("Mode", 0, 2), _mode,
+            Caption("Working dir", 0, 3), _cwd,
+            Caption("Description", 0, 4), _description,
+            Caption("Env (KEY=VALUE, !KEY removes)", RightX, 4), _env);
 
         // OK and Enter in a text field both reach OnAccepting. Cancel ends the dialog without committing.
         var ok = new Button { Text = "_OK" };
@@ -106,21 +128,49 @@ internal sealed class GroupDialog : Dialog<bool>
         return true;
     }
 
+    /// <summary>The parent choice in the dropdown, by its label. Top level when the choice cannot be found.</summary>
+    private GroupOption SelectedParent()
+    {
+        int index = GroupOptions.IndexOfLabel(_parentOptions, _parent.Value);
+        return index >= 0 ? _parentOptions[index] : _parentOptions[0];
+    }
+
+    private static Label Caption(string text, int x, int y) => new() { Text = text, X = x, Y = y };
+
+    private static TextField Field(int x, int y, int width, string text) =>
+        new() { X = x, Y = y, Width = width, Text = text };
+
+    private static TextView Area(int x, int y, int width, int height, string text) => new()
+    {
+        X = x,
+        Y = y,
+        Width = width,
+        Height = height,
+        Multiline = true,
+        TabKeyAddsTab = false,
+        Text = text,
+    };
+
     private bool TryCommit()
     {
-        string name = _name.Text;
-        IEnumerable<string> others = _session.Groups
-            .Where(g => !ReferenceEquals(g, _editing))
-            .Select(g => g.Name);
-        IReadOnlyList<string> errors = GroupForm.Validate(name, others);
+        GroupOption parent = SelectedParent();
+        GroupFormValues values = new(
+            _name.Text,
+            _description.Text,
+            _mode.Value ?? GroupMode.Parallel,
+            _cwd.Text,
+            _env.Text);
+
+        // Names are unique among the items of the parent the group would be in: groups and commands together.
+        IReadOnlyList<ItemEntry> siblings = parent.Group?.Items ?? _session.Groups;
+        IReadOnlyList<string> errors = GroupForm.Validate(values, GroupForm.SiblingNames(siblings, _editing));
         if (errors.Count > 0)
         {
             MessageBox.ErrorQuery(_app, "Group", string.Join("\n", errors), "_OK");
             return false;
         }
 
-        string? description = string.IsNullOrWhiteSpace(_description.Text) ? null : _description.Text;
-        string? error = _commit(name.Trim(), description, _mode.Value ?? GroupMode.Parallel);
+        string? error = _commit(parent.Group, GroupForm.Build(values));
         if (error is not null)
         {
             MessageBox.ErrorQuery(_app, "Group", error, "_OK");

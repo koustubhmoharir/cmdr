@@ -1,4 +1,5 @@
 using Cmdr.Core.Config;
+using Cmdr.Core.Session;
 
 namespace Cmdr.Tui;
 
@@ -96,14 +97,33 @@ internal static class CommandForm
     }
 }
 
-/// <summary>Validation of the group dialog's name. Pure.</summary>
+/// <summary>The text and choices of the group dialog, as the user left them.</summary>
+internal sealed record GroupFormValues(string Name, string? Description, GroupMode Mode, string Cwd, string Env);
+
+/// <summary>Validation and conversion of the group dialog's values. Pure.</summary>
 internal static class GroupForm
 {
-    /// <summary>The errors of a group name: it must not be blank and must be unique (case-insensitive) among the other groups.</summary>
-    public static IReadOnlyList<string> Validate(string name, IEnumerable<string> otherGroupNames)
+    /// <summary>
+    /// The names of the siblings a group or command would share a namespace with: the items of its target parent (groups and
+    /// commands together), without the item being edited.
+    /// </summary>
+    public static IReadOnlyList<string> SiblingNames(IEnumerable<ItemEntry> siblings, ItemEntry? editing)
+    {
+        ArgumentNullException.ThrowIfNull(siblings);
+
+        return siblings
+            .Where(item => !ReferenceEquals(item, editing))
+            .Select(item => item.Name)
+            .ToList();
+    }
+
+    /// <summary>The errors of a group name: it must not be blank and must be unique (case-insensitive) among its siblings.</summary>
+    /// <param name="name">The name typed.</param>
+    /// <param name="siblingNames">The names of the other groups and commands under the chosen parent (see <see cref="SiblingNames"/>).</param>
+    public static IReadOnlyList<string> Validate(string name, IEnumerable<string> siblingNames)
     {
         ArgumentNullException.ThrowIfNull(name);
-        ArgumentNullException.ThrowIfNull(otherGroupNames);
+        ArgumentNullException.ThrowIfNull(siblingNames);
 
         string trimmed = name.Trim();
         if (trimmed.Length == 0)
@@ -111,11 +131,45 @@ internal static class GroupForm
             return new[] { "Name must not be blank." };
         }
 
-        if (otherGroupNames.Any(other => string.Equals(other.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)))
+        if (siblingNames.Any(other => string.Equals(other.Trim(), trimmed, StringComparison.OrdinalIgnoreCase)))
         {
-            return new[] { $"Another group is already named '{trimmed}'." };
+            return new[] { $"Another group or command here is already named '{trimmed}'." };
         }
 
         return Array.Empty<string>();
+    }
+
+    /// <summary>The errors of all the values: the name (see <see cref="Validate(string, IEnumerable{string})"/>) and the environment.</summary>
+    public static IReadOnlyList<string> Validate(GroupFormValues values, IEnumerable<string> siblingNames)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var errors = new List<string>(Validate(values.Name, siblingNames));
+        foreach (string error in EnvText.Parse(values.Env).Errors)
+        {
+            errors.Add("Env: " + error);
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Builds the group settings. Call only when <see cref="Validate(GroupFormValues, IEnumerable{string})"/> returned no errors.
+    /// Blank description, working directory and an empty environment become null.
+    /// </summary>
+    public static GroupSettings Build(GroupFormValues values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        string? description = string.IsNullOrWhiteSpace(values.Description) ? null : values.Description;
+        string? cwd = string.IsNullOrWhiteSpace(values.Cwd) ? null : values.Cwd.Trim();
+        IReadOnlyDictionary<string, string?> env = EnvText.Parse(values.Env).Values;
+
+        return new GroupSettings(
+            values.Name.Trim(),
+            description,
+            values.Mode,
+            cwd,
+            env.Count == 0 ? null : new Dictionary<string, string?>(env));
     }
 }

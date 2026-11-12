@@ -1,5 +1,4 @@
 using System.Globalization;
-using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.ViewBase;
@@ -9,17 +8,18 @@ namespace Cmdr.Tui;
 
 /// <summary>
 /// The details strip for the focused row. A command shows its description (up to three lines) and a pid/log line; a group
-/// shows its mode and description. Reads the process state at draw time. UI thread only.
+/// shows its mode, working directory, environment and description (see <see cref="DetailsText"/>). Reads the process state at draw time. UI thread only.
 /// </summary>
 internal sealed class DetailsView : View
 {
-    private const int MaxDescriptionLines = 3;
-
     private ListRow? _row;
+    private string _configDir = string.Empty;
 
-    public void Show(ListRow? row)
+    /// <summary>Shows the row. <paramref name="configDir"/> is where relative working directories resolve (for groups).</summary>
+    public void Show(ListRow? row, string configDir)
     {
         _row = row;
+        _configDir = configDir;
         SetNeedsDraw();
     }
 
@@ -29,7 +29,7 @@ internal sealed class DetailsView : View
         int height = Viewport.Height;
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
 
-        IReadOnlyList<string> lines = LinesFor(_row);
+        IReadOnlyList<string> lines = LinesFor(_row, _configDir);
         for (int row = 0; row < height; row++)
         {
             string text = row < lines.Count ? lines[row] : string.Empty;
@@ -41,14 +41,14 @@ internal sealed class DetailsView : View
         return true;
     }
 
-    private static IReadOnlyList<string> LinesFor(ListRow? row)
+    private static IReadOnlyList<string> LinesFor(ListRow? row, string configDir)
     {
         switch (row)
         {
             case CommandRow command:
             {
                 CommandEntry entry = command.Entry;
-                var lines = DescriptionLinesOf(entry.Spec.Description);
+                var lines = DetailsText.DescriptionLines(entry.Spec.Description);
                 string pid = entry.Process.Snapshot.Pid?.ToString(CultureInfo.InvariantCulture) ?? "—";
                 string log = entry.Process.Output.IsLogging ? entry.Process.Output.LogPath ?? "on" : "off";
                 lines.Add("pid " + pid + " · log: " + log);
@@ -56,30 +56,10 @@ internal sealed class DetailsView : View
             }
 
             case GroupRow group:
-            {
-                var lines = new List<string> { "mode: " + (group.Group.Mode == GroupMode.Sequential ? "sequential" : "parallel") };
-                lines.AddRange(DescriptionLinesOf(group.Group.Description));
-                return lines;
-            }
+                return DetailsText.GroupLines(group.Group, configDir);
 
             default:
                 return Array.Empty<string>();
         }
-    }
-
-    private static List<string> DescriptionLinesOf(string? description)
-    {
-        var lines = new List<string>();
-        if (string.IsNullOrEmpty(description))
-        {
-            return lines;
-        }
-
-        foreach (string line in description.Replace("\r\n", "\n").Split('\n').Take(MaxDescriptionLines))
-        {
-            lines.Add(line);
-        }
-
-        return lines;
     }
 }

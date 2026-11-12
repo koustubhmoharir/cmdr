@@ -210,7 +210,7 @@ internal sealed class MainController : IDisposable
 
         if (key == Key.G.WithCtrl)
         {
-            AddGroup();
+            AddGroup(focused);
             return true;
         }
 
@@ -258,13 +258,13 @@ internal sealed class MainController : IDisposable
 
         if (key == Key.CursorUp.WithAlt)
         {
-            MoveCommand(focused, -1);
+            MoveItem(focused, -1);
             return true;
         }
 
         if (key == Key.CursorDown.WithAlt)
         {
-            MoveCommand(focused, 1);
+            MoveItem(focused, 1);
             return true;
         }
 
@@ -474,14 +474,15 @@ internal sealed class MainController : IDisposable
 
     private void RebuildRows()
     {
-        object? focusKey = KeyOf(FocusedRow);
+        ListRow? focusedRow = FocusedRow;
+        object? focusKey = KeyOf(focusedRow);
         int previousIndex = Math.Max(FocusedIndex, 0);
 
-        // Collapsed state of removed groups is dropped; a focused command of a collapsed group gives the focus to its header.
+        // Collapsed state of removed groups is dropped; a focused row that is now hidden gives the focus to the header that hides it.
         _collapsed.RemoveWhere(group => !_session.AllGroups.Any(existing => ReferenceEquals(existing, group)));
-        if (focusKey is CommandEntry entry && _collapsed.Contains(entry.Group))
+        if (focusedRow is not null && TreeRows.FocusHeaderFor(TreeRows.ItemOf(focusedRow), _collapsed) is { } header)
         {
-            focusKey = entry.Group;
+            focusKey = header;
         }
 
         _rows = VisibleRows(_session.BuildRows());
@@ -499,9 +500,8 @@ internal sealed class MainController : IDisposable
         UpdateFocusedViews();
     }
 
-    /// <summary>The rows shown: the commands of collapsed groups are left out.</summary>
-    private IReadOnlyList<ListRow> VisibleRows(IReadOnlyList<ListRow> all) =>
-        all.Where(row => row is not CommandRow command || !_collapsed.Contains(command.Entry.Group)).ToList();
+    /// <summary>The rows shown: everything below a collapsed group is left out, at any depth.</summary>
+    private IReadOnlyList<ListRow> VisibleRows(IReadOnlyList<ListRow> all) => TreeRows.Visible(all, _collapsed);
 
     /// <summary>Points the details and output views at the focused row. Called when the focus moves or the rows change.</summary>
     private void UpdateFocusedViews()
@@ -509,13 +509,8 @@ internal sealed class MainController : IDisposable
         ListRow? row = FocusedRow;
         _shownKey = KeyOf(row);
 
-        _detailsFrame.Title = row switch
-        {
-            CommandRow command => command.Entry.Group.Name + " / " + command.Entry.Spec.Name,
-            GroupRow group => group.Group.Name,
-            _ => string.Empty,
-        };
-        _details.Show(row);
+        _detailsFrame.Title = DetailsText.Title(row);
+        _details.Show(row, _session.ConfigDir);
         _output.Show((row as CommandRow)?.Entry);
         UpdateOutputTitle();
         _list.SetNeedsDraw();
@@ -543,12 +538,23 @@ internal sealed class MainController : IDisposable
     private string BuildTitle() =>
         Path.GetFileName(_session.ConfigPath) + (_session.IsDirty ? " *" : string.Empty);
 
-    /// <summary>Left: collapses an expanded group header, or the group of a command (focus moves to its header). Otherwise nothing.</summary>
+    /// <summary>
+    /// Left: on a command, collapses its group (the focus moves to the header). On an expanded header, collapses it. On a
+    /// collapsed header, moves the focus to the header of its parent (nothing at top level).
+    /// </summary>
     private void CollapseOrFocusHeader(ListRow? focused)
     {
         switch (focused)
         {
-            case GroupRow group when !_collapsed.Contains(group.Group):
+            case GroupRow group when _collapsed.Contains(group.Group):
+                if (group.Group.Parent is { } parent)
+                {
+                    FocusKey(parent);
+                }
+
+                break;
+
+            case GroupRow group:
                 _collapsed.Add(group.Group);
                 RebuildRows();
                 break;
@@ -766,21 +772,34 @@ internal sealed class MainController : IDisposable
         ShowMessage(successMessage);
     }
 
-    private void MoveCommand(ListRow? focused, int delta)
+    /// <summary>
+    /// Alt+Up/Down: moves a command or a group (with everything below it) among its siblings. The session refuses without
+    /// saying why; at either end nothing happens, otherwise the refusal is because a sequence is running.
+    /// </summary>
+    private void MoveItem(ListRow? focused, int delta)
     {
-        if (focused is not CommandRow command)
+        if (focused is null)
         {
             return;
         }
 
-        if (command.Entry.Group.IsSequenceRunning)
-        {
-            ShowMessage("Cannot move commands while the group's sequence is running.");
-            return;
-        }
+        ItemEntry item = TreeRows.ItemOf(focused);
 
         // The structure change rebuilds the rows and keeps focus on the same entry.
-        _session.MoveCommand(command.Entry, delta);
+        if (_session.MoveItem(item, delta))
+        {
+            return;
+        }
+
+        IReadOnlyList<ItemEntry> siblings = item.Parent is { } parent ? parent.Items : _session.Groups;
+        int index = siblings.ToList().IndexOf(item);
+        if (!TreeRows.CanMoveWithin(index, siblings.Count, delta))
+        {
+            return;
+        }
+
+        string kind = item is GroupEntry ? "groups" : "commands";
+        ShowMessage($"Cannot move {kind} while a sequence they belong to is running.");
     }
 
     private void RequestQuit()
@@ -853,7 +872,8 @@ internal sealed class MainController : IDisposable
         }
     }
 
-    private void AddGroup()
+    /// <summary>Ctrl+G: a new group. Its parent starts as the parent of the focused group or of the focused command's group.</summary>
+    private void AddGroup(ListRow? focused)
     {
         GroupEntry? added = null;
         using var dialog = new GroupDialog(
@@ -861,17 +881,16 @@ internal sealed class MainController : IDisposable
             _session,
             "Add group",
             editing: null,
-            name: string.Empty,
-            description: null,
-            mode: GroupMode.Parallel,
-            commit: (name, description, mode) =>
+            initialParent: TreeRows.DefaultParentFor(focused),
+            initial: new GroupSettings(string.Empty, null, GroupMode.Parallel, null, null),
+            commit: (parent, settings) =>
             {
                 try
                 {
-                    added = _session.AddGroup(null, new GroupSettings(name, description, mode, null, null));
+                    added = _session.AddGroup(parent, settings);
                     return null;
                 }
-                catch (ArgumentException ex)
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
                 {
                     return ex.Message;
                 }
@@ -936,14 +955,13 @@ internal sealed class MainController : IDisposable
             _session,
             "Edit group",
             editing: group,
-            name: group.Name,
-            description: group.Description,
-            mode: group.Mode,
-            commit: (name, description, mode) =>
+            initialParent: group.Parent,
+            initial: new GroupSettings(group.Name, group.Description, group.Mode, group.Cwd, group.Env),
+            commit: (parent, settings) =>
             {
                 try
                 {
-                    _session.UpdateGroup(group, new GroupSettings(name, description, mode, group.Cwd, group.Env), group.Parent);
+                    _session.UpdateGroup(group, settings, parent);
                     return null;
                 }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -974,9 +992,7 @@ internal sealed class MainController : IDisposable
                     break;
 
                 case GroupRow group:
-                    int count = group.Group.AllCommands.Count;
-                    string text = $"Delete group '{group.Group.Name}' and its {count} command(s)?";
-                    if (MessageBox.Query(_app, "Delete", text, "_Yes", "_No") == 0)
+                    if (MessageBox.Query(_app, "Delete", GroupTree.DeleteQuestion(group.Group), "_Yes", "_No") == 0)
                     {
                         _session.RemoveGroup(group.Group);
                     }
@@ -997,13 +1013,12 @@ internal sealed class MainController : IDisposable
         return dialog.Result == true;
     }
 
-    /// <summary>Moves the focus to the row of a group or command, if it is in the list.</summary>
+    /// <summary>Moves the focus to the row of a group or command, if it is in the list. A hidden row gives the focus to its header.</summary>
     private void FocusKey(object key)
     {
-        // A command in a collapsed group is not shown; its header is focused instead.
-        if (key is CommandEntry entry && _collapsed.Contains(entry.Group))
+        if (key is ItemEntry item && TreeRows.FocusHeaderFor(item, _collapsed) is { } header)
         {
-            key = entry.Group;
+            key = header;
         }
 
         int index = IndexOfKey(key);
