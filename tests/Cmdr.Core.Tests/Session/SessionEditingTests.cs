@@ -130,7 +130,7 @@ public class SessionEditingTests
         int changes = 0;
         session.StructureChanged += () => changes++;
 
-        GroupEntry group = session.AddGroup("build", "desc", GroupMode.Sequential);
+        GroupEntry group = session.AddGroup(null, Settings("build", GroupMode.Sequential, "desc"));
 
         Assert.Same(group, Assert.Single(session.Groups));
         Assert.Equal("build", group.Name);
@@ -147,7 +147,7 @@ public class SessionEditingTests
         using CmdrSession session = OpenWith(dir, Group("build", GroupMode.Parallel));
         GroupEntry group = session.Groups[0];
 
-        session.UpdateGroup(group, "release", null, GroupMode.Sequential);
+        session.UpdateGroup(group, Settings("release", GroupMode.Sequential), null);
 
         Assert.Equal("release", group.Name);
         Assert.Null(group.Description);
@@ -305,8 +305,8 @@ public class SessionEditingTests
             Assert.Null(session.Activate(group.Commands));
             WaitUntil(() => group.Commands[0].Process.Snapshot.State == ProcessState.Running, "loop running", group.Commands[0].Process);
 
-            Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(group, "g", null, GroupMode.Parallel));
-            session.UpdateGroup(group, "renamed", null, GroupMode.Sequential);
+            Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(group, Settings("g", GroupMode.Parallel), null));
+            session.UpdateGroup(group, Settings("renamed", GroupMode.Sequential), null);
             Assert.Equal("renamed", group.Name);
         }
         finally
@@ -346,7 +346,7 @@ public class SessionEditingTests
     {
         using var dir = new TempDir();
         using CmdrSession session = OpenEmpty(dir);
-        session.AddGroup("build", null, GroupMode.Sequential);
+        session.AddGroup(null, Settings("build", GroupMode.Sequential));
         session.AddCommand(session.Groups[0], Sh("restore", "true"));
         int changes = 0;
         session.StructureChanged += () => changes++;
@@ -366,7 +366,7 @@ public class SessionEditingTests
     {
         using var dir = new TempDir();
         using CmdrSession session = OpenEmpty(dir);
-        session.AddGroup("build", null, GroupMode.Parallel);
+        session.AddGroup(null, Settings("build", GroupMode.Parallel));
         session.AddCommand(session.Groups[0], new CommandSpec { Name = "bad", Program = "" });
 
         InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => session.Save());

@@ -31,6 +31,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly IApplication _app;
     private readonly Session _session;
     private readonly CommandEntry? _editing;
+    private readonly GroupEntry _initialGroup;
     private readonly Func<GroupEntry, CommandSpec, string?> _commit;
 
     private readonly DropDownList _group;
@@ -66,6 +67,7 @@ internal sealed class CommandDialog : Dialog<bool>
         _session = session;
         _editing = editing;
         _commit = commit;
+        _initialGroup = initialGroup;
 
         Title = title;
         Width = DialogWidth;
@@ -77,7 +79,9 @@ internal sealed class CommandDialog : Dialog<bool>
             X = 12,
             Y = 0,
             Width = LeftWidth - 12,
-            Source = new ListWrapper<string>(new ObservableCollection<string>(session.Groups.Select(g => g.Name))),
+            // The dropdown lists top-level groups; a nested group being edited is listed too, so that it stays selected.
+            Source = new ListWrapper<string>(new ObservableCollection<string>(
+                session.Groups.Select(g => g.Name).Concat(session.Groups.Contains(initialGroup) ? Array.Empty<string>() : new[] { initialGroup.Name }))),
             Value = initialGroup.Name,
         };
 
@@ -151,7 +155,9 @@ internal sealed class CommandDialog : Dialog<bool>
     private IReadOnlyList<GroupEntry> Groups => _session.Groups;
 
     /// <summary>The group named in the dropdown. Group names are unique, so the text identifies it.</summary>
-    private GroupEntry SelectedGroup => Groups.FirstOrDefault(g => g.Name == _group.Value) ?? Groups[0];
+    private GroupEntry SelectedGroup => _group.Value == _initialGroup.Name
+        ? _initialGroup
+        : Groups.FirstOrDefault(g => g.Name == _group.Value) ?? Groups[0];
 
     private static Label Caption(string text, int x, int y) => new() { Text = text, X = x, Y = y };
 

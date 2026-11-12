@@ -4,19 +4,22 @@ using Cmdr.Core.Processes;
 namespace Cmdr.Core.Session;
 
 /// <summary>A command in the session: its settings, its process supervisor, and its place in a sequence.</summary>
-public sealed class CommandEntry
+public sealed class CommandEntry : ItemEntry
 {
     private bool _isQueued;
 
     internal CommandEntry(GroupEntry group, CommandSpec spec, ManagedProcess process)
     {
-        Group = group;
+        Parent = group;
         Spec = spec;
         Process = process;
     }
 
-    /// <summary>The group this command belongs to.</summary>
-    public GroupEntry Group { get; internal set; }
+    /// <summary>The group this command belongs to (its direct parent).</summary>
+    public GroupEntry Group => Parent ?? throw new InvalidOperationException("A command always belongs to a group.");
+
+    /// <inheritdoc/>
+    public override string Name => Spec.Name;
 
     /// <summary>The command definition. The session stores its own copy; changes apply on next start.</summary>
     public CommandSpec Spec { get; internal set; }
@@ -40,9 +43,6 @@ public sealed class CommandEntry
             return snapshot.State is ProcessState.Running or ProcessState.Stopping || snapshot.LeftoverCount > 0;
         }
     }
-
-    /// <summary>True once the command has been removed from the session (its process is disposed).</summary>
-    internal bool IsRemoved { get; set; }
 
     /// <summary>The subscription to <see cref="ManagedProcess.Changed"/>, kept so it can be removed.</summary>
     internal Action<ManagedProcess>? ChangedHandler { get; set; }

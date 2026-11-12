@@ -15,11 +15,11 @@ public class SelectionTests
         public Fixture()
         {
             Session = OpenEmpty(_dir);
-            G1 = Session.AddGroup("g1", null, GroupMode.Parallel);
+            G1 = Session.AddGroup(null, Settings("g1", GroupMode.Parallel));
             A = Session.AddCommand(G1, Sh("a", "true"));
             B = Session.AddCommand(G1, Sh("b", "true"));
             C = Session.AddCommand(G1, Sh("c", "true"));
-            G2 = Session.AddGroup("g2", null, GroupMode.Parallel);
+            G2 = Session.AddGroup(null, Settings("g2", GroupMode.Parallel));
             D = Session.AddCommand(G2, Sh("d", "true"));
         }
 
@@ -105,12 +105,13 @@ public class SelectionTests
     }
 
     [Fact]
-    public void Targets_GroupHeader_IsWholeGroup()
+    public void Targets_GroupHeader_IsGroupTarget()
     {
         using var f = new Fixture();
         var selection = new Selection();
 
-        Assert.Equal(new[] { f.A, f.B, f.C }, selection.Targets(new GroupRow(f.G1)));
+        GroupTarget target = Assert.IsType<GroupTarget>(selection.Targets(new GroupRow(f.G1)));
+        Assert.Same(f.G1, target.Group);
     }
 
     [Fact]
@@ -119,7 +120,8 @@ public class SelectionTests
         using var f = new Fixture();
         var selection = new Selection();
 
-        Assert.Equal(new[] { f.B }, selection.Targets(new CommandRow(f.B)));
+        CommandsTarget target = Assert.IsType<CommandsTarget>(selection.Targets(new CommandRow(f.B)));
+        Assert.Equal(new[] { f.B }, target.Commands);
     }
 
     [Fact]
@@ -130,9 +132,9 @@ public class SelectionTests
         selection.Toggle(f.C);
         selection.Toggle(f.A);
 
-        IReadOnlyList<CommandEntry> targets = selection.Targets(new CommandRow(f.B));
+        CommandsTarget target = Assert.IsType<CommandsTarget>(selection.Targets(new CommandRow(f.B)));
 
-        Assert.Equal(new[] { f.A, f.C }, targets);
+        Assert.Equal(new[] { f.A, f.C }, target.Commands);
     }
 
     [Fact]
@@ -142,7 +144,8 @@ public class SelectionTests
         var selection = new Selection();
         selection.Toggle(f.A);
 
-        Assert.Equal(new[] { f.D }, selection.Targets(new CommandRow(f.D)));
+        CommandsTarget target = Assert.IsType<CommandsTarget>(selection.Targets(new CommandRow(f.D)));
+        Assert.Equal(new[] { f.D }, target.Commands);
     }
 
     [Fact]
@@ -164,5 +167,20 @@ public class SelectionTests
 
         Assert.Empty(selection.Marked);
         Assert.Null(selection.Group);
+    }
+
+    [Fact]
+    public void ToggleAll_OnGroupWithNestedGroup_MarksDirectCommandsOnly()
+    {
+        using var f = new Fixture();
+        var selection = new Selection();
+        GroupEntry inner = f.Session.AddGroup(f.G1, Settings("inner"));
+        CommandEntry nested = f.Session.AddCommand(inner, Sh("n", "true"));
+
+        selection.ToggleAll(f.G1);
+
+        Assert.Equal(new[] { f.A, f.B, f.C }, selection.Marked);
+        Assert.False(selection.IsMarked(nested));
+        Assert.Same(f.G1, selection.Group);
     }
 }

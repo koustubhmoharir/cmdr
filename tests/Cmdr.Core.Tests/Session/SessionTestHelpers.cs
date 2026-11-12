@@ -1,4 +1,5 @@
 using Cmdr.Core.Config;
+using Cmdr.Core.Session;
 using Cmdr.Core.Tests.Config;
 using CmdrSession = Cmdr.Core.Session.Session;
 
@@ -14,6 +15,10 @@ internal static class SessionTestHelpers
     /// <summary>A long-running command that exits on Ctrl+C (SIGINT). Used instead of a shell loop, which may ignore SIGINT.</summary>
     public static CommandSpec Sleeper(string name) =>
         new() { Name = name, Program = "sleep", Args = new List<string> { "30" } };
+
+    /// <summary>Settings for AddGroup/UpdateGroup: no cwd or env.</summary>
+    public static GroupSettings Settings(string name, GroupMode mode = GroupMode.Parallel, string? description = null) =>
+        new(name, description, mode, null, null);
 
     /// <summary>A group definition with the given commands.</summary>
     public static GroupSpec Group(string name, GroupMode mode, params CommandSpec[] commands) =>

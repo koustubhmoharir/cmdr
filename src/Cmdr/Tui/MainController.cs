@@ -334,8 +334,15 @@ internal sealed class MainController : IDisposable
         return -1;
     }
 
-    private IReadOnlyList<CommandEntry> TargetsOf(ListRow? focused) =>
-        focused is null ? Array.Empty<CommandEntry>() : _selection.Targets(focused);
+    private ActionTarget? TargetOf(ListRow? focused) => focused is null ? null : _selection.Targets(focused);
+
+    /// <summary>The commands an action applies to: every command below a group, or the commands of the target.</summary>
+    private static IReadOnlyList<CommandEntry> CommandsOf(ActionTarget target) => target switch
+    {
+        GroupTarget group => group.Group.AllCommands,
+        CommandsTarget commands => commands.Commands,
+        _ => Array.Empty<CommandEntry>(),
+    };
 
     private static GroupEntry GroupOf(ListRow row) => row switch
     {
@@ -471,7 +478,7 @@ internal sealed class MainController : IDisposable
         int previousIndex = Math.Max(FocusedIndex, 0);
 
         // Collapsed state of removed groups is dropped; a focused command of a collapsed group gives the focus to its header.
-        _collapsed.RemoveWhere(group => !_session.Groups.Any(existing => ReferenceEquals(existing, group)));
+        _collapsed.RemoveWhere(group => !_session.AllGroups.Any(existing => ReferenceEquals(existing, group)));
         if (focusKey is CommandEntry entry && _collapsed.Contains(entry.Group))
         {
             focusKey = entry.Group;
@@ -609,15 +616,20 @@ internal sealed class MainController : IDisposable
 
     private void Activate(ListRow? focused)
     {
-        IReadOnlyList<CommandEntry> targets = TargetsOf(focused);
-        if (targets.Count == 0)
+        ActionTarget? target = TargetOf(focused);
+        if (target is null || CommandsOf(target).Count == 0)
         {
             return;
         }
 
         try
         {
-            string? message = _session.Activate(targets);
+            string? message = target switch
+            {
+                GroupTarget group => _session.Activate(group.Group),
+                CommandsTarget commands => _session.Activate(commands.Commands),
+                _ => null,
+            };
             if (message is not null)
             {
                 ShowMessage(message);
@@ -631,8 +643,13 @@ internal sealed class MainController : IDisposable
 
     private void StopTargets(ListRow? focused, bool confirm)
     {
-        IReadOnlyList<CommandEntry> targets = TargetsOf(focused);
-        int stoppable = targets.Count(IsStoppable);
+        ActionTarget? target = TargetOf(focused);
+        if (target is null)
+        {
+            return;
+        }
+
+        int stoppable = CommandsOf(target).Count(IsStoppable);
         if (stoppable == 0)
         {
             return;
@@ -645,7 +662,14 @@ internal sealed class MainController : IDisposable
 
         try
         {
-            _session.Stop(targets);
+            if (target is GroupTarget group)
+            {
+                _session.Stop(group.Group);
+            }
+            else if (target is CommandsTarget commands)
+            {
+                _session.Stop(commands.Commands);
+            }
         }
         catch (ArgumentException ex)
         {
@@ -655,13 +679,19 @@ internal sealed class MainController : IDisposable
 
     private void RestartTargets(ListRow? focused)
     {
-        IReadOnlyList<CommandEntry> targets = TargetsOf(focused);
-        if (targets.Count == 0)
+        ActionTarget? target = TargetOf(focused);
+        if (target is null)
         {
             return;
         }
 
-        if (MessageBox.Query(_app, "Restart", $"Restart {targets.Count} command(s)?", "_Yes", "_No") != 0)
+        int count = CommandsOf(target).Count;
+        if (count == 0)
+        {
+            return;
+        }
+
+        if (MessageBox.Query(_app, "Restart", $"Restart {count} command(s)?", "_Yes", "_No") != 0)
         {
             return;
         }
@@ -672,7 +702,9 @@ internal sealed class MainController : IDisposable
             string? message;
             try
             {
-                message = await _session.RestartAsync(targets);
+                message = target is GroupTarget group
+                    ? await _session.RestartAsync(group.Group)
+                    : await _session.RestartAsync(((CommandsTarget)target).Commands);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -836,7 +868,7 @@ internal sealed class MainController : IDisposable
             {
                 try
                 {
-                    added = _session.AddGroup(name, description, mode);
+                    added = _session.AddGroup(null, new GroupSettings(name, description, mode, null, null));
                     return null;
                 }
                 catch (ArgumentException ex)
@@ -911,7 +943,7 @@ internal sealed class MainController : IDisposable
             {
                 try
                 {
-                    _session.UpdateGroup(group, name, description, mode);
+                    _session.UpdateGroup(group, new GroupSettings(name, description, mode, group.Cwd, group.Env), group.Parent);
                     return null;
                 }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
@@ -942,7 +974,7 @@ internal sealed class MainController : IDisposable
                     break;
 
                 case GroupRow group:
-                    int count = group.Group.Commands.Count;
+                    int count = group.Group.AllCommands.Count;
                     string text = $"Delete group '{group.Group.Name}' and its {count} command(s)?";
                     if (MessageBox.Query(_app, "Delete", text, "_Yes", "_No") == 0)
                     {
@@ -1005,11 +1037,18 @@ internal sealed class MainController : IDisposable
     /// <summary>The hint text left of "^Q Quit": "Enter Start" / "Enter Kill" for the current targets, when Enter does something.</summary>
     private string HintLeft()
     {
-        IReadOnlyList<CommandEntry> targets = TargetsOf(FocusedRow);
+        ActionTarget? target = TargetOf(FocusedRow);
+        IReadOnlyList<CommandEntry> targets = target is null ? Array.Empty<CommandEntry>() : CommandsOf(target);
         var enterTargets = targets
             .Select(e => new EnterTarget(e.Process.Snapshot.State, e.Process.Snapshot.LeftoverCount, e.Process.CanStart))
             .ToList();
-        bool sequenceRunning = targets.Count > 0 && targets[0].Group.Mode == GroupMode.Sequential && targets[0].Group.IsSequenceRunning;
+        GroupEntry? hintGroup = target switch
+        {
+            GroupTarget group => group.Group,
+            CommandsTarget when targets.Count > 0 => targets[0].Group,
+            _ => null,
+        };
+        bool sequenceRunning = hintGroup is { Mode: GroupMode.Sequential, IsSequenceRunning: true };
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
         return (enter is null ? string.Empty : "Enter " + enter + "  ") + HintsRest;

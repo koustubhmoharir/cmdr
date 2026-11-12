@@ -90,23 +90,23 @@ public sealed class Selection
     }
 
     /// <summary>
-    /// The commands an action applies to. A group header means the whole group. A command means the marked commands
+    /// What an action applies to. A group header means the whole group. A command means the marked commands
     /// when the focused command is in the marked group and something is marked; otherwise just the focused command.
     /// </summary>
-    public IReadOnlyList<CommandEntry> Targets(ListRow focused)
+    public ActionTarget Targets(ListRow focused)
     {
         ArgumentNullException.ThrowIfNull(focused);
 
         switch (focused)
         {
             case GroupRow header:
-                return header.Group.Commands.ToList();
+                return new GroupTarget(header.Group);
 
             case CommandRow row when Group is not null && row.Entry.Group == Group && _marked.Count > 0:
-                return Marked.ToList();
+                return new CommandsTarget(Marked.ToList());
 
             case CommandRow row:
-                return new[] { row.Entry };
+                return new CommandsTarget(new[] { row.Entry });
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(focused), focused, "Unknown row type.");
@@ -121,3 +121,14 @@ public sealed class Selection
         }
     }
 }
+
+/// <summary>The target of an action chosen from the list: a whole group, or a set of commands.</summary>
+public abstract record ActionTarget;
+
+/// <summary>An action on a whole group (everything below it).</summary>
+/// <param name="Group">The group.</param>
+public sealed record GroupTarget(GroupEntry Group) : ActionTarget;
+
+/// <summary>An action on a set of sibling commands.</summary>
+/// <param name="Commands">The commands, in file order.</param>
+public sealed record CommandsTarget(IReadOnlyList<CommandEntry> Commands) : ActionTarget;
