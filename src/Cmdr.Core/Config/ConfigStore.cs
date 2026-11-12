@@ -105,7 +105,7 @@ public static class ConfigStore
     }
 
     // Paths are compared case-insensitively where the file system usually is.
-    private static StringComparer PathComparer =>
+    internal static StringComparer PathComparer =>
         OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     // Parses an existing file. Shared by Load (the opened file) and LoadChain (base files).

@@ -31,11 +31,21 @@ static int Run(string[] args)
         return 0;
     }
 
+    if (args is [])
+    {
+        RecentFiles? recent = LoadRecent();
+        if (recent is null || recent.Files.Count == 0)
+        {
+            return Usage();
+        }
+
+        TuiHost.RunPicker(recent);
+        return 0;
+    }
+
     if (args is not [var configPath])
     {
-        Console.Error.WriteLine("usage: cmdr <config.json>");
-        Console.Error.WriteLine("       cmdr --version");
-        return 2;
+        return Usage();
     }
 
     Session session;
@@ -49,12 +59,42 @@ static int Run(string[] args)
         return 1;
     }
 
+    RecordRecent(configPath);
+
     using (session)
     {
         TuiHost.Run(session);
     }
 
     return 0;
+}
+
+static int Usage()
+{
+    Console.Error.WriteLine("usage: cmdr <config.json>");
+    Console.Error.WriteLine("       cmdr               pick a recently used config");
+    Console.Error.WriteLine("       cmdr --version");
+    return 2;
+}
+
+// The recent list, or null when there is no store location.
+static RecentFiles? LoadRecent()
+{
+    string? store = RecentFiles.DefaultStorePath;
+    return store is null ? null : RecentFiles.Load(store);
+}
+
+// Moves an opened config to the front of the recent list. Skipped without a store; a failed save is ignored.
+static void RecordRecent(string configPath)
+{
+    RecentFiles? recent = LoadRecent();
+    if (recent is null)
+    {
+        return;
+    }
+
+    recent.Add(configPath);
+    recent.TrySave();
 }
 
 // The version set in Directory.Build.props.

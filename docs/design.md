@@ -39,6 +39,18 @@ without the source-revision suffix).
 `cmdr <config.json>`, `cmdr --version`. `cmdr --send-ctrl-c <pid>` is an internal helper mode
 (Windows only, see Process supervision).
 
+`cmdr` with no arguments shows the recent-configs picker (`RecentPicker`, rows from `RecentRows`, digit
+selection in `NumberTyping`). The picker and the main window run one after the other on the same
+`IApplication` (`TuiHost.RunPicker`): the picker loads the chosen session itself, so a load error is
+shown there and the picker stays; on success it calls `RequestStop` and the main window runs next. The
+list's type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
+
+`RecentFiles` (Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
+recent first, at most 20, full paths compared like base-file paths. Every successful load is recorded
+(`cmdr <path>` and the picker), including files that don't exist yet. Reading never fails (a bad store
+reads as empty) and a failed save is ignored: the list is a convenience and must never stop cmdr from
+starting. Concurrent instances: last writer wins.
+
 ## Config
 
 - `ConfigStore` loads with System.Text.Json source generation (`ConfigJsonContext`): camelCase, comments

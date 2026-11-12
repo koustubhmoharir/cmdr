@@ -50,7 +50,7 @@ dotnet publish src/Cmdr -c Release -r linux-x64    # Linux   → Cmdr
 ```
 
 The executable lands in `src/Cmdr/bin/Release/net10.0/<rid>/publish/`; add `-o <dir>` to choose the
-folder. On first run it unpacks one small native library of a dependency to `%TEMP%\.net\Cmdr\` on
+folder. `./publish.ps1` (PowerShell) publishes both to `publish/win-x64/` and `publish/linux-x64/`. On first run it unpacks one small native library of a dependency to `%TEMP%\.net\Cmdr\` on
 Windows or `~/.net/Cmdr/` on Linux (override with `DOTNET_BUNDLE_EXTRACT_BASE_DIR`).
 
 Run the tests with `dotnet test`.
@@ -61,11 +61,18 @@ The version is set by hand in `Directory.Build.props`.
 
 ```sh
 cmdr <config.json>
+cmdr
 cmdr --version
 ```
 
-The config path is required. If the file does not exist, cmdr starts with an empty list and the first
-save (Ctrl+S) creates it. Commands and groups can be added and edited in the UI or in the file.
+If the config file does not exist, cmdr starts with an empty list and the first save (Ctrl+S) creates it.
+
+Every config opened is added to a list of recently used files (the last 20), kept in
+`%LOCALAPPDATA%\cmdr\recent.json` on Windows and `~/.local/share/cmdr/recent.json` on Linux
+(`$XDG_DATA_HOME/cmdr/recent.json` when set). `cmdr` with no arguments shows that list, numbered: type a
+number to select an entry, Enter to open it, Del to remove it from the list, Esc or Ctrl+Q to quit. Files
+that no longer exist are marked `(not found)`; opening one starts with an empty list, as above. With no
+recent files, `cmdr` prints the usage. Commands and groups can be added and edited in the UI or in the file.
 Changes made in the UI are saved only on Ctrl+S; unsaved changes are marked with `*` in the title.
 
 ## Configuration
