@@ -117,7 +117,9 @@ Output via pipes (not a PTY): stdout/stderr redirected and read asynchronously a
 stdin is a pipe kept open for the lifetime of the process; it is written to only by the
 `input` stop method and never closed by cmdr (some programs exit on stdin EOF).
 Per command, `"stdin": "console"` (default `"pipe"`, not written) makes a Windows command read its own
-hidden console instead of a pipe. For programs that ignore Ctrl+C when stdin is redirected
+hidden console instead of a pipe (cmdr's own STD_INPUT_HANDLE is set to null for the duration of
+`Process.Start`, because .NET otherwise hands a non-redirected child the parent's stdin, i.e. cmdr's
+terminal; with a null handle the child gets its new console's input). For programs that ignore Ctrl+C when stdin is redirected
 (`dotnet watch` on Windows). Nothing types into that console, so prompts there cannot be answered
 (for `dotnet watch` set `DOTNET_WATCH_RESTART_ON_RUDE_EDIT=1` or use `--non-interactive`). Not
 allowed with `stop.method: input`; a batch-wrapped program cannot get its "Terminate batch job" answer

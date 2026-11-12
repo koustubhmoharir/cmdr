@@ -190,6 +190,33 @@ public class WindowsProcessPlatformTests
         Assert.Equal("stdin is the console: cmdr cannot answer \"Terminate batch job (Y/N)?\" after Ctrl+C", console.Notice);
     }
 
+    [Fact]
+    public void ConsoleStdinGivesTheChildItsOwnConsoleAndKeepsCmdrStdin()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var dir = new TempDir();
+        nint before = WindowsNative.GetStdHandle(WindowsNative.StdInputHandle);
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            LaunchSpec spec = ProcessTestHelpers.Exec(
+                "powershell",
+                new[] { "-NoProfile", "-Command", "[Console]::IsInputRedirected" },
+                dir.Path) with { Stdin = StdinMode.Console };
+            p.Start(spec);
+            WaitForExited(p);
+
+            // False: the child's stdin is its own hidden console, not a redirected pipe or cmdr's terminal.
+            Assert.Contains(Lines(p), l => l.Source == OutputSource.StdOut && l.PlainText.Trim() == "False");
+            Assert.Equal(before, WindowsNative.GetStdHandle(WindowsNative.StdInputHandle));
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
     private static LaunchSpec Cmd(
         string command,
         string workingDirectory,

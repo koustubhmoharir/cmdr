@@ -63,4 +63,15 @@ internal static partial class WindowsNative
     /// <summary>Sends a control event to every process attached to the console (group id 0).</summary>
     [LibraryImport(Kernel32, EntryPoint = "GenerateConsoleCtrlEvent", SetLastError = true)]
     internal static partial int GenerateConsoleCtrlEvent(uint ctrlEvent, uint processGroupId);
+
+    /// <summary>STD_INPUT_HANDLE for <see cref="GetStdHandle"/> and <see cref="SetStdHandle"/> (-10 as a DWORD).</summary>
+    internal const uint StdInputHandle = unchecked((uint)-10);
+
+    /// <summary>Returns this process's standard handle (the process-wide one, not a per-call value). Zero or -1 when there is none.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "GetStdHandle", SetLastError = true)]
+    internal static partial nint GetStdHandle(uint standardHandle);
+
+    /// <summary>Sets this process's standard handle. Affects processes started later; a zero handle means none.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "SetStdHandle", SetLastError = true)]
+    internal static partial int SetStdHandle(uint standardHandle, nint handle);
 }

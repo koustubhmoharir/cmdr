@@ -42,6 +42,13 @@ internal sealed class LinuxProcessPlatform : IProcessPlatform
     }
 
     /// <inheritdoc />
+    public void Start(Process process, PreparedLaunch launch)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        process.Start();
+    }
+
+    /// <inheritdoc />
     public IProcessGroup Attach(Process process)
     {
         ArgumentNullException.ThrowIfNull(process);

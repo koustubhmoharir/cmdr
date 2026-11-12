@@ -320,7 +320,7 @@ public sealed class ManagedProcess : IDisposable
             // Subscribed before Start so an immediate exit is not missed. The handler waits for the lock,
             // which Start holds until the run state below is in place.
             process.Exited += (_, _) => OnExited(runId, process);
-            process.Start();
+            _platform.Start(process, launch);
         }
         catch (Exception ex)
         {

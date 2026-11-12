@@ -12,6 +12,11 @@ internal sealed class UnsupportedProcessPlatform : IProcessPlatform
 
     /// <inheritdoc />
     /// <exception cref="PlatformNotSupportedException">Always.</exception>
+    public void Start(Process process, PreparedLaunch launch) =>
+        throw new PlatformNotSupportedException("Process supervision is not implemented on this operating system yet.");
+
+    /// <inheritdoc />
+    /// <exception cref="PlatformNotSupportedException">Always.</exception>
     public IProcessGroup Attach(Process process) =>
         throw new PlatformNotSupportedException("Process supervision is not implemented on this operating system yet.");
 }

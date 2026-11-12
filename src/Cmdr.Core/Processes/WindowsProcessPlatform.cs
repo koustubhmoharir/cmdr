@@ -21,6 +21,9 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
 {
     private const int ErrorAccessDenied = 5;
 
+    /// <summary>Serializes the process-wide standard input swap in <see cref="Start"/>.</summary>
+    private static readonly object s_stdinLock = new();
+
     private readonly CtrlCHelperCommand _ctrlCHelper;
 
     /// <summary>Creates the platform; the Ctrl+C helper defaults to the current cmdr executable.</summary>
@@ -101,15 +104,72 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
 
         // Console stdin: there is no pipe to write the answer to, and the prompt appears on the hidden console, which
         // cmdr does not show. The user is told once at start; the batch job then needs a force kill.
+        // Start gives the child a null stdin handle (NullStdin), so the child reads its own console, not cmdr's.
         if (plan.InputAfterInterrupt is not null)
         {
             return new PreparedLaunch(
                 psi,
                 InputAfterInterrupt: null,
-                Notice: "stdin is the console: cmdr cannot answer \"Terminate batch job (Y/N)?\" after Ctrl+C");
+                Notice: "stdin is the console: cmdr cannot answer \"Terminate batch job (Y/N)?\" after Ctrl+C",
+                NullStdin: true);
         }
 
-        return new PreparedLaunch(psi, InputAfterInterrupt: null);
+        return new PreparedLaunch(psi, InputAfterInterrupt: null, NullStdin: true);
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// For <see cref="PreparedLaunch.NullStdin"/> the start is wrapped so the child does not get cmdr's own input. Stdout
+    /// and stderr are redirected, so .NET starts the child with STARTF_USESTDHANDLES and, for the unredirected stdin,
+    /// passes the value of <c>GetStdHandle(STD_INPUT_HANDLE)</c> read during <see cref="Process.Start()"/>. Without this,
+    /// a command such as <c>dotnet watch</c> would read keys from cmdr's terminal. cmdr's handle is set to null only for
+    /// that call and restored right after. A null handle is what makes Windows give the child its new hidden console as
+    /// its input (expected behaviour; confirmed on Windows only by the user, not in this environment).
+    /// </remarks>
+    /// <exception cref="Win32Exception">cmdr's standard input could not be changed or restored, or the process could not be started.</exception>
+    public void Start(Process process, PreparedLaunch launch)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        ArgumentNullException.ThrowIfNull(launch);
+
+        if (!launch.NullStdin)
+        {
+            process.Start();
+            return;
+        }
+
+        lock (s_stdinLock)
+        {
+            // Saved as it is, whatever it is (a valid handle, or none): the same value is put back afterwards.
+            nint saved = WindowsNative.GetStdHandle(WindowsNative.StdInputHandle);
+            if (WindowsNative.SetStdHandle(WindowsNative.StdInputHandle, 0) == 0)
+            {
+                // Nothing has been started yet, so failing here leaves no child behind.
+                throw new Win32Exception(Marshal.GetLastPInvokeError());
+            }
+
+            bool started = false;
+            try
+            {
+                process.Start();
+                started = true;
+            }
+            finally
+            {
+                if (WindowsNative.SetStdHandle(WindowsNative.StdInputHandle, saved) == 0)
+                {
+                    // cmdr's own stdin is now null, which is not recoverable from here. The child is killed rather than
+                    // left running untracked, and the failure is reported, not swallowed.
+                    int error = Marshal.GetLastPInvokeError();
+                    if (started)
+                    {
+                        KillUntracked(process);
+                    }
+
+                    throw new Win32Exception(error);
+                }
+            }
+        }
     }
 
     /// <inheritdoc />

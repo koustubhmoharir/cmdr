@@ -59,6 +59,8 @@ public class ManagedProcessInterruptInputTests
             return new PreparedLaunch(launch.StartInfo, _input);
         }
 
+        public void Start(Process process, PreparedLaunch launch) => _inner.Start(process, launch);
+
         public IProcessGroup Attach(Process process) => _inner.Attach(process);
     }
 }

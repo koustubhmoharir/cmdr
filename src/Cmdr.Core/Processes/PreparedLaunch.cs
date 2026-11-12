@@ -12,4 +12,8 @@ namespace Cmdr.Core.Processes;
 /// A system line written to the output once the process has started, or null for none. Used when the platform could not
 /// do something the launch asked for and the user needs to know it.
 /// </param>
-internal sealed record PreparedLaunch(ProcessStartInfo StartInfo, string? InputAfterInterrupt, string? Notice = null);
+/// <param name="NullStdin">
+/// True when the platform must start the process with a null standard input handle while cmdr's own is unrelated (Windows
+/// console stdin). Only <see cref="IProcessPlatform.Start"/> acts on it.
+/// </param>
+internal sealed record PreparedLaunch(ProcessStartInfo StartInfo, string? InputAfterInterrupt, string? Notice = null, bool NullStdin = false);
