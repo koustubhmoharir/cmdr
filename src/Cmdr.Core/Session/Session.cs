@@ -169,6 +169,7 @@ public sealed partial class Session : IDisposable
         group.Mode = settings.Mode;
         group.Cwd = settings.Cwd;
         group.Env = CopyEnv(settings.Env);
+        group.Expanded = settings.Expanded;
         MarkDirty();
     }
 
@@ -428,7 +429,12 @@ public sealed partial class Session : IDisposable
     private static IEnumerable<ItemEntry> Walk(IEnumerable<ItemEntry> items) => GroupEntry.Walk(items);
 
     private static GroupEntry NewGroup(GroupSettings settings, ConfigSource source) =>
-        new(settings.Name, settings.Description, settings.Mode, source) { Cwd = settings.Cwd, Env = CopyEnv(settings.Env) };
+        new(settings.Name, settings.Description, settings.Mode, source)
+        {
+            Cwd = settings.Cwd,
+            Env = CopyEnv(settings.Env),
+            Expanded = settings.Expanded,
+        };
 
     private static IReadOnlyDictionary<string, string?>? CopyEnv(IReadOnlyDictionary<string, string?>? env) =>
         env is null ? null : new Dictionary<string, string?>(env);
@@ -454,7 +460,9 @@ public sealed partial class Session : IDisposable
 
     private GroupEntry BuildGroup(GroupSpec spec, ConfigSource source)
     {
-        GroupEntry group = NewGroup(new GroupSettings(spec.Name, spec.Description, spec.Mode, spec.Cwd, spec.Env), source);
+        GroupEntry group = NewGroup(
+            new GroupSettings(spec.Name, spec.Description, spec.Mode, spec.Cwd, spec.Env, spec.Expanded ?? true),
+            source);
         foreach (ItemSpec item in spec.Items)
         {
             if (item is CommandSpec command)

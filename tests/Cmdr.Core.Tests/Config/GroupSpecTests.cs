@@ -114,4 +114,61 @@ public class GroupSpecTests
         Assert.Equal(new[] { "restore" }, ((CommandSpec)original.Items[0]).Args);
         Assert.Single(((GroupSpec)original.Items[1]).Items);
     }
+
+    [Fact]
+    public void Expanded_false_is_written_and_read_back()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        ConfigStore.Save(new CmdrConfig { Groups = { new GroupSpec { Name = "g", Expanded = false } } }, path);
+
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.False(doc.RootElement.GetProperty("groups")[0].GetProperty("expanded").GetBoolean());
+        Assert.False(Assert.Single(ConfigStore.Load(path).Groups).Expanded);
+    }
+
+    [Fact]
+    public void Expanded_null_is_not_written()
+    {
+        // Only the session decides to write false alone; see SessionExpandedTests.BuildConfig_writes_false_only_and_drops_true.
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        ConfigStore.Save(new CmdrConfig { Groups = { new GroupSpec { Name = "a" } } }, path);
+
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.False(doc.RootElement.GetProperty("groups")[0].TryGetProperty("expanded", out _));
+    }
+
+    [Fact]
+    public void Expanded_is_absent_when_the_file_omits_it()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g" } ] }""");
+
+        Assert.Null(Assert.Single(ConfigStore.Load(path).Groups).Expanded);
+    }
+
+    [Theory]
+    [InlineData("1")]
+    [InlineData("0")]
+    [InlineData("\"false\"")]
+    [InlineData("\"\"")]
+    public void Expanded_must_be_a_boolean(string value)
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, $$"""{ "groups": [ { "name": "g", "expanded": {{value}} } ] }""");
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains(path, ex.Message);
+    }
+
+    [Fact]
+    public void Clone_copies_expanded()
+    {
+        Assert.False(new GroupSpec { Name = "g", Expanded = false }.Clone().Expanded);
+        Assert.True(new GroupSpec { Name = "g", Expanded = true }.Clone().Expanded);
+        Assert.Null(new GroupSpec { Name = "g" }.Clone().Expanded);
+    }
 }

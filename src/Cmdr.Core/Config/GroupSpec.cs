@@ -29,6 +29,13 @@ public class GroupSpec : ItemSpec
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public Dictionary<string, string?>? Env { get; set; }
 
+    /// <summary>
+    /// Whether the group starts expanded when the configuration is loaded. Null (omitted) and true mean expanded; only false is
+    /// written. It does not follow the collapse state of the list while the program runs.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Expanded { get; set; }
+
     /// <summary>Commands and nested groups, in display order.</summary>
     public List<ItemSpec> Items { get; set; } = new();
 
@@ -40,6 +47,7 @@ public class GroupSpec : ItemSpec
         Mode = Mode,
         Cwd = Cwd,
         Env = Env is null ? null : new Dictionary<string, string?>(Env),
+        Expanded = Expanded,
         Items = Items.Select(i => i.Clone()).ToList(),
     };
 }

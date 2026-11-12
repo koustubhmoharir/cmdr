@@ -98,6 +98,12 @@ internal sealed class MainController : IDisposable
         _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _window.Add(_listFrame, _detailsFrame, _outputFrame, _status);
 
+        // Groups marked expanded: false start collapsed. Only here, at load; the list's state is not written back.
+        foreach (GroupEntry group in TreeRows.InitiallyCollapsed(_session.AllGroups))
+        {
+            _collapsed.Add(group);
+        }
+
         _session.EntryChanged += OnEntryChanged;
         _session.StructureChanged += OnStructureChanged;
         RebuildRows();
@@ -996,7 +1002,7 @@ internal sealed class MainController : IDisposable
             "Edit group",
             editing: group,
             initialParent: group.Parent,
-            initial: new GroupSettings(group.Name, group.Description, group.Mode, group.Cwd, group.Env),
+            initial: new GroupSettings(group.Name, group.Description, group.Mode, group.Cwd, group.Env, group.Expanded),
             commit: (parent, settings) =>
             {
                 try

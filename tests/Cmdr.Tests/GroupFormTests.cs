@@ -15,8 +15,8 @@ public sealed class GroupFormTests : IDisposable
 
     private GroupEntry Group(string name) => Session.AllGroups.Single(g => g.Name == name);
 
-    private static GroupFormValues Values(string name = "fresh", string cwd = "", string env = "", string description = "") =>
-        new(name, description, GroupMode.Parallel, cwd, env);
+    private static GroupFormValues Values(string name = "fresh", string cwd = "", string env = "", string description = "", bool expanded = true) =>
+        new(name, description, GroupMode.Parallel, cwd, env, expanded);
 
     [Fact]
     public void Siblings_under_a_parent_are_its_groups_and_commands_together()
@@ -116,8 +116,15 @@ public sealed class GroupFormTests : IDisposable
     [Fact]
     public void Build_passes_the_mode_through()
     {
-        GroupSettings settings = GroupForm.Build(new GroupFormValues("x", null, GroupMode.Sequential, string.Empty, string.Empty));
+        GroupSettings settings = GroupForm.Build(new GroupFormValues("x", null, GroupMode.Sequential, string.Empty, string.Empty, true));
 
         Assert.Equal(GroupMode.Sequential, settings.Mode);
+    }
+
+    [Fact]
+    public void Build_passes_the_expanded_setting_through()
+    {
+        Assert.False(GroupForm.Build(Values(expanded: false)).Expanded);
+        Assert.True(GroupForm.Build(Values(expanded: true)).Expanded);
     }
 }

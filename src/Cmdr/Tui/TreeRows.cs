@@ -36,6 +36,17 @@ internal static class TreeRows
         return outermost;
     }
 
+    /// <summary>
+    /// The groups that start collapsed when the session is loaded: those with <see cref="GroupEntry.Expanded"/> false, at any depth.
+    /// Called once at load; later changes of the setting do not affect the list.
+    /// </summary>
+    public static IReadOnlyList<GroupEntry> InitiallyCollapsed(IEnumerable<GroupEntry> allGroups)
+    {
+        ArgumentNullException.ThrowIfNull(allGroups);
+
+        return allGroups.Where(group => !group.Expanded).ToList();
+    }
+
     /// <summary>Whether the item is hidden by a collapsed ancestor.</summary>
     public static bool IsHidden(ItemEntry item, IReadOnlySet<GroupEntry> collapsed) => FocusHeaderFor(item, collapsed) is not null;
 

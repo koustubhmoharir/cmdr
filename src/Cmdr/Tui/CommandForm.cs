@@ -100,7 +100,7 @@ internal static class CommandForm
 }
 
 /// <summary>The text and choices of the group dialog, as the user left them.</summary>
-internal sealed record GroupFormValues(string Name, string? Description, GroupMode Mode, string Cwd, string Env);
+internal sealed record GroupFormValues(string Name, string? Description, GroupMode Mode, string Cwd, string Env, bool Expanded);
 
 /// <summary>Validation and conversion of the group dialog's values. Pure.</summary>
 internal static class GroupForm
@@ -172,6 +172,7 @@ internal static class GroupForm
             description,
             values.Mode,
             cwd,
-            env.Count == 0 ? null : new Dictionary<string, string?>(env));
+            env.Count == 0 ? null : new Dictionary<string, string?>(env),
+            values.Expanded);
     }
 }

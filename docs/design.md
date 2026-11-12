@@ -61,6 +61,9 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 ```
 
 - Every command belongs to a group; groups and commands are shown in file order.
+- Group `expanded` (default `true`, only `false` is written): whether the group starts expanded when
+  the config is loaded. Not kept in sync with collapsing/expanding in the UI (that never marks the file
+  dirty); editing it in the group dialog takes effect on the next load.
 - Group `mode`: `parallel` (default) or `sequential`. Group names unique (case-insensitive) within a file;
   command names unique within their group.
 - `args` is an array, passed via `ProcessStartInfo.ArgumentList` (no quoting issues).
