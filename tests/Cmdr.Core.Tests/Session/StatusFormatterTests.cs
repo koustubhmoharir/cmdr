@@ -24,7 +24,7 @@ public class StatusFormatterTests
     {
         StatusText text = StatusFormatter.Format(Snap(ProcessState.NotStarted), queued: false, Started);
 
-        Assert.Equal(new StatusText("○", StatusKind.Idle, "—", string.Empty), text);
+        Assert.Equal(new StatusText("·", StatusKind.Idle, "—", string.Empty), text);
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class StatusFormatterTests
 
         StatusText text = StatusFormatter.Format(Snap(ProcessState.Running, Started), queued: false, now);
 
-        Assert.Equal(new StatusText("●", StatusKind.Running, LocalStart, "12:51"), text);
+        Assert.Equal(new StatusText("↻", StatusKind.Running, LocalStart, "12:51"), text);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public class StatusFormatterTests
 
         StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddSeconds(13));
 
-        Assert.Equal(new StatusText("◐", StatusKind.Stopping, LocalStart, "stopping 0:03"), text);
+        Assert.Equal(new StatusText("⧗", StatusKind.Stopping, LocalStart, "stopping 0:03"), text);
     }
 
     [Fact]

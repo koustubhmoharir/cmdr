@@ -18,11 +18,17 @@ internal readonly record struct GroupHeaderText(string Text, int SourceColumn, s
 /// <summary>Pure text layout of the command list. Every result is exactly the requested width (or empty for width 0).</summary>
 internal static class RowLayout
 {
-    /// <summary>Column of the status glyph in a command's main line: "  " + mark + " " + glyph.</summary>
-    public const int GlyphColumn = 4;
+    /// <summary>
+    /// Column of the status glyph in a command's main line, relative to the indent of the command's group: " " + mark + glyph.
+    /// It is the same column as the ▾/▸ of a group header one depth deeper (a sibling of the command).
+    /// </summary>
+    public const int GlyphColumn = 2;
 
-    /// <summary>Column of the name in a command's main line, and the indent of its detail line.</summary>
-    public const int NameColumn = 6;
+    /// <summary>
+    /// Column of the name in a command's main line, relative to the indent of the command's group, and the offset of its detail
+    /// line. It is the same column as the name of a group header one depth deeper.
+    /// </summary>
+    public const int NameColumn = 4;
 
     private const string Marked = "■";
     private const string Unmarked = " ";
@@ -39,10 +45,10 @@ internal static class RowLayout
     public static int CommandDetailIndent(int depth) => NameColumn + IndentOf(depth);
 
     /// <summary>
-    /// Formats the main line of a command: <c>"&lt;indent&gt;  &lt;mark&gt; &lt;glyph&gt; &lt;name…&gt;"</c>, where the indent is
-    /// <see cref="IndentOf"/> the depth of the command's group. The name uses all remaining width and is truncated with an
-    /// ellipsis only when it does not fit. Narrow widths drop the name first, then the glyph. The returned columns are
-    /// relative to the start of the line.
+    /// Formats the main line of a command: <c>"&lt;indent&gt; &lt;mark&gt;&lt;glyph&gt; &lt;name…&gt;"</c>, where the indent is
+    /// <see cref="IndentOf"/> the depth of the command's group, the mark is "■" when marked and " " otherwise. The name uses all
+    /// remaining width and is truncated with an ellipsis only when it does not fit. Narrow widths drop the name first, then the
+    /// glyph. The returned columns are relative to the start of the line.
     /// </summary>
     public static CommandMainText FormatCommandMain(int width, bool marked, string glyph, string name, int depth = 0)
     {
@@ -57,7 +63,7 @@ internal static class RowLayout
         int shift = IndentOf(depth);
         int glyphColumn = GlyphColumn + shift;
         int nameColumn = NameColumn + shift;
-        string prefix = new string(' ', shift) + "  " + (marked ? Marked : Unmarked) + " " + glyph + " ";
+        string prefix = new string(' ', shift) + " " + (marked ? Marked : Unmarked) + glyph + " ";
         if (width <= nameColumn)
         {
             // Name hidden. When even the indent does not fit, the line is blank; otherwise it is the prefix, cut to the width.

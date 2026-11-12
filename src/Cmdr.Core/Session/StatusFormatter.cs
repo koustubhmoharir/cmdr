@@ -58,11 +58,11 @@ public static class StatusFormatter
         switch (snapshot.State)
         {
             case ProcessState.Running:
-                return new StatusText("●", StatusKind.Running, started, Duration(Between(snapshot.StartedAt, now)));
+                return new StatusText("↻", StatusKind.Running, started, Duration(Between(snapshot.StartedAt, now)));
 
             case ProcessState.Stopping:
                 return new StatusText(
-                    "◐",
+                    "⧗",
                     StatusKind.Stopping,
                     started,
                     FormattableString.Invariant($"stopping {Duration(Between(snapshot.StopRequestedAt, now))}"));
@@ -76,7 +76,7 @@ public static class StatusFormatter
         switch (snapshot.State)
         {
             case ProcessState.NotStarted:
-                return new StatusText("○", StatusKind.Idle, NoValue, string.Empty);
+                return new StatusText("·", StatusKind.Idle, NoValue, string.Empty);
 
             case ProcessState.FailedToStart:
                 return new StatusText("✗", StatusKind.Failure, NoValue, "failed to start");

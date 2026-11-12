@@ -7,10 +7,10 @@ namespace Cmdr.Tests;
 
 public sealed class RowLayoutTests
 {
-    private static StatusText Running(string detail = "0:05") => new("●", StatusKind.Running, "12:00:00", detail);
+    private static StatusText Running(string detail = "0:05") => new("↻", StatusKind.Running, "12:00:00", detail);
 
     private static CommandMainText MainLine(int width, bool marked = false, string name = "web") =>
-        RowLayout.FormatCommandMain(width, marked, "●", name);
+        RowLayout.FormatCommandMain(width, marked, "↻", name);
 
     [Fact]
     public void Main_line_is_exactly_the_requested_width()
@@ -21,30 +21,30 @@ public sealed class RowLayoutTests
     }
 
     [Fact]
-    public void Glyph_is_at_column_4_and_name_at_column_6()
+    public void Glyph_is_at_column_2_and_name_at_column_4()
     {
         CommandMainText row = MainLine(60);
 
         Assert.Equal(RowLayout.GlyphColumn, row.GlyphColumn);
-        Assert.Equal(4, row.GlyphColumn);
+        Assert.Equal(2, row.GlyphColumn);
         Assert.Equal(RowLayout.NameColumn, row.NameColumn);
-        Assert.Equal(6, row.NameColumn);
-        Assert.Equal("●", row.Text.Substring(4, 1));
-        Assert.Equal(" ", row.Text.Substring(2, 1));
-        Assert.Equal("web", row.Text.Substring(6, 3));
+        Assert.Equal(4, row.NameColumn);
+        Assert.Equal("↻", row.Text.Substring(2, 1));
+        Assert.Equal(" ", row.Text.Substring(1, 1));
+        Assert.Equal("web", row.Text.Substring(4, 3));
     }
 
     [Fact]
     public void Main_line_starts_with_the_name_after_the_glyph()
     {
-        Assert.StartsWith("    ● web", MainLine(60).Text);
+        Assert.StartsWith("  ↻ web", MainLine(60).Text);
     }
 
     [Fact]
     public void Name_uses_all_remaining_width()
     {
-        // 40 columns: 6 for the prefix, 34 for the name.
-        string name = new string('n', 34);
+        // 40 columns: 4 for the prefix, 36 for the name.
+        string name = new string('n', 36);
 
         CommandMainText row = MainLine(40, name: name);
 
@@ -83,8 +83,8 @@ public sealed class RowLayoutTests
         CommandMainText marked = MainLine(60, marked: true);
         CommandMainText unmarked = MainLine(60, marked: false);
 
-        Assert.Equal("■", marked.Text.Substring(2, 1));
-        Assert.Equal(" ", unmarked.Text.Substring(2, 1));
+        Assert.Equal("■", marked.Text.Substring(1, 1));
+        Assert.Equal(" ", unmarked.Text.Substring(1, 1));
         Assert.Equal(marked.GlyphColumn, unmarked.GlyphColumn);
     }
 
@@ -96,7 +96,7 @@ public sealed class RowLayoutTests
         CommandMainText row = MainLine(20, name: name);
 
         Assert.Equal(20, TextWidth.Columns(row.Text));
-        Assert.Equal("●", row.Text.Substring(4, 1));
+        Assert.Equal("↻", row.Text.Substring(2, 1));
         Assert.Contains("…", row.Text);
     }
 
@@ -116,8 +116,8 @@ public sealed class RowLayoutTests
     [Fact]
     public void Glyph_is_hidden_when_the_row_is_too_narrow_for_it()
     {
-        Assert.Equal(-1, MainLine(4).GlyphColumn);
-        Assert.Equal(4, MainLine(5).GlyphColumn);
+        Assert.Equal(-1, MainLine(2).GlyphColumn);
+        Assert.Equal(2, MainLine(3).GlyphColumn);
         Assert.Equal(-1, MainLine(0).GlyphColumn);
         Assert.Equal(string.Empty, MainLine(0).Text);
     }
@@ -125,18 +125,53 @@ public sealed class RowLayoutTests
     [Fact]
     public void Name_is_hidden_when_the_width_does_not_pass_the_prefix()
     {
-        CommandMainText row = MainLine(6);
+        CommandMainText row = MainLine(4);
 
         Assert.Equal(-1, row.NameColumn);
-        Assert.Equal(6, TextWidth.Columns(row.Text));
+        Assert.Equal(4, TextWidth.Columns(row.Text));
         Assert.DoesNotContain("web", row.Text);
     }
 
     [Theory]
-    [InlineData("●")]
-    [InlineData("◐")]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Command_glyph_and_name_columns_match_a_sibling_group_header(int depth)
+    {
+        // A command in a group at depth d is a sibling of the groups at depth d + 1, whose ▾ and name it lines up with.
+        const string groupName = "grp";
+        CommandMainText command = RowLayout.FormatCommandMain(40, marked: false, "↻", "web", depth);
+        GroupHeaderText header = RowLayout.FormatGroupHeader(40, groupName, GroupMode.Parallel, false, false, string.Empty, depth + 1);
+
+        int markerColumn = header.Text.IndexOf('▾');
+        int nameColumn = header.Text.IndexOf(groupName, StringComparison.Ordinal);
+
+        Assert.True(markerColumn >= 0 && nameColumn >= 0);
+        Assert.Equal(markerColumn, command.GlyphColumn);
+        Assert.Equal(nameColumn, command.NameColumn);
+        Assert.Equal(RowLayout.CommandDetailIndent(depth), nameColumn);
+    }
+
+    [Theory]
+    [InlineData(0, true, " ■↻ web")]
+    [InlineData(0, false, "  ↻ web")]
+    [InlineData(1, true, "   ■↻ web")]
+    [InlineData(1, false, "    ↻ web")]
+    [InlineData(2, true, "     ■↻ web")]
+    public void Marked_prefix_is_a_space_then_the_mark_then_the_glyph(int depth, bool marked, string expected)
+    {
+        CommandMainText row = RowLayout.FormatCommandMain(40, marked, "↻", "web", depth);
+
+        Assert.StartsWith(expected, row.Text);
+        Assert.Equal(marked ? "■" : " ", row.Text.Substring(2 * depth + 1, 1));
+        Assert.Equal(2 * depth + 4, row.NameColumn);
+    }
+
+    [Theory]
+    [InlineData("↻")]
+    [InlineData("⧗")]
     [InlineData("…")]
-    [InlineData("○")]
+    [InlineData("·")]
     [InlineData("✓")]
     [InlineData("✗")]
     [InlineData("⚠")]
@@ -166,13 +201,13 @@ public sealed class RowLayoutTests
 
         string text = RowLayout.FormatCommandDetail(60, RowLayout.NameColumn, status);
 
-        Assert.Equal("      09:30:15  exit 0 · 0:03", text.TrimEnd());
+        Assert.Equal("    09:30:15  exit 0 · 0:03", text.TrimEnd());
     }
 
     [Fact]
     public void Detail_for_a_running_command_shows_start_time_and_elapsed()
     {
-        var status = new StatusText("●", StatusKind.Running, "10:00:00", "1:23");
+        var status = new StatusText("↻", StatusKind.Running, "10:00:00", "1:23");
 
         Assert.Equal("10:00:00  1:23", RowLayout.FormatCommandDetail(40, 6, status).TrimStart().TrimEnd());
     }
@@ -180,7 +215,7 @@ public sealed class RowLayoutTests
     [Fact]
     public void Detail_for_a_stopping_command_shows_the_stop_time()
     {
-        var status = new StatusText("◐", StatusKind.Stopping, "10:00:00", "stopping 0:02");
+        var status = new StatusText("⧗", StatusKind.Stopping, "10:00:00", "stopping 0:02");
 
         Assert.Equal("10:00:00  stopping 0:02", RowLayout.FormatCommandDetail(60, 6, status).TrimStart().TrimEnd());
     }
@@ -215,7 +250,7 @@ public sealed class RowLayoutTests
     [Fact]
     public void Detail_for_a_command_that_was_never_started_reads_not_started()
     {
-        var status = new StatusText("○", StatusKind.Idle, "—", string.Empty);
+        var status = new StatusText("·", StatusKind.Idle, "—", string.Empty);
 
         string text = RowLayout.FormatCommandDetail(60, 6, status);
 
@@ -275,7 +310,7 @@ public sealed class RowLayoutTests
     [Fact]
     public void Detail_is_truncated_when_it_is_longer_than_the_width()
     {
-        var status = new StatusText("●", StatusKind.Running, "10:00:00", "123:45:00");
+        var status = new StatusText("↻", StatusKind.Running, "10:00:00", "123:45:00");
 
         string text = RowLayout.FormatCommandDetail(16, RowLayout.NameColumn, status);
 
@@ -286,7 +321,7 @@ public sealed class RowLayoutTests
     [Fact]
     public void Detail_with_no_room_after_the_indent_is_blank()
     {
-        var status = new StatusText("●", StatusKind.Running, "10:00:00", "0:05");
+        var status = new StatusText("↻", StatusKind.Running, "10:00:00", "0:05");
 
         Assert.Equal(new string(' ', 6), RowLayout.FormatCommandDetail(6, 6, status));
         Assert.Equal(string.Empty, RowLayout.FormatCommandDetail(0, 6, status));

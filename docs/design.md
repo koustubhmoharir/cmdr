@@ -158,8 +158,8 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
 
 ```
 ┌ Commands ───────────────────────────┐┌ web ───────────────────────────────────┐
-│ ● web       10:42:03   00:12:51     ││ Frontend dev server.                   │
-│ ○ api       —          —            ││ Needs the api running first.           │
+│ ↻ web       10:42:03   00:12:51     ││ Frontend dev server.                   │
+│ · api       —          —            ││ Needs the api running first.           │
 │ ✗ migrate   10:40:11   exit 1       │├────────────────────────────────────────┤
 │                                     ││ (colored output, tail-follow)          │
 └─────────────────────────────────────┘└────────────────────────────────────────┘
