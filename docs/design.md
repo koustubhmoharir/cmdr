@@ -61,7 +61,7 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 ```
 
 - Every command belongs to a group; groups and commands are shown in file order.
-- Group `mode`: `parallel` (default) or `sequential`. Group names unique (case-insensitive);
+- Group `mode`: `parallel` (default) or `sequential`. Group names unique (case-insensitive) within a file;
   command names unique within their group.
 - `args` is an array, passed via `ProcessStartInfo.ArgumentList` (no quoting issues).
 - `env`: values overlay the inherited environment; `null` removes a variable.
@@ -70,6 +70,23 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 - Default `stop.method` is `ctrlC`. Default `bufferLines` is 10000.
 - `leftovers`: `track` (default, not written) or `detach`. See Process supervision.
 - Explicit save only (Ctrl+S). Unsaved changes are marked `*` in the title; quit prompts.
+
+### Base file
+
+- `"base": "<path>"` (top level only, at most one) imports another config file; a relative path
+  resolves against the importing file's directory. A base may have its own `base` (a chain). A cycle,
+  a missing base file or a malformed one is a load error naming the files.
+- No merging: the groups of the deepest base come first, then each importing file's, the opened file's last.
+- Each file keeps its own settings for its own groups: `bufferLines`, `logsDir`, and the directory that
+  relative `cwd` and `${configDir}` resolve against.
+- Validation is per file: group names must be unique within a file; the same name in different files is
+  allowed. Errors from a base file are prefixed with its path.
+- Base files are read-only. Their commands can be run, stopped, restarted and logged, but editing,
+  adding into, removing or moving their items (or moving items into them) is refused with
+  `'<name>' comes from <path>; edit that file.` The opened file's top-level groups stay below the base
+  groups. A top-level base group's header shows its file name (dimmed); the info strip shows
+  `from: <path> (read-only)`.
+- Ctrl+S writes only the opened file (with its `base`); base files are never written.
 
 ### Groups and sequences
 

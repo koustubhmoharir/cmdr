@@ -30,6 +30,17 @@ internal static class GroupTree
             Env = g.Env is null ? null : new Dictionary<string, string?>(g.Env),
         }).ToList();
 
+    /// <summary>
+    /// The groups that can be edited: those of the opened file. Base groups are read-only, so they are never a parent, a target
+    /// or a sibling that a change would be made in. Keeps the order.
+    /// </summary>
+    public static IReadOnlyList<GroupEntry> Editable(IEnumerable<GroupEntry> groups)
+    {
+        ArgumentNullException.ThrowIfNull(groups);
+
+        return groups.Where(group => !group.IsReadOnly).ToList();
+    }
+
     /// <summary>The names from the outermost group down to the item, joined with <paramref name="separator"/>.</summary>
     public static string PathText(ItemEntry item, string separator)
     {

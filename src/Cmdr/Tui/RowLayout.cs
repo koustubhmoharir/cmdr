@@ -9,6 +9,12 @@ namespace Cmdr.Tui;
 /// </summary>
 internal readonly record struct CommandMainText(string Text, int GlyphColumn, int NameColumn);
 
+/// <summary>
+/// The text of a group header: the full line (exactly the requested width, or empty for width 0), and the column and text of
+/// the source label at its end (<c>SourceColumn</c> is -1 and <c>SourceText</c> empty when no label is shown).
+/// </summary>
+internal readonly record struct GroupHeaderText(string Text, int SourceColumn, string SourceText);
+
 /// <summary>Pure text layout of the command list. Every result is exactly the requested width (or empty for width 0).</summary>
 internal static class RowLayout
 {
@@ -85,7 +91,23 @@ internal static class RowLayout
     /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. The header is indented by
     /// <see cref="IndentOf"/> <paramref name="depth"/>. Truncated and padded to <paramref name="width"/>.
     /// </summary>
-    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0)
+    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0) =>
+        FormatGroupHeader(width, name, mode, sequenceRunning, collapsed, summary, depth).Text;
+
+    /// <summary>
+    /// Formats a group header as <see cref="FormatGroupRow"/> does, with <paramref name="sourceLabel"/> (the file a base group comes
+    /// from) after it, separated by two spaces. The label is dropped when the whole header with the label does not fit, so the
+    /// header itself is never truncated for it. Null or empty means no label.
+    /// </summary>
+    public static GroupHeaderText FormatGroupHeader(
+        int width,
+        string name,
+        GroupMode mode,
+        bool sequenceRunning,
+        bool collapsed,
+        string summary,
+        int depth = 0,
+        string? sourceLabel = null)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(summary);
@@ -99,10 +121,23 @@ internal static class RowLayout
         int shift = IndentOf(depth);
         if (width <= shift)
         {
-            return new string(' ', Math.Max(width, 0));
+            return new GroupHeaderText(new string(' ', Math.Max(width, 0)), -1, string.Empty);
         }
 
-        return new string(' ', shift) + TextWidth.Fit(text, width - shift);
+        int room = width - shift;
+        if (!string.IsNullOrEmpty(sourceLabel))
+        {
+            string withSource = text + "  " + sourceLabel;
+            if (TextWidth.Columns(withSource) <= room)
+            {
+                return new GroupHeaderText(
+                    new string(' ', shift) + TextWidth.Fit(withSource, room),
+                    shift + TextWidth.Columns(text) + 2,
+                    sourceLabel);
+            }
+        }
+
+        return new GroupHeaderText(new string(' ', shift) + TextWidth.Fit(text, room), -1, string.Empty);
     }
 
     /// <summary>The detail text without indent: the start time and detail when there are any, otherwise the kind's own text.</summary>

@@ -5,6 +5,13 @@ namespace Cmdr.Core.Config;
 /// <summary>Root of the cmdr configuration file.</summary>
 public class CmdrConfig
 {
+    /// <summary>
+    /// Path of a base file this file imports. The base's groups and settings are loaded as well but not merged with this file's.
+    /// A relative path resolves against the directory of this file. Null means no base (see <see cref="ConfigStore.LoadChain"/>).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Base { get; set; }
+
     /// <summary>Maximum number of output lines kept per command in memory.</summary>
     public int BufferLines { get; set; } = 10000;
 
@@ -25,6 +32,11 @@ public class CmdrConfig
     public IReadOnlyList<string> Validate()
     {
         var errors = new List<string>();
+
+        if (Base is not null && string.IsNullOrWhiteSpace(Base))
+        {
+            errors.Add("base must not be blank.");
+        }
 
         if (BufferLines <= 0)
         {

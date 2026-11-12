@@ -120,8 +120,19 @@ internal sealed class CommandListSource : IListDataSource
             ? GroupSummary.Compose(group.AllCommands.Select(command => StatusOf(command).Kind))
             : string.Empty;
 
+        // A top-level group of a base file names that file, faint, after the header. Nested groups inherit it visibly.
+        string? sourceLabel = group.Parent is null && group.IsReadOnly ? group.Source.DisplayPath : null;
+        GroupHeaderText header = RowLayout.FormatGroupHeader(
+            width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, group.Depth, sourceLabel);
+
         listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold));
-        listView.AddStr(RowLayout.FormatGroupRow(width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, group.Depth));
+        listView.AddStr(header.Text);
+        if (header.SourceColumn >= 0)
+        {
+            listView.Move(col + header.SourceColumn, row);
+            listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
+            listView.AddStr(header.SourceText);
+        }
     }
 
     private static StatusText StatusOf(CommandEntry entry) =>

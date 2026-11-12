@@ -105,6 +105,11 @@ internal static class DetailsText
                 new DetailsSpan(CommandLineFormatter.ForSpec(spec, windows), DetailsStyle.Command)),
         };
 
+        if (entry.IsReadOnly)
+        {
+            lines.Add(FromLine(entry.Source));
+        }
+
         // A cwd that cannot be resolved (e.g. it contains a NUL) is shown, not thrown: the launch reports it on start.
         LaunchSpec? launch = null;
         try
@@ -199,6 +204,11 @@ internal static class DetailsText
                 new DetailsSpan(group.Mode == GroupMode.Sequential ? "sequential" : "parallel", DetailsStyle.Normal)),
         };
 
+        if (group.IsReadOnly)
+        {
+            lines.Add(FromLine(group.Source));
+        }
+
         string? resolved = null;
         try
         {
@@ -232,6 +242,28 @@ internal static class DetailsText
         lines.AddRange(DescriptionLines(group.Description));
         return lines;
     }
+
+    /// <summary>
+    /// The directory that the relative paths of a row resolve against: the directory of the file the item comes from, so that a
+    /// base item uses its own directory. <paramref name="fallback"/> when there is no row.
+    /// </summary>
+    public static string ConfigDirFor(ListRow? row, string fallback)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(fallback);
+
+        return row switch
+        {
+            CommandRow command => command.Entry.Source.Dir,
+            GroupRow group => group.Group.Source.Dir,
+            _ => fallback,
+        };
+    }
+
+    /// <summary>The source line of a read-only item: the file it comes from, marked read-only.</summary>
+    private static DetailsLine FromLine(ConfigSource source) => Line(
+        new DetailsSpan("from: ", DetailsStyle.Label),
+        new DetailsSpan(source.DisplayPath, DetailsStyle.Path),
+        new DetailsSpan(" (read-only)", DetailsStyle.Faint));
 
     private static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException;
 

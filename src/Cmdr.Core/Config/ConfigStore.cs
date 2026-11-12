@@ -25,6 +25,92 @@ public static class ConfigStore
             return new CmdrConfig();
         }
 
+        return Parse(path);
+    }
+
+    /// <summary>
+    /// Loads the file at <paramref name="path"/> and then, following each <see cref="CmdrConfig.Base"/> import in turn, the base files.
+    /// Every file keeps its own groups and settings; nothing is merged. A missing opened file yields one empty entry, but a missing
+    /// base file is an error. Does not validate; see <see cref="ValidateChain"/>.
+    /// </summary>
+    /// <returns>The files ordered deepest base first, with the opened file last.</returns>
+    /// <exception cref="ConfigException">A file is malformed, a base file does not exist, or the imports form a cycle.</exception>
+    public static IReadOnlyList<ConfigFile> LoadChain(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
+        string fullPath = Path.GetFullPath(path);
+        StringComparer comparer = PathComparer;
+        var chain = new List<ConfigFile>();
+        var visited = new List<string>();
+
+        CmdrConfig config = Load(fullPath);
+        chain.Add(new ConfigFile(fullPath, config, IsBase: false));
+        visited.Add(fullPath);
+
+        string current = fullPath;
+        while (!string.IsNullOrWhiteSpace(config.Base))
+        {
+            string importer = current;
+            string resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(importer)!, config.Base));
+
+            int cycleStart = visited.FindIndex(p => comparer.Equals(p, resolved));
+            if (cycleStart >= 0)
+            {
+                IEnumerable<string> loop = visited.Skip(cycleStart).Append(resolved);
+                throw new ConfigException($"Base files form a cycle: {string.Join(" → ", loop)}");
+            }
+
+            if (!File.Exists(resolved))
+            {
+                throw new ConfigException($"Base file '{resolved}' imported by '{importer}' does not exist.");
+            }
+
+            config = Parse(resolved);
+            chain.Add(new ConfigFile(resolved, config, IsBase: true));
+            visited.Add(resolved);
+            current = resolved;
+        }
+
+        chain.Reverse();
+        return chain;
+    }
+
+    /// <summary>
+    /// Validates each file of a chain (see <see cref="LoadChain"/>) on its own and returns all errors, in chain order. A group name
+    /// may therefore repeat across files but not within one. Errors of base files are prefixed with the file's path relative to the
+    /// directory of the opened file (the last entry); errors of the opened file are not prefixed.
+    /// </summary>
+    public static IReadOnlyList<string> ValidateChain(IReadOnlyList<ConfigFile> chain)
+    {
+        ArgumentNullException.ThrowIfNull(chain);
+
+        var errors = new List<string>();
+        if (chain.Count == 0)
+        {
+            return errors;
+        }
+
+        string openedDir = chain[^1].Dir;
+        foreach (ConfigFile file in chain)
+        {
+            string prefix = file.IsBase ? $"{Path.GetRelativePath(openedDir, file.Path)}: " : "";
+            foreach (string error in file.Config.Validate())
+            {
+                errors.Add(prefix + error);
+            }
+        }
+
+        return errors;
+    }
+
+    // Paths are compared case-insensitively where the file system usually is.
+    private static StringComparer PathComparer =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    // Parses an existing file. Shared by Load (the opened file) and LoadChain (base files).
+    private static CmdrConfig Parse(string path)
+    {
         byte[] bytes = File.ReadAllBytes(path);
         CmdrConfig? config;
         try

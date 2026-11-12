@@ -21,6 +21,9 @@ public sealed class CommandEntry : ItemEntry
     /// <inheritdoc/>
     public override string Name => Spec.Name;
 
+    /// <summary>The file of the group this command belongs to. A command is always in the same file as its group.</summary>
+    public override ConfigSource Source => Group.Source;
+
     /// <summary>The command definition. The session stores its own copy; changes apply on next start.</summary>
     public CommandSpec Spec { get; internal set; }
 

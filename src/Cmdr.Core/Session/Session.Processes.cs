@@ -265,7 +265,7 @@ public sealed partial class Session
                 entry.Process.Output.EnableLog(ResolveLogPath(entry));
             }
 
-            entry.Process.Start(LaunchSpec.From(entry.Group.SpecChain(), spec, ConfigDir));
+            entry.Process.Start(LaunchSpec.From(entry.Group.SpecChain(), spec, entry.Source.Dir));
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or ObjectDisposedException or NotSupportedException)
@@ -276,7 +276,7 @@ public sealed partial class Session
     }
 
     private string ResolveLogPath(CommandEntry entry) =>
-        ConfigPaths.ResolveLogPath(entry.Group.SpecChain(), entry.Spec, LogsDir);
+        ConfigPaths.ResolveLogPath(entry.Group.SpecChain(), entry.Spec, entry.Source.LogsDir);
 
     /// <summary>
     /// Starts the given commands of a group: in sequence for a sequential group, otherwise each at once. Refuses, with a

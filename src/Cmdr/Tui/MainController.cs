@@ -508,7 +508,7 @@ internal sealed class MainController : IDisposable
         ListRow? row = FocusedRow;
         _shownKey = KeyOf(row);
 
-        _details.Show(row, _session.ConfigDir);
+        _details.Show(row, DetailsText.ConfigDirFor(row, _session.ConfigDir));
         _output.Show((row as CommandRow)?.Entry);
         UpdateOutputTitle();
         UpdateDetailsTitle();
@@ -793,14 +793,27 @@ internal sealed class MainController : IDisposable
         }
 
         ItemEntry item = TreeRows.ItemOf(focused);
-
-        // The structure change rebuilds the rows and keeps focus on the same entry.
-        if (_session.MoveItem(item, delta))
+        if (RefuseReadOnly(item))
         {
             return;
         }
 
-        IReadOnlyList<ItemEntry> siblings = item.Parent is { } parent ? parent.Items : _session.Groups;
+        // The structure change rebuilds the rows and keeps focus on the same entry.
+        try
+        {
+            if (_session.MoveItem(item, delta))
+            {
+                return;
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            ShowMessage(ex.Message);
+            return;
+        }
+
+        // At top level, only the groups of the opened file count: moves stop at its first group, as the session does.
+        IReadOnlyList<ItemEntry> siblings = item.Parent is { } parent ? parent.Items : GroupTree.Editable(_session.Groups);
         int index = siblings.ToList().IndexOf(item);
         if (!TreeRows.CanMoveWithin(index, siblings.Count, delta))
         {
@@ -847,13 +860,19 @@ internal sealed class MainController : IDisposable
     /// <summary>Ctrl+N: a command in the focused row's group. Without groups there is nowhere to put it.</summary>
     private void AddCommand(ListRow? focused)
     {
-        if (_session.Groups.Count == 0)
+        // Without a focused row the command goes to the first group of the opened file. A focused base group is refused.
+        GroupEntry? group = focused is null ? GroupTree.Editable(_session.Groups).FirstOrDefault() : GroupOf(focused);
+        if (group is null)
         {
             ShowMessage("Create a group first (Ctrl+G)");
             return;
         }
 
-        GroupEntry group = focused is null ? _session.Groups[0] : GroupOf(focused);
+        if (RefuseReadOnly(group))
+        {
+            return;
+        }
+
         CommandEntry? added = null;
         using var dialog = new CommandDialog(
             _app,
@@ -884,13 +903,20 @@ internal sealed class MainController : IDisposable
     /// <summary>Ctrl+G: a new group. Its parent starts as the parent of the focused group or of the focused command's group.</summary>
     private void AddGroup(ListRow? focused)
     {
+        // A top-level group is always allowed. A group inside a base group is not: the parent is refused.
+        GroupEntry? defaultParent = TreeRows.DefaultParentFor(focused);
+        if (defaultParent is not null && RefuseReadOnly(defaultParent))
+        {
+            return;
+        }
+
         GroupEntry? added = null;
         using var dialog = new GroupDialog(
             _app,
             _session,
             "Add group",
             editing: null,
-            initialParent: TreeRows.DefaultParentFor(focused),
+            initialParent: defaultParent,
             initial: new GroupSettings(string.Empty, null, GroupMode.Parallel, null, null),
             commit: (parent, settings) =>
             {
@@ -913,6 +939,11 @@ internal sealed class MainController : IDisposable
 
     private void EditFocused(ListRow? focused)
     {
+        if (focused is not null && RefuseReadOnly(TreeRows.ItemOf(focused)))
+        {
+            return;
+        }
+
         switch (focused)
         {
             case CommandRow command:
@@ -988,6 +1019,11 @@ internal sealed class MainController : IDisposable
     /// <summary>Delete: asks first. The session refuses to remove running, queued or sequenced commands; that is shown as an error.</summary>
     private void DeleteFocused(ListRow? focused)
     {
+        if (focused is not null && RefuseReadOnly(TreeRows.ItemOf(focused)))
+        {
+            return;
+        }
+
         try
         {
             switch (focused)
@@ -1036,6 +1072,19 @@ internal sealed class MainController : IDisposable
             FocusRowIndex(index);
             UpdateFocusedViews();
         }
+    }
+
+    /// <summary>Shows the refusal when the item comes from a base file, and returns true. False (nothing shown) for an editable item.</summary>
+    private bool RefuseReadOnly(ItemEntry item)
+    {
+        string? text = item.ReadOnlyMessage;
+        if (text is null)
+        {
+            return false;
+        }
+
+        ShowMessage(text);
+        return true;
     }
 
     private void ShowMessage(string text)

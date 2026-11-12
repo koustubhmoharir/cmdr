@@ -70,7 +70,8 @@ internal sealed class CommandDialog : Dialog<bool>
         _editing = editing;
         _commit = commit;
         _initialGroup = initialGroup;
-        _groupOptions = GroupOptions.TargetChoices(session.AllGroups);
+        // Commands can only go into groups of the opened file; base groups are read-only.
+        _groupOptions = GroupOptions.TargetChoices(GroupTree.Editable(session.AllGroups));
 
         Title = title;
         Width = DialogWidth;

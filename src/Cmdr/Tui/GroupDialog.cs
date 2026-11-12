@@ -43,7 +43,7 @@ internal sealed class GroupDialog : Dialog<bool>
     private readonly TextView _env;
 
     /// <param name="app">The application, for the message boxes.</param>
-    /// <param name="session">Supplies the groups for the parent choices and the sibling names.</param>
+    /// <param name="session">Supplies the groups for the parent choices and the sibling names. Base groups are not offered.</param>
     /// <param name="title">The dialog title, e.g. "Add group".</param>
     /// <param name="editing">The group being edited (excluded from the name check and from the parent choices with its descendants), or null when adding.</param>
     /// <param name="initialParent">The parent selected at the start; null for top level.</param>
@@ -62,7 +62,8 @@ internal sealed class GroupDialog : Dialog<bool>
         _session = session;
         _editing = editing;
         _commit = commit;
-        _parentOptions = GroupOptions.ParentChoices(session.AllGroups, editing);
+        // Base groups are read-only, so they are not offered as a parent.
+        _parentOptions = GroupOptions.ParentChoices(GroupTree.Editable(session.AllGroups), editing);
 
         Title = title;
         Width = DialogWidth;
@@ -161,8 +162,9 @@ internal sealed class GroupDialog : Dialog<bool>
             _cwd.Text,
             _env.Text);
 
-        // Names are unique among the items of the parent the group would be in: groups and commands together.
-        IReadOnlyList<ItemEntry> siblings = parent.Group?.Items ?? _session.Groups;
+        // Names are unique among the items of the parent the group would be in: groups and commands together. At top level
+        // that is the groups of the opened file only; base groups are not changed by this group.
+        IReadOnlyList<ItemEntry> siblings = parent.Group?.Items ?? GroupTree.Editable(_session.Groups);
         IReadOnlyList<string> errors = GroupForm.Validate(values, GroupForm.SiblingNames(siblings, _editing));
         if (errors.Count > 0)
         {

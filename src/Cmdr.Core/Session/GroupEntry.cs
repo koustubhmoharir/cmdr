@@ -14,15 +14,19 @@ public sealed class GroupEntry : ItemEntry
     private string _name;
     private SequenceRun? _activeSequence;
 
-    internal GroupEntry(string name, string? description, GroupMode mode)
+    internal GroupEntry(string name, string? description, GroupMode mode, ConfigSource source)
     {
         _name = name;
         Description = description;
         Mode = mode;
+        Source = source;
     }
 
     /// <inheritdoc/>
     public override string Name => _name;
+
+    /// <inheritdoc/>
+    public override ConfigSource Source { get; }
 
     /// <summary>Sets the display name.</summary>
     internal void Rename(string name) => _name = name;
