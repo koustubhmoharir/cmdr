@@ -76,6 +76,7 @@ public class SessionTreeRunTests
             Assert.Equal(new[] { "x1", "x2" }, OrderLines(dir));
             WaitForExited(x2.Process);
             Assert.Equal(3, x2.Process.Snapshot.ExitCode);
+            WaitForText(x2.Process, "sequence cancelled: exit code 3");
             Assert.Contains("sequence cancelled: exit code 3", Text(x2.Process), StringComparison.Ordinal);
             Assert.Equal(ProcessState.NotStarted, x3.Process.Snapshot.State);
             Assert.Equal(ProcessState.NotStarted, after.Process.Snapshot.State);

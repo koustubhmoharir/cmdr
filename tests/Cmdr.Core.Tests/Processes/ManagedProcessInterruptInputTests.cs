@@ -22,14 +22,17 @@ public class ManagedProcessInterruptInputTests
         try
         {
             // Single quotes keep $a for the trap body: it is expanded when the trap runs, not when it is set.
-            p.Start(Sh("trap 'read a; echo got-$a; exit 0' INT; while :; do sleep 0.1; done", dir.Path));
+            p.Start(Sh("trap 'read a; echo got-$a; exit 0' INT; echo ready; while :; do sleep 0.1; done", dir.Path));
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            Thread.Sleep(200); // Let the trap be installed.
+            // Wait for the trap to be installed; an earlier Ctrl+C would kill the shell with the default action.
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
 
             p.RequestStop();
             WaitForExited(p);
 
             Assert.Equal(0, p.Snapshot.ExitCode);
+            // The exit marker can be written before the trap's output is pumped (the drain is bounded), so wait for it.
+            WaitUntil(() => Text(p).Contains("got-y", StringComparison.Ordinal), "trap output 'got-y'", p);
             Assert.Contains("got-y", Text(p));
         }
         finally

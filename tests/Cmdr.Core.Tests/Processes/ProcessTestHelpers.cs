@@ -64,6 +64,13 @@ internal static class ProcessTestHelpers
             process,
             timeout);
 
+    /// <summary>
+    /// Waits until the retained output contains <paramref name="text"/>. Output can be written after the exit marker
+    /// (the output drain after exit is bounded), so assertions on output after <see cref="WaitForExited"/> must use this.
+    /// </summary>
+    public static void WaitForText(ManagedProcess process, string text, TimeSpan? timeout = null) =>
+        WaitUntil(() => Text(process).Contains(text, StringComparison.Ordinal), $"output containing '{text}'", process, timeout);
+
     /// <summary>All retained lines (completed and partial) as plain text joined with newlines.</summary>
     public static string Text(ManagedProcess process) => string.Join("\n", Lines(process).Select(l => l.PlainText));
 

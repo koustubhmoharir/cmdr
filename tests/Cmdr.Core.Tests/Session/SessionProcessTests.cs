@@ -46,7 +46,7 @@ public class SessionProcessTests
         CmdrSession session = OpenWith(dir, Group(
             "g",
             GroupMode.Parallel,
-            Sh("stubborn", "trap '' INT; while :; do sleep 0.1; done"),
+            Sh("stubborn", "trap '' INT; echo ready; while :; do sleep 0.1; done"),
             Sh("idle", "exit 0")));
         try
         {
@@ -55,6 +55,8 @@ public class SessionProcessTests
 
             Assert.Null(session.Activate(new[] { stubborn }));
             WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Running, "stubborn running", stubborn.Process);
+            // Running is set as soon as the process starts; wait for the trap to be installed before sending Ctrl+C.
+            WaitUntil(() => Text(stubborn.Process).Contains("ready", StringComparison.Ordinal), "shell ready", stubborn.Process);
             Assert.Null(session.Stop(new[] { stubborn }));
             WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Stopping, "stubborn stopping", stubborn.Process);
 
@@ -136,6 +138,7 @@ public class SessionProcessTests
             WaitUntil(() => !group.IsSequenceRunning, "sequence to end", second.Process);
             WaitForExited(second.Process);
             Assert.Equal(3, second.Process.Snapshot.ExitCode);
+            WaitForText(second.Process, "sequence cancelled: exit code 3");
             Assert.Contains("sequence cancelled: exit code 3", Text(second.Process), StringComparison.Ordinal);
 
             Assert.Equal(ProcessState.NotStarted, third.Process.Snapshot.State);
@@ -319,7 +322,9 @@ public class SessionProcessTests
             session.Activate(new[] { entry });
             WaitForExited(entry.Process);
 
-            string logText = File.ReadAllText(dir.File(Path.Combine("logs", "g", "hello.log")));
+            string logPath = dir.File(Path.Combine("logs", "g", "hello.log"));
+            WaitUntil(() => File.Exists(logPath) && File.ReadAllText(logPath).Contains("hello", StringComparison.Ordinal), "log to contain output", entry.Process);
+            string logText = File.ReadAllText(logPath);
             Assert.Contains("hello", logText, StringComparison.Ordinal);
             Assert.Contains("=== exited with code 0 ===", logText, StringComparison.Ordinal);
         }

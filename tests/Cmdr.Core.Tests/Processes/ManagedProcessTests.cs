@@ -59,6 +59,7 @@ public class ManagedProcessTests
             var env = new Dictionary<string, string?> { ["FOO"] = "bar", [removedVar] = null };
             p.Start(Sh("pwd; echo \"$FOO\"; echo \"${CMDR_TEST_REMOVED-unset}\"", dir.Path, env));
             WaitForExited(p);
+            WaitForText(p, "unset"); // last line printed
 
             string[] texts = Lines(p).Where(l => l.Source == OutputSource.StdOut).Select(l => l.PlainText).ToArray();
             Assert.Contains(texts, t => t == Path.GetFileName(dir.Path) || t.EndsWith(Path.GetFileName(dir.Path), StringComparison.Ordinal));
@@ -108,9 +109,10 @@ public class ManagedProcessTests
         var p = new ManagedProcess(BufferLines);
         try
         {
-            p.Start(Sh("trap \"echo got-int; exit 3\" INT; while :; do sleep 0.1; done", dir.Path));
+            p.Start(Sh("trap \"echo got-int; exit 3\" INT; echo ready; while :; do sleep 0.1; done", dir.Path));
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            Thread.Sleep(200); // Let the trap be installed.
+            // Wait for the trap to be installed; an earlier Ctrl+C would kill the shell with the default action.
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
 
             p.RequestStop();
             ProcessSnapshot stopping = p.Snapshot;
@@ -120,6 +122,8 @@ public class ManagedProcessTests
             WaitForExited(p);
             Assert.Equal(3, p.Snapshot.ExitCode);
             Assert.Equal(0, p.Snapshot.LeftoverCount);
+            // The exit marker can be written before the trap's output is pumped (the drain is bounded), so wait for it.
+            WaitUntil(() => Text(p).Contains("got-int", StringComparison.Ordinal), "trap output 'got-int'", p);
             Assert.Contains("got-int", Text(p));
             Assert.Equal(stopping.StopRequestedAt, p.Snapshot.StopRequestedAt);
         }
@@ -145,6 +149,7 @@ public class ManagedProcessTests
             WaitForExited(p);
 
             Assert.Equal(0, p.Snapshot.ExitCode);
+            WaitForText(p, "got-q");
             Assert.Contains("got-q", Text(p));
             Assert.Contains("stop requested (input)", Text(p));
         }
@@ -190,9 +195,10 @@ public class ManagedProcessTests
         var p = new ManagedProcess(BufferLines);
         try
         {
-            p.Start(Sh("sleep 30 & sleep 30", dir.Path));
+            p.Start(Sh("sleep 30 & echo ready; sleep 30", dir.Path));
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            Thread.Sleep(200); // Let both sleeps start.
+            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
 
             p.RequestStop();
             WaitUntil(() => p.Snapshot.State == ProcessState.Exited, "leader to exit after Ctrl+C", p);
@@ -247,6 +253,7 @@ public class ManagedProcessTests
             WaitForExited(p);
 
             Assert.NotEqual(0, p.Snapshot.ExitCode);
+            WaitUntil(() => Lines(p).Any(l => l.Source == OutputSource.StdErr && l.PlainText.Length > 0), "stderr output", p);
             Assert.Contains(Lines(p), l => l.Source == OutputSource.StdErr && l.PlainText.Length > 0);
         }
         finally
@@ -320,6 +327,8 @@ public class ManagedProcessTests
             // Changed notification for "Running" to be observable.
             p.Start(Sh("sleep 0.3", dir.Path));
             WaitForExited(p);
+            // The exit marker is written before Changed is raised for Exited, so wait for that notification too.
+            WaitUntil(() => seen.Contains(ProcessState.Exited), "Changed for exit", p);
 
             ProcessState[] states = seen.ToArray();
             Assert.Contains(ProcessState.Running, states);

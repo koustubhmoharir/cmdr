@@ -151,11 +151,20 @@ public class SessionTreeTests
             Assert.Null(session.Activate(new[] { entry }));
             WaitForExited(entry.Process);
 
+            // The exit marker can be written before the last stdout chunks are read (the drain is bounded), so wait for them.
+            string logPath = dir.File(Path.Combine("logs", "outer", "inner", "show.log"));
+            WaitUntil(
+                () => Text(entry.Process).Contains("/sub", StringComparison.Ordinal)
+                    && File.Exists(logPath)
+                    && File.ReadAllText(logPath).Contains("[ab]", StringComparison.Ordinal),
+                "stdout and log to contain the command output",
+                entry.Process);
+
             string text = Text(entry.Process);
             Assert.Contains("[ab]", text, StringComparison.Ordinal);
             Assert.Contains("/sub", text, StringComparison.Ordinal);
 
-            string logText = File.ReadAllText(dir.File(Path.Combine("logs", "outer", "inner", "show.log")));
+            string logText = File.ReadAllText(logPath);
             Assert.Contains("[ab]", logText, StringComparison.Ordinal);
         }
         finally

@@ -41,12 +41,16 @@ public class EnvExpansionProcessTests
             p.Start(spec);
             ProcessTestHelpers.WaitForExited(p);
 
-            string[] stdout = ProcessTestHelpers.Lines(p)
+            string[] Stdout() => ProcessTestHelpers.Lines(p)
                 .Where(l => l.Source == OutputSource.StdOut)
                 .Select(l => l.PlainText)
                 .ToArray();
 
-            Assert.Equal(new[] { "a-b", Path.GetFullPath(Path.Combine(dir.Path, "sub")), "prefixed" }, stdout);
+            string[] expected = { "a-b", Path.GetFullPath(Path.Combine(dir.Path, "sub")), "prefixed" };
+            // The exit marker can be written before the last stdout chunks are read (the drain is bounded), so wait for them.
+            ProcessTestHelpers.WaitUntil(() => Stdout().Length >= expected.Length, "all stdout lines", p);
+
+            Assert.Equal(expected, Stdout());
         }
         finally
         {
