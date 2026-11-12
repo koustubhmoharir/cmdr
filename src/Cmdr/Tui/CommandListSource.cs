@@ -70,6 +70,22 @@ internal sealed class CommandListSource : IListDataSource
             return;
         }
 
+        // ListView remembers the attribute it last set and fills the rows below the last item with it without setting it
+        // again, so the attribute it set before this call is restored at the end. Otherwise the focused command's detail
+        // line, drawn last, would leave the focus colors for the empty rows below.
+        Attribute entryAttr = listView.GetCurrentAttribute();
+        try
+        {
+            RenderLine(listView, selected, item, col, row, width);
+        }
+        finally
+        {
+            listView.SetAttribute(entryAttr);
+        }
+    }
+
+    private void RenderLine(ListView listView, bool selected, int item, int col, int row, int width)
+    {
         DisplayLine line = _lines.Lines[item];
 
         // Both lines of the focused command are drawn as focused.
