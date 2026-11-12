@@ -16,7 +16,27 @@ internal static class ProcessTestHelpers
         IReadOnlyDictionary<string, string?>? env = null,
         StopMethod stopMethod = StopMethod.CtrlC,
         string? stopInput = null) =>
-        new("sh", new[] { "-c", script }, workingDirectory, env ?? new Dictionary<string, string?>(), stopMethod, stopInput);
+        Exec("sh", new[] { "-c", script }, workingDirectory, env, stopMethod, stopInput);
+
+    /// <summary>
+    /// Builds a launch request for a program. The optional <paramref name="env"/> is one overlay level defined in
+    /// <paramref name="workingDirectory"/>, which is also the config directory.
+    /// </summary>
+    public static LaunchSpec Exec(
+        string program,
+        IReadOnlyList<string> args,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string?>? env = null,
+        StopMethod stopMethod = StopMethod.CtrlC,
+        string? stopInput = null) =>
+        new(
+            program,
+            args,
+            workingDirectory,
+            env is null ? Array.Empty<EnvLevel>() : new[] { new EnvLevel(env, workingDirectory) },
+            workingDirectory,
+            stopMethod,
+            stopInput);
 
     /// <summary>Polls <paramref name="condition"/> every 20 ms; fails with the current state if it does not hold in time.</summary>
     public static void WaitUntil(Func<bool> condition, string description, ManagedProcess? process = null, TimeSpan? timeout = null)

@@ -1,20 +1,48 @@
 namespace Cmdr.Core.Config;
 
-/// <summary>Resolves working directory and log file paths for a command.</summary>
+/// <summary>Resolves working directories and log file paths of items.</summary>
 public static class ConfigPaths
 {
     /// <summary>
-    /// Resolves the working directory. Null/empty means the config directory; relative paths
-    /// are resolved against the config directory; absolute paths are normalized.
+    /// Resolves a directory setting against <paramref name="baseDir"/>. Null or blank means <paramref name="baseDir"/>;
+    /// a relative path is combined with it; an absolute path replaces it. The result is normalized.
     /// </summary>
-    public static string ResolveCwd(CommandSpec cmd, string configDir)
+    public static string ResolveDir(string? path, string baseDir)
     {
-        ArgumentNullException.ThrowIfNull(cmd);
+        ArgumentException.ThrowIfNullOrEmpty(baseDir);
+
+        return Path.GetFullPath(string.IsNullOrWhiteSpace(path) ? baseDir : Path.Combine(baseDir, path));
+    }
+
+    /// <summary>
+    /// The effective working directory of a group: <c>cwd</c> of each group from the outermost one inwards, each
+    /// resolved against the one before it. The first group's parent is <paramref name="configDir"/>.
+    /// </summary>
+    /// <param name="ancestorsIncludingGroup">The group and its ancestors, outermost first.</param>
+    public static string ResolveGroupCwd(IReadOnlyList<GroupSpec> ancestorsIncludingGroup, string configDir)
+    {
+        ArgumentNullException.ThrowIfNull(ancestorsIncludingGroup);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
 
-        return string.IsNullOrWhiteSpace(cmd.Cwd)
-            ? Path.GetFullPath(configDir)
-            : Path.GetFullPath(Path.Combine(configDir, cmd.Cwd));
+        string cwd = Path.GetFullPath(configDir);
+        foreach (GroupSpec group in ancestorsIncludingGroup)
+        {
+            cwd = ResolveDir(group.Cwd, cwd);
+        }
+
+        return cwd;
+    }
+
+    /// <summary>
+    /// The effective working directory of a command: its <c>cwd</c> resolved against the effective working directory of
+    /// its enclosing groups.
+    /// </summary>
+    /// <param name="ancestors">The groups that contain the command, outermost first (empty for a command at the top level).</param>
+    public static string ResolveCwd(IReadOnlyList<GroupSpec> ancestors, CommandSpec cmd, string configDir)
+    {
+        ArgumentNullException.ThrowIfNull(cmd);
+
+        return ResolveDir(cmd.Cwd, ResolveGroupCwd(ancestors, configDir));
     }
 
     /// <summary>
@@ -33,13 +61,14 @@ public static class ConfigPaths
     /// <summary>
     /// Resolves the log file path. If <see cref="LogSpec.Path"/> is set, a relative path is resolved against
     /// <paramref name="logsDir"/>. Otherwise the path is
-    /// <c>&lt;logsDir&gt;/&lt;safe group name&gt;/&lt;safe command name&gt;.log</c>, where unsafe filename
-    /// characters are replaced by '_'; a blank group name becomes "group" and a blank command name "command".
+    /// <c>&lt;logsDir&gt;/&lt;group&gt;/&lt;subgroup&gt;/…/&lt;safe command name&gt;.log</c>, one folder per enclosing group, with
+    /// unsafe filename characters replaced by '_'; a blank group name becomes "group" and a blank command name "command".
     /// </summary>
+    /// <param name="ancestors">The groups that contain the command, outermost first.</param>
     /// <param name="logsDir">The resolved logs directory (see <see cref="ResolveLogsDir"/>).</param>
-    public static string ResolveLogPath(GroupSpec group, CommandSpec cmd, string logsDir)
+    public static string ResolveLogPath(IReadOnlyList<GroupSpec> ancestors, CommandSpec cmd, string logsDir)
     {
-        ArgumentNullException.ThrowIfNull(group);
+        ArgumentNullException.ThrowIfNull(ancestors);
         ArgumentNullException.ThrowIfNull(cmd);
         ArgumentException.ThrowIfNullOrEmpty(logsDir);
 
@@ -48,9 +77,10 @@ public static class ConfigPaths
             return Path.GetFullPath(Path.Combine(logsDir, cmd.Log.Path));
         }
 
-        string groupDir = SafeFileName(group.Name, "group");
-        string fileName = SafeFileName(cmd.Name, "command") + ".log";
-        return Path.GetFullPath(Path.Combine(logsDir, groupDir, fileName));
+        var segments = new List<string> { logsDir };
+        segments.AddRange(ancestors.Select(group => SafeFileName(group.Name, "group")));
+        segments.Add(SafeFileName(cmd.Name, "command") + ".log");
+        return Path.GetFullPath(Path.Combine(segments.ToArray()));
     }
 
     private static string SafeFileName(string name, string fallback)

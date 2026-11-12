@@ -24,6 +24,22 @@ public sealed class GroupEntry
     /// <summary>How the commands are started.</summary>
     public GroupMode Mode { get; internal set; }
 
+    /// <summary>The group's working directory setting as written in the config (null when not set). Kept so saving does not lose it.</summary>
+    internal string? Cwd { get; set; }
+
+    /// <summary>The group's environment setting as written in the config (null when not set). Kept so saving does not lose it.</summary>
+    internal Dictionary<string, string?>? Env { get; set; }
+
+    /// <summary>A group definition with this group's settings; its items are not included.</summary>
+    internal GroupSpec ToSpec() => new()
+    {
+        Name = Name,
+        Description = Description,
+        Mode = Mode,
+        Cwd = Cwd,
+        Env = Env is null ? null : new Dictionary<string, string?>(Env),
+    };
+
     /// <summary>Commands in file order.</summary>
     public IReadOnlyList<CommandEntry> Commands => _commands;
 

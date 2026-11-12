@@ -44,8 +44,8 @@ public class SessionEditingTests
             BufferLines = 500,
             Groups = new List<GroupSpec>
             {
-                new() { Name = "build", Description = "desc", Mode = GroupMode.Sequential, Commands = new List<CommandSpec> { Sh("restore", "true") } },
-                new() { Name = "servers", Commands = new List<CommandSpec> { web } },
+                new() { Name = "build", Description = "desc", Mode = GroupMode.Sequential, Items = new List<ItemSpec> { Sh("restore", "true") } },
+                new() { Name = "servers", Items = new List<ItemSpec> { web } },
             },
         };
         string path = dir.File("cmdr.json");
@@ -61,7 +61,7 @@ public class SessionEditingTests
         Assert.Equal(GroupMode.Sequential, built.Groups[0].Mode);
         Assert.Equal(GroupMode.Parallel, built.Groups[1].Mode);
 
-        CommandSpec loaded = built.Groups[1].Commands.Single();
+        var loaded = (CommandSpec)built.Groups[1].Items.Single();
         Assert.Equal("multi\nline", loaded.Description);
         Assert.Equal("pnpm", loaded.Program);
         Assert.Equal(new[] { "start" }, loaded.Args);
@@ -108,7 +108,7 @@ public class SessionEditingTests
 
         using CmdrSession session = CmdrSession.Load(path);
 
-        Assert.Contains(session.LoadErrors, e => e.Contains("duplicate command name 'a'", StringComparison.Ordinal));
+        Assert.Contains(session.LoadErrors, e => e.Contains("duplicate name 'a'", StringComparison.Ordinal));
         Assert.Contains(session.LoadErrors, e => e.Contains("Duplicate group name 'g'", StringComparison.Ordinal));
     }
 
@@ -358,7 +358,7 @@ public class SessionEditingTests
         CmdrConfig reloaded = ConfigStore.Load(dir.File("cmdr.json"));
         Assert.Equal("build", reloaded.Groups.Single().Name);
         Assert.Equal(GroupMode.Sequential, reloaded.Groups.Single().Mode);
-        Assert.Equal("restore", reloaded.Groups.Single().Commands.Single().Name);
+        Assert.Equal("restore", reloaded.Groups.Single().Items.Single().Name);
     }
 
     [Fact]

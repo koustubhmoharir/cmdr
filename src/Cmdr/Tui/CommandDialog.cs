@@ -172,7 +172,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private void UpdateLogHint()
     {
         string path = ConfigPaths.ResolveLogPath(
-            new GroupSpec { Name = SelectedGroup.Name },
+            new[] { new GroupSpec { Name = SelectedGroup.Name } },
             new CommandSpec { Name = _name.Text },
             _session.LogsDir);
         _logHint.Text = "Default: " + Path.GetRelativePath(_session.ConfigDir, path);

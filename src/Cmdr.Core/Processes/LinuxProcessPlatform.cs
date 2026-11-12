@@ -37,7 +37,7 @@ internal sealed class LinuxProcessPlatform : IProcessPlatform
             psi.ArgumentList.Add(arg);
         }
 
-        EnvironmentOverlay.Apply(psi.Environment, spec.Env);
+        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator);
         return new PreparedLaunch(psi, InputAfterInterrupt: null);
     }
 

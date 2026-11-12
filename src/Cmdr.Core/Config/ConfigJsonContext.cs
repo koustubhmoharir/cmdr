@@ -10,6 +10,8 @@ namespace Cmdr.Core.Config;
     AllowTrailingCommas = true,
     PropertyNameCaseInsensitive = false)]
 [JsonSerializable(typeof(CmdrConfig))]
+[JsonSerializable(typeof(GroupSpec))]
+[JsonSerializable(typeof(CommandSpec))]
 internal sealed partial class ConfigJsonContext : JsonSerializerContext
 {
 }

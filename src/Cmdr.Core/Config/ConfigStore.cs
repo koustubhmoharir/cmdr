@@ -5,11 +5,17 @@ namespace Cmdr.Core.Config;
 /// <summary>Loads and saves the cmdr configuration file.</summary>
 public static class ConfigStore
 {
+    private static readonly JsonDocumentOptions DocumentOptions = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true,
+    };
+
     /// <summary>
     /// Loads the configuration. A missing file yields an empty configuration with defaults.
     /// Does not validate; call <see cref="CmdrConfig.Validate"/> separately.
     /// </summary>
-    /// <exception cref="ConfigException">The file is malformed or contains a JSON null document.</exception>
+    /// <exception cref="ConfigException">The file is malformed, has a legacy <c>commands</c> list, or contains a JSON null document.</exception>
     public static CmdrConfig Load(string path)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
@@ -19,11 +25,16 @@ public static class ConfigStore
             return new CmdrConfig();
         }
 
+        byte[] bytes = File.ReadAllBytes(path);
         CmdrConfig? config;
         try
         {
-            using FileStream stream = File.OpenRead(path);
-            config = JsonSerializer.Deserialize(stream, ConfigJsonContext.Default.CmdrConfig);
+            using (JsonDocument document = JsonDocument.Parse(bytes, DocumentOptions))
+            {
+                RejectLegacyCommands(document.RootElement, path);
+            }
+
+            config = JsonSerializer.Deserialize(bytes, ConfigJsonContext.Default.CmdrConfig);
         }
         catch (JsonException ex)
         {
@@ -77,9 +88,56 @@ public static class ConfigStore
         }
     }
 
+    // A group with "commands" is an old-format file (rejected even next to "items", which would silently drop it). Items are read by shape, so this is the only
+    // place that can report the old property by name with its position. Top-level groups are read here too.
+    private static void RejectLegacyCommands(JsonElement root, string configPath)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("groups", out JsonElement groups) || groups.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        int index = 0;
+        foreach (JsonElement group in groups.EnumerateArray())
+        {
+            RejectLegacyGroup(group, $"groups[{index}]", configPath);
+            index++;
+        }
+    }
+
+    private static void RejectLegacyGroup(JsonElement group, string jsonPath, string configPath)
+    {
+        if (group.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        if (group.TryGetProperty("commands", out _))
+        {
+            throw new ConfigException($"Configuration file '{configPath}': {jsonPath} uses 'commands'; use 'items' instead of 'commands'.");
+        }
+
+        if (!group.TryGetProperty("items", out JsonElement items) || items.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        int index = 0;
+        foreach (JsonElement child in items.EnumerateArray())
+        {
+            // An object with "program" is a command; anything else is checked as a group.
+            if (child.ValueKind == JsonValueKind.Object && !child.TryGetProperty("program", out _))
+            {
+                RejectLegacyGroup(child, $"{jsonPath}.items[{index}]", configPath);
+            }
+
+            index++;
+        }
+    }
+
     // JSON null is valid for nested values, which would otherwise leave non-nullable
     // properties null. Replace them with defaults; reject null list entries outright.
-    private static void Normalize(CmdrConfig config, string path)
+    private static void Normalize(CmdrConfig config, string configPath)
     {
         config.Groups ??= new List<GroupSpec>();
 
@@ -88,34 +146,55 @@ public static class ConfigStore
             GroupSpec? group = config.Groups[g];
             if (group is null)
             {
-                throw new ConfigException($"Configuration file '{path}': groups[{g}] must be an object, not null.");
+                throw new ConfigException($"Configuration file '{configPath}': groups[{g}] must be an object, not null.");
             }
 
-            group.Name ??= "";
-            group.Commands ??= new List<CommandSpec>();
+            NormalizeGroup(group, configPath, $"groups[{g}]");
+        }
+    }
 
-            for (int c = 0; c < group.Commands.Count; c++)
+    private static void NormalizeGroup(GroupSpec group, string configPath, string jsonPath)
+    {
+        group.Name ??= "";
+        group.Items ??= new List<ItemSpec>();
+
+        for (int i = 0; i < group.Items.Count; i++)
+        {
+            ItemSpec? item = group.Items[i];
+            string itemPath = $"{jsonPath}.items[{i}]";
+            if (item is null)
             {
-                CommandSpec? cmd = group.Commands[c];
-                if (cmd is null)
-                {
-                    throw new ConfigException($"Configuration file '{path}': groups[{g}].commands[{c}] must be an object, not null.");
-                }
+                throw new ConfigException($"Configuration file '{configPath}': {itemPath} must be an object, not null.");
+            }
 
-                cmd.Name ??= "";
-                cmd.Program ??= "";
-                cmd.Env ??= new Dictionary<string, string?>();
-                cmd.Stop ??= new StopSpec();
-                cmd.Log ??= new LogSpec();
-                cmd.Args ??= new List<string>();
+            item.Name ??= "";
 
-                for (int a = 0; a < cmd.Args.Count; a++)
-                {
-                    if (cmd.Args[a] is null)
-                    {
-                        throw new ConfigException($"Configuration file '{path}': groups[{g}].commands[{c}].args[{a}] must be a string, not null.");
-                    }
-                }
+            switch (item)
+            {
+                case GroupSpec child:
+                    NormalizeGroup(child, configPath, itemPath);
+                    break;
+
+                case CommandSpec cmd:
+                    NormalizeCommand(cmd, configPath, itemPath);
+                    break;
+            }
+        }
+    }
+
+    private static void NormalizeCommand(CommandSpec cmd, string configPath, string jsonPath)
+    {
+        cmd.Program ??= "";
+        cmd.Env ??= new Dictionary<string, string?>();
+        cmd.Stop ??= new StopSpec();
+        cmd.Log ??= new LogSpec();
+        cmd.Args ??= new List<string>();
+
+        for (int a = 0; a < cmd.Args.Count; a++)
+        {
+            if (cmd.Args[a] is null)
+            {
+                throw new ConfigException($"Configuration file '{configPath}': {jsonPath}.args[{a}] must be a string, not null.");
             }
         }
     }

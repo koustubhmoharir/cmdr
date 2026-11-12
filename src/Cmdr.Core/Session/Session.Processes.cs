@@ -217,7 +217,7 @@ public sealed partial class Session
                 entry.Process.Output.EnableLog(ResolveLogPath(entry));
             }
 
-            entry.Process.Start(LaunchSpec.From(spec, ConfigDir));
+            entry.Process.Start(LaunchSpec.From(new[] { entry.Group.ToSpec() }, spec, ConfigDir));
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or ObjectDisposedException or NotSupportedException)
@@ -228,10 +228,7 @@ public sealed partial class Session
     }
 
     private string ResolveLogPath(CommandEntry entry) =>
-        ConfigPaths.ResolveLogPath(
-            new GroupSpec { Name = entry.Group.Name, Description = entry.Group.Description, Mode = entry.Group.Mode },
-            entry.Spec,
-            LogsDir);
+        ConfigPaths.ResolveLogPath(new[] { entry.Group.ToSpec() }, entry.Spec, LogsDir);
 
     /// <summary>Creates a sequence over the entries and starts it in the background. Returns a message if one is already running.</summary>
     private string? StartSequence(GroupEntry group, IReadOnlyList<CommandEntry> entries)

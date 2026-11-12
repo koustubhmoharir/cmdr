@@ -32,11 +32,12 @@ public sealed partial class Session : IDisposable
         // An invalid buffer size is reported through LoadErrors; the processes still need a usable buffer.
         _processBufferLines = Math.Max(1, config.BufferLines);
 
+        // Temporary: the session is flat. Nested groups are rejected in Load, so every item here is a command.
         foreach (GroupSpec spec in config.Groups)
         {
-            var group = new GroupEntry(spec.Name, spec.Description, spec.Mode);
+            var group = new GroupEntry(spec.Name, spec.Description, spec.Mode) { Cwd = spec.Cwd, Env = spec.Env is null ? null : new Dictionary<string, string?>(spec.Env) };
             _groups.Add(group);
-            foreach (CommandSpec command in spec.Commands)
+            foreach (CommandSpec command in spec.Items.OfType<CommandSpec>())
             {
                 AttachCommand(group, command.Clone());
             }
@@ -74,13 +75,18 @@ public sealed partial class Session : IDisposable
     public IReadOnlyList<string> LoadErrors { get; }
 
     /// <summary>Loads the configuration file. A missing file yields an empty session.</summary>
-    /// <exception cref="ConfigException">The file is malformed.</exception>
+    /// <exception cref="ConfigException">The file is malformed, or a group contains a nested group (not supported yet).</exception>
     public static Session Load(string configPath)
     {
         ArgumentException.ThrowIfNullOrEmpty(configPath);
 
         string fullPath = Path.GetFullPath(configPath);
         CmdrConfig config = ConfigStore.Load(fullPath);
+        if (config.Groups.Any(g => g.Items.Any(i => i is GroupSpec)))
+        {
+            throw new ConfigException("Nested groups are not supported yet.");
+        }
+
         return new Session(fullPath, config);
     }
 
@@ -224,13 +230,9 @@ public sealed partial class Session : IDisposable
         var config = new CmdrConfig { BufferLines = BufferLines, LogsDir = LogsDirSetting };
         foreach (GroupEntry group in _groups)
         {
-            config.Groups.Add(new GroupSpec
-            {
-                Name = group.Name,
-                Description = group.Description,
-                Mode = group.Mode,
-                Commands = group.Commands.Select(c => c.Spec.Clone()).ToList(),
-            });
+            GroupSpec spec = group.ToSpec();
+            spec.Items = group.Commands.Select(c => (ItemSpec)c.Spec.Clone()).ToList();
+            config.Groups.Add(spec);
         }
 
         return config;

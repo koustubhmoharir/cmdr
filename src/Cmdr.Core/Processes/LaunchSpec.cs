@@ -9,30 +9,54 @@ namespace Cmdr.Core.Processes;
 /// <param name="Program">Executable to launch.</param>
 /// <param name="Args">Arguments, passed without quoting.</param>
 /// <param name="WorkingDirectory">Absolute working directory.</param>
-/// <param name="Env">Environment overlay; a null value removes the inherited variable.</param>
+/// <param name="EnvLevels">
+/// Environment overlays, outermost first: each enclosing group with an <c>env</c>, then the command's own.
+/// See <see cref="EnvExpansion.ApplyLevels"/>.
+/// </param>
+/// <param name="ConfigDir">Absolute config directory, the value of <c>${configDir}</c>.</param>
 /// <param name="StopMethod">How the process is asked to stop.</param>
 /// <param name="StopInput">Text written to stdin for the <see cref="StopMethod.Input"/> stop method.</param>
 public sealed record LaunchSpec(
     string Program,
     IReadOnlyList<string> Args,
     string WorkingDirectory,
-    IReadOnlyDictionary<string, string?> Env,
+    IReadOnlyList<EnvLevel> EnvLevels,
+    string ConfigDir,
     StopMethod StopMethod,
     string? StopInput)
 {
-    /// <summary>Builds a launch request from a command definition, resolving the working directory against <paramref name="configDir"/>.</summary>
-    /// <exception cref="ArgumentNullException"><paramref name="spec"/> is null.</exception>
+    /// <summary>
+    /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
+    /// each environment level are resolved against <paramref name="configDir"/>.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="ancestors"/> or <paramref name="spec"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="configDir"/> is null or empty.</exception>
-    public static LaunchSpec From(CommandSpec spec, string configDir)
+    public static LaunchSpec From(IReadOnlyList<GroupSpec> ancestors, CommandSpec spec, string configDir)
     {
+        ArgumentNullException.ThrowIfNull(ancestors);
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
+
+        var levels = new List<EnvLevel>();
+        string cwd = Path.GetFullPath(configDir);
+        foreach (GroupSpec group in ancestors)
+        {
+            cwd = ConfigPaths.ResolveDir(group.Cwd, cwd);
+            if (group.Env is not null)
+            {
+                levels.Add(new EnvLevel(new Dictionary<string, string?>(group.Env), cwd));
+            }
+        }
+
+        string workingDirectory = ConfigPaths.ResolveDir(spec.Cwd, cwd);
+        levels.Add(new EnvLevel(new Dictionary<string, string?>(spec.Env), workingDirectory));
 
         return new LaunchSpec(
             spec.Program,
             spec.Args.ToArray(),
-            ConfigPaths.ResolveCwd(spec, configDir),
-            new Dictionary<string, string?>(spec.Env),
+            workingDirectory,
+            levels,
+            Path.GetFullPath(configDir),
             spec.Stop.Method,
             spec.Stop.Input);
     }

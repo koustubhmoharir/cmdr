@@ -59,8 +59,8 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
 
-        // The overlay goes first so that PATH, PATHEXT and ComSpec are the effective values of this child.
-        EnvironmentOverlay.Apply(psi.Environment, spec.Env);
+        // The overlays go first so that PATH, PATHEXT and ComSpec are the effective values of this child.
+        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator);
 
         string? resolved = WindowsCommandResolver.Resolve(
             spec.Program,

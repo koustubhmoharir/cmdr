@@ -6,60 +6,32 @@ namespace Cmdr.Core.Tests.Config;
 public class GroupSpecTests
 {
     [Fact]
-    public void Mode_DefaultsToParallel()
+    public void Defaults()
     {
-        Assert.Equal(GroupMode.Parallel, new GroupSpec().Mode);
-        Assert.Equal("", new GroupSpec().Name);
-        Assert.Null(new GroupSpec().Description);
-        Assert.Empty(new GroupSpec().Commands);
+        var group = new GroupSpec();
+
+        Assert.Equal(GroupMode.Parallel, group.Mode);
+        Assert.Equal("", group.Name);
+        Assert.Null(group.Description);
+        Assert.Null(group.Cwd);
+        Assert.Null(group.Env);
+        Assert.Empty(group.Items);
     }
 
     [Fact]
-    public void Save_WritesModeAsString_AndOmitsNullDescription()
+    public void Save_WritesModeAsString_AndOmitsNullFields()
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        var config = new CmdrConfig
-        {
-            Groups =
-            {
-                new GroupSpec { Name = "a", Mode = GroupMode.Parallel },
-                new GroupSpec { Name = "b", Description = "second", Mode = GroupMode.Sequential },
-            },
-        };
-
-        ConfigStore.Save(config, path);
+        ConfigStore.Save(new CmdrConfig { Groups = { new GroupSpec { Name = "g", Mode = GroupMode.Sequential } } }, path);
 
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
-        JsonElement first = doc.RootElement.GetProperty("groups")[0];
-        JsonElement second = doc.RootElement.GetProperty("groups")[1];
-        Assert.Equal("parallel", first.GetProperty("mode").GetString());
-        Assert.False(first.TryGetProperty("description", out _));
-        Assert.Equal("sequential", second.GetProperty("mode").GetString());
-        Assert.Equal("second", second.GetProperty("description").GetString());
-    }
-
-    [Fact]
-    public void RoundTrip_PreservesModeAndDescription()
-    {
-        using var dir = new TempDir();
-        string path = dir.File("cmdr.json");
-        var config = new CmdrConfig
-        {
-            Groups =
-            {
-                new GroupSpec { Name = "a", Description = "desc", Mode = GroupMode.Sequential },
-                new GroupSpec { Name = "b", Mode = GroupMode.Parallel },
-            },
-        };
-
-        ConfigStore.Save(config, path);
-        CmdrConfig loaded = ConfigStore.Load(path);
-
-        Assert.Equal("desc", loaded.Groups[0].Description);
-        Assert.Equal(GroupMode.Sequential, loaded.Groups[0].Mode);
-        Assert.Null(loaded.Groups[1].Description);
-        Assert.Equal(GroupMode.Parallel, loaded.Groups[1].Mode);
+        JsonElement group = doc.RootElement.GetProperty("groups")[0];
+        Assert.Equal("sequential", group.GetProperty("mode").GetString());
+        Assert.False(group.TryGetProperty("description", out _));
+        Assert.False(group.TryGetProperty("cwd", out _));
+        Assert.False(group.TryGetProperty("env", out _));
+        Assert.Equal(JsonValueKind.Array, group.GetProperty("items").ValueKind);
     }
 
     [Fact]
@@ -67,7 +39,7 @@ public class GroupSpecTests
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        File.WriteAllText(path, """{ "groups": [ { "name": "a" } ] }""");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g" } ] }""");
 
         Assert.Equal(GroupMode.Parallel, Assert.Single(ConfigStore.Load(path).Groups).Mode);
     }
@@ -75,52 +47,46 @@ public class GroupSpecTests
     [Theory]
     [InlineData("1")]
     [InlineData("0")]
-    public void Load_IntegerMode_IsRejected(string value)
+    [InlineData("\"parallelish\"")]
+    [InlineData("\"\"")]
+    public void Load_NonCanonicalMode_IsRejected(string value)
     {
         using var dir = new TempDir();
         string path = dir.File("cmdr.json");
-        File.WriteAllText(path, $$"""{ "groups": [ { "name": "a", "mode": {{value}} } ] }""");
-
-        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
-        Assert.Contains(path, ex.Message);
-    }
-
-    [Theory]
-    [InlineData("parallelish")]
-    [InlineData("")]
-    public void Load_UnknownModeString_IsRejected(string value)
-    {
-        using var dir = new TempDir();
-        string path = dir.File("cmdr.json");
-        File.WriteAllText(path, $$"""{ "groups": [ { "name": "a", "mode": "{{value}}" } ] }""");
+        File.WriteAllText(path, $$"""{ "groups": [ { "name": "g", "mode": {{value}} } ] }""");
 
         ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
         Assert.Contains(path, ex.Message);
     }
 
     [Fact]
-    public void Clone_CopiesAllValues()
+    public void Clone_CopiesAllGroupFields()
     {
         var original = new GroupSpec
         {
-            Name = "build",
+            Name = "nav",
             Description = "desc",
             Mode = GroupMode.Sequential,
-            Commands =
+            Cwd = "../golang",
+            Env = new Dictionary<string, string?> { ["A"] = "1", ["B"] = null },
+            Items =
             {
                 new CommandSpec { Name = "restore", Program = "dotnet", Args = { "restore" } },
-                new CommandSpec { Name = "build", Program = "dotnet", Args = { "build" } },
+                new GroupSpec { Name = "inner", Items = { new CommandSpec { Name = "deep", Program = "p" } } },
             },
         };
 
         GroupSpec clone = original.Clone();
 
-        Assert.Equal("build", clone.Name);
+        Assert.Equal("nav", clone.Name);
         Assert.Equal("desc", clone.Description);
         Assert.Equal(GroupMode.Sequential, clone.Mode);
-        Assert.Equal(2, clone.Commands.Count);
-        Assert.Equal("restore", clone.Commands[0].Name);
-        Assert.Equal(new[] { "build" }, clone.Commands[1].Args);
+        Assert.Equal("../golang", clone.Cwd);
+        Assert.Equal(new Dictionary<string, string?> { ["A"] = "1", ["B"] = null }, clone.Env);
+        Assert.Equal(2, clone.Items.Count);
+        Assert.Equal("restore", clone.Items[0].Name);
+        Assert.IsType<GroupSpec>(clone.Items[1]);
+        Assert.Equal("deep", Assert.Single(((GroupSpec)clone.Items[1]).Items).Name);
     }
 
     [Fact]
@@ -128,25 +94,24 @@ public class GroupSpecTests
     {
         var original = new GroupSpec
         {
-            Name = "build",
-            Commands = { new CommandSpec { Name = "restore", Program = "dotnet", Args = { "restore" } } },
+            Name = "g",
+            Env = new Dictionary<string, string?> { ["A"] = "1" },
+            Items =
+            {
+                new CommandSpec { Name = "restore", Program = "dotnet", Args = { "restore" } },
+                new GroupSpec { Name = "inner", Items = { new CommandSpec { Name = "deep", Program = "p" } } },
+            },
         };
 
         GroupSpec clone = original.Clone();
-        clone.Name = "changed";
-        clone.Mode = GroupMode.Sequential;
-        clone.Commands.Add(new CommandSpec { Name = "extra" });
-        clone.Commands[0].Name = "renamed";
-        clone.Commands[0].Args.Add("--x");
-        clone.Commands[0].Stop.Method = StopMethod.Input;
-        clone.Commands[0].Log.Enabled = true;
+        clone.Env!["A"] = "changed";
+        clone.Items.Add(new CommandSpec { Name = "extra" });
+        ((CommandSpec)clone.Items[0]).Args.Add("--x");
+        ((GroupSpec)clone.Items[1]).Items.Clear();
 
-        Assert.Equal("build", original.Name);
-        Assert.Equal(GroupMode.Parallel, original.Mode);
-        Assert.Single(original.Commands);
-        Assert.Equal("restore", original.Commands[0].Name);
-        Assert.Equal(new[] { "restore" }, original.Commands[0].Args);
-        Assert.Equal(StopMethod.CtrlC, original.Commands[0].Stop.Method);
-        Assert.False(original.Commands[0].Log.Enabled);
+        Assert.Equal("1", original.Env!["A"]);
+        Assert.Equal(2, original.Items.Count);
+        Assert.Equal(new[] { "restore" }, ((CommandSpec)original.Items[0]).Args);
+        Assert.Single(((GroupSpec)original.Items[1]).Items);
     }
 }

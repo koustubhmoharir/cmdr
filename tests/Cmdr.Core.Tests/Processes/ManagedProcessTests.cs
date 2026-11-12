@@ -243,7 +243,7 @@ public class ManagedProcessTests
         var p = new ManagedProcess(BufferLines);
         try
         {
-            p.Start(new LaunchSpec("cmdr-no-such-program-xyz", Array.Empty<string>(), dir.Path, new Dictionary<string, string?>(), StopMethod.CtrlC, null));
+            p.Start(Exec("cmdr-no-such-program-xyz", Array.Empty<string>(), dir.Path));
             WaitForExited(p);
 
             Assert.NotEqual(0, p.Snapshot.ExitCode);
@@ -375,7 +375,7 @@ public class ManagedProcessTests
             var p = new ManagedProcess(100);
             try
             {
-                p.Start(new LaunchSpec("sleep", new[] { "30" }, dir.Path, new Dictionary<string, string?>(), StopMethod.CtrlC, null));
+                p.Start(Exec("sleep", new[] { "30" }, dir.Path));
                 p.RequestStop();
                 WaitForExited(p, TimeSpan.FromSeconds(5));
             }

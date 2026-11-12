@@ -122,5 +122,5 @@ public class WindowsProcessPlatformTests
         string command,
         string workingDirectory,
         IReadOnlyDictionary<string, string?>? env = null) =>
-        new("cmd", new[] { "/c", command }, workingDirectory, env ?? new Dictionary<string, string?>(), StopMethod.CtrlC, null);
+        ProcessTestHelpers.Exec("cmd", new[] { "/c", command }, workingDirectory, env);
 }

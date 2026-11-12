@@ -17,7 +17,7 @@ internal static class SessionTestHelpers
 
     /// <summary>A group definition with the given commands.</summary>
     public static GroupSpec Group(string name, GroupMode mode, params CommandSpec[] commands) =>
-        new() { Name = name, Mode = mode, Commands = commands.ToList() };
+        new() { Name = name, Mode = mode, Items = commands.Cast<ItemSpec>().ToList() };
 
     /// <summary>Writes a configuration into the temp directory and loads it, so the session starts clean (not dirty).</summary>
     public static CmdrSession OpenWith(TempDir dir, params GroupSpec[] groups)
