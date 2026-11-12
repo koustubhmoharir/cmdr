@@ -135,19 +135,74 @@ internal sealed class DetailsView : View
         }
 
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
-        IReadOnlyList<string> lines = Wrapped(width);
+        IReadOnlyList<DetailsLine> lines = Wrapped(width);
         _offset = DetailsText.ClampOffset(_offset, lines.Count, height);
 
         for (int row = 0; row < height; row++)
         {
             int index = _offset + row;
-            string text = index < lines.Count ? lines[index] : string.Empty;
             Move(0, row);
-            SetAttribute(normal);
-            AddStr(TextWidth.Fit(text, width));
+            if (index < lines.Count)
+            {
+                DrawLine(lines[index], width, normal);
+            }
+            else
+            {
+                SetAttribute(normal);
+                AddStr(new string(' ', width));
+            }
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Draws one wrapped line: each span in its own attribute, then the rest of the width in the normal attribute, so the row is
+    /// exactly <paramref name="width"/> columns.
+    /// </summary>
+    private void DrawLine(DetailsLine line, int width, Attribute normal)
+    {
+        string plain = line.Text;
+        if (TextWidth.Columns(plain) > width)
+        {
+            // Only a single character wider than the width gets here; it is fitted like any other text.
+            SetAttribute(normal);
+            AddStr(TextWidth.Fit(plain, width));
+            return;
+        }
+
+        int used = 0;
+        foreach (DetailsSpan span in line.Spans)
+        {
+            SetAttribute(AttributeFor(span.Style, normal));
+            AddStr(span.Text);
+            used += TextWidth.Columns(span.Text);
+        }
+
+        SetAttribute(normal);
+        AddStr(new string(' ', Math.Max(0, width - used)));
+    }
+
+    /// <summary>
+    /// The attribute of a span: a 16-color name, so the colors follow the terminal theme, on the normal background. The bright
+    /// names are used where the normal ones have poor contrast on dark backgrounds.
+    /// </summary>
+    internal static Attribute AttributeFor(DetailsStyle style, Attribute normal)
+    {
+        Color fg = normal.Foreground;
+        Color bg = normal.Background;
+        return style switch
+        {
+            DetailsStyle.Prompt => new Attribute(fg, bg, TextStyle.Faint),
+            DetailsStyle.Command => new Attribute(ColorName16.BrightGreen, bg, TextStyle.None),
+            DetailsStyle.Label => new Attribute(fg, bg, TextStyle.Faint),
+            DetailsStyle.Path => new Attribute(ColorName16.BrightCyan, bg, TextStyle.None),
+            DetailsStyle.EnvName => new Attribute(ColorName16.BrightMagenta, bg, TextStyle.None),
+            DetailsStyle.EnvValue => new Attribute(fg, bg, TextStyle.None),
+            DetailsStyle.Unset => new Attribute(ColorName16.BrightRed, bg, TextStyle.None),
+            DetailsStyle.Faint => new Attribute(fg, bg, TextStyle.Faint),
+            _ => normal,
+        };
     }
 
     private bool ScrollTo(int offset)
@@ -160,10 +215,10 @@ internal sealed class DetailsView : View
     }
 
     /// <summary>The lines of the row, wrapped to <paramref name="width"/>. Empty for a non-positive width.</summary>
-    private IReadOnlyList<string> Wrapped(int width) =>
-        width <= 0 ? Array.Empty<string>() : DetailsText.Wrap(Lines(), width);
+    private IReadOnlyList<DetailsLine> Wrapped(int width) =>
+        width <= 0 ? Array.Empty<DetailsLine>() : DetailsText.Wrap(Lines(), width);
 
-    private IReadOnlyList<string> Lines() => _row switch
+    private IReadOnlyList<DetailsLine> Lines() => _row switch
     {
         CommandRow command => DetailsText.CommandLines(
             command.Entry,
@@ -172,7 +227,7 @@ internal sealed class DetailsView : View
             ProcessEnvironment(),
             Path.PathSeparator),
         GroupRow group => DetailsText.GroupLines(group.Group, _configDir),
-        _ => Array.Empty<string>(),
+        _ => Array.Empty<DetailsLine>(),
     };
 
     private static IReadOnlyDictionary<string, string?> ProcessEnvironment()

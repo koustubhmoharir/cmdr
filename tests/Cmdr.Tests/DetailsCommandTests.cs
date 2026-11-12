@@ -81,10 +81,48 @@ public sealed class DetailsCommandTests : IDisposable
         },
     };
 
+    private static (string Text, DetailsStyle Style)[] Spans(DetailsLine line) =>
+        line.Spans.Select(span => (span.Text, span.Style)).ToArray();
+
+    [Fact]
+    public void Command_lines_style_each_piece_of_text()
+    {
+        IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal(
+            new[] { ("$ ", DetailsStyle.Prompt), ("tool --flag 'two words'", DetailsStyle.Command) },
+            Spans(lines[0]));
+        Assert.Equal(
+            new[] { ("cwd: ", DetailsStyle.Label), (Resolved("src", "sub", "bin"), DetailsStyle.Path) },
+            Spans(lines[1]));
+        Assert.Equal(
+            new[] { ("TOP", DetailsStyle.EnvName), ("=", DetailsStyle.Faint), ("t", DetailsStyle.EnvValue) },
+            Spans(lines[2]));
+        Assert.Equal(
+            new[] { ("GONE", DetailsStyle.EnvName), (" (unset)", DetailsStyle.Unset) },
+            Spans(lines[5]));
+        Assert.Equal(
+            new[] { ("HERE", DetailsStyle.EnvName), ("=", DetailsStyle.Faint), (Resolved("src", "sub") + "/x", DetailsStyle.EnvValue) },
+            Spans(lines[6]));
+        Assert.Equal(new[] { ("pid — · log: off", DetailsStyle.Faint) }, Spans(lines[8]));
+        Assert.Equal(new[] { ("a", DetailsStyle.Normal) }, Spans(lines[9]));
+        Assert.Equal(new[] { ("e", DetailsStyle.Normal) }, Spans(lines[13]));
+    }
+
+    [Fact]
+    public void Windows_command_row_uses_the_prompt_style_for_its_prompt()
+    {
+        IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');
+
+        Assert.Equal(
+            new[] { ("> ", DetailsStyle.Prompt), ("tool --flag \"two words\"", DetailsStyle.Command) },
+            Spans(lines[0]));
+    }
+
     [Fact]
     public void Command_lines_come_in_order_with_the_command_line_first()
     {
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal(
             new[]
@@ -111,7 +149,7 @@ public sealed class DetailsCommandTests : IDisposable
     public void The_prompt_is_not_part_of_the_copied_command_line()
     {
         string copied = CommandLineFormatter.ForSpec(Run.Spec, windows: false);
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal("tool --flag 'two words'", copied);
         Assert.Equal("$ " + copied, lines[0]);
@@ -120,7 +158,7 @@ public sealed class DetailsCommandTests : IDisposable
     [Fact]
     public void Windows_uses_its_prompt_and_quoting()
     {
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';'));
 
         Assert.Equal("> tool --flag \"two words\"", lines[0]);
         Assert.Equal("PATHX=base;/top", lines[3]);
@@ -129,7 +167,7 @@ public sealed class DetailsCommandTests : IDisposable
     [Fact]
     public void The_cwd_is_resolved_through_every_enclosing_group()
     {
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal("cwd: " + Resolved("src", "sub", "bin"), lines[1]);
     }
@@ -142,7 +180,7 @@ public sealed class DetailsCommandTests : IDisposable
             new(new Dictionary<string, string?> { ["NOPE"] = null }, "/work"),
         };
 
-        IReadOnlyList<string> lines = DetailsText.EnvLines(levels, "/conf", BaseEnvironment, windows: false, '/');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.EnvLines(levels, "/conf", BaseEnvironment, windows: false, '/'));
 
         Assert.Equal(new[] { "NOPE (unset)" }, lines);
     }
@@ -151,7 +189,7 @@ public sealed class DetailsCommandTests : IDisposable
     public void Inherited_group_env_is_applied_before_the_commands_own()
     {
         // The command's SHARED expands the value the group left, and OWN sees the same value, not the command's own SHARED.
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Contains("SHARED=outer-mid+cmd", lines);
         Assert.Contains("OWN=" + ConfigDir + "|outer-mid", lines);
@@ -160,7 +198,7 @@ public sealed class DetailsCommandTests : IDisposable
     [Fact]
     public void Env_values_are_expanded_against_the_base_environment()
     {
-        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal("PATHX=base:/top", lines.Single(l => l.StartsWith("PATHX=", StringComparison.Ordinal)));
     }
@@ -174,7 +212,7 @@ public sealed class DetailsCommandTests : IDisposable
             new(new Dictionary<string, string?> { ["B"] = "3", ["C"] = "${B}" }, "/w"),
         };
 
-        IReadOnlyList<string> lines = DetailsText.EnvLines(levels, "/conf", new Dictionary<string, string?>(), windows: false, '/');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.EnvLines(levels, "/conf", new Dictionary<string, string?>(), windows: false, '/'));
 
         Assert.Equal(new[] { "B=3", "A=2", "C=1" }, lines);
     }
@@ -190,7 +228,7 @@ public sealed class DetailsCommandTests : IDisposable
         CommandEntry entry = plain.Session.AllEntries.Single();
         string dir = Path.GetFullPath(plain.Session.ConfigDir);
 
-        IReadOnlyList<string> lines = DetailsText.CommandLines(entry, dir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(entry, dir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal(new[] { "$ sh", "cwd: " + dir, "pid — · log: off" }, lines);
     }

@@ -9,8 +9,8 @@ namespace Cmdr.Tui;
 internal readonly record struct DetailsScroll(int Offset, int Height, int Total);
 
 /// <summary>
-/// The text of the details strip: its title, its lines and its scroll position. Pure: the process state and the environment
-/// are passed in.
+/// The text of the details strip: its title, its styled lines and its scroll position. Pure: the process state and the
+/// environment are passed in. The plain text of the lines is the copyable text; the styles only colour it.
 /// </summary>
 internal static class DetailsText
 {
@@ -54,12 +54,28 @@ internal static class DetailsText
         return Math.Clamp(offset, 0, max);
     }
 
-    /// <summary>Wraps each line to <paramref name="width"/> columns. Non-positive widths give no lines.</summary>
-    public static IReadOnlyList<string> Wrap(IReadOnlyList<string> lines, int width)
+    /// <summary>
+    /// Wraps each line to <paramref name="width"/> columns, keeping the styles: a span may continue on the next line. The plain
+    /// text is wrapped exactly as <see cref="TextWidth.Wrap(string, int)"/> wraps it. Non-positive widths give no lines.
+    /// </summary>
+    public static IReadOnlyList<DetailsLine> Wrap(IReadOnlyList<DetailsLine> lines, int width)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        return lines.SelectMany(line => TextWidth.Wrap(line, width)).ToList();
+        return lines
+            .SelectMany(line => TextWidth.WrapSpans(
+                line.Spans.Select(span => (span.Text, span.Style)).ToList(),
+                width))
+            .Select(spans => new DetailsLine(spans.Select(span => new DetailsSpan(span.Text, span.Style)).ToList()))
+            .ToList();
+    }
+
+    /// <summary>The plain text of each line, without styles.</summary>
+    public static IReadOnlyList<string> Plain(IReadOnlyList<DetailsLine> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        return lines.Select(line => line.Text).ToList();
     }
 
     /// <summary>
@@ -68,7 +84,7 @@ internal static class DetailsText
     /// </summary>
     /// <param name="environment">The process environment the values are applied to (see <see cref="EnvLines"/>).</param>
     /// <param name="windows">The platform: quoting of the command line, the prompt and the key comparison.</param>
-    public static IReadOnlyList<string> CommandLines(
+    public static IReadOnlyList<DetailsLine> CommandLines(
         CommandEntry entry,
         string configDir,
         bool windows,
@@ -83,17 +99,21 @@ internal static class DetailsText
         IReadOnlyList<GroupSpec> ancestors = GroupTree.SpecChain(entry.Group);
         LaunchSpec launch = LaunchSpec.From(ancestors, spec, configDir);
 
-        var lines = new List<string>
+        var lines = new List<DetailsLine>
         {
-            (windows ? "> " : "$ ") + CommandLineFormatter.ForSpec(spec, windows),
-            "cwd: " + ConfigPaths.ResolveCwd(ancestors, spec, configDir),
+            Line(
+                new DetailsSpan(windows ? "> " : "$ ", DetailsStyle.Prompt),
+                new DetailsSpan(CommandLineFormatter.ForSpec(spec, windows), DetailsStyle.Command)),
+            Line(
+                new DetailsSpan("cwd: ", DetailsStyle.Label),
+                new DetailsSpan(ConfigPaths.ResolveCwd(ancestors, spec, configDir), DetailsStyle.Path)),
         };
 
         lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
 
         string pid = entry.Process.Snapshot.Pid?.ToString(CultureInfo.InvariantCulture) ?? "—";
         string log = entry.Process.Output.IsLogging ? entry.Process.Output.LogPath ?? "on" : "off";
-        lines.Add("pid " + pid + " · log: " + log);
+        lines.Add(Line(new DetailsSpan("pid " + pid + " · log: " + log, DetailsStyle.Faint)));
 
         lines.AddRange(DescriptionLines(spec.Description));
         return lines;
@@ -104,7 +124,7 @@ internal static class DetailsText
     /// <c>KEY=value</c> with the value expanded, or <c>KEY (unset)</c> when the variable is removed. The levels are applied to a
     /// copy of <paramref name="environment"/> exactly as the launch applies them. Empty when no level mentions a key.
     /// </summary>
-    public static IReadOnlyList<string> EnvLines(
+    public static IReadOnlyList<DetailsLine> EnvLines(
         IReadOnlyList<EnvLevel> levels,
         string configDir,
         IReadOnlyDictionary<string, string?> environment,
@@ -132,7 +152,7 @@ internal static class DetailsText
 
         if (mentioned.Count == 0)
         {
-            return Array.Empty<string>();
+            return Array.Empty<DetailsLine>();
         }
 
         var target = new Dictionary<string, string?>(keys);
@@ -143,12 +163,10 @@ internal static class DetailsText
 
         EnvExpansion.ApplyLevels(target, levels, configDir, pathSeparator);
 
-        var lines = new List<string>(mentioned.Count);
+        var lines = new List<DetailsLine>(mentioned.Count);
         foreach (string key in mentioned)
         {
-            lines.Add(target.TryGetValue(key, out string? value) && value is not null
-                ? key + "=" + value
-                : key + " (unset)");
+            lines.Add(EnvLine(key, target.TryGetValue(key, out string? value) ? value : null));
         }
 
         return lines;
@@ -158,29 +176,33 @@ internal static class DetailsText
     /// The lines of a group: its mode, its working directory (the setting and the resolved path, or only the resolved path
     /// when no setting is given), one line per environment entry, then the description.
     /// </summary>
-    public static IReadOnlyList<string> GroupLines(GroupEntry group, string configDir)
+    public static IReadOnlyList<DetailsLine> GroupLines(GroupEntry group, string configDir)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
 
-        var lines = new List<string>
+        var lines = new List<DetailsLine>
         {
-            "mode: " + (group.Mode == GroupMode.Sequential ? "sequential" : "parallel"),
+            Line(
+                new DetailsSpan("mode: ", DetailsStyle.Label),
+                new DetailsSpan(group.Mode == GroupMode.Sequential ? "sequential" : "parallel", DetailsStyle.Normal)),
         };
 
         string resolved = ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir);
         // The setting is shown only when it says something the resolved path does not (a relative or unnormalised path).
         lines.Add(string.IsNullOrWhiteSpace(group.Cwd) || group.Cwd == resolved
-            ? "cwd: " + resolved
-            : "cwd: " + group.Cwd + " → " + resolved);
+            ? Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(resolved, DetailsStyle.Path))
+            : Line(
+                new DetailsSpan("cwd: ", DetailsStyle.Label),
+                new DetailsSpan(group.Cwd, DetailsStyle.Path),
+                new DetailsSpan(" → ", DetailsStyle.Faint),
+                new DetailsSpan(resolved, DetailsStyle.Path)));
 
         if (group.Env is not null)
         {
             foreach (KeyValuePair<string, string?> entry in group.Env)
             {
-                lines.Add(entry.Value is null
-                    ? entry.Key + " (unset)"
-                    : entry.Key + "=" + entry.Value);
+                lines.Add(EnvLine(entry.Key, entry.Value));
             }
         }
 
@@ -189,9 +211,9 @@ internal static class DetailsText
     }
 
     /// <summary>The lines of a description, with line breaks normalised. Empty for no description.</summary>
-    public static List<string> DescriptionLines(string? description)
+    public static List<DetailsLine> DescriptionLines(string? description)
     {
-        var lines = new List<string>();
+        var lines = new List<DetailsLine>();
         if (string.IsNullOrEmpty(description))
         {
             return lines;
@@ -203,7 +225,19 @@ internal static class DetailsText
             return lines;
         }
 
-        lines.AddRange(text.Split('\n'));
+        lines.AddRange(text.Split('\n').Select(part => Line(new DetailsSpan(part, DetailsStyle.Normal))));
         return lines;
     }
+
+    /// <summary>One environment entry: <c>KEY=value</c>, or <c>KEY (unset)</c> when the value is null.</summary>
+    private static DetailsLine EnvLine(string key, string? value) => value is null
+        ? Line(new DetailsSpan(key, DetailsStyle.EnvName), new DetailsSpan(" (unset)", DetailsStyle.Unset))
+        : Line(
+            new DetailsSpan(key, DetailsStyle.EnvName),
+            new DetailsSpan("=", DetailsStyle.Faint),
+            new DetailsSpan(value, DetailsStyle.EnvValue));
+
+    /// <summary>A line of the given spans. Empty spans are dropped, so a line never holds an empty run.</summary>
+    private static DetailsLine Line(params DetailsSpan[] spans) =>
+        new(spans.Where(span => span.Text.Length > 0).ToList());
 }

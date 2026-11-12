@@ -58,16 +58,22 @@ public sealed class DetailsScrollTests
     [Fact]
     public void Wrap_applies_to_each_logical_line()
     {
+        var lines = new[]
+        {
+            new DetailsLine(new[] { new DetailsSpan("abc def", DetailsStyle.Normal) }),
+            new DetailsLine(new[] { new DetailsSpan("g", DetailsStyle.Normal) }),
+        };
+
         Assert.Equal(
             new[] { "abc", "def", "g" },
-            DetailsText.Wrap(new[] { "abc def", "g" }, 3));
+            DetailsText.Plain(DetailsText.Wrap(lines, 3)));
     }
 
     [Fact]
     public void Description_lines_are_not_capped()
     {
-        Assert.Equal(new[] { "a", "b", "c", "d" }, DetailsText.DescriptionLines("a\r\nb\nc\nd"));
-        Assert.Equal(new[] { "a", "b" }, DetailsText.DescriptionLines("a\nb\n"));
+        Assert.Equal(new[] { "a", "b", "c", "d" }, DetailsText.Plain(DetailsText.DescriptionLines("a\r\nb\nc\nd")));
+        Assert.Equal(new[] { "a", "b" }, DetailsText.Plain(DetailsText.DescriptionLines("a\nb\n")));
         Assert.Empty(DetailsText.DescriptionLines(null));
         Assert.Empty(DetailsText.DescriptionLines(string.Empty));
     }

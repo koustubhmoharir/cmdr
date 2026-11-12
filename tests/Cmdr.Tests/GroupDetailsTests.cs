@@ -21,7 +21,7 @@ public sealed class GroupDetailsTests : IDisposable
     [Fact]
     public void Group_lines_are_mode_cwd_env_then_description()
     {
-        IReadOnlyList<string> lines = DetailsText.GroupLines(Group("mid"), Session.ConfigDir);
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.GroupLines(Group("mid"), Session.ConfigDir));
 
         Assert.Equal(
             new[]
@@ -38,19 +38,54 @@ public sealed class GroupDetailsTests : IDisposable
             lines);
     }
 
+    private static (string Text, DetailsStyle Style)[] Spans(DetailsLine line) =>
+        line.Spans.Select(span => (span.Text, span.Style)).ToArray();
+
+    [Fact]
+    public void Group_lines_style_the_mode_cwd_and_env_pieces()
+    {
+        IReadOnlyList<DetailsLine> lines = DetailsText.GroupLines(Group("mid"), Session.ConfigDir);
+
+        Assert.Equal(new[] { ("mode: ", DetailsStyle.Label), ("parallel", DetailsStyle.Normal) }, Spans(lines[0]));
+        Assert.Equal(
+            new[]
+            {
+                ("cwd: ", DetailsStyle.Label),
+                ("sub", DetailsStyle.Path),
+                (" → ", DetailsStyle.Faint),
+                (Resolved("src", "sub"), DetailsStyle.Path),
+            },
+            Spans(lines[1]));
+        Assert.Equal(
+            new[] { ("Y", DetailsStyle.EnvName), ("=", DetailsStyle.Faint), ("2", DetailsStyle.EnvValue) },
+            Spans(lines[2]));
+        Assert.Equal(new[] { ("GONE", DetailsStyle.EnvName), (" (unset)", DetailsStyle.Unset) }, Spans(lines[3]));
+        Assert.Equal(new[] { ("Line one", DetailsStyle.Normal) }, Spans(lines[4]));
+    }
+
+    [Fact]
+    public void Group_cwd_shown_once_is_one_path_span()
+    {
+        IReadOnlyList<DetailsLine> lines = DetailsText.GroupLines(Group("other"), Session.ConfigDir);
+
+        Assert.Equal(
+            new[] { ("cwd: ", DetailsStyle.Label), (Session.ConfigDir, DetailsStyle.Path) },
+            Spans(lines[1]));
+    }
+
     [Fact]
     public void Absolute_cwd_setting_equal_to_the_resolved_path_is_shown_once()
     {
         string absolute = Resolved("src");
         var group = Session.AddGroup(null, new GroupSettings("abs", null, GroupMode.Parallel, absolute, null));
 
-        Assert.Equal("cwd: " + absolute, DetailsText.GroupLines(group, Session.ConfigDir)[1]);
+        Assert.Equal("cwd: " + absolute, DetailsText.Plain(DetailsText.GroupLines(group, Session.ConfigDir))[1]);
     }
 
     [Fact]
     public void Top_group_with_a_cwd_setting_shows_setting_and_resolved_path()
     {
-        IReadOnlyList<string> lines = DetailsText.GroupLines(Group("top"), Session.ConfigDir);
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.GroupLines(Group("top"), Session.ConfigDir));
 
         Assert.Equal("cwd: src → " + Resolved("src"), lines[1]);
         Assert.Equal("X=1", lines[2]);
@@ -60,7 +95,7 @@ public sealed class GroupDetailsTests : IDisposable
     [Fact]
     public void Without_a_cwd_setting_only_the_resolved_path_is_shown_through_the_ancestors()
     {
-        IReadOnlyList<string> lines = DetailsText.GroupLines(Group("deep"), Session.ConfigDir);
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.GroupLines(Group("deep"), Session.ConfigDir));
 
         Assert.Equal("mode: sequential", lines[0]);
         Assert.Equal("cwd: " + Resolved("src", "sub"), lines[1]);
@@ -70,7 +105,7 @@ public sealed class GroupDetailsTests : IDisposable
     [Fact]
     public void Group_without_env_or_description_has_only_mode_and_cwd()
     {
-        IReadOnlyList<string> lines = DetailsText.GroupLines(Group("other"), Session.ConfigDir);
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.GroupLines(Group("other"), Session.ConfigDir));
 
         Assert.Equal(new[] { "mode: parallel", "cwd: " + Session.ConfigDir }, lines);
     }
@@ -78,7 +113,7 @@ public sealed class GroupDetailsTests : IDisposable
     [Fact]
     public void Descriptions_are_not_cut()
     {
-        Assert.Equal(new[] { "a", "b", "c", "d" }, DetailsText.DescriptionLines("a\r\nb\nc\nd"));
+        Assert.Equal(new[] { "a", "b", "c", "d" }, DetailsText.Plain(DetailsText.DescriptionLines("a\r\nb\nc\nd")));
         Assert.Empty(DetailsText.DescriptionLines(null));
         Assert.Empty(DetailsText.DescriptionLines(string.Empty));
     }

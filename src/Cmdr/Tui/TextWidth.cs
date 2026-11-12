@@ -97,87 +97,180 @@ internal static class TextWidth
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        var lines = new List<string>();
-        if (width <= 0)
+        var cells = Cells(Clean(text));
+        return WrapRanges(cells, width).Select(range => Join(cells, range.Start, range.End)).ToList();
+    }
+
+    /// <summary>
+    /// Wraps a line made of styled spans with the same breaks as <see cref="Wrap(string, int)"/>: the plain text of each
+    /// returned line is what <see cref="Wrap(string, int)"/> gives for the concatenated text. A span may be split over lines,
+    /// and adjacent characters with the same style form one span within a line. Non-positive widths give no lines.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<(string Text, T Style)>> WrapSpans<T>(
+        IReadOnlyList<(string Text, T Style)> spans,
+        int width)
+    {
+        ArgumentNullException.ThrowIfNull(spans);
+
+        // The style of each UTF-16 unit of the plain text. Cleaning keeps the length, so the offsets still line up.
+        string plain = string.Concat(spans.Select(span => span.Text));
+        var styleAt = new T[plain.Length];
+        int at = 0;
+        foreach ((string text, T style) in spans)
         {
-            return lines;
+            Array.Fill(styleAt, style, at, text.Length);
+            at += text.Length;
         }
 
-        var line = new List<(string Text, int Width)>();
-        int used = 0;
-        foreach (Rune rune in Clean(text).EnumerateRunes())
+        var cells = new List<(string Text, int Width)>();
+        var styles = new List<T>();
+        int offset = 0;
+        foreach (Rune rune in Clean(plain).EnumerateRunes())
         {
-            string s = rune.ToString();
-            int w = Width(rune);
-            while (used + w > width && line.Count > 0)
-            {
-                if (s == " ")
-                {
-                    // A space that does not fit ends the line; the space itself is dropped.
-                    lines.Add(JoinLine(line, TrimmedCount(line, line.Count)));
-                    line.Clear();
-                    used = 0;
-                    break;
-                }
-
-                int space = line.FindLastIndex(c => c.Text == " ");
-                int end = space < 0 ? 0 : TrimmedCount(line, space);
-                if (end > 0)
-                {
-                    // Break after the last space; the partial word after it starts the next line.
-                    lines.Add(JoinLine(line, end));
-                    line.RemoveRange(0, space + 1);
-                    while (line.Count > 0 && line[0].Text == " ")
-                    {
-                        line.RemoveAt(0);
-                    }
-                }
-                else
-                {
-                    lines.Add(JoinLine(line, line.Count));
-                    line.Clear();
-                }
-
-                used = line.Sum(c => c.Width);
-            }
-
-            // Spaces at the start of a wrapped line are dropped.
-            if (s == " " && line.Count == 0 && lines.Count > 0)
-            {
-                continue;
-            }
-
-            line.Add((s, w));
-            used += w;
+            cells.Add((rune.ToString(), Width(rune)));
+            styles.Add(styleAt[offset]);
+            offset += rune.Utf16SequenceLength;
         }
 
-        if (line.Count > 0 || lines.Count == 0)
+        var lines = new List<IReadOnlyList<(string Text, T Style)>>();
+        foreach ((int start, int end) in WrapRanges(cells, width))
         {
-            lines.Add(JoinLine(line, line.Count));
+            var line = new List<(string Text, T Style)>();
+            int runStart = start;
+            for (int i = start + 1; i <= end; i++)
+            {
+                if (i == end || !EqualityComparer<T>.Default.Equals(styles[i], styles[runStart]))
+                {
+                    line.Add((Join(cells, runStart, i), styles[runStart]));
+                    runStart = i;
+                }
+            }
+
+            lines.Add(line);
         }
 
         return lines;
     }
 
-    private static string JoinLine(List<(string Text, int Width)> line, int count)
+    /// <summary>
+    /// The breaking rules of <see cref="Wrap(string, int)"/>, on cells (one per rune: its text and its width). Each line is the
+    /// range of cells it holds, <c>[Start, End)</c>; the cells that fall between one line's end and the next line's start are
+    /// the spaces dropped at a break. Empty cells give one empty range; a width that is not positive gives none.
+    /// </summary>
+    public static List<(int Start, int End)> WrapRanges(IReadOnlyList<(string Text, int Width)> cells, int width)
+    {
+        ArgumentNullException.ThrowIfNull(cells);
+
+        var ranges = new List<(int Start, int End)>();
+        if (width <= 0)
+        {
+            return ranges;
+        }
+
+        // The current line is cells[start, i); used is its width.
+        int start = 0;
+        int used = 0;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            string s = cells[i].Text;
+            int w = cells[i].Width;
+            while (used + w > width && i > start)
+            {
+                if (s == " ")
+                {
+                    // A space that does not fit ends the line; the space itself is dropped.
+                    ranges.Add((start, TrimmedEnd(cells, start, i)));
+                    start = i;
+                    used = 0;
+                    break;
+                }
+
+                int space = LastSpace(cells, start, i);
+                int cut = space < 0 ? start : TrimmedEnd(cells, start, space);
+                if (cut > start)
+                {
+                    // Break after the last space; the partial word after it starts the next line.
+                    ranges.Add((start, cut));
+                    start = space + 1;
+                    while (start < i && cells[start].Text == " ")
+                    {
+                        start++;
+                    }
+                }
+                else
+                {
+                    ranges.Add((start, i));
+                    start = i;
+                }
+
+                used = Sum(cells, start, i);
+            }
+
+            // Spaces at the start of a wrapped line are dropped.
+            if (s == " " && start == i && ranges.Count > 0)
+            {
+                start = i + 1;
+                continue;
+            }
+
+            used += w;
+        }
+
+        if (start < cells.Count || ranges.Count == 0)
+        {
+            ranges.Add((start, cells.Count));
+        }
+
+        return ranges;
+    }
+
+    /// <summary>The cells of cleaned text: one per rune, with its width.</summary>
+    private static List<(string Text, int Width)> Cells(string cleaned) =>
+        cleaned.EnumerateRunes().Select(rune => (rune.ToString(), Width(rune))).ToList();
+
+    private static string Join(IReadOnlyList<(string Text, int Width)> cells, int start, int end)
     {
         var sb = new StringBuilder();
-        for (int i = 0; i < count; i++)
+        for (int i = start; i < end; i++)
         {
-            sb.Append(line[i].Text);
+            sb.Append(cells[i].Text);
         }
 
         return sb.ToString();
     }
 
-    private static int TrimmedCount(List<(string Text, int Width)> line, int count)
+    private static int TrimmedEnd(IReadOnlyList<(string Text, int Width)> cells, int start, int end)
     {
-        while (count > 0 && line[count - 1].Text == " ")
+        while (end > start && cells[end - 1].Text == " ")
         {
-            count--;
+            end--;
         }
 
-        return count;
+        return end;
+    }
+
+    private static int LastSpace(IReadOnlyList<(string Text, int Width)> cells, int start, int end)
+    {
+        for (int i = end - 1; i >= start; i--)
+        {
+            if (cells[i].Text == " ")
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int Sum(IReadOnlyList<(string Text, int Width)> cells, int start, int end)
+    {
+        int total = 0;
+        for (int i = start; i < end; i++)
+        {
+            total += cells[i].Width;
+        }
+
+        return total;
     }
 
     /// <summary>Replaces control characters with spaces, so they cannot disturb the layout.</summary>
