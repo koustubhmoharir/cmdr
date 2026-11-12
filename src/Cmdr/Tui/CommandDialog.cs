@@ -23,7 +23,7 @@ namespace Cmdr.Tui;
 internal sealed class CommandDialog : Dialog<bool>
 {
     private const int DialogWidth = 78;
-    private const int DialogHeight = 19;
+    private const int DialogHeight = 20;
     private const int LeftWidth = 37;
     private const int RightX = 40;
     private const int RightWidth = 36;
@@ -49,6 +49,8 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly Label _logHint;
     private readonly CheckBox _detachLeftovers;
     private readonly OptionSelector<StdinMode> _stdin;
+    private readonly TextField _readyPattern;
+    private readonly TextField _busyPattern;
 
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
@@ -134,6 +136,10 @@ internal sealed class CommandDialog : Dialog<bool>
             Value = initial.Stdin,
         };
 
+        // Left column, below the environment: the readiness patterns, one line each (see CommandForm for the rules).
+        _readyPattern = Field(12, 12, LeftWidth - 12, initial.Ready?.Pattern ?? string.Empty);
+        _busyPattern = Field(12, 13, LeftWidth - 12, initial.Ready?.Busy ?? string.Empty);
+
         View[] root =
         {
             Caption("Group", 0, 0), _group,
@@ -150,6 +156,8 @@ internal sealed class CommandDialog : Dialog<bool>
             _logHint,
             _detachLeftovers,
             Caption("Input", RightX, 12), _stdin,
+            Caption("Ready regex", 0, 12), _readyPattern,
+            Caption("Busy regex", 0, 13), _busyPattern,
         };
         Add(root);
 
@@ -222,7 +230,9 @@ internal sealed class CommandDialog : Dialog<bool>
         LogEnabled: _logEnabled.Value == CheckState.Checked,
         LogPath: _logPath.Text,
         DetachLeftovers: _detachLeftovers.Value == CheckState.Checked,
-        Stdin: _stdin.Value ?? StdinMode.Pipe);
+        Stdin: _stdin.Value ?? StdinMode.Pipe,
+        ReadyPattern: _readyPattern.Text,
+        BusyPattern: _busyPattern.Text);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

@@ -29,6 +29,12 @@ public enum StatusKind
 
     /// <summary>Exited after a graceful stop or a force kill was requested. The exit code does not decide success.</summary>
     Stopped,
+
+    /// <summary>Running, and the command's ready pattern has not matched yet (or a busy pattern matched last).</summary>
+    Starting,
+
+    /// <summary>Running, and the command's ready pattern matched last.</summary>
+    Ready,
 }
 
 /// <summary>The text shown for a command in the list.</summary>
@@ -61,11 +67,24 @@ public static class StatusFormatter
         switch (snapshot.State)
         {
             case ProcessState.Running:
-                return new StatusText("↻", StatusKind.Running, started, Duration(Between(snapshot.StartedAt, now)));
+                return snapshot.Readiness switch
+                {
+                    ProcessReadiness.Starting => new StatusText(
+                        "⧗",
+                        StatusKind.Starting,
+                        started,
+                        FormattableString.Invariant($"starting {Duration(Between(snapshot.ReadinessSince, now))}")),
+                    ProcessReadiness.Ready => new StatusText(
+                        "●",
+                        StatusKind.Ready,
+                        started,
+                        FormattableString.Invariant($"ready · {Duration(Between(snapshot.StartedAt, now))}")),
+                    _ => new StatusText("⧗", StatusKind.Running, started, Duration(Between(snapshot.StartedAt, now))),
+                };
 
             case ProcessState.Stopping:
                 return new StatusText(
-                    "⧗",
+                    "◌",
                     StatusKind.Stopping,
                     started,
                     FormattableString.Invariant($"stopping {Duration(Between(snapshot.StopRequestedAt, now))}"));

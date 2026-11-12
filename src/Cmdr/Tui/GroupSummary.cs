@@ -11,6 +11,8 @@ internal static class GroupSummary
     private static readonly (StatusKind Kind, string Label)[] Labels =
     {
         (StatusKind.Running, "running"),
+        (StatusKind.Starting, "starting"),
+        (StatusKind.Ready, "ready"),
         (StatusKind.Stopping, "stopping"),
         (StatusKind.Queued, "queued"),
         (StatusKind.Failure, "failed"),

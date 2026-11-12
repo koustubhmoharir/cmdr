@@ -83,7 +83,7 @@ public sealed class RowLayoutTests
         CommandMainText marked = MainLine(60, marked: true);
         CommandMainText unmarked = MainLine(60, marked: false);
 
-        Assert.Equal("›", marked.Text.Substring(RowLayout.MarkColumn, 1));
+        Assert.Equal("→", marked.Text.Substring(RowLayout.MarkColumn, 1));
         Assert.Equal(" ", unmarked.Text.Substring(RowLayout.MarkColumn, 1));
         Assert.Equal(marked.GlyphColumn, unmarked.GlyphColumn);
     }
@@ -138,12 +138,12 @@ public sealed class RowLayoutTests
     [InlineData(2)]
     public void Command_glyph_and_name_columns_match_a_sibling_group_header(int depth)
     {
-        // A command in a group at depth d is a sibling of the groups at depth d + 1, whose ⊟ and name it lines up with.
+        // A command in a group at depth d is a sibling of the groups at depth d + 1, whose ▾ and name it lines up with.
         const string groupName = "grp";
         CommandMainText command = RowLayout.FormatCommandMain(40, marked: false, "↻", "web", depth);
         GroupHeaderText header = RowLayout.FormatGroupHeader(40, groupName, GroupMode.Parallel, false, false, string.Empty, depth + 1);
 
-        int markerColumn = header.Text.IndexOf('⊟');
+        int markerColumn = header.Text.IndexOf('▾');
         int nameColumn = header.Text.IndexOf(groupName, StringComparison.Ordinal);
 
         Assert.True(markerColumn >= 0 && nameColumn >= 0);
@@ -153,17 +153,17 @@ public sealed class RowLayoutTests
     }
 
     [Theory]
-    [InlineData(0, true, "› ↻ web")]
+    [InlineData(0, true, "→ ↻ web")]
     [InlineData(0, false, "  ↻ web")]
-    [InlineData(1, true, "›   ↻ web")]
+    [InlineData(1, true, "→   ↻ web")]
     [InlineData(1, false, "    ↻ web")]
-    [InlineData(2, true, "›     ↻ web")]
+    [InlineData(2, true, "→     ↻ web")]
     public void Mark_sits_at_column_0_and_the_glyph_and_name_keep_their_columns(int depth, bool marked, string expected)
     {
         CommandMainText row = RowLayout.FormatCommandMain(40, marked, "↻", "web", depth);
 
         Assert.StartsWith(expected, row.Text);
-        Assert.Equal(marked ? "›" : " ", row.Text.Substring(RowLayout.MarkColumn, 1));
+        Assert.Equal(marked ? "→" : " ", row.Text.Substring(RowLayout.MarkColumn, 1));
         Assert.Equal("↻", row.Text.Substring(2 * depth + 2, 1));
         Assert.Equal(2 * depth + 2, row.GlyphColumn);
         Assert.Equal(2 * depth + 4, row.NameColumn);
@@ -178,10 +178,12 @@ public sealed class RowLayoutTests
     [InlineData("✓")]
     [InlineData("✗")]
     [InlineData("⚠")]
-    [InlineData("›")]
-    [InlineData("⊟")]
-    [InlineData("⊞")]
+    [InlineData("→")]
+    [InlineData("▾")]
+    [InlineData("▸")]
     [InlineData("▶")]
+    [InlineData("●")]
+    [InlineData("◌")]
     public void Glyphs_are_one_column_wide(string glyph)
     {
         Assert.Equal(1, TextWidth.Columns(glyph));
@@ -336,7 +338,7 @@ public sealed class RowLayoutTests
         string text = RowLayout.FormatGroupRow(40, "build", GroupMode.Sequential, sequenceRunning: false, collapsed: false, summary: string.Empty);
 
         Assert.Equal(40, TextWidth.Columns(text));
-        Assert.StartsWith("⊟ build  [sequential]", text);
+        Assert.StartsWith("▾ build  [sequential]", text);
         Assert.DoesNotContain("sequence running", text);
     }
 
@@ -356,7 +358,7 @@ public sealed class RowLayoutTests
         string text = RowLayout.FormatGroupRow(60, "build", GroupMode.Sequential, sequenceRunning: false, collapsed: true, summary: "2 running · 1 queued");
 
         Assert.Equal(60, TextWidth.Columns(text));
-        Assert.StartsWith("⊞ build  [sequential]  2 running · 1 queued", text);
+        Assert.StartsWith("▸ build  [sequential]  2 running · 1 queued", text);
     }
 
     [Fact]
@@ -364,7 +366,7 @@ public sealed class RowLayoutTests
     {
         string text = RowLayout.FormatGroupRow(80, "steps", GroupMode.Sequential, sequenceRunning: true, collapsed: true, summary: "1 running · 2 queued");
 
-        Assert.Equal("⊞ steps  [sequential]  1 running · 2 queued  ▶ sequence running", text.TrimEnd());
+        Assert.Equal("▸ steps  [sequential]  1 running · 2 queued  ▶ sequence running", text.TrimEnd());
     }
 
     [Fact]
@@ -372,7 +374,7 @@ public sealed class RowLayoutTests
     {
         string text = RowLayout.FormatGroupRow(40, "build", GroupMode.Parallel, sequenceRunning: false, collapsed: true, summary: string.Empty);
 
-        Assert.Equal("⊞ build  [parallel]", text.TrimEnd());
+        Assert.Equal("▸ build  [parallel]", text.TrimEnd());
     }
 
     [Fact]
@@ -380,7 +382,7 @@ public sealed class RowLayoutTests
     {
         string text = RowLayout.FormatGroupRow(60, "build", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: "2 running");
 
-        Assert.StartsWith("⊟ build  [parallel]", text);
+        Assert.StartsWith("▾ build  [parallel]", text);
         Assert.DoesNotContain("2 running", text);
     }
 

@@ -162,4 +162,53 @@ public sealed class CommandFormTests
         Assert.Single(GroupForm.Validate("Build", new[] { "build" }));
         Assert.Empty(GroupForm.Validate("Build", new[] { "servers" }));
     }
+
+    [Fact]
+    public void Ready_and_busy_patterns_build_a_ready_spec()
+    {
+        CommandSpec spec = CommandForm.Build(Valid() with { ReadyPattern = "listening on", BusyPattern = "rebuilding" });
+
+        Assert.NotNull(spec.Ready);
+        Assert.Equal("listening on", spec.Ready!.Pattern);
+        Assert.Equal("rebuilding", spec.Ready.Busy);
+        Assert.Empty(CommandForm.Validate(Valid() with { ReadyPattern = "listening on", BusyPattern = "rebuilding" }, Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void Ready_pattern_alone_builds_a_ready_spec_without_busy()
+    {
+        CommandSpec spec = CommandForm.Build(Valid() with { ReadyPattern = "ready", BusyPattern = "   " });
+
+        Assert.NotNull(spec.Ready);
+        Assert.Equal("ready", spec.Ready!.Pattern);
+        Assert.Null(spec.Ready.Busy);
+    }
+
+    [Fact]
+    public void Blank_ready_pattern_builds_no_ready_spec()
+    {
+        Assert.Null(CommandForm.Build(Valid() with { ReadyPattern = "  ", BusyPattern = "" }).Ready);
+        Assert.Null(CommandForm.Build(Valid()).Ready);
+    }
+
+    [Fact]
+    public void Busy_pattern_without_ready_pattern_is_an_error()
+    {
+        IReadOnlyList<string> errors = CommandForm.Validate(Valid() with { ReadyPattern = " ", BusyPattern = "rebuild" }, Array.Empty<string>());
+
+        Assert.Single(errors);
+        Assert.Equal("Busy pattern needs a ready pattern.", errors[0]);
+    }
+
+    [Fact]
+    public void Invalid_ready_or_busy_regex_is_an_error()
+    {
+        IReadOnlyList<string> ready = CommandForm.Validate(Valid() with { ReadyPattern = "(open" }, Array.Empty<string>());
+        IReadOnlyList<string> busy = CommandForm.Validate(Valid() with { ReadyPattern = "ok", BusyPattern = "[x" }, Array.Empty<string>());
+
+        Assert.Single(ready);
+        Assert.StartsWith("Ready pattern is not a valid regular expression", ready[0]);
+        Assert.Single(busy);
+        Assert.StartsWith("Busy pattern is not a valid regular expression", busy[0]);
+    }
 }

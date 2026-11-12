@@ -27,6 +27,13 @@ public class CommandSpec : ItemSpec
     public LogSpec Log { get; set; } = new();
 
     /// <summary>
+    /// Readiness patterns (see <see cref="ReadySpec"/>). Null when the command does not declare any; then it is never
+    /// shown as starting or ready. Omitted from the configuration file when null.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ReadySpec? Ready { get; set; }
+
+    /// <summary>
     /// What happens to processes left running after the leader exits on its own. Defaults to <see cref="LeftoverMode.Track"/>;
     /// the default is not written to the configuration file.
     /// </summary>
@@ -51,6 +58,7 @@ public class CommandSpec : ItemSpec
         Env = new Dictionary<string, string?>(Env),
         Stop = new StopSpec { Method = Stop.Method, Input = Stop.Input },
         Log = new LogSpec { Enabled = Log.Enabled, Path = Log.Path },
+        Ready = Ready?.Clone(),
         Leftovers = Leftovers,
         Stdin = Stdin,
     };

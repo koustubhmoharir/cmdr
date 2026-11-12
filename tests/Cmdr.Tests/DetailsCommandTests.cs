@@ -125,6 +125,44 @@ public sealed class DetailsCommandTests : IDisposable
     }
 
     [Fact]
+    public void Ready_and_busy_patterns_are_listed_with_their_labels()
+    {
+        Run.Spec.Ready = new ReadySpec { Pattern = "listening on \\d+", Busy = "rebuilding" };
+        IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+        IReadOnlyList<string> plain = DetailsText.Plain(lines);
+
+        int index = plain.ToList().IndexOf("ready: listening on \\d+");
+        Assert.True(index > 0);
+        Assert.Equal(
+            new[] { ("ready: ", DetailsStyle.Label), ("listening on \\d+", DetailsStyle.Normal) },
+            Spans(lines[index]));
+        Assert.Equal("busy: rebuilding", plain[index + 1]);
+        Assert.Equal(
+            new[] { ("busy: ", DetailsStyle.Label), ("rebuilding", DetailsStyle.Normal) },
+            Spans(lines[index + 1]));
+        Assert.StartsWith("pid ", plain[index + 2]);
+    }
+
+    [Fact]
+    public void Ready_pattern_alone_lists_no_busy_line()
+    {
+        Run.Spec.Ready = new ReadySpec { Pattern = "ready" };
+        IReadOnlyList<string> plain = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
+
+        Assert.Contains("ready: ready", plain);
+        Assert.DoesNotContain(plain, line => line.StartsWith("busy:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Command_without_ready_pattern_lists_no_ready_lines()
+    {
+        IReadOnlyList<string> plain = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
+
+        Assert.DoesNotContain(plain, line => line.StartsWith("ready:", StringComparison.Ordinal));
+        Assert.DoesNotContain(plain, line => line.StartsWith("busy:", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Windows_command_row_uses_the_prompt_style_for_its_prompt()
     {
         IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');

@@ -146,6 +146,16 @@ internal static class DetailsText
             lines.Add(Line(new DetailsSpan("stdin: ", DetailsStyle.Label), new DetailsSpan("console", DetailsStyle.Normal)));
         }
 
+        // The readiness patterns, when the command declares them. A busy pattern is only listed with a ready pattern.
+        if (spec.Ready is { } ready)
+        {
+            lines.Add(Line(new DetailsSpan("ready: ", DetailsStyle.Label), new DetailsSpan(ready.Pattern, DetailsStyle.Normal)));
+            if (ready.Busy is not null)
+            {
+                lines.Add(Line(new DetailsSpan("busy: ", DetailsStyle.Label), new DetailsSpan(ready.Busy, DetailsStyle.Normal)));
+            }
+        }
+
         string pid = entry.Process.Snapshot.Pid?.ToString(CultureInfo.InvariantCulture) ?? "—";
         string log = entry.Process.Output.IsLogging ? entry.Process.Output.LogPath ?? "on" : "off";
         lines.Add(Line(new DetailsSpan("pid " + pid + " · log: " + log, DetailsStyle.Faint)));

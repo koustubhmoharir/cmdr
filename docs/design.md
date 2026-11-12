@@ -79,6 +79,11 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 - Relative `log.path` resolves against `logsDir`. Default log path: `<logsDir>/<group>/<command>.log`.
 - Default `stop.method` is `ctrlC`. Default `bufferLines` is 10000.
 - `leftovers`: `track` (default, not written) or `detach`. See Process supervision.
+- `ready` (optional): `{ "pattern": "<regex>", "busy": "<regex>" }`. Matched against each completed
+  output line (plain text, stdout and stderr). A run starts as starting; a line matching `pattern`
+  makes it ready, a line matching `busy` (and not `pattern`) makes it starting again (e.g. a rebuild).
+  Status glyphs while running: `⧗` starting/busy (yellow; also every running command without `ready`),
+  `●` ready (green), `◌` stopping (red).
 - Explicit save only (Ctrl+S). Unsaved changes are marked `*` in the title; quit prompts.
 
 ### Base file

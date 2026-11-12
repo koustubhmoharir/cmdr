@@ -18,6 +18,7 @@ namespace Cmdr.Core.Processes;
 /// <param name="StopInput">Text written to stdin for the <see cref="StopMethod.Input"/> stop method.</param>
 /// <param name="Leftovers">What happens to processes left running after the leader exits on its own.</param>
 /// <param name="Stdin">Where the standard input comes from. <see cref="StdinMode.Console"/> is honoured on Windows only.</param>
+/// <param name="Ready">Readiness patterns of the command, or null when it declares none. Each run matches its own output against them.</param>
 public sealed record LaunchSpec(
     string Program,
     IReadOnlyList<string> Args,
@@ -27,7 +28,8 @@ public sealed record LaunchSpec(
     StopMethod StopMethod,
     string? StopInput,
     LeftoverMode Leftovers = LeftoverMode.Track,
-    StdinMode Stdin = StdinMode.Pipe)
+    StdinMode Stdin = StdinMode.Pipe,
+    ReadySpec? Ready = null)
 {
     /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
@@ -64,6 +66,7 @@ public sealed record LaunchSpec(
             spec.Stop.Method,
             spec.Stop.Input,
             spec.Leftovers,
-            spec.Stdin);
+            spec.Stdin,
+            spec.Ready?.Clone());
     }
 }

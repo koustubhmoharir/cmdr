@@ -17,8 +17,10 @@ public class StatusFormatterTests
         DateTimeOffset? stopRequestedAt = null,
         int? exitCode = null,
         int leftovers = 0,
-        bool stopRequested = false) =>
-        new(state, 42, startedAt, exitedAt, stopRequestedAt, exitCode, null, leftovers, stopRequested);
+        bool stopRequested = false,
+        ProcessReadiness readiness = ProcessReadiness.None,
+        DateTimeOffset? readinessSince = null) =>
+        new(state, 42, startedAt, exitedAt, stopRequestedAt, exitCode, null, leftovers, stopRequested, readiness, readinessSince);
 
     [Fact]
     public void NotStarted_IsIdle()
@@ -47,13 +49,44 @@ public class StatusFormatterTests
     }
 
     [Fact]
-    public void Running_ShowsStartAndElapsed()
+    public void Running_WithoutReadySpec_ShowsStartAndElapsed()
     {
         DateTimeOffset now = Started.AddMinutes(12).AddSeconds(51);
 
         StatusText text = StatusFormatter.Format(Snap(ProcessState.Running, Started), queued: false, now);
 
-        Assert.Equal(new StatusText("↻", StatusKind.Running, LocalStart, "12:51"), text);
+        Assert.Equal(new StatusText("⧗", StatusKind.Running, LocalStart, "12:51"), text);
+    }
+
+    [Fact]
+    public void Running_Starting_ShowsTimeSinceStartingBegan()
+    {
+        // Started long ago, but the current starting phase began 7 seconds before "now".
+        DateTimeOffset now = Started.AddMinutes(3);
+        ProcessSnapshot snapshot = Snap(
+            ProcessState.Running,
+            Started,
+            readiness: ProcessReadiness.Starting,
+            readinessSince: now.AddSeconds(-7));
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, now);
+
+        Assert.Equal(new StatusText("⧗", StatusKind.Starting, LocalStart, "starting 0:07"), text);
+    }
+
+    [Fact]
+    public void Running_Ready_ShowsTotalRunningTime()
+    {
+        DateTimeOffset now = Started.AddMinutes(12).AddSeconds(51);
+        ProcessSnapshot snapshot = Snap(
+            ProcessState.Running,
+            Started,
+            readiness: ProcessReadiness.Ready,
+            readinessSince: now.AddMinutes(-1));
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, now);
+
+        Assert.Equal(new StatusText("●", StatusKind.Ready, LocalStart, "ready · 12:51"), text);
     }
 
     [Fact]
@@ -63,7 +96,25 @@ public class StatusFormatterTests
 
         StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddSeconds(13));
 
-        Assert.Equal(new StatusText("⧗", StatusKind.Stopping, LocalStart, "stopping 0:03"), text);
+        Assert.Equal(new StatusText("◌", StatusKind.Stopping, LocalStart, "stopping 0:03"), text);
+    }
+
+    [Theory]
+    [InlineData(ProcessReadiness.None)]
+    [InlineData(ProcessReadiness.Starting)]
+    [InlineData(ProcessReadiness.Ready)]
+    public void Stopping_KeepsStoppingStatusWhateverTheReadiness(ProcessReadiness readiness)
+    {
+        ProcessSnapshot snapshot = Snap(
+            ProcessState.Stopping,
+            Started,
+            stopRequestedAt: Started.AddSeconds(10),
+            readiness: readiness,
+            readinessSince: Started);
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddSeconds(13));
+
+        Assert.Equal(new StatusText("◌", StatusKind.Stopping, LocalStart, "stopping 0:03"), text);
     }
 
     [Fact]

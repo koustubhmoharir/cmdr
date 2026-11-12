@@ -11,6 +11,9 @@ namespace Cmdr.Core.Processes;
 /// <param name="LeftoverCount">Live processes left in the group after the leader exited; 0 otherwise.</param>
 /// <param name="StopRequested">True when a graceful stop or a force kill was requested while the run was active. Set when the
 /// leader exits and kept afterwards; the exit code of a stopped run says nothing about whether it succeeded.</param>
+/// <param name="Readiness">Readiness of the current run, from the command's ready patterns. <see cref="ProcessReadiness.None"/> when
+/// the command has none, or is not running.</param>
+/// <param name="ReadinessSince">When the current <see cref="Readiness"/> phase began; null when <see cref="Readiness"/> is None.</param>
 public sealed record ProcessSnapshot(
     ProcessState State,
     int? Pid,
@@ -20,4 +23,19 @@ public sealed record ProcessSnapshot(
     int? ExitCode,
     string? Error,
     int LeftoverCount,
-    bool StopRequested = false);
+    bool StopRequested = false,
+    ProcessReadiness Readiness = ProcessReadiness.None,
+    DateTimeOffset? ReadinessSince = null);
+
+/// <summary>Readiness of a running command, as declared by its ready patterns.</summary>
+public enum ProcessReadiness
+{
+    /// <summary>The command declares no ready patterns, or is not running.</summary>
+    None,
+
+    /// <summary>Running, and not (or no longer) showing its ready output.</summary>
+    Starting,
+
+    /// <summary>Running, and the last decisive output line matched the ready pattern.</summary>
+    Ready,
+}

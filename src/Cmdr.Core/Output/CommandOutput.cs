@@ -14,6 +14,7 @@ namespace Cmdr.Core.Output;
 public sealed class CommandOutput : IDisposable
 {
     private readonly object _sync = new();
+    private readonly object _notifySync = new();
     private readonly OutputBuffer _buffer;
     private readonly List<OutputLine> _completed = new();
 
@@ -34,6 +35,17 @@ public sealed class CommandOutput : IDisposable
 
     /// <summary>The in-memory output buffer displayed by the UI.</summary>
     public OutputBuffer Buffer => _buffer;
+
+    /// <summary>
+    /// Raised with the lines that a call to <see cref="WriteStdOut"/> or <see cref="WriteStdErr"/> completed: process output
+    /// only, not system lines and not partial lines. Lines are already in <see cref="Buffer"/> when this is raised.
+    /// </summary>
+    /// <remarks>
+    /// Raised on the writing thread, after the internal lock is released, so a handler may call back into this object's
+    /// read members. Notifications are serialized and follow buffer order, also across stdout and stderr. A handler
+    /// must not write output itself (it would be notified re-entrantly) and must not block on another thread that writes output.
+    /// </remarks>
+    public event Action<IReadOnlyList<OutputLine>>? ProcessLinesCompleted;
 
     /// <summary>Whether output is currently being written to a log file.</summary>
     public bool IsLogging
@@ -83,22 +95,10 @@ public sealed class CommandOutput : IDisposable
     }
 
     /// <summary>Writes a chunk of standard output.</summary>
-    public void WriteStdOut(ReadOnlySpan<char> chunk)
-    {
-        lock (_sync)
-        {
-            WriteChunkLocked(_stdOutParser, OutputSource.StdOut, chunk);
-        }
-    }
+    public void WriteStdOut(ReadOnlySpan<char> chunk) => WriteProcessChunk(OutputSource.StdOut, chunk);
 
     /// <summary>Writes a chunk of standard error.</summary>
-    public void WriteStdErr(ReadOnlySpan<char> chunk)
-    {
-        lock (_sync)
-        {
-            WriteChunkLocked(_stdErrParser, OutputSource.StdErr, chunk);
-        }
-    }
+    public void WriteStdErr(ReadOnlySpan<char> chunk) => WriteProcessChunk(OutputSource.StdErr, chunk);
 
     /// <summary>Appends a system line (or several, if <paramref name="message"/> contains newlines).</summary>
     public void WriteSystem(string message)
@@ -218,15 +218,44 @@ public sealed class CommandOutput : IDisposable
         DisableLog();
     }
 
-    private void WriteChunkLocked(AnsiLineParser parser, OutputSource source, ReadOnlySpan<char> chunk)
+    /// <summary>
+    /// Appends a process output chunk, then notifies <see cref="ProcessLinesCompleted"/> with the lines it completed.
+    /// </summary>
+    /// <remarks>
+    /// Lock order: <c>_notifySync</c>, then <c>_sync</c>. <c>_notifySync</c> is taken only here, so an owner of this output
+    /// must never call these methods while holding its own lock. Callers that write process output must hold no lock.
+    /// The handler runs outside <c>_sync</c>, so a handler may take an owner's lock as long as that owner does not write
+    /// process output while holding it.
+    /// </remarks>
+    private void WriteProcessChunk(OutputSource source, ReadOnlySpan<char> chunk)
+    {
+        lock (_notifySync)
+        {
+            IReadOnlyList<OutputLine> completed;
+            lock (_sync)
+            {
+                completed = WriteChunkLocked(source == OutputSource.StdOut ? _stdOutParser : _stdErrParser, source, chunk);
+            }
+
+            if (completed.Count > 0)
+            {
+                ProcessLinesCompleted?.Invoke(completed);
+            }
+        }
+    }
+
+    /// <summary>Parses and appends one chunk. Returns the lines it completed (a copy, safe to use after the lock is released).</summary>
+    private IReadOnlyList<OutputLine> WriteChunkLocked(AnsiLineParser parser, OutputSource source, ReadOnlySpan<char> chunk)
     {
         _completed.Clear();
         parser.Feed(chunk, _completed);
         AppendLinesLocked(_completed);
+        IReadOnlyList<OutputLine> completed = _completed.Count == 0 ? Array.Empty<OutputLine>() : _completed.ToArray();
         _completed.Clear();
 
         _buffer.SetPartial(source, parser.Partial);
         FlushLogLocked();
+        return completed;
     }
 
     private void AppendSystemLocked(string message)

@@ -65,6 +65,23 @@ public sealed class StatusColorsTests
         Assert.Equal(bright, StatusColors.For(kind, default, NormalForeground));
     }
 
+    [Fact]
+    public void Running_and_starting_are_yellow_and_stopping_is_red_like_failure()
+    {
+        Assert.Equal(
+            StatusColors.For(StatusKind.Failure, Black, NormalForeground),
+            StatusColors.For(StatusKind.Stopping, Black, NormalForeground));
+        Assert.Equal(
+            StatusColors.For(StatusKind.Stopping, White, NormalForeground),
+            StatusColors.For(StatusKind.Failure, White, NormalForeground));
+        Assert.Equal(
+            StatusColors.For(StatusKind.Running, White, NormalForeground),
+            StatusColors.For(StatusKind.Starting, White, NormalForeground));
+        Assert.NotEqual(
+            StatusColors.For(StatusKind.Running, White, NormalForeground),
+            StatusColors.For(StatusKind.Ready, White, NormalForeground));
+    }
+
     [Theory]
     [InlineData(StatusKind.Idle)]
     [InlineData(StatusKind.Stopped)]
@@ -78,9 +95,11 @@ public sealed class StatusColorsTests
     /// <summary>The bright variant of each coloured kind.</summary>
     public static TheoryData<StatusKind, Color> BrightVariants() => new()
     {
-        { StatusKind.Running, new Color(ColorName16.BrightGreen) },
+        { StatusKind.Running, new Color(ColorName16.BrightYellow) },
+        { StatusKind.Starting, new Color(ColorName16.BrightYellow) },
+        { StatusKind.Ready, new Color(ColorName16.BrightGreen) },
         { StatusKind.Success, new Color(ColorName16.BrightGreen) },
-        { StatusKind.Stopping, new Color(ColorName16.BrightYellow) },
+        { StatusKind.Stopping, new Color(ColorName16.BrightRed) },
         { StatusKind.Failure, new Color(ColorName16.BrightRed) },
         { StatusKind.Warning, BrightWarning },
         { StatusKind.Queued, new Color(ColorName16.BrightCyan) },
@@ -89,9 +108,11 @@ public sealed class StatusColorsTests
     /// <summary>The dark variant of each coloured kind.</summary>
     public static TheoryData<StatusKind, Color> DarkVariants() => new()
     {
-        { StatusKind.Running, new Color(0x10, 0x7C, 0x10) },
+        { StatusKind.Running, new Color(0x6B, 0x60, 0x00) },
+        { StatusKind.Starting, new Color(0x6B, 0x60, 0x00) },
+        { StatusKind.Ready, new Color(0x10, 0x7C, 0x10) },
         { StatusKind.Success, new Color(0x10, 0x7C, 0x10) },
-        { StatusKind.Stopping, new Color(0x6B, 0x60, 0x00) },
+        { StatusKind.Stopping, new Color(0xC5, 0x0F, 0x1F) },
         { StatusKind.Failure, new Color(0xC5, 0x0F, 0x1F) },
         { StatusKind.Warning, new Color(0x8A, 0x5A, 0x00) },
         { StatusKind.Queued, new Color(0x0F, 0x6B, 0x73) },

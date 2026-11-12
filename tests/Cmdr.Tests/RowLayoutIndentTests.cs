@@ -54,7 +54,7 @@ public sealed class RowLayoutIndentTests
         CommandMainText unmarked = RowLayout.FormatCommandMain(60, marked: false, "↻", "web", depth);
 
         Assert.Equal(RowLayout.MarkColumn, 0);
-        Assert.Equal("›", marked.Text.Substring(0, 1));
+        Assert.Equal("→", marked.Text.Substring(0, 1));
         Assert.Equal(" ", unmarked.Text.Substring(0, 1));
         Assert.Equal(new string(' ', 2 * depth + 1), marked.Text.Substring(1, 2 * depth + 1));
         Assert.Equal(2 * depth + 2, marked.GlyphColumn);
@@ -146,7 +146,7 @@ public sealed class RowLayoutIndentTests
         string text = RowLayout.FormatGroupRow(40, "nav", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: string.Empty, depth: 2);
 
         Assert.Equal(40, TextWidth.Columns(text));
-        Assert.Equal("    ⊟ nav  [parallel]", text.TrimEnd());
+        Assert.Equal("    ▾ nav  [parallel]", text.TrimEnd());
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public sealed class RowLayoutIndentTests
     {
         string text = RowLayout.FormatGroupRow(60, "deep", GroupMode.Sequential, sequenceRunning: false, collapsed: true, summary: "2 failed", depth: 1);
 
-        Assert.Equal("  ⊞ deep  [sequential]  2 failed", text.TrimEnd());
+        Assert.Equal("  ▸ deep  [sequential]  2 failed", text.TrimEnd());
     }
 
     [Fact]

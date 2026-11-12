@@ -551,4 +551,61 @@ public class CommandOutputTests : IDisposable
         output.Dispose();
         output.Dispose();
     }
+
+    [Fact]
+    public void ProcessLinesCompleted_ReportsCompletedProcessLinesOnly()
+    {
+        var notified = new List<OutputLine>();
+        _output.ProcessLinesCompleted += lines => notified.AddRange(lines);
+
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\nb");
+        _output.WriteSystem("system line");
+        _output.WriteStdErr("e\n");
+        _output.EndRun("exit 0");
+
+        // "b" is partial until the run ends, and system lines never reach the handler.
+        Assert.Equal(new[] { "a", "e" }, Texts(notified));
+        Assert.Equal(new[] { OutputSource.StdOut, OutputSource.StdErr }, notified.Select(l => l.Source));
+    }
+
+    [Fact]
+    public void ProcessLinesCompleted_ReportsPlainTextWithoutAnsi()
+    {
+        var notified = new List<OutputLine>();
+        _output.ProcessLinesCompleted += lines => notified.AddRange(lines);
+
+        _output.WriteStdOut("\u001B[31mred\u001B[0m\n");
+
+        Assert.Equal(new[] { "red" }, Texts(notified));
+    }
+
+    [Fact]
+    public void ProcessLinesCompleted_RunsAfterTheLinesAreInTheBuffer()
+    {
+        int countSeen = -1;
+        string? lastSeen = null;
+        _output.ProcessLinesCompleted += lines =>
+        {
+            countSeen = _output.Buffer.Count;
+            lastSeen = _output.Buffer.GetLines(_output.Buffer.Count - 1, 1)[0].PlainText;
+        };
+
+        _output.BeginRun(Start);
+        _output.WriteStdOut("first\nsecond\n");
+
+        Assert.Equal(3, countSeen);
+        Assert.Equal("second", lastSeen);
+    }
+
+    [Fact]
+    public void ProcessLinesCompleted_HandlerMayReadTheOutputWithoutDeadlock()
+    {
+        bool logging = true;
+        _output.ProcessLinesCompleted += _ => logging = _output.IsLogging;
+
+        _output.WriteStdOut("line\n");
+
+        Assert.False(logging);
+    }
 }

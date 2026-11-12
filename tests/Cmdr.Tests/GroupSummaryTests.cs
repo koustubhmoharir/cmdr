@@ -58,4 +58,23 @@ public sealed class GroupSummaryTests
 
         Assert.Equal("1 queued", text);
     }
+
+    [Fact]
+    public void Starting_and_ready_are_counted_after_running()
+    {
+        string text = GroupSummary.Compose(new[]
+        {
+            StatusKind.Ready, StatusKind.Stopping, StatusKind.Starting, StatusKind.Running, StatusKind.Ready,
+        });
+
+        Assert.Equal("1 running · 1 starting · 2 ready · 1 stopping", text);
+    }
+
+    [Fact]
+    public void Stopped_starting_and_ready_example()
+    {
+        string text = GroupSummary.Compose(new[] { StatusKind.Starting, StatusKind.Ready, StatusKind.Stopped });
+
+        Assert.Equal("1 starting · 1 ready", text);
+    }
 }

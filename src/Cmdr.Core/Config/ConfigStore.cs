@@ -275,6 +275,12 @@ public static class ConfigStore
         cmd.Stop ??= new StopSpec();
         cmd.Log ??= new LogSpec();
         cmd.Args ??= new List<string>();
+        // A JSON null for "ready" means no readiness patterns, the same as omitting it. A null pattern becomes blank,
+        // which validation reports.
+        if (cmd.Ready is not null)
+        {
+            cmd.Ready.Pattern ??= "";
+        }
 
         for (int a = 0; a < cmd.Args.Count; a++)
         {

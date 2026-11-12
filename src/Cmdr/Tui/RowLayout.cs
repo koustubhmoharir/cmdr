@@ -26,7 +26,7 @@ internal static class RowLayout
 
     /// <summary>
     /// Column of the status glyph in a command's main line, relative to the indent of the command's group: mark + spaces + glyph,
-    /// with the mark at <see cref="MarkColumn"/>. It is the same column as the ⊟/⊞ of a group header one depth deeper (a sibling
+    /// with the mark at <see cref="MarkColumn"/>. It is the same column as the ▾/▸ of a group header one depth deeper (a sibling
     /// of the command).
     /// </summary>
     public const int GlyphColumn = 2;
@@ -37,7 +37,7 @@ internal static class RowLayout
     /// </summary>
     public const int NameColumn = 4;
 
-    private const string Marked = "›";
+    private const string Marked = "→";
     private const string Unmarked = " ";
     private const string NoValue = "—";
     private const string NotStartedText = "not started";
@@ -52,7 +52,7 @@ internal static class RowLayout
     public static int CommandDetailIndent(int depth) => NameColumn + IndentOf(depth);
 
     /// <summary>
-    /// Formats the main line of a command: <c>"&lt;mark&gt;&lt;indent&gt; &lt;glyph&gt; &lt;name…&gt;"</c>, where the mark is "›" when marked
+    /// Formats the main line of a command: <c>"&lt;mark&gt;&lt;indent&gt; &lt;glyph&gt; &lt;name…&gt;"</c>, where the mark is "→" when marked
     /// and " " otherwise, always at <see cref="MarkColumn"/> (column 0), and the indent is <see cref="IndentOf"/> the depth of the
     /// command's group. The name uses all remaining width and is truncated with an ellipsis only when it does not fit. Narrow
     /// widths drop the name first, then the glyph; a width that does not pass the indent gives a blank line. The returned columns
@@ -101,8 +101,8 @@ internal static class RowLayout
     }
 
     /// <summary>
-    /// Formats a group header: <c>"⊟ &lt;name&gt;  [parallel|sequential]"</c>, followed by <c>"  ▶ sequence running"</c> while a
-    /// sequence runs. A collapsed header shows <c>"⊞"</c> and <paramref name="summary"/> after the mode. The header is indented by
+    /// Formats a group header: <c>"▾ &lt;name&gt;  [parallel|sequential]"</c>, followed by <c>"  ▶ sequence running"</c> while a
+    /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. The header is indented by
     /// <see cref="IndentOf"/> <paramref name="depth"/>. Truncated and padded to <paramref name="width"/>.
     /// </summary>
     public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0) =>
@@ -128,7 +128,7 @@ internal static class RowLayout
 
         string modeText = mode == GroupMode.Sequential ? "sequential" : "parallel";
         // The summary of a collapsed header comes before the sequence marker, so that it is the part that stays visible when narrow.
-        string text = (collapsed ? "⊞ " : "⊟ ") + name + "  [" + modeText + "]"
+        string text = (collapsed ? "▸ " : "▾ ") + name + "  [" + modeText + "]"
             + (collapsed && summary.Length > 0 ? "  " + summary : string.Empty)
             + (sequenceRunning ? "  ▶ sequence running" : string.Empty);
 

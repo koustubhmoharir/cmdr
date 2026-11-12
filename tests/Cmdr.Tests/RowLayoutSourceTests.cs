@@ -16,9 +16,9 @@ public sealed class RowLayoutSourceTests
     {
         GroupHeaderText header = Header(60);
 
-        Assert.Equal("⊟ shared  [parallel]  " + Label, header.Text.TrimEnd());
+        Assert.Equal("▾ shared  [parallel]  " + Label, header.Text.TrimEnd());
         Assert.Equal(Label, header.SourceText);
-        Assert.Equal(TextWidth.Columns("⊟ shared  [parallel]  "), header.SourceColumn);
+        Assert.Equal(TextWidth.Columns("▾ shared  [parallel]  "), header.SourceColumn);
         Assert.Equal(Label, header.Text.Substring(header.SourceColumn, Label.Length));
     }
 
@@ -33,13 +33,13 @@ public sealed class RowLayoutSourceTests
     [Fact]
     public void Label_is_dropped_before_the_header_is_truncated()
     {
-        // "⊟ shared  [parallel]" is 20 columns; with the label it needs 20 + 2 + 16 = 38.
+        // "▾ shared  [parallel]" is 20 columns; with the label it needs 20 + 2 + 16 = 38.
         GroupHeaderText header = Header(37);
 
         Assert.Equal(-1, header.SourceColumn);
         Assert.Equal(string.Empty, header.SourceText);
         Assert.Equal(RowLayout.FormatGroupRow(37, "shared", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: string.Empty), header.Text);
-        Assert.Equal("⊟ shared  [parallel]", header.Text.TrimEnd());
+        Assert.Equal("▾ shared  [parallel]", header.Text.TrimEnd());
     }
 
     [Fact]
@@ -75,7 +75,7 @@ public sealed class RowLayoutSourceTests
     {
         GroupHeaderText header = Header(70, depth: 2);
 
-        Assert.Equal(4 + TextWidth.Columns("⊟ shared  [parallel]  "), header.SourceColumn);
+        Assert.Equal(4 + TextWidth.Columns("▾ shared  [parallel]  "), header.SourceColumn);
         Assert.Equal(Label, header.Text.Substring(header.SourceColumn, Label.Length));
     }
 

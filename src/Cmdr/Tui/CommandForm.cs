@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 
@@ -16,7 +17,9 @@ internal sealed record CommandFormValues(
     bool LogEnabled,
     string LogPath,
     bool DetachLeftovers,
-    StdinMode Stdin);
+    StdinMode Stdin,
+    string ReadyPattern = "",
+    string BusyPattern = "");
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -51,6 +54,8 @@ internal static class CommandForm
         {
             errors.Add("Env: " + error);
         }
+
+        errors.AddRange(ValidateReady(values.ReadyPattern, values.BusyPattern));
 
         // The stop input is only used by the Input method; other values are not checked.
         if (values.Method == StopMethod.Input)
@@ -102,7 +107,66 @@ internal static class CommandForm
             Log = new LogSpec { Enabled = values.LogEnabled, Path = logPath },
             Leftovers = values.DetachLeftovers ? LeftoverMode.Detach : LeftoverMode.Track,
             Stdin = values.Stdin,
+            Ready = BuildReady(values.ReadyPattern, values.BusyPattern),
         };
+    }
+
+    /// <summary>
+    /// The errors of the readiness patterns: a busy pattern needs a ready pattern, and each non-blank pattern must be a valid
+    /// regular expression (the same rule as the configuration check).
+    /// </summary>
+    private static IEnumerable<string> ValidateReady(string readyPattern, string busyPattern)
+    {
+        bool hasReady = !string.IsNullOrWhiteSpace(readyPattern);
+        bool hasBusy = !string.IsNullOrWhiteSpace(busyPattern);
+
+        if (!hasReady)
+        {
+            if (hasBusy)
+            {
+                yield return "Busy pattern needs a ready pattern.";
+            }
+
+            yield break;
+        }
+
+        if (!IsValidRegex(readyPattern))
+        {
+            yield return $"Ready pattern is not a valid regular expression: '{readyPattern}'.";
+        }
+
+        if (hasBusy && !IsValidRegex(busyPattern))
+        {
+            yield return $"Busy pattern is not a valid regular expression: '{busyPattern}'.";
+        }
+    }
+
+    /// <summary>The readiness settings: null when there is no ready pattern; the busy pattern only when it is not blank.</summary>
+    private static ReadySpec? BuildReady(string readyPattern, string busyPattern)
+    {
+        if (string.IsNullOrWhiteSpace(readyPattern))
+        {
+            return null;
+        }
+
+        return new ReadySpec
+        {
+            Pattern = readyPattern,
+            Busy = string.IsNullOrWhiteSpace(busyPattern) ? null : busyPattern,
+        };
+    }
+
+    private static bool IsValidRegex(string pattern)
+    {
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.CultureInvariant);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 }
 

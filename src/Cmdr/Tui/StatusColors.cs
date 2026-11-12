@@ -52,17 +52,19 @@ internal static class StatusColors
     {
         switch (kind)
         {
-            case StatusKind.Running:
+            case StatusKind.Ready:
             case StatusKind.Success:
                 bright = new Color(ColorName16.BrightGreen);
                 dark = DarkGreen;
                 return true;
 
-            case StatusKind.Stopping:
+            case StatusKind.Running:
+            case StatusKind.Starting:
                 bright = new Color(ColorName16.BrightYellow);
                 dark = DarkOlive;
                 return true;
 
+            case StatusKind.Stopping:
             case StatusKind.Failure:
                 bright = new Color(ColorName16.BrightRed);
                 dark = DarkRed;

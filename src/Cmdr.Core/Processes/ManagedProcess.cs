@@ -37,6 +37,7 @@ public sealed class ManagedProcess : IDisposable
     private bool _forceKillRequested;
     private string? _inputAfterInterrupt;
     private int _runId;
+    private ReadinessMatcher? _readiness;
     private Timer? _leftoverTimer;
     private bool _disposed;
 
@@ -52,6 +53,7 @@ public sealed class ManagedProcess : IDisposable
         ArgumentNullException.ThrowIfNull(platform);
         Output = new CommandOutput(bufferLines);
         _platform = platform;
+        Output.ProcessLinesCompleted += OnProcessLinesCompleted;
     }
 
     /// <summary>Output of this command. Each run clears the in-memory buffer and appends a start marker; the log file keeps all runs.</summary>
@@ -295,6 +297,7 @@ public sealed class ManagedProcess : IDisposable
         int runId = ++_runId;
         ReleaseRunResourcesLocked();
         StopLeftoverTimerLocked();
+        _readiness = null;
 
         _stopMethod = spec.StopMethod;
         _stopInput = spec.StopInput;
@@ -305,6 +308,20 @@ public sealed class ManagedProcess : IDisposable
 
         DateTimeOffset now = DateTimeOffset.Now;
         Output.BeginRun(now);
+
+        ReadinessMatcher? readiness = null;
+        if (spec.Ready is not null)
+        {
+            try
+            {
+                readiness = new ReadinessMatcher(spec.Ready);
+            }
+            catch (ArgumentException ex)
+            {
+                // Configuration validation rejects this; a launch that skipped it must not crash the supervisor.
+                Output.WriteSystem($"ready patterns ignored: {ex.Message}");
+            }
+        }
 
         Process? process = null;
         string? inputAfterInterrupt = null;
@@ -358,14 +375,65 @@ public sealed class ManagedProcess : IDisposable
             _stdin.AutoFlush = true;
         }
 
-        _stdOutPump = PumpAsync(process.StandardOutput, isStdErr: false);
-        _stdErrPump = PumpAsync(process.StandardError, isStdErr: true);
         _runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _snapshot = new ProcessSnapshot(ProcessState.Running, process.Id, now, null, null, null, null, 0);
+        _readiness = readiness;
+        _snapshot = new ProcessSnapshot(
+            ProcessState.Running,
+            process.Id,
+            now,
+            null,
+            null,
+            null,
+            null,
+            0,
+            StopRequested: false,
+            Readiness: readiness is null ? ProcessReadiness.None : ProcessReadiness.Starting,
+            ReadinessSince: readiness is null ? null : now);
+        // The pumps run on the thread pool, never on this thread. A pump's output callbacks take this object's lock, so a pump
+        // that read synchronously here would take the output's notify lock while holding this one, against the lock order.
+        _stdOutPump = Task.Run(() => PumpAsync(process.StandardOutput, isStdErr: false));
+        _stdErrPump = Task.Run(() => PumpAsync(process.StandardError, isStdErr: true));
         if (notice is not null)
         {
             Output.WriteSystem(notice);
         }
+    }
+
+    /// <summary>
+    /// Applies the readiness patterns to the lines a run just completed. Runs on the pump thread, outside every lock of this
+    /// object. Matching happens before taking the lock, so a slow pattern does not hold it.
+    /// </summary>
+    private void OnProcessLinesCompleted(IReadOnlyList<OutputLine> lines)
+    {
+        ReadinessMatcher? matcher;
+        lock (_sync)
+        {
+            matcher = _readiness;
+        }
+
+        if (matcher is null)
+        {
+            return;
+        }
+
+        ProcessReadiness? verdict = matcher.Evaluate(lines);
+        if (verdict is not { } phase)
+        {
+            return;
+        }
+
+        lock (_sync)
+        {
+            // The matcher check drops lines that belong to an earlier run, which can still be pumped after a new run began.
+            if (_disposed || !ReferenceEquals(matcher, _readiness) || !IsActiveLocked || _snapshot.Readiness == phase)
+            {
+                return;
+            }
+
+            _snapshot = _snapshot with { Readiness = phase, ReadinessSince = DateTimeOffset.Now };
+        }
+
+        RaiseChanged();
     }
 
     /// <summary>Reads one output stream until EOF, forwarding raw chunks (no line splitting) to <see cref="Output"/>.</summary>
@@ -438,12 +506,15 @@ public sealed class ManagedProcess : IDisposable
             }
 
             int exitCode = process.ExitCode;
+            _readiness = null;
             _snapshot = _snapshot with
             {
                 State = ProcessState.Exited,
                 ExitedAt = exitedAt,
                 ExitCode = exitCode,
                 StopRequested = _stopOrKillRequested,
+                Readiness = ProcessReadiness.None,
+                ReadinessSince = null,
             };
 
             int leftovers = _group?.CountLiveProcesses() ?? 0;

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 
 namespace Cmdr.Core.Config;
 
@@ -104,6 +105,11 @@ public class CmdrConfig
                         errors.Add($"{label}: {error}");
                     }
 
+                    if (cmd.Ready is not null)
+                    {
+                        ValidateReady(cmd.Ready, label, errors);
+                    }
+
                     break;
 
                 case GroupSpec child:
@@ -116,6 +122,44 @@ public class CmdrConfig
         foreach (KeyValuePair<string, List<int>> dup in FindDuplicates(parent.Items.Select(i => i.Name)))
         {
             errors.Add($"{parentLabel}: duplicate name '{dup.Key}' (items {FormatPositions(dup.Value)}).");
+        }
+    }
+
+    /// <summary>Checks the readiness patterns of a command: each must be a valid, non-blank regular expression.</summary>
+    private static void ValidateReady(ReadySpec ready, string label, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(ready.Pattern))
+        {
+            errors.Add($"{label}: ready.pattern must not be blank.");
+        }
+        else if (!IsValidRegex(ready.Pattern))
+        {
+            errors.Add($"{label}: ready.pattern is not a valid regular expression: '{ready.Pattern}'.");
+        }
+
+        if (ready.Busy is not null)
+        {
+            if (string.IsNullOrWhiteSpace(ready.Busy))
+            {
+                errors.Add($"{label}: ready.busy must not be blank (omit it instead).");
+            }
+            else if (!IsValidRegex(ready.Busy))
+            {
+                errors.Add($"{label}: ready.busy is not a valid regular expression: '{ready.Busy}'.");
+            }
+        }
+    }
+
+    private static bool IsValidRegex(string pattern)
+    {
+        try
+        {
+            _ = new Regex(pattern, RegexOptions.CultureInvariant);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
         }
     }
 
