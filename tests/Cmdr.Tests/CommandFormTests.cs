@@ -11,8 +11,9 @@ public sealed class CommandFormTests
         StopMethod method = StopMethod.CtrlC,
         string stopInput = "",
         string env = "",
-        string args = "-c\necho hi") =>
-        new(name, string.Empty, program, args, string.Empty, env, method, stopInput, false, string.Empty, false);
+        string args = "-c\necho hi",
+        StdinMode stdin = StdinMode.Pipe) =>
+        new(name, string.Empty, program, args, string.Empty, env, method, stopInput, false, string.Empty, false, stdin);
 
     [Fact]
     public void Valid_values_have_no_errors()
@@ -93,7 +94,8 @@ public sealed class CommandFormTests
             StopInput: "q\\n",
             LogEnabled: true,
             LogPath: "logs/tool.log",
-            DetachLeftovers: true);
+            DetachLeftovers: true,
+            Stdin: StdinMode.Console);
 
         CommandSpec spec = CommandForm.Build(values);
 
@@ -110,6 +112,25 @@ public sealed class CommandFormTests
         Assert.True(spec.Log.Enabled);
         Assert.Equal("logs/tool.log", spec.Log.Path);
         Assert.Equal(LeftoverMode.Detach, spec.Leftovers);
+        Assert.Equal(StdinMode.Console, spec.Stdin);
+    }
+
+    [Fact]
+    public void Console_stdin_with_the_input_stop_method_is_an_error()
+    {
+        IReadOnlyList<string> errors = CommandForm.Validate(
+            Valid(method: StopMethod.Input, stopInput: "q", stdin: StdinMode.Console),
+            Array.Empty<string>());
+
+        Assert.Single(errors);
+        Assert.Contains("Pipe", errors[0]);
+    }
+
+    [Fact]
+    public void Console_stdin_with_ctrl_c_is_valid_and_pipe_is_the_default()
+    {
+        Assert.Empty(CommandForm.Validate(Valid(stdin: StdinMode.Console), Array.Empty<string>()));
+        Assert.Equal(StdinMode.Pipe, CommandForm.Build(Valid()).Stdin);
     }
 
     [Fact]
@@ -123,7 +144,7 @@ public sealed class CommandFormTests
     [Fact]
     public void Build_drops_stop_input_for_ctrl_c_and_blank_optional_fields_become_null()
     {
-        var values = new CommandFormValues("x", "d", "p", string.Empty, "", "", StopMethod.CtrlC, "leftover", false, " ", false);
+        var values = new CommandFormValues("x", "d", "p", string.Empty, "", "", StopMethod.CtrlC, "leftover", false, " ", false, StdinMode.Pipe);
 
         CommandSpec spec = CommandForm.Build(values);
 

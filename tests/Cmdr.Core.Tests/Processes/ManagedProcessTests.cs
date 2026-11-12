@@ -257,6 +257,32 @@ public class ManagedProcessTests
     }
 
     [Fact]
+    public void ConsoleStdinIsIgnoredOnLinuxSoInputStopStillWritesToThePipe()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            LaunchSpec spec = Sh("read x; echo \"got-$x\"", dir.Path, stopMethod: StopMethod.Input, stopInput: "q\n") with { Stdin = StdinMode.Console };
+            p.Start(spec);
+            WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
+
+            p.RequestStop();
+            WaitForExited(p);
+
+            Assert.Equal(0, p.Snapshot.ExitCode);
+            WaitForText(p, "got-q");
+            Assert.DoesNotContain("stop input failed", Text(p));
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
     public void BackgroundChildLeftoverBlocksStartUntilForceKilled()
     {
         if (!OperatingSystem.IsLinux()) return;

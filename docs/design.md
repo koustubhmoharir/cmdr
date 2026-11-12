@@ -116,6 +116,12 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 Output via pipes (not a PTY): stdout/stderr redirected and read asynchronously as UTF-8.
 stdin is a pipe kept open for the lifetime of the process; it is written to only by the
 `input` stop method and never closed by cmdr (some programs exit on stdin EOF).
+Per command, `"stdin": "console"` (default `"pipe"`, not written) makes a Windows command read its own
+hidden console instead of a pipe. For programs that ignore Ctrl+C when stdin is redirected
+(`dotnet watch` on Windows). Nothing types into that console, so prompts there cannot be answered
+(for `dotnet watch` set `DOTNET_WATCH_RESTART_ON_RUDE_EDIT=1` or use `--non-interactive`). Not
+allowed with `stop.method: input`; a batch-wrapped program cannot get its "Terminate batch job" answer
+(noted in the output). No effect on Linux, where SIGINT does not depend on stdin.
 
 | Action | Linux | Windows |
 |---|---|---|

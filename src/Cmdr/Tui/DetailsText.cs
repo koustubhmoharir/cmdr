@@ -140,6 +140,12 @@ internal static class DetailsText
             lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
         }
 
+        // The default (pipe) is not shown: only the setting that changes how the command runs.
+        if (spec.Stdin == StdinMode.Console)
+        {
+            lines.Add(Line(new DetailsSpan("stdin: ", DetailsStyle.Label), new DetailsSpan("console", DetailsStyle.Normal)));
+        }
+
         string pid = entry.Process.Snapshot.Pid?.ToString(CultureInfo.InvariantCulture) ?? "—";
         string log = entry.Process.Output.IsLogging ? entry.Process.Output.LogPath ?? "on" : "off";
         lines.Add(Line(new DetailsSpan("pid " + pid + " · log: " + log, DetailsStyle.Faint)));

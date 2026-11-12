@@ -94,6 +94,11 @@ public class CmdrConfig
                         errors.Add($"{label}: stop.input must not be empty when stop.method is 'input'.");
                     }
 
+                    if (cmd.Stdin == StdinMode.Console && cmd.Stop.Method == StopMethod.Input)
+                    {
+                        errors.Add($"{label}: stop.method 'input' needs stdin 'pipe' (there is nothing to write the stop input to).");
+                    }
+
                     foreach (string error in InputPlaceholders.Errors(cmd.Args))
                     {
                         errors.Add($"{label}: {error}");

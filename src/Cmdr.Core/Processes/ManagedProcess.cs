@@ -305,10 +305,12 @@ public sealed class ManagedProcess : IDisposable
 
         Process? process = null;
         string? inputAfterInterrupt = null;
+        string? notice = null;
         try
         {
             PreparedLaunch launch = _platform.Prepare(spec);
             inputAfterInterrupt = launch.InputAfterInterrupt;
+            notice = launch.Notice;
             process = new Process
             {
                 StartInfo = launch.StartInfo,
@@ -346,12 +348,21 @@ public sealed class ManagedProcess : IDisposable
         _process = process;
         _group = group;
         _inputAfterInterrupt = inputAfterInterrupt;
-        _stdin = process.StandardInput;
-        _stdin.AutoFlush = true;
+        // Process.StandardInput throws when stdin is not redirected (the Console stdin mode): then there is no writer.
+        _stdin = process.StartInfo.RedirectStandardInput ? process.StandardInput : null;
+        if (_stdin is not null)
+        {
+            _stdin.AutoFlush = true;
+        }
+
         _stdOutPump = PumpAsync(process.StandardOutput, isStdErr: false);
         _stdErrPump = PumpAsync(process.StandardError, isStdErr: true);
         _runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _snapshot = new ProcessSnapshot(ProcessState.Running, process.Id, now, null, null, null, null, 0);
+        if (notice is not null)
+        {
+            Output.WriteSystem(notice);
+        }
     }
 
     /// <summary>Reads one output stream until EOF, forwarding raw chunks (no line splitting) to <see cref="Output"/>.</summary>

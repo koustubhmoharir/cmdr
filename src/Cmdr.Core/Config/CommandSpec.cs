@@ -33,6 +33,13 @@ public class CommandSpec : ItemSpec
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public LeftoverMode Leftovers { get; set; } = LeftoverMode.Track;
 
+    /// <summary>
+    /// Where the standard input comes from. Defaults to <see cref="StdinMode.Pipe"/>; the default is not written to the
+    /// configuration file. <see cref="StdinMode.Console"/> is honoured on Windows only.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public StdinMode Stdin { get; set; } = StdinMode.Pipe;
+
     /// <summary>Returns a deep copy: lists, dictionaries and sub-objects are copied.</summary>
     public override CommandSpec Clone() => new()
     {
@@ -45,5 +52,6 @@ public class CommandSpec : ItemSpec
         Stop = new StopSpec { Method = Stop.Method, Input = Stop.Input },
         Log = new LogSpec { Enabled = Log.Enabled, Path = Log.Path },
         Leftovers = Leftovers,
+        Stdin = Stdin,
     };
 }

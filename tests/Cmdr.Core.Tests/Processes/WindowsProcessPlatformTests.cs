@@ -155,6 +155,41 @@ public class WindowsProcessPlatformTests
     }
 
     /// <summary>Builds a launch request running <c>cmd /c command</c>.</summary>
+    [Fact]
+    public void ConsoleStdinLeavesStdinUnredirected()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var dir = new TempDir();
+        PreparedLaunch pipe = new WindowsProcessPlatform().Prepare(Cmd("echo hi", dir.Path));
+        PreparedLaunch console = new WindowsProcessPlatform().Prepare(Cmd("echo hi", dir.Path) with { Stdin = StdinMode.Console });
+
+        Assert.True(pipe.StartInfo.RedirectStandardInput);
+        Assert.False(console.StartInfo.RedirectStandardInput);
+        Assert.True(console.StartInfo.CreateNoWindow);
+        Assert.Null(console.Notice);
+    }
+
+    [Fact]
+    public void ConsoleStdinOnBatchFileDropsTheAnswerAndSaysSo()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var dir = new TempDir();
+        string script = dir.File("run.cmd");
+        File.WriteAllText(script, "@echo off\r\necho hi\r\n");
+
+        PreparedLaunch pipe = new WindowsProcessPlatform().Prepare(ProcessTestHelpers.Exec(script, Array.Empty<string>(), dir.Path));
+        PreparedLaunch console = new WindowsProcessPlatform().Prepare(
+            ProcessTestHelpers.Exec(script, Array.Empty<string>(), dir.Path) with { Stdin = StdinMode.Console });
+
+        Assert.Equal("Y\r\n", pipe.InputAfterInterrupt);
+        Assert.Null(pipe.Notice);
+        Assert.Null(console.InputAfterInterrupt);
+        Assert.False(console.StartInfo.RedirectStandardInput);
+        Assert.Equal("stdin is the console: cmdr cannot answer \"Terminate batch job (Y/N)?\" after Ctrl+C", console.Notice);
+    }
+
     private static LaunchSpec Cmd(
         string command,
         string workingDirectory,

@@ -17,6 +17,7 @@ namespace Cmdr.Core.Processes;
 /// <param name="StopMethod">How the process is asked to stop.</param>
 /// <param name="StopInput">Text written to stdin for the <see cref="StopMethod.Input"/> stop method.</param>
 /// <param name="Leftovers">What happens to processes left running after the leader exits on its own.</param>
+/// <param name="Stdin">Where the standard input comes from. <see cref="StdinMode.Console"/> is honoured on Windows only.</param>
 public sealed record LaunchSpec(
     string Program,
     IReadOnlyList<string> Args,
@@ -25,7 +26,8 @@ public sealed record LaunchSpec(
     string ConfigDir,
     StopMethod StopMethod,
     string? StopInput,
-    LeftoverMode Leftovers = LeftoverMode.Track)
+    LeftoverMode Leftovers = LeftoverMode.Track,
+    StdinMode Stdin = StdinMode.Pipe)
 {
     /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
@@ -61,6 +63,7 @@ public sealed record LaunchSpec(
             Path.GetFullPath(configDir),
             spec.Stop.Method,
             spec.Stop.Input,
-            spec.Leftovers);
+            spec.Leftovers,
+            spec.Stdin);
     }
 }

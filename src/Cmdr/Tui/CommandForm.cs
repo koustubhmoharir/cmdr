@@ -15,7 +15,8 @@ internal sealed record CommandFormValues(
     string StopInput,
     bool LogEnabled,
     string LogPath,
-    bool DetachLeftovers);
+    bool DetachLeftovers,
+    StdinMode Stdin);
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -63,6 +64,11 @@ internal static class CommandForm
             {
                 errors.Add("Stop input must not be empty when the stop method is Input.");
             }
+
+            if (values.Stdin == StdinMode.Console)
+            {
+                errors.Add("The Input stop method needs Input 'Pipe' (there is nothing to write the stop input to).");
+            }
         }
 
         return errors;
@@ -95,6 +101,7 @@ internal static class CommandForm
             },
             Log = new LogSpec { Enabled = values.LogEnabled, Path = logPath },
             Leftovers = values.DetachLeftovers ? LeftoverMode.Detach : LeftoverMode.Track,
+            Stdin = values.Stdin,
         };
     }
 }

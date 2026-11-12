@@ -275,6 +275,38 @@ public class ConfigStoreTests
         Assert.False(items[1].TryGetProperty("leftovers", out _));
     }
 
+    [Fact]
+    public void Stdin_ConsoleIsReadAndWritten_DefaultIsOmitted()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "console" }, { "name": "b", "program": "p" } ] } ] }""");
+
+        GroupSpec group = Assert.Single(ConfigStore.Load(path).Groups);
+        Assert.Equal(StdinMode.Console, ((CommandSpec)group.Items[0]).Stdin);
+        Assert.Equal(StdinMode.Pipe, ((CommandSpec)group.Items[1]).Stdin);
+
+        ConfigStore.Save(ConfigStore.Load(path), path);
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        JsonElement items = doc.RootElement.GetProperty("groups")[0].GetProperty("items");
+        Assert.Equal("console", items[0].GetProperty("stdin").GetString());
+        Assert.False(items[1].TryGetProperty("stdin", out _));
+    }
+
+    [Theory]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "Console" } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "tty" } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": 1 } ] } ] }""")]
+    public void Load_InvalidStdin_ThrowsConfigException(string json)
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, json);
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains(path, ex.Message);
+    }
+
     [Theory]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "Detach" } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "keep" } ] } ] }""")]

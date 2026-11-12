@@ -23,7 +23,7 @@ namespace Cmdr.Tui;
 internal sealed class CommandDialog : Dialog<bool>
 {
     private const int DialogWidth = 78;
-    private const int DialogHeight = 18;
+    private const int DialogHeight = 19;
     private const int LeftWidth = 37;
     private const int RightX = 40;
     private const int RightWidth = 36;
@@ -48,6 +48,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly TextField _logPath;
     private readonly Label _logHint;
     private readonly CheckBox _detachLeftovers;
+    private readonly OptionSelector<StdinMode> _stdin;
 
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
@@ -123,6 +124,15 @@ internal sealed class CommandDialog : Dialog<bool>
             Text = "Detach leftovers on exit",
             Value = initial.Leftovers == LeftoverMode.Detach ? CheckState.Checked : CheckState.UnChecked,
         };
+        _stdin = new OptionSelector<StdinMode>
+        {
+            X = RightX + 6,
+            Y = 12,
+            Width = RightWidth - 6,
+            Height = 1,
+            Orientation = Terminal.Gui.ViewBase.Orientation.Horizontal,
+            Value = initial.Stdin,
+        };
 
         View[] root =
         {
@@ -139,6 +149,7 @@ internal sealed class CommandDialog : Dialog<bool>
             Caption("Log path", RightX, 8), _logPath,
             _logHint,
             _detachLeftovers,
+            Caption("Input", RightX, 12), _stdin,
         };
         Add(root);
 
@@ -210,7 +221,8 @@ internal sealed class CommandDialog : Dialog<bool>
         StopInput: _stopInput.Text,
         LogEnabled: _logEnabled.Value == CheckState.Checked,
         LogPath: _logPath.Text,
-        DetachLeftovers: _detachLeftovers.Value == CheckState.Checked);
+        DetachLeftovers: _detachLeftovers.Value == CheckState.Checked,
+        Stdin: _stdin.Value ?? StdinMode.Pipe);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

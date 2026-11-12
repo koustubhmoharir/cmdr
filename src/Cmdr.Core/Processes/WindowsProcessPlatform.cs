@@ -45,16 +45,18 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     {
         ArgumentNullException.ThrowIfNull(spec);
 
+        // With Console the child keeps its own hidden console as its stdin instead of a pipe (see StdinMode.Console).
+        bool pipeStdin = spec.Stdin == StdinMode.Pipe;
         var psi = new ProcessStartInfo
         {
             FileName = spec.Program,
             WorkingDirectory = spec.WorkingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true, // gives the child its own hidden console, which the Ctrl+C mechanism needs
-            RedirectStandardInput = true,
+            RedirectStandardInput = pipeStdin,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            StandardInputEncoding = pipeStdin ? new UTF8Encoding(encoderShouldEmitUTF8Identifier: false) : null,
             StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
@@ -92,7 +94,22 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         // Ctrl+C on a batch file makes cmd.exe ask "Terminate batch job (Y/N)?" and wait on stdin. The answer is
         // written after the interrupt. Caveat: a child that reads stdin itself (before cmd asks) could consume the
         // "Y" instead; in that case the batch job stays at the prompt and force kill is needed.
-        return new PreparedLaunch(psi, plan.InputAfterInterrupt);
+        if (pipeStdin)
+        {
+            return new PreparedLaunch(psi, plan.InputAfterInterrupt);
+        }
+
+        // Console stdin: there is no pipe to write the answer to, and the prompt appears on the hidden console, which
+        // cmdr does not show. The user is told once at start; the batch job then needs a force kill.
+        if (plan.InputAfterInterrupt is not null)
+        {
+            return new PreparedLaunch(
+                psi,
+                InputAfterInterrupt: null,
+                Notice: "stdin is the console: cmdr cannot answer \"Terminate batch job (Y/N)?\" after Ctrl+C");
+        }
+
+        return new PreparedLaunch(psi, InputAfterInterrupt: null);
     }
 
     /// <inheritdoc />

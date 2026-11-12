@@ -18,6 +18,7 @@ public class CloneTests
             Stop = new StopSpec { Method = StopMethod.Input, Input = "q" },
             Log = new LogSpec { Enabled = true, Path = "w.log" },
             Leftovers = LeftoverMode.Detach,
+            Stdin = StdinMode.Console,
         };
 
         CommandSpec clone = original.Clone();
@@ -34,6 +35,7 @@ public class CloneTests
         Assert.True(clone.Log.Enabled);
         Assert.Equal("w.log", clone.Log.Path);
         Assert.Equal(LeftoverMode.Detach, clone.Leftovers);
+        Assert.Equal(StdinMode.Console, clone.Stdin);
     }
 
     [Fact]

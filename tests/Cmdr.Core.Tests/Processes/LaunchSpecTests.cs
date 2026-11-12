@@ -7,6 +7,18 @@ namespace Cmdr.Core.Tests.Processes;
 public class LaunchSpecTests
 {
     [Fact]
+    public void From_CarriesStdinMode_PipeIsTheDefault()
+    {
+        using var dir = new TempDir();
+
+        LaunchSpec console = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p", Stdin = StdinMode.Console }, dir.Path);
+        LaunchSpec pipe = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path);
+
+        Assert.Equal(StdinMode.Console, console.Stdin);
+        Assert.Equal(StdinMode.Pipe, pipe.Stdin);
+    }
+
+    [Fact]
     public void From_NoGroups_UsesConfigDirAsWorkingDirectory()
     {
         using var dir = new TempDir();

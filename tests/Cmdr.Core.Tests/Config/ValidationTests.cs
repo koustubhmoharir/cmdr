@@ -230,6 +230,30 @@ public class ValidationTests
     }
 
     [Fact]
+    public void StdinConsole_WithInputStop_IsAnError()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "a", Program = "p", Stdin = StdinMode.Console, Stop = new StopSpec { Method = StopMethod.Input, Input = "q" } } } } },
+        };
+
+        Assert.Equal(
+            "Group 'g' › command 'a': stop.method 'input' needs stdin 'pipe' (there is nothing to write the stop input to).",
+            Assert.Single(config.Validate()));
+    }
+
+    [Fact]
+    public void StdinConsole_WithCtrlCStop_IsValid()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "a", Program = "p", Stdin = StdinMode.Console } } } },
+        };
+
+        Assert.Empty(config.Validate());
+    }
+
+    [Fact]
     public void StopInput_NotRequiredForCtrlC()
     {
         var config = new CmdrConfig

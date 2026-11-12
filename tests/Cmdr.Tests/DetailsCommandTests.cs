@@ -110,6 +110,21 @@ public sealed class DetailsCommandTests : IDisposable
     }
 
     [Fact]
+    public void Console_stdin_is_listed_and_the_pipe_default_is_not()
+    {
+        Assert.DoesNotContain("stdin: console", DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':')));
+
+        Run.Spec.Stdin = StdinMode.Console;
+        IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        int index = DetailsText.Plain(lines).ToList().IndexOf("stdin: console");
+        Assert.True(index > 0);
+        Assert.Equal(
+            new[] { ("stdin: ", DetailsStyle.Label), ("console", DetailsStyle.Normal) },
+            Spans(lines[index]));
+    }
+
+    [Fact]
     public void Windows_command_row_uses_the_prompt_style_for_its_prompt()
     {
         IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');
