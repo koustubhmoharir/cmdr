@@ -136,9 +136,10 @@ allowed with `stop.method: input`; a batch-wrapped program cannot get its "Termi
 States: `Stopped | Running | Stopping(since) | Exited(code) | FailedToStart(message)`.
 If the leader has exited but the group/job still has live processes, state shows
 `Exited – N still running` and force kill remains available.
-With `"leftovers": "detach"`, when the leader exits on its own (no stop or force kill during the run)
-and processes remain, cmdr writes `N leftover process(es) detached`, stops supervising them and shows
-a plain exit; the command can start again at once and quitting does not touch them. For tools that keep
+With `"leftovers": "detach"`, when the leader exits (on its own or after a graceful stop; not after a
+force kill, which means "kill everything") and processes remain, cmdr writes `N leftover process(es)
+detached`, stops supervising them and shows a plain exit (or `∎ stopped`); the command can start again
+at once and quitting does not touch them. For tools that keep
 build servers alive on purpose (MSBuild nodes, Gradle daemon). Linux: the process group is simply no
 longer tracked. Windows: `KILL_ON_JOB_CLOSE` is cleared on the job before its handle is closed.
 A run that exits after the user asked it to stop (graceful stop or force kill) is shown as stopped

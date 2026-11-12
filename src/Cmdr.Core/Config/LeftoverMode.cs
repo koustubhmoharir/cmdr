@@ -13,8 +13,9 @@ public enum LeftoverMode
     Track,
 
     /// <summary>
-    /// Stop supervising them once the leader exits on its own: they keep running untracked. Not applied when the run was
-    /// stopped or force-killed. Serialized as "detach".
+    /// Stop supervising them once the leader exits: they keep running untracked. Applies after the leader exits on its
+    /// own and after a graceful stop (Ctrl+C or input). Not applied when the run was force-killed, since a force kill
+    /// means "kill everything". Serialized as "detach".
     /// </summary>
     [JsonStringEnumMemberName("detach")]
     Detach,

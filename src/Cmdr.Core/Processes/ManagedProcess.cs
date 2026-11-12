@@ -34,6 +34,7 @@ public sealed class ManagedProcess : IDisposable
     private string? _stopInput;
     private LeftoverMode _leftoverMode;
     private bool _stopOrKillRequested;
+    private bool _forceKillRequested;
     private string? _inputAfterInterrupt;
     private int _runId;
     private Timer? _leftoverTimer;
@@ -193,6 +194,7 @@ public sealed class ManagedProcess : IDisposable
             if (IsActiveLocked)
             {
                 _stopOrKillRequested = true;
+                _forceKillRequested = true;
             }
 
             group = _group;
@@ -298,6 +300,7 @@ public sealed class ManagedProcess : IDisposable
         _stopInput = spec.StopInput;
         _leftoverMode = spec.Leftovers;
         _stopOrKillRequested = false;
+        _forceKillRequested = false;
         _runExited = null;
 
         DateTimeOffset now = DateTimeOffset.Now;
@@ -456,13 +459,16 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Stops supervising the leftover processes of a run that ended on its own, when the command asks for it. Writes the
-    /// outcome to the output before the end marker. Returns true if they were detached; on failure they stay tracked.
+    /// Stops supervising the leftover processes of a run whose leader exited, when the command asks for it
+    /// (<see cref="LeftoverMode.Detach"/>). A graceful stop (Ctrl+C or input) still detaches them, so a command such as
+    /// <c>dotnet watch</c> does not leave its build servers tracked after the user stops it. Only a force kill during the
+    /// run prevents detaching, because it means "kill everything". Writes the outcome to the output before the end marker.
+    /// Returns true if they were detached; on failure they stay tracked.
     /// Caller holds the lock and has verified that <paramref name="leftovers"/> is positive.
     /// </summary>
     private bool TryDetachLeftoversLocked(int leftovers)
     {
-        if (_leftoverMode != LeftoverMode.Detach || _stopOrKillRequested || _group is null)
+        if (_leftoverMode != LeftoverMode.Detach || _forceKillRequested || _group is null)
         {
             return false;
         }

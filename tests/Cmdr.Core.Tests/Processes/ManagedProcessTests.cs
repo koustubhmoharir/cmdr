@@ -568,7 +568,52 @@ public class ManagedProcessTests
     }
 
     [Fact]
-    public void DetachDoesNotApplyWhenTheRunWasStopped()
+    public void GracefulStopStillDetachesLeftovers()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        int? leaderPid = null;
+        try
+        {
+            LaunchSpec spec = Sh("sleep 30 & echo ready; sleep 30", dir.Path) with { Leftovers = LeftoverMode.Detach };
+            p.Start(spec);
+            WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
+            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
+            leaderPid = p.Snapshot.Pid;
+
+            p.RequestStop();
+            WaitUntil(() => p.Snapshot.State == ProcessState.Exited, "leader to exit after Ctrl+C", p);
+
+            // The background sleep ignores Ctrl+C. A graceful stop still detaches it, so it is no longer tracked.
+            WaitUntil(() => Text(p).Contains("1 leftover process(es) detached", StringComparison.Ordinal), "detach message", p);
+            Assert.Equal(0, p.Snapshot.LeftoverCount);
+            Assert.True(p.Snapshot.StopRequested);
+            Assert.True(p.CanStart);
+
+            IReadOnlyList<OutputLine> lines = Lines(p);
+            int detached = lines.ToList().FindIndex(l => l.PlainText == "1 leftover process(es) detached");
+            int exited = lines.ToList().FindIndex(l => l.PlainText.StartsWith("=== exited", StringComparison.Ordinal));
+            Assert.True(detached >= 0 && detached < exited, "detach message must precede the end marker");
+        }
+        finally
+        {
+            if (leaderPid is int pgid)
+            {
+                // The detached sleep is in the group whose id is the leader's pid (setsid). Kill it so it does not leak.
+                var group = new LinuxProcessGroup(pgid);
+                group.Kill();
+                WaitUntil(() => group.CountLiveProcesses() == 0, "detached process to die", timeout: TimeSpan.FromSeconds(5));
+            }
+
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void ForceKillPreventsDetachingLeftovers()
     {
         if (!OperatingSystem.IsLinux()) return;
 
@@ -579,19 +624,17 @@ public class ManagedProcessTests
             LaunchSpec spec = Sh("sleep 30 & echo ready; sleep 30", dir.Path) with { Leftovers = LeftoverMode.Detach };
             p.Start(spec);
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
             WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
 
-            p.RequestStop();
-            WaitUntil(() => p.Snapshot.State == ProcessState.Exited, "leader to exit after Ctrl+C", p);
-
-            // The background sleep ignores Ctrl+C, so it stays and must be tracked, not detached.
-            WaitUntil(() => p.Snapshot.LeftoverCount == 1, "background sleep to remain", p);
-            Assert.DoesNotContain("detached", Text(p));
-            Assert.False(p.CanStart);
-
+            // A force kill during the run means "kill everything". On Linux it signals the whole process group, so the
+            // background sleep is killed along with the leader and there is nothing left to detach. The assertion that
+            // matters is that no detach happened: the group is gone, so the leftover count cannot be used to observe it.
             p.ForceKill();
+            WaitUntil(() => p.Snapshot.State == ProcessState.Exited, "leader to exit after force kill", p, TimeSpan.FromSeconds(5));
             WaitUntil(() => p.Snapshot.LeftoverCount == 0, "leftovers to clear after force kill", p, TimeSpan.FromSeconds(5));
+
+            Assert.DoesNotContain("detached", Text(p));
+            Assert.True(p.Snapshot.StopRequested);
         }
         finally
         {
