@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Embedded so the single-file publish of Cmdr is one file (no separate .pdb) and still has line numbers. -->
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
 
 </Project>

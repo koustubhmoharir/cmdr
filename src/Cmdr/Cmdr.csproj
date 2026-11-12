@@ -19,4 +19,17 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Publishing: one framework-dependent executable (needs the .NET runtime installed).
+    dotnet publish src/Cmdr -c Release -r win-x64     (or linux-x64, osx-arm64, ...)
+    Native libraries of dependencies are bundled too and extracted on first run; only English resources are kept.
+  -->
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
 </Project>

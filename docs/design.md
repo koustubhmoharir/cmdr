@@ -10,7 +10,14 @@ Cmdr.slnx
 src/Cmdr.Core/          config, process supervision, output buffering/parsing, logging (no UI)
 src/Cmdr/               Terminal.Gui app
 tests/Cmdr.Core.Tests/  xUnit tests for Cmdr.Core
+tests/Cmdr.Tests/       xUnit tests for the app's pure UI logic
 ```
+
+Publishing produces one framework-dependent executable (the .NET 10 runtime must be installed):
+`dotnet publish src/Cmdr -c Release -r win-x64` (or `linux-x64`, …). Native libraries of
+dependencies are bundled and self-extracted, symbols are embedded, and only English resources are
+kept. The Ctrl+C helper relaunches the executable itself (`Environment.ProcessPath`), which works
+for the single-file build.
 
 ## CLI
 
