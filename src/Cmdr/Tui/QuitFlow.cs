@@ -43,7 +43,7 @@ internal sealed class QuitFlow
         }
 
         string text = $"{active} command(s) are running or have leftover processes.";
-        int? choice = MessageBox.Query(_app, "Quit", text, "_Stop and wait", "_Force kill", "_Cancel");
+        int? choice = Confirm.Choose(_app, "Quit", text, "_Stop and wait", "_Force kill", "_Cancel");
         switch (choice)
         {
             case 0:
@@ -61,7 +61,7 @@ internal sealed class QuitFlow
     private bool ResolveUnsaved()
     {
         string file = Path.GetFileName(_session.ConfigPath);
-        int? choice = MessageBox.Query(_app, "Quit", $"Save changes to {file}?", "_Save", "_Discard", "_Cancel");
+        int? choice = Confirm.Choose(_app, "Quit", $"Save changes to {file}?", "_Save", "_Discard", "_Cancel");
         return choice switch
         {
             0 => _save(),

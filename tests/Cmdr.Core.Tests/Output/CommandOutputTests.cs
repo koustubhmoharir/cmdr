@@ -152,10 +152,42 @@ public class CommandOutputTests : IDisposable
         _output.BeginRun(second);
         _output.WriteStdOut("new\n");
 
+        Assert.Equal(new[] { StartMarker(second), "new" }, BufferTexts(_output.Buffer));
+        Assert.Equal(SpanStyle.Default, _output.Buffer.GetLines(1, 1)[0].Spans[0].Style);
+    }
+
+    [Fact]
+    public void SecondBeginRunClearsPreviousRunFromBuffer()
+    {
+        _output.BeginRun(Start);
+        _output.WriteStdOut("old\n");
+        _output.WriteStdErr("partial");
+        _output.EndRun("1");
+
+        var second = Start.AddMinutes(1);
+        _output.BeginRun(second);
+
+        Assert.Equal(new[] { StartMarker(second) }, BufferTexts(_output.Buffer));
+        Assert.Equal(1, _output.Buffer.Count);
+    }
+
+    [Fact]
+    public void LogKeepsBothRunsAfterSecondBeginRun()
+    {
+        string path = _temp.File("both-runs.log");
+        _output.EnableLog(path);
+        _output.BeginRun(Start);
+        _output.WriteStdOut("old\n");
+        _output.EndRun("1");
+
+        var second = Start.AddMinutes(1);
+        _output.BeginRun(second);
+        _output.WriteStdOut("new\n");
+        _output.DisableLog();
+
         Assert.Equal(
-            new[] { StartMarker(Start), "old", "=== 1 ===", StartMarker(second), "new" },
-            BufferTexts(_output.Buffer));
-        Assert.Equal(SpanStyle.Default, _output.Buffer.GetLines(4, 1)[0].Spans[0].Style);
+            Lines(StartMarker(Start), "old", "=== 1 ===", StartMarker(second), "new"),
+            ReadLog(path));
     }
 
     [Fact]
@@ -480,9 +512,8 @@ public class CommandOutputTests : IDisposable
         _output.WriteStdOut("still works\n");
         _output.EndRun("ok");
 
-        string[] texts = BufferTexts(_output.Buffer);
-        Assert.StartsWith("log disabled: ", texts[0], StringComparison.Ordinal);
-        Assert.Equal(new[] { StartMarker(Start), "still works", "=== ok ===" }, texts[1..]);
+        // BeginRun cleared the buffer, so the earlier "log disabled" notice is gone.
+        Assert.Equal(new[] { StartMarker(Start), "still works", "=== ok ===" }, BufferTexts(_output.Buffer));
     }
 
     [Fact]

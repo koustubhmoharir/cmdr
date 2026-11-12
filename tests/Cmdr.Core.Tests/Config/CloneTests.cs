@@ -17,6 +17,7 @@ public class CloneTests
             Env = new Dictionary<string, string?> { ["X"] = "1", ["Y"] = null },
             Stop = new StopSpec { Method = StopMethod.Input, Input = "q" },
             Log = new LogSpec { Enabled = true, Path = "w.log" },
+            Leftovers = LeftoverMode.Detach,
         };
 
         CommandSpec clone = original.Clone();
@@ -32,6 +33,7 @@ public class CloneTests
         Assert.Equal("q", clone.Stop.Input);
         Assert.True(clone.Log.Enabled);
         Assert.Equal("w.log", clone.Log.Path);
+        Assert.Equal(LeftoverMode.Detach, clone.Leftovers);
     }
 
     [Fact]

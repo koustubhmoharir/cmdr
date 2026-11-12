@@ -60,7 +60,8 @@ public sealed class CommandOutput : IDisposable
     }
 
     /// <summary>
-    /// Starts a new run: resets both parsers, discards any partial lines, and appends a
+    /// Starts a new run: clears the in-memory buffer (output of previous runs; the log file is not affected),
+    /// resets both parsers, discards any partial lines, and appends a
     /// <c>=== started yyyy-MM-dd HH:mm:ss ===</c> marker (local time).
     /// </summary>
     public void BeginRun(DateTimeOffset startedAt)
@@ -69,8 +70,10 @@ public sealed class CommandOutput : IDisposable
         {
             _stdOutParser = new AnsiLineParser(OutputSource.StdOut);
             _stdErrParser = new AnsiLineParser(OutputSource.StdErr);
-            _buffer.SetPartial(OutputSource.StdOut, null);
-            _buffer.SetPartial(OutputSource.StdErr, null);
+
+            // Clear also drops partial lines. Every line already appended to the buffer has been written
+            // to the log (each public method flushes), so clearing loses nothing from the log.
+            _buffer.Clear();
 
             _runFirstLine = _buffer.NextLineNumber;
             string stamp = startedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);

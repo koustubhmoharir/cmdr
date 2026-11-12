@@ -14,7 +14,8 @@ internal sealed record CommandFormValues(
     StopMethod Method,
     string StopInput,
     bool LogEnabled,
-    string LogPath);
+    string LogPath,
+    bool DetachLeftovers);
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -93,6 +94,7 @@ internal static class CommandForm
                 Input = values.Method == StopMethod.Input ? EscapeText.Parse(values.StopInput).Value : null,
             },
             Log = new LogSpec { Enabled = values.LogEnabled, Path = logPath },
+            Leftovers = values.DetachLeftovers ? LeftoverMode.Detach : LeftoverMode.Track,
         };
     }
 }

@@ -68,6 +68,7 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 - Relative `cwd` and `logsDir` resolve against the config file's directory; `logsDir` defaults to `logs`.
 - Relative `log.path` resolves against `logsDir`. Default log path: `<logsDir>/<group>/<command>.log`.
 - Default `stop.method` is `ctrlC`. Default `bufferLines` is 10000.
+- `leftovers`: `track` (default, not written) or `detach`. See Process supervision.
 - Explicit save only (Ctrl+S). Unsaved changes are marked `*` in the title; quit prompts.
 
 ### Groups and sequences
@@ -78,8 +79,9 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 - Sequential group, Enter: the selected commands run one after another in file order; each starts
   after the previous leader exits with code 0. Non-zero exit or failure to start cancels the rest
   (like `&&`). Waiting commands show `queued`. Leftover processes do not block the sequence.
-- Stopping (Esc/Ctrl+C) any command of a running sequence stops the current command and cancels
-  the queue. Only one sequence per group at a time. F5 stops running selected commands, then
+- Stopping (Esc/Ctrl+C) the running command of a sequence stops it and cancels the queue. On a
+  queued command, it cancels the queue only; the running command keeps going.
+  Only one sequence per group at a time. F5 stops running selected commands, then
   reruns the selection in sequence.
 
 ## Process supervision
@@ -99,6 +101,11 @@ stdin is a pipe kept open for the lifetime of the process; it is written to only
 States: `Stopped | Running | Stopping(since) | Exited(code) | FailedToStart(message)`.
 If the leader has exited but the group/job still has live processes, state shows
 `Exited – N still running` and force kill remains available.
+With `"leftovers": "detach"`, when the leader exits on its own (no stop or force kill during the run)
+and processes remain, cmdr writes `N leftover process(es) detached`, stops supervising them and shows
+a plain exit; the command can start again at once and quitting does not touch them. For tools that keep
+build servers alive on purpose (MSBuild nodes, Gradle daemon). Linux: the process group is simply no
+longer tracked. Windows: `KILL_ON_JOB_CLOSE` is cleared on the job before its handle is closed.
 Restart = graceful stop, wait for exit, start.
 
 Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
@@ -111,6 +118,7 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
 - Bare `\r` (not followed by `\n`) resets the current line, so progress bars overwrite in place.
 - Colors through pipes require the program to force color; configure via `env`
   (`FORCE_COLOR=1`, `CLICOLOR_FORCE=1`, `DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1`, …).
+- Starting a run clears the in-memory output of previous runs; the log file keeps them.
 
 ### Log file
 
@@ -140,7 +148,7 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
   whole description. A group's strip shows mode, cwd, env and description. Lines wrap to the width. When they do
   not fit, the strip scrolls (↑↓, PgUp/PgDn, Home/End, wheel; a fresh row starts at the top) and the frame title
   shows the range, e.g. `go-apps / nav / run  (1–4 of 11 ↓)`, with ↑/↓/↕ for content out of view.
-- The output view tail-follows by default; scrolling up pauses following, End resumes.
+- The output view tail-follows by default; scrolling up pauses following, End resumes. Lines wrap to the view width, by cell like a terminal (nothing is dropped; copy gives the original line), and the wheel scrolls by screen rows.
 - Output view is a custom view: mouse drag = character selection, Shift+↑/↓ = line selection.
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written to the terminal.
 
@@ -257,7 +265,8 @@ an item with `items` is a group). The top level remains `groups` (groups only). 
   commands that are already running and dropping groups left with nothing to start. Refused with a
   message when the plan overlaps an active run.
 - Esc/Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
-  On a command, it cancels the innermost run containing it (which then fails upward). F5 on a group
+  On a command, it cancels the innermost run containing it (which then fails upward) and stops the
+  command if it is running; on a queued command, whatever that run is currently running keeps going. F5 on a group
   stops everything below, waits for leaders, then runs the group.
 - Edits on a group (mode change, move, reparent, remove) and moves/removal of items are refused while
   the affected item or anything below it is part of a run. Reparenting into itself or a descendant is

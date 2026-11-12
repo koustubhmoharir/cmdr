@@ -91,6 +91,31 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Clears KILL_ON_JOB_CLOSE, so a later Dispose closes the job handle without terminating its processes. Ignored if
+    /// the job is already closed.
+    /// </remarks>
+    /// <exception cref="Win32Exception">SetInformationJobObject failed.</exception>
+    public void Detach()
+    {
+        try
+        {
+            // A zeroed limit struct sets no limits: the job was created with KILL_ON_JOB_CLOSE as its only limit.
+            var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            uint size = (uint)Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+            if (UseJob(job => WindowsNative.SetInformationJobObject(
+                job, WindowsNative.JobObjectExtendedLimitInformation, ref info, size)) == 0)
+            {
+                throw new Win32Exception(Marshal.GetLastPInvokeError());
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // Already closed: nothing to detach from.
+        }
+    }
+
+    /// <inheritdoc />
     /// <remarks>Reads ActiveProcesses from the job's basic accounting information. Returns 0 once disposed.</remarks>
     /// <exception cref="Win32Exception">QueryInformationJobObject failed.</exception>
     public int CountLiveProcesses()

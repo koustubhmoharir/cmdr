@@ -47,6 +47,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly CheckBox _logEnabled;
     private readonly TextField _logPath;
     private readonly Label _logHint;
+    private readonly CheckBox _detachLeftovers;
 
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
@@ -114,6 +115,13 @@ internal sealed class CommandDialog : Dialog<bool>
         };
         _logPath = Field(RightX + 10, 8, RightWidth - 10, initial.Log.Path ?? string.Empty);
         _logHint = new Label { X = RightX, Y = 9, Width = RightWidth, Height = 2 };
+        _detachLeftovers = new CheckBox
+        {
+            X = RightX,
+            Y = 11,
+            Text = "Detach leftovers on exit",
+            Value = initial.Leftovers == LeftoverMode.Detach ? CheckState.Checked : CheckState.UnChecked,
+        };
 
         View[] root =
         {
@@ -129,6 +137,7 @@ internal sealed class CommandDialog : Dialog<bool>
             _logEnabled,
             Caption("Log path", RightX, 8), _logPath,
             _logHint,
+            _detachLeftovers,
         };
         Add(root);
 
@@ -199,7 +208,8 @@ internal sealed class CommandDialog : Dialog<bool>
         Method: _method.Value ?? StopMethod.CtrlC,
         StopInput: _stopInput.Text,
         LogEnabled: _logEnabled.Value == CheckState.Checked,
-        LogPath: _logPath.Text);
+        LogPath: _logPath.Text,
+        DetachLeftovers: _detachLeftovers.Value == CheckState.Checked);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

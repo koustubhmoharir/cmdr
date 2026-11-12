@@ -16,6 +16,7 @@ namespace Cmdr.Core.Processes;
 /// <param name="ConfigDir">Absolute config directory, the value of <c>${configDir}</c>.</param>
 /// <param name="StopMethod">How the process is asked to stop.</param>
 /// <param name="StopInput">Text written to stdin for the <see cref="StopMethod.Input"/> stop method.</param>
+/// <param name="Leftovers">What happens to processes left running after the leader exits on its own.</param>
 public sealed record LaunchSpec(
     string Program,
     IReadOnlyList<string> Args,
@@ -23,7 +24,8 @@ public sealed record LaunchSpec(
     IReadOnlyList<EnvLevel> EnvLevels,
     string ConfigDir,
     StopMethod StopMethod,
-    string? StopInput)
+    string? StopInput,
+    LeftoverMode Leftovers = LeftoverMode.Track)
 {
     /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
@@ -58,6 +60,7 @@ public sealed record LaunchSpec(
             levels,
             Path.GetFullPath(configDir),
             spec.Stop.Method,
-            spec.Stop.Input);
+            spec.Stop.Input,
+            spec.Leftovers);
     }
 }

@@ -32,6 +32,8 @@ public sealed class ManagedProcess : IDisposable
     private TaskCompletionSource? _runExited;
     private StopMethod _stopMethod;
     private string? _stopInput;
+    private LeftoverMode _leftoverMode;
+    private bool _stopOrKillRequested;
     private string? _inputAfterInterrupt;
     private int _runId;
     private Timer? _leftoverTimer;
@@ -51,7 +53,7 @@ public sealed class ManagedProcess : IDisposable
         _platform = platform;
     }
 
-    /// <summary>Output of this command. Persists across runs; each run appends a start marker.</summary>
+    /// <summary>Output of this command. Each run clears the in-memory buffer and appends a start marker; the log file keeps all runs.</summary>
     public CommandOutput Output { get; }
 
     /// <summary>Raised after every change to <see cref="Snapshot"/>, from the thread that made the change.</summary>
@@ -130,6 +132,7 @@ public sealed class ManagedProcess : IDisposable
             }
 
             stateChanged = _snapshot.State == ProcessState.Running;
+            _stopOrKillRequested = true;
             _snapshot = _snapshot with
             {
                 State = ProcessState.Stopping,
@@ -185,6 +188,11 @@ public sealed class ManagedProcess : IDisposable
             if (!valid)
             {
                 return;
+            }
+
+            if (IsActiveLocked)
+            {
+                _stopOrKillRequested = true;
             }
 
             group = _group;
@@ -288,6 +296,8 @@ public sealed class ManagedProcess : IDisposable
 
         _stopMethod = spec.StopMethod;
         _stopInput = spec.StopInput;
+        _leftoverMode = spec.Leftovers;
+        _stopOrKillRequested = false;
         _runExited = null;
 
         DateTimeOffset now = DateTimeOffset.Now;
@@ -421,14 +431,44 @@ public sealed class ManagedProcess : IDisposable
                 ExitCode = exitCode,
             };
 
+            int leftovers = _group?.CountLiveProcesses() ?? 0;
+            bool detached = leftovers > 0 && TryDetachLeftoversLocked(leftovers);
+
             Output.EndRun($"exited with code {exitCode}");
             _runExited?.TrySetResult();
 
-            int leftovers = _group?.CountLiveProcesses() ?? 0;
-            SetLeftoverCountLocked(leftovers);
+            SetLeftoverCountLocked(detached ? 0 : leftovers);
         }
 
         RaiseChanged();
+    }
+
+    /// <summary>
+    /// Stops supervising the leftover processes of a run that ended on its own, when the command asks for it. Writes the
+    /// outcome to the output before the end marker. Returns true if they were detached; on failure they stay tracked.
+    /// Caller holds the lock and has verified that <paramref name="leftovers"/> is positive.
+    /// </summary>
+    private bool TryDetachLeftoversLocked(int leftovers)
+    {
+        if (_leftoverMode != LeftoverMode.Detach || _stopOrKillRequested || _group is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            _group.Detach();
+        }
+        catch (Exception ex)
+        {
+            Output.WriteSystem($"detach failed: {ex.Message}");
+            return false;
+        }
+
+        _group.Dispose();
+        _group = null;
+        Output.WriteSystem($"{leftovers} leftover process(es) detached");
+        return true;
     }
 
     private bool IsCurrentRunLocked(int runId, Process process) =>

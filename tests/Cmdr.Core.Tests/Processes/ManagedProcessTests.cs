@@ -304,7 +304,7 @@ public class ManagedProcessTests
 
             Assert.Equal(ProcessState.Running, p.Snapshot.State);
             Assert.NotEqual(firstPid, p.Snapshot.Pid);
-            Assert.Equal(2, Lines(p).Count(l => l.PlainText.StartsWith("=== started ", StringComparison.Ordinal)));
+            Assert.Equal(1, Lines(p).Count(l => l.PlainText.StartsWith("=== started ", StringComparison.Ordinal)));
         }
         finally
         {
@@ -392,6 +392,87 @@ public class ManagedProcessTests
             {
                 Cleanup(p);
             }
+        }
+    }
+
+    [Fact]
+    public void DetachedLeftoversAreNotTrackedAndDoNotBlockStart()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        int? leaderPid = null;
+        try
+        {
+            LaunchSpec spec = Sh("sleep 30 & echo started", dir.Path) with { Leftovers = LeftoverMode.Detach };
+            p.Start(spec);
+            WaitForExited(p);
+            leaderPid = p.Snapshot.Pid;
+
+            Assert.Equal(ProcessState.Exited, p.Snapshot.State);
+            Assert.Equal(0, p.Snapshot.ExitCode);
+            Assert.Equal(0, p.Snapshot.LeftoverCount);
+            Assert.True(p.CanStart);
+
+            // The message must come before the end marker, which is written last.
+            IReadOnlyList<OutputLine> lines = Lines(p);
+            int detached = lines.ToList().FindIndex(l => l.PlainText == "1 leftover process(es) detached");
+            int exited = lines.ToList().FindIndex(l => l.PlainText == "=== exited with code 0 ===");
+            Assert.True(detached >= 0, "detach message is missing");
+            Assert.True(detached < exited, "detach message must precede the end marker");
+
+            // Nothing polls the detached group, so the count stays at zero.
+            Thread.Sleep(1200);
+            Assert.Equal(0, p.Snapshot.LeftoverCount);
+
+            p.Start(Sh("exit 0", dir.Path));
+            WaitForExited(p);
+            Assert.Equal(0, p.Snapshot.ExitCode);
+        }
+        finally
+        {
+            if (leaderPid is int pgid)
+            {
+                // The detached sleep is in the group whose id is the leader's pid (setsid). Kill it so it does not leak.
+                var group = new LinuxProcessGroup(pgid);
+                group.Kill();
+                WaitUntil(() => group.CountLiveProcesses() == 0, "detached process to die", timeout: TimeSpan.FromSeconds(5));
+            }
+
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void DetachDoesNotApplyWhenTheRunWasStopped()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            LaunchSpec spec = Sh("sleep 30 & echo ready; sleep 30", dir.Path) with { Leftovers = LeftoverMode.Detach };
+            p.Start(spec);
+            WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
+            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
+
+            p.RequestStop();
+            WaitUntil(() => p.Snapshot.State == ProcessState.Exited, "leader to exit after Ctrl+C", p);
+
+            // The background sleep ignores Ctrl+C, so it stays and must be tracked, not detached.
+            WaitUntil(() => p.Snapshot.LeftoverCount == 1, "background sleep to remain", p);
+            Assert.DoesNotContain("detached", Text(p));
+            Assert.False(p.CanStart);
+
+            p.ForceKill();
+            WaitUntil(() => p.Snapshot.LeftoverCount == 0, "leftovers to clear after force kill", p, TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            Cleanup(p);
         }
     }
 }

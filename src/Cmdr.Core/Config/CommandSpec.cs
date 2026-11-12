@@ -26,6 +26,13 @@ public class CommandSpec : ItemSpec
     /// <summary>Log file settings.</summary>
     public LogSpec Log { get; set; } = new();
 
+    /// <summary>
+    /// What happens to processes left running after the leader exits on its own. Defaults to <see cref="LeftoverMode.Track"/>;
+    /// the default is not written to the configuration file.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public LeftoverMode Leftovers { get; set; } = LeftoverMode.Track;
+
     /// <summary>Returns a deep copy: lists, dictionaries and sub-objects are copied.</summary>
     public override CommandSpec Clone() => new()
     {
@@ -37,5 +44,6 @@ public class CommandSpec : ItemSpec
         Env = new Dictionary<string, string?>(Env),
         Stop = new StopSpec { Method = Stop.Method, Input = Stop.Input },
         Log = new LogSpec { Enabled = Log.Enabled, Path = Log.Path },
+        Leftovers = Leftovers,
     };
 }

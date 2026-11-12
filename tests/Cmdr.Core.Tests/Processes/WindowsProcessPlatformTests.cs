@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
@@ -114,6 +115,42 @@ public class WindowsProcessPlatformTests
         finally
         {
             Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void DetachedGroupLeavesItsProcessRunningAfterDispose()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // The leader is a plain process that outlives the group: after Detach and Dispose it must still be running.
+        var psi = new ProcessStartInfo("ping")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        psi.ArgumentList.Add("-n");
+        psi.ArgumentList.Add("30");
+        psi.ArgumentList.Add("127.0.0.1");
+
+        using Process leader = Process.Start(psi)!;
+        try
+        {
+            IProcessGroup group = new WindowsProcessPlatform().Attach(leader);
+            group.Detach();
+            group.Dispose();
+
+            Thread.Sleep(1000);
+            Assert.False(leader.HasExited);
+        }
+        finally
+        {
+            if (!leader.HasExited)
+            {
+                leader.Kill(entireProcessTree: true);
+            }
         }
     }
 

@@ -15,4 +15,11 @@ internal interface IProcessGroup : IDisposable
 
     /// <summary>Number of live (non-zombie) processes in the tree, including the leader if it is alive.</summary>
     int CountLiveProcesses();
+
+    /// <summary>
+    /// Stops supervising the tree without killing it: after this call, <see cref="Dispose"/> leaves the remaining processes
+    /// running. The group must not be used afterwards except to Dispose it.
+    /// </summary>
+    /// <exception cref="System.ComponentModel.Win32Exception">The supervision could not be released.</exception>
+    void Detach();
 }

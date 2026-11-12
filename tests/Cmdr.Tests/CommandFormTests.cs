@@ -12,7 +12,7 @@ public sealed class CommandFormTests
         string stopInput = "",
         string env = "",
         string args = "-c\necho hi") =>
-        new(name, string.Empty, program, args, string.Empty, env, method, stopInput, false, string.Empty);
+        new(name, string.Empty, program, args, string.Empty, env, method, stopInput, false, string.Empty, false);
 
     [Fact]
     public void Valid_values_have_no_errors()
@@ -92,7 +92,8 @@ public sealed class CommandFormTests
             Method: StopMethod.Input,
             StopInput: "q\\n",
             LogEnabled: true,
-            LogPath: "logs/tool.log");
+            LogPath: "logs/tool.log",
+            DetachLeftovers: true);
 
         CommandSpec spec = CommandForm.Build(values);
 
@@ -108,12 +109,21 @@ public sealed class CommandFormTests
         Assert.Equal("q\n", spec.Stop.Input);
         Assert.True(spec.Log.Enabled);
         Assert.Equal("logs/tool.log", spec.Log.Path);
+        Assert.Equal(LeftoverMode.Detach, spec.Leftovers);
+    }
+
+    [Fact]
+    public void Detach_checkbox_maps_to_track_when_unchecked()
+    {
+        CommandSpec spec = CommandForm.Build(Valid());
+
+        Assert.Equal(LeftoverMode.Track, spec.Leftovers);
     }
 
     [Fact]
     public void Build_drops_stop_input_for_ctrl_c_and_blank_optional_fields_become_null()
     {
-        var values = new CommandFormValues("x", "d", "p", string.Empty, "", "", StopMethod.CtrlC, "leftover", false, " ");
+        var values = new CommandFormValues("x", "d", "p", string.Empty, "", "", StopMethod.CtrlC, "leftover", false, " ", false);
 
         CommandSpec spec = CommandForm.Build(values);
 

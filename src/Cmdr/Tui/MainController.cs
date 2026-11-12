@@ -671,7 +671,7 @@ internal sealed class MainController : IDisposable
             return;
         }
 
-        if (confirm && MessageBox.Query(_app, "Stop", $"Stop {stoppable} command(s)?", "_Yes", "_No") != 0)
+        if (confirm && !Confirm.Ask(_app, "Stop", $"Stop {stoppable} command(s)?"))
         {
             return;
         }
@@ -707,7 +707,7 @@ internal sealed class MainController : IDisposable
             return;
         }
 
-        if (MessageBox.Query(_app, "Restart", $"Restart {count} command(s)?", "_Yes", "_No") != 0)
+        if (!Confirm.Ask(_app, "Restart", $"Restart {count} command(s)?"))
         {
             return;
         }
@@ -993,7 +993,7 @@ internal sealed class MainController : IDisposable
             switch (focused)
             {
                 case CommandRow command:
-                    if (MessageBox.Query(_app, "Delete", $"Delete command '{command.Entry.Spec.Name}'?", "_Yes", "_No") == 0)
+                    if (Confirm.Ask(_app, "Delete", $"Delete command '{command.Entry.Spec.Name}'?"))
                     {
                         _session.RemoveCommand(command.Entry);
                     }
@@ -1001,7 +1001,7 @@ internal sealed class MainController : IDisposable
                     break;
 
                 case GroupRow group:
-                    if (MessageBox.Query(_app, "Delete", GroupTree.DeleteQuestion(group.Group), "_Yes", "_No") == 0)
+                    if (Confirm.Ask(_app, "Delete", GroupTree.DeleteQuestion(group.Group)))
                     {
                         _session.RemoveGroup(group.Group);
                     }

@@ -10,15 +10,16 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace Cmdr.Tui;
 
 /// <summary>
-/// Shows the output buffer of one command: no wrapping, tail-follow by default. The view has a cursor line (shown while
-/// focused) and an optional selection (a line selection from Shift+arrows, or a character selection from the mouse).
-/// Scrolling up or moving the cursor off the last line pauses following; End, or moving back onto the last line, resumes
-/// it. The cursor and the top line are remembered by absolute number, so they stay put as old lines are evicted. UI thread only.
+/// Shows the output buffer of one command. Long lines wrap to the view width, cell by cell like a terminal; nothing is
+/// dropped, and copy takes the original lines. Scrolling moves by screen rows, tail-follows by default. The view has a
+/// cursor line (shown while focused, all its rows shaded) and an optional selection (a line selection from Shift+arrows,
+/// or a character selection from the mouse). Scrolling up or moving the cursor off the last line pauses following; End, or
+/// moving back onto the last line, resumes it. The cursor and the top are remembered by absolute line number, so they
+/// stay put as old lines are evicted. UI thread only.
 /// </summary>
 internal sealed class OutputView : View
 {
     private const int WheelLines = 3;
-    private const int HorizontalStep = 4;
     private const int ShadePercent = 12;
     private static readonly Color FallbackCursorShade = new(0x3A, 0x3F, 0x4B);
 
@@ -27,24 +28,89 @@ internal sealed class OutputView : View
     private OutputBuffer? _buffer;
     private long _lastVersion = -1;
 
-    // While following, the view shows the last page and the cursor is the last line; _topLine and _cursorLine are
-    // only read again after a pause (see Pause).
+    // While following, the view shows the last rows and the cursor is the last line; _top and _cursorLine are only read
+    // again after a pause (see Pause).
     private bool _following = true;
-    private long _topLine;
+    private ScrollPosition _top;
     private long _cursorLine;
-    private int _hOffset;
 
     private SelectionState? _selection;
     private bool _dragging;
 
     private readonly record struct SelectionState(SelectionPoint Anchor, SelectionPoint Active, bool LineMode);
 
-    /// <summary>Retained lines and the viewport height, read once per operation. Last is First when there are no lines.</summary>
-    private readonly record struct Geometry(long First, int Total, int Height)
+    /// <summary>A line with its cells, the attribute of each span, and the column range of each of its rows.</summary>
+    private sealed record PreparedLine(
+        IReadOnlyList<OutputWrap.Cell> Cells,
+        IReadOnlyList<Attribute> SpanAttributes,
+        IReadOnlyList<(int StartColumn, int EndColumn)> Rows);
+
+    /// <summary>Row <paramref name="Row"/> of the absolute line <paramref name="Number"/>, as one screen row.</summary>
+    private readonly record struct ScreenRow(long Number, int Row, PreparedLine Prepared)
     {
+        public int StartColumn => Prepared.Rows[Row].StartColumn;
+
+        public int EndColumn => Prepared.Rows[Row].EndColumn;
+
+        public bool LastOfLine => Row == Prepared.Rows.Count - 1;
+    }
+
+    /// <summary>
+    /// The retained lines and the viewport, measured once per operation. Row counts are wrapped when first needed and
+    /// cached for the operation, so only the lines an operation reaches are wrapped.
+    /// </summary>
+    private sealed class Geometry
+    {
+        private readonly Dictionary<long, int> _rows = new();
+
+        public Geometry(OutputBuffer buffer, int width, int height)
+        {
+            Buffer = buffer;
+            Width = width;
+            Height = Math.Max(0, height);
+            First = buffer.FirstLineNumber;
+            Total = buffer.Count;
+        }
+
+        public OutputBuffer Buffer { get; }
+
+        public int Width { get; }
+
+        public int Height { get; }
+
+        /// <summary>Absolute number of the first retained line.</summary>
+        public long First { get; }
+
+        public int Total { get; }
+
+        /// <summary>Absolute number of the last retained line. Last is First when there are no lines.</summary>
         public long Last => First + Math.Max(0, Total - 1);
 
-        public long MaxTopLine => First + Math.Max(0, Total - Height);
+        public ScrollPosition MaxTop => OutputScroll.MaxTop(First, Last, Height, Rows);
+
+        /// <summary>The number of screen rows a line wraps to at this width. A line that is no longer retained counts as one row.</summary>
+        public int Rows(long line)
+        {
+            if (!_rows.TryGetValue(line, out int rows))
+            {
+                (_, IReadOnlyList<OutputLine> lines) = ReadLines(Buffer, line, 1);
+                rows = lines.Count == 1 ? OutputWrap.RowCount(lines[0], Width) : 1;
+                _rows[line] = rows;
+            }
+
+            return rows;
+        }
+
+        public ScrollPosition Clamp(ScrollPosition position) => OutputScroll.Clamp(position, First, Last, Height, Rows);
+
+        public ScrollPosition ScrollBy(ScrollPosition position, int delta) =>
+            OutputScroll.ScrollBy(position, delta, First, Last, Height, Rows);
+
+        public ScrollPosition EnsureVisible(ScrollPosition top, long cursor) =>
+            OutputScroll.EnsureVisible(top, cursor, First, Last, Height, Rows);
+
+        public long PageTarget(long cursor, int direction) =>
+            OutputScroll.PageTarget(cursor, direction, First, Last, Height, Rows);
     }
 
     public OutputView(MainController controller)
@@ -70,9 +136,8 @@ internal sealed class OutputView : View
         _entry = entry;
         _buffer = buffer;
         _following = true;
-        _topLine = 0;
+        _top = default;
         _cursorLine = 0;
-        _hOffset = 0;
         _selection = null;
         _lastVersion = -1;
         SetNeedsDraw();
@@ -119,7 +184,6 @@ internal sealed class OutputView : View
             return CopySelectionOrCursorLine();
         }
 
-        int page = Math.Max(1, Viewport.Height);
         if (key == Key.CursorUp)
         {
             return MoveCursor(-1, page: false, extend: false);
@@ -170,14 +234,10 @@ internal sealed class OutputView : View
             return ResumeFollowing();
         }
 
-        if (key == Key.CursorLeft)
+        // Lines wrap, so there is nothing to scroll sideways. The keys are consumed so that focus stays here.
+        if (key == Key.CursorLeft || key == Key.CursorRight)
         {
-            return PanHorizontal(-HorizontalStep);
-        }
-
-        if (key == Key.CursorRight)
-        {
-            return PanHorizontal(HorizontalStep);
+            return true;
         }
 
         return base.OnKeyDown(key);
@@ -185,25 +245,19 @@ internal sealed class OutputView : View
 
     protected override bool OnMouseEvent(Mouse mouse)
     {
-        bool shift = mouse.Flags.HasFlag(MouseFlags.Shift);
         if (mouse.Flags.HasFlag(MouseFlags.WheeledUp))
         {
-            return shift ? PanHorizontal(-HorizontalStep) : Scroll(-WheelLines);
+            return Scroll(-WheelLines);
         }
 
         if (mouse.Flags.HasFlag(MouseFlags.WheeledDown))
         {
-            return shift ? PanHorizontal(HorizontalStep) : Scroll(WheelLines);
+            return Scroll(WheelLines);
         }
 
-        if (mouse.Flags.HasFlag(MouseFlags.WheeledLeft))
+        if (mouse.Flags.HasFlag(MouseFlags.WheeledLeft) || mouse.Flags.HasFlag(MouseFlags.WheeledRight))
         {
-            return PanHorizontal(-HorizontalStep);
-        }
-
-        if (mouse.Flags.HasFlag(MouseFlags.WheeledRight))
-        {
-            return PanHorizontal(HorizontalStep);
+            return true;
         }
 
         if (_dragging)
@@ -239,13 +293,12 @@ internal sealed class OutputView : View
         }
 
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
-        IReadOnlyList<OutputLine> lines = Array.Empty<OutputLine>();
-        long first = 0;
+        IReadOnlyList<ScreenRow> rows = Array.Empty<ScreenRow>();
         long cursor = -1;
         if (_buffer is not null)
         {
-            Geometry geometry = Measure(_buffer, height);
-            (first, lines) = ReadLines(_buffer, TopLine(geometry), height);
+            Geometry geometry = Measure(_buffer);
+            rows = ScreenRows(geometry, TopPosition(geometry), normal);
             if (HasFocus && geometry.Total > 0)
             {
                 cursor = CursorLine(geometry);
@@ -257,35 +310,31 @@ internal sealed class OutputView : View
 
         for (int row = 0; row < height; row++)
         {
-            long number = first + row;
-            Color? cursorShade = number == cursor ? shade : null;
-            if (row < lines.Count)
+            if (row < rows.Count)
             {
-                DrawLine(lines[row], number, row, width, normal, cursorShade, selection);
+                ScreenRow screenRow = rows[row];
+                Color? cursorShade = screenRow.Number == cursor ? shade : null;
+                DrawRow(row, screenRow, width, normal, cursorShade, selection);
             }
             else
             {
-                FillRow(row, 0, width, RowFill(normal, cursorShade));
+                FillRow(row, 0, width, RowFill(normal, null));
             }
         }
 
         return true;
     }
 
-    private Geometry Measure(OutputBuffer buffer, int height) =>
-        new(buffer.FirstLineNumber, buffer.Count, Math.Max(0, height));
+    private Geometry Measure(OutputBuffer buffer) => new(buffer, Viewport.Width, Viewport.Height);
 
-    private Geometry Measure(OutputBuffer buffer) => Measure(buffer, Viewport.Height);
-
-    /// <summary>Absolute number of the first visible line.</summary>
-    private long TopLine(Geometry geometry) =>
-        _following ? geometry.MaxTopLine : Math.Clamp(_topLine, geometry.First, geometry.MaxTopLine);
+    /// <summary>The position of the top row: the stored one, or the last page while following.</summary>
+    private ScrollPosition TopPosition(Geometry geometry) => _following ? geometry.MaxTop : geometry.Clamp(_top);
 
     /// <summary>Absolute number of the cursor line.</summary>
     private long CursorLine(Geometry geometry) =>
         _following ? geometry.Last : Math.Clamp(_cursorLine, geometry.First, geometry.Last);
 
-    /// <summary>Stores the current top line and cursor so that following can be turned off without moving either.</summary>
+    /// <summary>Stores the current top and cursor so that following can be turned off without moving either.</summary>
     private void Pause(Geometry geometry)
     {
         if (!_following)
@@ -293,14 +342,14 @@ internal sealed class OutputView : View
             return;
         }
 
-        _topLine = TopLine(geometry);
+        _top = TopPosition(geometry);
         _cursorLine = CursorLine(geometry);
         _following = false;
     }
 
     /// <summary>
-    /// Moves the cursor by one line, or by a page (which also moves the viewport). The view scrolls to keep the cursor
-    /// visible. With <paramref name="extend"/>, the selection becomes a line selection from its anchor (or from the
+    /// Moves the cursor by one line, or by a page (which also scrolls by a page of rows). The view scrolls to keep the cursor
+    /// line fully visible. With <paramref name="extend"/>, the selection becomes a line selection from its anchor (or from the
     /// cursor when there is none) to the new cursor line.
     /// </summary>
     private bool MoveCursor(int direction, bool page, bool extend)
@@ -318,26 +367,17 @@ internal sealed class OutputView : View
 
         long from = CursorLine(geometry);
         Pause(geometry);
-        int height = Math.Max(1, geometry.Height);
-        long step = page ? height : 1;
-        long target = Math.Clamp(from + direction * step, geometry.First, geometry.Last);
+        long target = page
+            ? geometry.PageTarget(from, direction)
+            : Math.Clamp(from + direction, geometry.First, geometry.Last);
 
-        long top = TopLine(geometry);
+        ScrollPosition top = TopPosition(geometry);
         if (page)
         {
-            top = Math.Clamp(top + direction * step, geometry.First, geometry.MaxTopLine);
+            top = geometry.ScrollBy(top, direction * geometry.Height);
         }
 
-        if (target < top)
-        {
-            top = target;
-        }
-        else if (target >= top + height)
-        {
-            top = target - height + 1;
-        }
-
-        _topLine = Math.Clamp(top, geometry.First, geometry.MaxTopLine);
+        _top = geometry.EnsureVisible(top, target);
         _cursorLine = target;
         _following = target == geometry.Last;
 
@@ -351,7 +391,7 @@ internal sealed class OutputView : View
         return true;
     }
 
-    /// <summary>Wheel scrolling: moves the viewport only, not the cursor. Reaching the bottom resumes following.</summary>
+    /// <summary>Wheel scrolling: moves the viewport by screen rows, not the cursor. Reaching the bottom resumes following.</summary>
     private bool Scroll(int delta)
     {
         if (_buffer is null)
@@ -360,10 +400,10 @@ internal sealed class OutputView : View
         }
 
         Geometry geometry = Measure(_buffer);
-        long target = Math.Clamp(TopLine(geometry) + delta, geometry.First, geometry.MaxTopLine);
+        ScrollPosition target = geometry.ScrollBy(TopPosition(geometry), delta);
         Pause(geometry);
-        _topLine = target;
-        _following = delta > 0 && target >= geometry.MaxTopLine;
+        _top = target;
+        _following = delta > 0 && target == geometry.MaxTop;
         SetNeedsDraw();
         return true;
     }
@@ -381,8 +421,7 @@ internal sealed class OutputView : View
             return true;
         }
 
-        Pause(geometry);
-        _topLine = geometry.First;
+        _top = new ScrollPosition(geometry.First, 0);
         _cursorLine = geometry.First;
         _following = geometry.Last == geometry.First;
         SetNeedsDraw();
@@ -401,13 +440,6 @@ internal sealed class OutputView : View
         return true;
     }
 
-    private bool PanHorizontal(int delta)
-    {
-        _hOffset = Math.Max(0, _hOffset + delta);
-        SetNeedsDraw();
-        return true;
-    }
-
     private bool ClearSelection()
     {
         if (_selection is not null)
@@ -419,11 +451,26 @@ internal sealed class OutputView : View
         return true;
     }
 
-    /// <summary>The character position under a viewport-relative cell. The line is clamped to the retained lines.</summary>
+    /// <summary>
+    /// The character position under a viewport cell. On a row that is not the last row of its line, the column stops at the
+    /// row's last cell, so a drag past the right edge selects to the end of the row.
+    /// </summary>
     private SelectionPoint PointAt(Geometry geometry, int row, int column)
     {
-        long line = Math.Clamp(TopLine(geometry) + row, geometry.First, geometry.Last);
-        return new SelectionPoint(line, _hOffset + Math.Max(0, column));
+        IReadOnlyList<ScreenRow> rows = ScreenRows(geometry, TopPosition(geometry), GetAttributeForRole(VisualRole.Normal));
+        if (rows.Count == 0)
+        {
+            return new SelectionPoint(geometry.First, 0);
+        }
+
+        ScreenRow target = rows[Math.Clamp(row, 0, rows.Count - 1)];
+        int offset = Math.Max(0, column);
+        if (!target.LastOfLine)
+        {
+            offset = Math.Min(offset, Math.Max(0, target.EndColumn - target.StartColumn - 1));
+        }
+
+        return new SelectionPoint(target.Number, target.StartColumn + offset);
     }
 
     /// <summary>
@@ -457,7 +504,7 @@ internal sealed class OutputView : View
 
     /// <summary>
     /// Drag: extends the character selection to the cell under the pointer and moves the cursor there. Dragging above or
-    /// below the view scrolls by one line per motion event.
+    /// below the view scrolls by one screen row per motion event.
     /// </summary>
     private void DragTo(Mouse mouse)
     {
@@ -571,15 +618,46 @@ internal sealed class OutputView : View
         }
     }
 
+    /// <summary>
+    /// The screen rows from the top position, in order, until the viewport is full or the lines run out. Only the lines the
+    /// viewport reaches are read and wrapped; a line is wrapped once and shared by its rows.
+    /// </summary>
+    private static List<ScreenRow> ScreenRows(Geometry geometry, ScrollPosition top, Attribute normal)
+    {
+        var rows = new List<ScreenRow>(geometry.Height);
+        (long first, IReadOnlyList<OutputLine> lines) = ReadLines(geometry.Buffer, top.Line, geometry.Height);
+        for (int i = 0; i < lines.Count && rows.Count < geometry.Height; i++)
+        {
+            long number = first + i;
+            PreparedLine prepared = Prepare(lines[i], geometry.Width, normal);
+            int firstRow = number == top.Line ? Math.Min(top.Row, prepared.Rows.Count - 1) : 0;
+            for (int row = firstRow; row < prepared.Rows.Count && rows.Count < geometry.Height; row++)
+            {
+                rows.Add(new ScreenRow(number, row, prepared));
+            }
+        }
+
+        return rows;
+    }
+
+    private static PreparedLine Prepare(OutputLine line, int width, Attribute normal)
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(line);
+        Attribute[] spanAttributes = line.Spans.Select(span => ColorMap.ToAttribute(span.Style, line.Source, normal)).ToArray();
+        return new PreparedLine(cells, spanAttributes, OutputWrap.Rows(cells.Select(cell => cell.Width).ToList(), width));
+    }
+
     private static int CharacterCount(string text) => text.EnumerateRunes().Count();
 
-    /// <summary>Draws one line from column 0 of the viewport, honouring the horizontal offset, and pads the rest of the row.</summary>
-    private void DrawLine(OutputLine line, long number, int row, int width, Attribute normal, Color? cursorShade, SelectionRange? selection)
+    /// <summary>
+    /// Draws one screen row: the cells of the row's column range, styled as the span they belong to, with the cursor shade,
+    /// the selection and the padding exactly as the line would have them. Pads the rest of the row.
+    /// </summary>
+    private void DrawRow(int screenRow, ScreenRow row, int width, Attribute normal, Color? cursorShade, SelectionRange? selection)
     {
+        int start = row.StartColumn;
+        int end = row.EndColumn;
         int drawn = 0;
-        int hidden = _hOffset;
-        int column = 0;
-        bool full = false;
         var run = new StringBuilder();
         Attribute? runAttr = null;
         int runStart = 0;
@@ -588,7 +666,7 @@ internal sealed class OutputView : View
         {
             if (runAttr is { } attr && run.Length > 0)
             {
-                Move(runStart, row);
+                Move(runStart, screenRow);
                 SetAttribute(attr);
                 AddStr(run.ToString());
             }
@@ -596,64 +674,41 @@ internal sealed class OutputView : View
             run.Clear();
         }
 
-        foreach (StyledSpan span in line.Spans)
+        IReadOnlyList<OutputWrap.Cell> cells = row.Prepared.Cells;
+        for (int i = OutputWrap.FirstCellAt(cells, start); i < cells.Count && cells[i].Column < end; i++)
         {
-            if (full)
+            OutputWrap.Cell cell = cells[i];
+            int offset = cell.Column - start;
+            if (offset + cell.Width > width)
             {
+                // A wide character wider than the view itself: nothing of it fits.
                 break;
             }
 
-            Attribute spanAttr = ColorMap.ToAttribute(span.Style, line.Source, normal);
-            foreach (Rune original in span.Text.EnumerateRunes())
+            Attribute attr = row.Prepared.SpanAttributes[cell.Span];
+            if (cursorShade is { } shade)
             {
-                Rune rune = Rune.IsControl(original) ? new Rune(' ') : original;
-                int cols = Math.Max(0, rune.GetColumns());
-                if (cols == 0)
-                {
-                    continue;
-                }
-
-                int cellColumn = column;
-                column += cols;
-                if (hidden >= cols)
-                {
-                    hidden -= cols;
-                    continue;
-                }
-
-                int visible = cols - hidden;
-                hidden = 0;
-                if (drawn + visible > width)
-                {
-                    full = true;
-                    break;
-                }
-
-                Attribute attr = spanAttr;
-                if (cursorShade is { } shade)
-                {
-                    attr = Shade(attr, normal, shade);
-                }
-
-                if (selection is { } range && range.Covers(number, cellColumn, cols))
-                {
-                    attr = Invert(attr);
-                }
-
-                if (runAttr is null || !runAttr.Value.Equals(attr))
-                {
-                    Flush();
-                    runAttr = attr;
-                    runStart = drawn;
-                }
-
-                run.Append(visible == cols ? rune.ToString() : new string(' ', visible));
-                drawn += visible;
+                attr = Shade(attr, normal, shade);
             }
+
+            if (selection is { } range && range.Covers(row.Number, cell.Column, cell.Width))
+            {
+                attr = Invert(attr);
+            }
+
+            if (runAttr is null || !runAttr.Value.Equals(attr))
+            {
+                Flush();
+                runAttr = attr;
+                runStart = offset;
+            }
+
+            run.Append(cell.Rune.ToString());
+            drawn = offset + cell.Width;
         }
 
         Flush();
-        FillRow(row, drawn, width, RowFill(normal, cursorShade));
+        FillRow(screenRow, drawn, width, RowFill(normal, cursorShade));
     }
 
     private void FillRow(int row, int fromCol, int width, Attribute attr)

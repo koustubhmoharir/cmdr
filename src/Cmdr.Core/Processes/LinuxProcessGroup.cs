@@ -65,6 +65,12 @@ internal sealed class LinuxProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
+    /// <remarks>Nothing to release: Dispose does not signal, so the group is already detached.</remarks>
+    public void Detach()
+    {
+    }
+
+    /// <inheritdoc />
     public void Dispose()
     {
         // Nothing to release: the group is identified by its id only. Does not signal anything.

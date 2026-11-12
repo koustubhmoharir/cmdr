@@ -14,8 +14,6 @@ namespace Cmdr.Tui;
 /// </summary>
 internal sealed class CommandListSource : IListDataSource
 {
-    private static readonly Color GlyphWarning = new(0xE5, 0xA5, 0x0A);
-
     private readonly IReadOnlySet<GroupEntry> _collapsed;
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private DisplayLines _lines = DisplayLines.Build(Array.Empty<ListRow>());
@@ -100,7 +98,7 @@ internal sealed class CommandListSource : IListDataSource
                 listView.AddStr(text.Text);
                 if (text.GlyphColumn >= 0)
                 {
-                    Color glyphColor = GlyphColor(status.Kind, baseAttr.Foreground);
+                    Color glyphColor = StatusColors.For(status.Kind, baseAttr.Background, baseAttr.Foreground);
                     listView.Move(col + text.GlyphColumn, row);
                     listView.SetAttribute(new Attribute(glyphColor, baseAttr.Background, TextStyle.None));
                     listView.AddStr(status.Glyph);
@@ -128,16 +126,4 @@ internal sealed class CommandListSource : IListDataSource
 
     private static StatusText StatusOf(CommandEntry entry) =>
         StatusFormatter.Format(entry.Process.Snapshot, entry.IsQueued, DateTimeOffset.Now);
-
-    private static Color GlyphColor(StatusKind kind, Color normal) => kind switch
-    {
-        // Bright variants: the normal ones (especially green) have poor contrast on dark backgrounds.
-        StatusKind.Running => ColorName16.BrightGreen,
-        StatusKind.Stopping => ColorName16.BrightYellow,
-        StatusKind.Success => ColorName16.BrightGreen,
-        StatusKind.Failure => ColorName16.BrightRed,
-        StatusKind.Warning => GlyphWarning,
-        StatusKind.Queued => ColorName16.BrightCyan,
-        _ => normal,
-    };
 }

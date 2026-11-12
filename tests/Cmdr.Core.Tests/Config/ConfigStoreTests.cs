@@ -257,6 +257,38 @@ public class ConfigStoreTests
         Assert.Equal(StopMethod.CtrlC, cmd.Stop.Method);
     }
 
+    [Fact]
+    public void Leftovers_DetachIsReadAndWritten_DefaultIsOmitted()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, """{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "detach" }, { "name": "b", "program": "p" } ] } ] }""");
+
+        GroupSpec group = Assert.Single(ConfigStore.Load(path).Groups);
+        Assert.Equal(LeftoverMode.Detach, ((CommandSpec)group.Items[0]).Leftovers);
+        Assert.Equal(LeftoverMode.Track, ((CommandSpec)group.Items[1]).Leftovers);
+
+        ConfigStore.Save(ConfigStore.Load(path), path);
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+        JsonElement items = doc.RootElement.GetProperty("groups")[0].GetProperty("items");
+        Assert.Equal("detach", items[0].GetProperty("leftovers").GetString());
+        Assert.False(items[1].TryGetProperty("leftovers", out _));
+    }
+
+    [Theory]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "Detach" } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "keep" } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": 1 } ] } ] }""")]
+    public void Load_InvalidLeftovers_ThrowsConfigException(string json)
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, json);
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains(path, ex.Message);
+    }
+
     [Theory]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stop": { "method": "ctrlc" } } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stop": { "method": 3 } } ] } ] }""")]
