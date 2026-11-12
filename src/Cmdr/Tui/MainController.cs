@@ -44,6 +44,7 @@ internal sealed class MainController : IDisposable
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private object? _shownKey;
     private string? _outputTitle;
+    private string? _detailsTitle;
     private string? _message;
     private DateTimeOffset _messageUntil;
 
@@ -78,7 +79,7 @@ internal sealed class MainController : IDisposable
             TabStop = TabBehavior.TabStop,
         };
 
-        _details = new DetailsView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _details = new DetailsView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _output = new OutputView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
         _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0, Height = Dim.Fill(1) };
@@ -148,7 +149,7 @@ internal sealed class MainController : IDisposable
 
         if (key == Key.Tab || key == Key.Tab.WithShift)
         {
-            ToggleFocusPane();
+            CycleFocusPane(backward: key == Key.Tab.WithShift);
             return true;
         }
 
@@ -272,20 +273,17 @@ internal sealed class MainController : IDisposable
     }
 
     /// <summary>
-    /// Tab and Shift+Tab switch between the list and the output. Handled here rather than by Terminal.Gui's focus
-    /// traversal, which did not move focus between these views in this setup.
+    /// Tab moves the focus through the list, the details strip and the output, and Shift+Tab backward. Handled here rather
+    /// than by Terminal.Gui's focus traversal, which did not move focus between these views in this setup.
     /// </summary>
-    public void ToggleFocusPane()
+    public void CycleFocusPane(bool backward)
     {
-        if (_list.HasFocus)
-        {
-            _output.SetFocus();
-        }
-        else
-        {
-            _list.SetFocus();
-        }
+        View[] panes = { _list, _details, _output };
+        panes[FocusCycle.Next(Array.FindIndex(panes, pane => pane.HasFocus), panes.Length, backward)].SetFocus();
     }
+
+    /// <summary>Called by the details view after its scroll position changed. Updates the range shown in its title.</summary>
+    public void OnDetailsScrolled() => UpdateDetailsTitle();
 
     /// <summary>
     /// Ctrl+click toggles the mark of the row clicked (an index into the shown rows). Without a row, the focused row is used.
@@ -439,6 +437,7 @@ internal sealed class MainController : IDisposable
 
         _output.Tick();
         UpdateOutputTitle();
+        UpdateDetailsTitle();
 
         // The Enter hint depends on the targets, their states and marks; it is recomputed on every tick.
         if (_message is null)
@@ -509,11 +508,22 @@ internal sealed class MainController : IDisposable
         ListRow? row = FocusedRow;
         _shownKey = KeyOf(row);
 
-        _detailsFrame.Title = DetailsText.Title(row);
         _details.Show(row, _session.ConfigDir);
         _output.Show((row as CommandRow)?.Entry);
         UpdateOutputTitle();
+        UpdateDetailsTitle();
         _list.SetNeedsDraw();
+    }
+
+    /// <summary>The details title: the path of the focused row, with the range shown when its content overflows.</summary>
+    private void UpdateDetailsTitle()
+    {
+        string title = DetailsText.FrameTitle(DetailsText.Title(FocusedRow), _details.Scroll);
+        if (title != _detailsTitle)
+        {
+            _detailsTitle = title;
+            _detailsFrame.Title = title;
+        }
     }
 
     private void UpdateOutputTitle()
@@ -751,8 +761,7 @@ internal sealed class MainController : IDisposable
             return;
         }
 
-        var spec = command.Entry.Spec;
-        string line = CommandLineFormatter.Format(spec.Program, spec.Args, OperatingSystem.IsWindows());
+        string line = CommandLineFormatter.ForSpec(command.Entry.Spec, OperatingSystem.IsWindows());
         CopyToClipboard(line, "Copied command line");
     }
 

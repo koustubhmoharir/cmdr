@@ -134,8 +134,13 @@ Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.
   takes two lines: mark, status glyph and the full name; below it (dimmed) start time and elapsed /
   stopping-for / exit code / leftovers. Groups collapse with ←/→ (UI state only, not saved); a collapsed
   header shows a summary such as `2 running · 1 failed`. Refreshed every second.
-- Right: description strip + colored output view for the focused command. Tail-follows by
-  default; scrolling up pauses following, End resumes.
+- Right: details strip (4 lines high) above a colored output view for the focused row. A command's strip shows
+  the command line (as `c` copies it, with a `$`/`>` prompt), its cwd, the environment cmdr sets for it (keys
+  mentioned by the group chain and the command, expanded, `KEY (unset)` when removed), the pid and log, then the
+  whole description. A group's strip shows mode, cwd, env and description. Lines wrap to the width. When they do
+  not fit, the strip scrolls (↑↓, PgUp/PgDn, Home/End, wheel; a fresh row starts at the top) and the frame title
+  shows the range, e.g. `go-apps / nav / run  (1–4 of 11 ↓)`, with ↑/↓/↕ for content out of view.
+- The output view tail-follows by default; scrolling up pauses following, End resumes.
 - Output view is a custom view: mouse drag = character selection, Shift+↑/↓ = line selection.
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written to the terminal.
 
@@ -149,6 +154,7 @@ Selection-based actions apply to all selected commands (or the focused one if no
 | Ctrl+A | toggle select all in the focused group |
 | Alt+↑ / Alt+↓ | move a command or group (with its subtree) among its siblings |
 | ← / → | collapse / expand group (← on a command collapses its group and focuses the header; ← on a collapsed header focuses its parent header) |
+| Tab / Shift+Tab | move focus forward / backward: list → info strip → output → list |
 | Enter | if any target is stopping or has leftovers: force kill those (start nothing); else start the startable targets |
 | Esc | graceful stop (with confirmation) |
 | Ctrl+C | graceful stop (no confirmation) |

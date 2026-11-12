@@ -1,4 +1,5 @@
 using System.Text;
+using Cmdr.Core.Config;
 
 namespace Cmdr.Tui;
 
@@ -6,6 +7,14 @@ namespace Cmdr.Tui;
 internal static class CommandLineFormatter
 {
     private static readonly char[] WindowsDelimiters = { ' ', '\t', '\n', '\r', '"' };
+
+    /// <summary>The command line of a command definition: the program and its arguments, quoted for the platform.</summary>
+    public static string ForSpec(CommandSpec spec, bool windows)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+
+        return Format(spec.Program, spec.Args, windows);
+    }
 
     /// <summary>The program and its arguments, each quoted for the given platform and separated by spaces.</summary>
     public static string Format(string program, IReadOnlyList<string> args, bool windows)

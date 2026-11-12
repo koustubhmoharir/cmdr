@@ -88,6 +88,98 @@ internal static class TextWidth
         return new string(' ', Math.Max(0, width - Columns(truncated))) + truncated;
     }
 
+    /// <summary>
+    /// Wraps the text into lines of at most <paramref name="width"/> columns. A line breaks after the last space that fits, and
+    /// spaces at a break are dropped; a token longer than the width is broken where it does not fit. Control characters become
+    /// spaces. Empty text gives one empty line; a width that is not positive gives no lines.
+    /// </summary>
+    public static IReadOnlyList<string> Wrap(string text, int width)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        var lines = new List<string>();
+        if (width <= 0)
+        {
+            return lines;
+        }
+
+        var line = new List<(string Text, int Width)>();
+        int used = 0;
+        foreach (Rune rune in Clean(text).EnumerateRunes())
+        {
+            string s = rune.ToString();
+            int w = Width(rune);
+            while (used + w > width && line.Count > 0)
+            {
+                if (s == " ")
+                {
+                    // A space that does not fit ends the line; the space itself is dropped.
+                    lines.Add(JoinLine(line, TrimmedCount(line, line.Count)));
+                    line.Clear();
+                    used = 0;
+                    break;
+                }
+
+                int space = line.FindLastIndex(c => c.Text == " ");
+                int end = space < 0 ? 0 : TrimmedCount(line, space);
+                if (end > 0)
+                {
+                    // Break after the last space; the partial word after it starts the next line.
+                    lines.Add(JoinLine(line, end));
+                    line.RemoveRange(0, space + 1);
+                    while (line.Count > 0 && line[0].Text == " ")
+                    {
+                        line.RemoveAt(0);
+                    }
+                }
+                else
+                {
+                    lines.Add(JoinLine(line, line.Count));
+                    line.Clear();
+                }
+
+                used = line.Sum(c => c.Width);
+            }
+
+            // Spaces at the start of a wrapped line are dropped.
+            if (s == " " && line.Count == 0 && lines.Count > 0)
+            {
+                continue;
+            }
+
+            line.Add((s, w));
+            used += w;
+        }
+
+        if (line.Count > 0 || lines.Count == 0)
+        {
+            lines.Add(JoinLine(line, line.Count));
+        }
+
+        return lines;
+    }
+
+    private static string JoinLine(List<(string Text, int Width)> line, int count)
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < count; i++)
+        {
+            sb.Append(line[i].Text);
+        }
+
+        return sb.ToString();
+    }
+
+    private static int TrimmedCount(List<(string Text, int Width)> line, int count)
+    {
+        while (count > 0 && line[count - 1].Text == " ")
+        {
+            count--;
+        }
+
+        return count;
+    }
+
     /// <summary>Replaces control characters with spaces, so they cannot disturb the layout.</summary>
     public static string Clean(string text)
     {

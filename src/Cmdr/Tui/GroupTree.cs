@@ -19,11 +19,16 @@ internal static class GroupTree
     }
 
     /// <summary>
-    /// The definitions of the group and its ancestors, outermost first, for <see cref="Cmdr.Core.Config.ConfigPaths"/>. Only the
-    /// name and the working directory setting are filled in.
+    /// The definitions of the group and its ancestors, outermost first, for <see cref="Cmdr.Core.Config.ConfigPaths"/> and
+    /// <see cref="Cmdr.Core.Processes.LaunchSpec.From"/>. The name, working directory and environment are filled in.
     /// </summary>
     public static IReadOnlyList<GroupSpec> SpecChain(GroupEntry? group) =>
-        ChainTo(group).Select(g => new GroupSpec { Name = g.Name, Cwd = g.Cwd }).ToList();
+        ChainTo(group).Select(g => new GroupSpec
+        {
+            Name = g.Name,
+            Cwd = g.Cwd,
+            Env = g.Env is null ? null : new Dictionary<string, string?>(g.Env),
+        }).ToList();
 
     /// <summary>The names from the outermost group down to the item, joined with <paramref name="separator"/>.</summary>
     public static string PathText(ItemEntry item, string separator)

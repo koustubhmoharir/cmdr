@@ -1,0 +1,197 @@
+using Cmdr.Core.Config;
+using Cmdr.Core.Session;
+using Cmdr.Tui;
+using CmdrSession = Cmdr.Core.Session.Session;
+
+namespace Cmdr.Tests;
+
+/// <summary>
+/// The details lines of a command. Every test passes an explicit base environment, so the real process environment does not
+/// matter.
+/// </summary>
+public sealed class DetailsCommandTests : IDisposable
+{
+    private static readonly IReadOnlyDictionary<string, string?> BaseEnvironment = new Dictionary<string, string?>
+    {
+        ["PATHX"] = "base",
+        ["GONE"] = "was",
+        ["KEEP"] = "k",
+    };
+
+    private readonly TempSession _temp = TempSession.Open(NestedTree());
+
+    public void Dispose() => _temp.Dispose();
+
+    private CmdrSession Session => _temp.Session;
+
+    private string ConfigDir => Path.GetFullPath(Session.ConfigDir);
+
+    private CommandEntry Run => Session.AllEntries.Single(e => e.Name == "run");
+
+    private string Resolved(params string[] relative) =>
+        Path.GetFullPath(Path.Combine(new[] { ConfigDir }.Concat(relative).ToArray()));
+
+    /// <summary>
+    /// top (cwd "src", env TOP, PATHX, SHARED)
+    ///   mid (cwd "sub", env SHARED, GONE removed, HERE)
+    ///     run (cwd "bin", args, description of five lines, env SHARED, OWN)
+    /// </summary>
+    private static GroupSpec[] NestedTree() => new[]
+    {
+        new GroupSpec
+        {
+            Name = "top",
+            Cwd = "src",
+            Env = new Dictionary<string, string?>
+            {
+                ["TOP"] = "t",
+                ["PATHX"] = "${PATHX}${pathsep}/top",
+                ["SHARED"] = "outer",
+            },
+            Items =
+            {
+                new GroupSpec
+                {
+                    Name = "mid",
+                    Cwd = "sub",
+                    Env = new Dictionary<string, string?>
+                    {
+                        ["SHARED"] = "${SHARED}-mid",
+                        ["GONE"] = null,
+                        ["HERE"] = "${cwd}/x",
+                    },
+                    Items =
+                    {
+                        new CommandSpec
+                        {
+                            Name = "run",
+                            Program = "tool",
+                            Args = new List<string> { "--flag", "two words" },
+                            Cwd = "bin",
+                            Description = "a\nb\nc\nd\ne",
+                            Env = new Dictionary<string, string?>
+                            {
+                                ["SHARED"] = "${SHARED}+cmd",
+                                ["OWN"] = "${configDir}|${SHARED}",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    [Fact]
+    public void Command_lines_come_in_order_with_the_command_line_first()
+    {
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal(
+            new[]
+            {
+                "$ tool --flag 'two words'",
+                "cwd: " + Resolved("src", "sub", "bin"),
+                "TOP=t",
+                "PATHX=base:/top",
+                "SHARED=outer-mid+cmd",
+                "GONE (unset)",
+                "HERE=" + Resolved("src", "sub") + "/x",
+                "OWN=" + ConfigDir + "|outer-mid",
+                "pid — · log: off",
+                "a",
+                "b",
+                "c",
+                "d",
+                "e",
+            },
+            lines);
+    }
+
+    [Fact]
+    public void The_prompt_is_not_part_of_the_copied_command_line()
+    {
+        string copied = CommandLineFormatter.ForSpec(Run.Spec, windows: false);
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal("tool --flag 'two words'", copied);
+        Assert.Equal("$ " + copied, lines[0]);
+    }
+
+    [Fact]
+    public void Windows_uses_its_prompt_and_quoting()
+    {
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');
+
+        Assert.Equal("> tool --flag \"two words\"", lines[0]);
+        Assert.Equal("PATHX=base;/top", lines[3]);
+    }
+
+    [Fact]
+    public void The_cwd_is_resolved_through_every_enclosing_group()
+    {
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal("cwd: " + Resolved("src", "sub", "bin"), lines[1]);
+    }
+
+    [Fact]
+    public void A_removed_variable_is_listed_as_unset_even_when_the_base_lacks_it()
+    {
+        var levels = new List<EnvLevel>
+        {
+            new(new Dictionary<string, string?> { ["NOPE"] = null }, "/work"),
+        };
+
+        IReadOnlyList<string> lines = DetailsText.EnvLines(levels, "/conf", BaseEnvironment, windows: false, '/');
+
+        Assert.Equal(new[] { "NOPE (unset)" }, lines);
+    }
+
+    [Fact]
+    public void Inherited_group_env_is_applied_before_the_commands_own()
+    {
+        // The command's SHARED expands the value the group left, and OWN sees the same value, not the command's own SHARED.
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Contains("SHARED=outer-mid+cmd", lines);
+        Assert.Contains("OWN=" + ConfigDir + "|outer-mid", lines);
+    }
+
+    [Fact]
+    public void Env_values_are_expanded_against_the_base_environment()
+    {
+        IReadOnlyList<string> lines = DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal("PATHX=base:/top", lines.Single(l => l.StartsWith("PATHX=", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void Keys_are_listed_in_first_mention_order_once_each()
+    {
+        var levels = new List<EnvLevel>
+        {
+            new(new Dictionary<string, string?> { ["B"] = "1", ["A"] = "2" }, "/w"),
+            new(new Dictionary<string, string?> { ["B"] = "3", ["C"] = "${B}" }, "/w"),
+        };
+
+        IReadOnlyList<string> lines = DetailsText.EnvLines(levels, "/conf", new Dictionary<string, string?>(), windows: false, '/');
+
+        Assert.Equal(new[] { "B=3", "A=2", "C=1" }, lines);
+    }
+
+    [Fact]
+    public void A_command_without_any_env_has_no_env_block()
+    {
+        using var plain = TempSession.Open(new GroupSpec
+        {
+            Name = "g",
+            Items = { new CommandSpec { Name = "sh1", Program = "sh" } },
+        });
+        CommandEntry entry = plain.Session.AllEntries.Single();
+        string dir = Path.GetFullPath(plain.Session.ConfigDir);
+
+        IReadOnlyList<string> lines = DetailsText.CommandLines(entry, dir, windows: false, BaseEnvironment, ':');
+
+        Assert.Equal(new[] { "$ sh", "cwd: " + dir, "pid — · log: off" }, lines);
+    }
+}

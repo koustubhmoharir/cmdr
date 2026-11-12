@@ -33,8 +33,18 @@ public sealed class GroupDetailsTests : IDisposable
                 "Line one",
                 "Line two",
                 "Line three",
+                "Line four",
             },
             lines);
+    }
+
+    [Fact]
+    public void Absolute_cwd_setting_equal_to_the_resolved_path_is_shown_once()
+    {
+        string absolute = Resolved("src");
+        var group = Session.AddGroup(null, new GroupSettings("abs", null, GroupMode.Parallel, absolute, null));
+
+        Assert.Equal("cwd: " + absolute, DetailsText.GroupLines(group, Session.ConfigDir)[1]);
     }
 
     [Fact]
@@ -66,9 +76,9 @@ public sealed class GroupDetailsTests : IDisposable
     }
 
     [Fact]
-    public void Descriptions_are_cut_to_three_lines()
+    public void Descriptions_are_not_cut()
     {
-        Assert.Equal(new[] { "a", "b", "c" }, DetailsText.DescriptionLines("a\r\nb\nc\nd"));
+        Assert.Equal(new[] { "a", "b", "c", "d" }, DetailsText.DescriptionLines("a\r\nb\nc\nd"));
         Assert.Empty(DetailsText.DescriptionLines(null));
         Assert.Empty(DetailsText.DescriptionLines(string.Empty));
     }

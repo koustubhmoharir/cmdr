@@ -104,7 +104,7 @@ internal sealed class OutputView : View
 
         if (key == Key.Tab || key == Key.Tab.WithShift)
         {
-            _controller.ToggleFocusPane();
+            _controller.CycleFocusPane(backward: key == Key.Tab.WithShift);
             return true;
         }
 
