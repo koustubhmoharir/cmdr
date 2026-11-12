@@ -9,6 +9,8 @@ namespace Cmdr.Core.Processes;
 /// <param name="ExitCode">Exit code of the leader, if it has exited.</param>
 /// <param name="Error">Launch error message when <see cref="ProcessState.FailedToStart"/>.</param>
 /// <param name="LeftoverCount">Live processes left in the group after the leader exited; 0 otherwise.</param>
+/// <param name="StopRequested">True when a graceful stop or a force kill was requested while the run was active. Set when the
+/// leader exits and kept afterwards; the exit code of a stopped run says nothing about whether it succeeded.</param>
 public sealed record ProcessSnapshot(
     ProcessState State,
     int? Pid,
@@ -17,4 +19,5 @@ public sealed record ProcessSnapshot(
     DateTimeOffset? StopRequestedAt,
     int? ExitCode,
     string? Error,
-    int LeftoverCount);
+    int LeftoverCount,
+    bool StopRequested = false);

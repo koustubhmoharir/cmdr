@@ -67,6 +67,7 @@ public sealed class StatusColorsTests
 
     [Theory]
     [InlineData(StatusKind.Idle)]
+    [InlineData(StatusKind.Stopped)]
     public void Kind_without_color_keeps_normal_foreground(StatusKind kind)
     {
         Assert.Equal(NormalForeground, StatusColors.For(kind, White, NormalForeground));

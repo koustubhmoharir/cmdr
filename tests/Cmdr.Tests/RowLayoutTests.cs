@@ -172,6 +172,7 @@ public sealed class RowLayoutTests
     [InlineData("⧗")]
     [InlineData("…")]
     [InlineData("·")]
+    [InlineData("∎")]
     [InlineData("✓")]
     [InlineData("✗")]
     [InlineData("⚠")]

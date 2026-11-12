@@ -134,6 +134,103 @@ public class ManagedProcessTests
     }
 
     [Fact]
+    public void GracefulStopIsRecordedInTheSnapshotAfterExit()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            p.Start(Sh("trap \"exit 3\" INT; echo ready; while :; do sleep 0.1; done", dir.Path));
+            WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
+
+            Assert.False(p.Snapshot.StopRequested);
+            p.RequestStop();
+            WaitForExited(p);
+
+            Assert.Equal(3, p.Snapshot.ExitCode);
+            Assert.True(p.Snapshot.StopRequested);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void ForceKillIsRecordedInTheSnapshotAfterExit()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            p.Start(Sh("echo ready; while :; do sleep 0.1; done", dir.Path));
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
+
+            p.ForceKill();
+            WaitForExited(p);
+
+            Assert.True(p.Snapshot.StopRequested);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void NonZeroExitWithoutStopIsNotStopRequested()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            p.Start(Sh("exit 3", dir.Path));
+            WaitForExited(p);
+
+            Assert.Equal(3, p.Snapshot.ExitCode);
+            Assert.False(p.Snapshot.StopRequested);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
+    public void StopRequestedIsResetByANewRun()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            p.Start(Sh("echo ready; while :; do sleep 0.1; done", dir.Path));
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
+            p.ForceKill();
+            WaitForExited(p);
+            Assert.True(p.Snapshot.StopRequested);
+
+            p.Start(Sh("exit 0", dir.Path));
+            WaitForExited(p);
+
+            Assert.Equal(0, p.Snapshot.ExitCode);
+            Assert.False(p.Snapshot.StopRequested);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
+
+    [Fact]
     public void InputStopWritesToStdin()
     {
         if (!OperatingSystem.IsLinux()) return;

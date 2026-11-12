@@ -192,6 +192,73 @@ public class SessionProcessTests
     }
 
     [Fact]
+    public void ForceKill_CommandInSequentialGroup_WritesStoppedAndCancelsRest()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group(
+            "build",
+            GroupMode.Sequential,
+            Sleeper("first"),
+            Sh("second", "echo second; exit 0")));
+        try
+        {
+            GroupEntry group = session.Groups[0];
+            CommandEntry first = group.Commands[0];
+            CommandEntry second = group.Commands[1];
+
+            Assert.Null(session.Activate(group.Commands));
+            WaitUntil(() => first.Process.Snapshot.State == ProcessState.Running, "first running", first.Process);
+
+            // Force kill does not cancel the run, so the sequence judges the exit itself (a graceful Stop cancels it first).
+            session.ForceKill(new[] { first });
+
+            WaitUntil(() => !group.IsSequenceRunning, "sequence to end", first.Process);
+            WaitForExited(first.Process);
+            Assert.True(first.Process.Snapshot.StopRequested);
+            Assert.NotEqual(0, first.Process.Snapshot.ExitCode);
+            WaitForText(first.Process, "sequence cancelled: stopped");
+            Assert.DoesNotContain("sequence cancelled: exit code", Text(first.Process), StringComparison.Ordinal);
+            Assert.Equal(ProcessState.NotStarted, second.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void ParallelGroupOutsideRun_StoppedOrFailedCommands_WriteNoSequenceCancelledLine()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("bad", "exit 3"), Sleeper("stopme")));
+        try
+        {
+            CommandEntry bad = session.Groups[0].Commands[0];
+            CommandEntry stopme = session.Groups[0].Commands[1];
+
+            Assert.Null(session.Activate(session.Groups[0].Commands));
+            WaitForExited(bad.Process);
+            WaitUntil(() => stopme.Process.Snapshot.State == ProcessState.Running, "stopme running", stopme.Process);
+
+            Assert.Null(session.Stop(new[] { stopme }));
+            WaitForExited(stopme.Process);
+
+            Assert.Equal(3, bad.Process.Snapshot.ExitCode);
+            Assert.True(stopme.Process.Snapshot.StopRequested);
+            Assert.DoesNotContain("sequence cancelled", Text(bad.Process), StringComparison.Ordinal);
+            Assert.DoesNotContain("sequence cancelled", Text(stopme.Process), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
     public void Activate_BusySequentialGroup_ReturnsMessage()
     {
         if (!OperatingSystem.IsLinux()) return;

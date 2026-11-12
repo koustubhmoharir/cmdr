@@ -429,6 +429,7 @@ public sealed class ManagedProcess : IDisposable
                 State = ProcessState.Exited,
                 ExitedAt = exitedAt,
                 ExitCode = exitCode,
+                StopRequested = _stopOrKillRequested,
             };
 
             int leftovers = _group?.CountLiveProcesses() ?? 0;

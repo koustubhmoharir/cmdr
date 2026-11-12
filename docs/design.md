@@ -133,6 +133,13 @@ and processes remain, cmdr writes `N leftover process(es) detached`, stops super
 a plain exit; the command can start again at once and quitting does not touch them. For tools that keep
 build servers alive on purpose (MSBuild nodes, Gradle daemon). Linux: the process group is simply no
 longer tracked. Windows: `KILL_ON_JOB_CLOSE` is cleared on the job before its handle is closed.
+A run that exits after the user asked it to stop (graceful stop or force kill) is shown as stopped
+(`∎`, `stopped · exit N · runtime`), not as a failure, whatever its exit code (a stopped program's code
+is arbitrary, e.g. 255 from cmd.exe after "Terminate batch job"). Leftovers still show `⚠`. A stopped
+command does not count as success, so it still ends its sequence (a graceful stop cancels the run
+directly; a force kill, or a stopped parallel branch inside a run, writes `sequence cancelled: stopped`).
+`sequence cancelled: …` lines are written only for commands that are part of a run; a parallel group
+started outside any sequence writes none.
 Restart = graceful stop, wait for exit, start.
 
 Tracked per run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code.

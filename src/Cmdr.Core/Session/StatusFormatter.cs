@@ -26,6 +26,9 @@ public enum StatusKind
 
     /// <summary>Exited, but processes from the run are still alive.</summary>
     Warning,
+
+    /// <summary>Exited after a graceful stop or a force kill was requested. The exit code does not decide success.</summary>
+    Stopped,
 }
 
 /// <summary>The text shown for a command in the list.</summary>
@@ -87,6 +90,14 @@ public static class StatusFormatter
                     StatusKind.Warning,
                     started,
                     FormattableString.Invariant($"exit {ExitCodeText(snapshot)} · {snapshot.LeftoverCount} left"));
+
+            case ProcessState.Exited when snapshot.StopRequested:
+                return new StatusText(
+                    "∎",
+                    StatusKind.Stopped,
+                    started,
+                    FormattableString.Invariant(
+                        $"stopped · exit {ExitCodeText(snapshot)} · {Duration(Span(snapshot.StartedAt, snapshot.ExitedAt))}"));
 
             case ProcessState.Exited:
                 string code = ExitCodeText(snapshot);

@@ -271,14 +271,14 @@ internal sealed class SequenceRun
 
         await entry.Process.WaitForExitAsync(_cts.Token).ConfigureAwait(false);
 
-        int? code = entry.Process.Snapshot.ExitCode;
-        if (code != 0)
+        ProcessSnapshot snapshot = entry.Process.Snapshot;
+        if (Session.Succeeded(snapshot))
         {
-            entry.Process.Output.WriteSystem($"sequence cancelled: exit code {code?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?"}");
-            return false;
+            return true;
         }
 
-        return true;
+        entry.Process.Output.WriteSystem(Session.CancelledMessage(snapshot));
+        return false;
     }
 
     /// <summary>Takes the next step off the queue and makes it the current one. Returns null when cancelled or empty.</summary>

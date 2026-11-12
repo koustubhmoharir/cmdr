@@ -90,6 +90,64 @@ public class SessionTreeRunTests
     }
 
     [Fact]
+    public void ParallelGroupInsideSequence_FailedBranch_WritesExitCodeLine()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq(
+            "seq",
+            Par("par", Mark(dir, "bad", "bad", exitCode: "3"))));
+        try
+        {
+            GroupEntry seq = session.Groups[0];
+            CommandEntry bad = seq.Groups[0].Commands[0];
+
+            Assert.Null(session.Activate(seq));
+            WaitUntil(() => !seq.IsSequenceRunning, "sequence to end", bad.Process);
+
+            WaitForText(bad.Process, "sequence cancelled: exit code 3");
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void ParallelGroupInsideSequence_StoppedBranch_WritesStoppedAndCancelsSequence()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq(
+            "seq",
+            Par("par", Sleeper("p")),
+            Mark(dir, "after", "after")));
+        try
+        {
+            GroupEntry seq = session.Groups[0];
+            CommandEntry p = seq.Groups[0].Commands[0];
+            CommandEntry after = seq.Commands[0];
+
+            Assert.Null(session.Activate(seq));
+            WaitUntil(() => p.Process.Snapshot.State == ProcessState.Running, "p running", p.Process);
+
+            Assert.Null(session.Stop(new[] { p }));
+
+            WaitUntil(() => !seq.IsSequenceRunning, "sequence to end", p.Process);
+            WaitForExited(p.Process);
+            WaitForText(p.Process, "sequence cancelled: stopped");
+            Assert.DoesNotContain("sequence cancelled: exit code", Text(p.Process), StringComparison.Ordinal);
+            Assert.Equal(ProcessState.NotStarted, after.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
     public void ParallelSiblingSequences_FailureInOneDoesNotCancelTheOther()
     {
         if (!OperatingSystem.IsLinux()) return;

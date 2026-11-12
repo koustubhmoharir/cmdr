@@ -650,7 +650,10 @@ public sealed partial class Session
         return branches;
     }
 
-    /// <summary>Starts a branch command and completes when its leader exits: true for exit code 0.</summary>
+    /// <summary>
+    /// Starts a branch command and completes when its leader exits: true when <see cref="Succeeded"/>. A branch outside any
+    /// run (<paramref name="owner"/> is null) writes no "sequence cancelled" line.
+    /// </summary>
     private Task<bool> StartBranchCommand(CommandEntry entry, SequenceRun? owner, IReadOnlyDictionary<string, string> inputs)
     {
         entry.IsQueued = false;
@@ -661,7 +664,11 @@ public sealed partial class Session
 
         if (!entry.Process.CanStart)
         {
-            entry.Process.Output.WriteSystem("sequence cancelled: command cannot start");
+            if (owner is not null)
+            {
+                entry.Process.Output.WriteSystem("sequence cancelled: command cannot start");
+            }
+
             return Task.FromResult(false);
         }
 
@@ -671,22 +678,37 @@ public sealed partial class Session
         }
 
         owner?.StopIfCancelled(entry);
-        return WaitBranchAsync(entry);
+        return WaitBranchAsync(entry, owner is not null);
     }
 
-    private static async Task<bool> WaitBranchAsync(CommandEntry entry)
+    private static async Task<bool> WaitBranchAsync(CommandEntry entry, bool inRun)
     {
         await entry.Process.WaitForExitAsync().ConfigureAwait(false);
 
-        int? code = entry.Process.Snapshot.ExitCode;
-        if (code == 0)
+        ProcessSnapshot snapshot = entry.Process.Snapshot;
+        if (Succeeded(snapshot))
         {
             return true;
         }
 
-        entry.Process.Output.WriteSystem($"sequence cancelled: exit code {code?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?"}");
+        if (inRun)
+        {
+            entry.Process.Output.WriteSystem(CancelledMessage(snapshot));
+        }
+
         return false;
     }
+
+    /// <summary>
+    /// True when a finished run counts as a success: it was not stopped and its leader exited with code 0. A stopped run
+    /// ends its sequence whatever its exit code, because such codes (130, 255, 0xC000013A, ...) are not verdicts.
+    /// </summary>
+    internal static bool Succeeded(ProcessSnapshot snapshot) => !snapshot.StopRequested && snapshot.ExitCode == 0;
+
+    /// <summary>The "sequence cancelled" line for a run that did not <see cref="Succeeded"/>.</summary>
+    internal static string CancelledMessage(ProcessSnapshot snapshot) => snapshot.StopRequested
+        ? "sequence cancelled: stopped"
+        : $"sequence cancelled: exit code {snapshot.ExitCode?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "?"}";
 
     /// <summary>Completes with true when every task succeeds, and with false as soon as one fails. Others are not cancelled.</summary>
     internal static async Task<bool> AllSucceedAsync(IReadOnlyList<Task<bool>> tasks, CancellationToken ct = default)

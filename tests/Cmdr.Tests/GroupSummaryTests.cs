@@ -18,6 +18,13 @@ public sealed class GroupSummaryTests
     }
 
     [Fact]
+    public void Stopped_is_not_counted()
+    {
+        Assert.Equal(string.Empty, GroupSummary.Compose(new[] { StatusKind.Stopped, StatusKind.Stopped }));
+        Assert.Equal("1 running", GroupSummary.Compose(new[] { StatusKind.Stopped, StatusKind.Running }));
+    }
+
+    [Fact]
     public void Counts_are_given_per_kind_with_zero_counts_left_out()
     {
         string text = GroupSummary.Compose(new[] { StatusKind.Running, StatusKind.Running, StatusKind.Failure });

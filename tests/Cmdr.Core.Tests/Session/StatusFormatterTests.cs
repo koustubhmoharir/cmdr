@@ -16,8 +16,9 @@ public class StatusFormatterTests
         DateTimeOffset? exitedAt = null,
         DateTimeOffset? stopRequestedAt = null,
         int? exitCode = null,
-        int leftovers = 0) =>
-        new(state, 42, startedAt, exitedAt, stopRequestedAt, exitCode, null, leftovers);
+        int leftovers = 0,
+        bool stopRequested = false) =>
+        new(state, 42, startedAt, exitedAt, stopRequestedAt, exitCode, null, leftovers, stopRequested);
 
     [Fact]
     public void NotStarted_IsIdle()
@@ -93,6 +94,41 @@ public class StatusFormatterTests
         StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddHours(1));
 
         Assert.Equal(new StatusText("✗", StatusKind.Failure, LocalStart, "exit 3 · 2:03"), text);
+    }
+
+    [Theory]
+    [InlineData(255)]
+    [InlineData(130)]
+    [InlineData(-1073741510)]
+    public void Exited_StoppedWithNonZeroCode_IsStoppedNotFailure(int exitCode)
+    {
+        ProcessSnapshot snapshot = Snap(ProcessState.Exited, Started, Started.AddMinutes(2).AddSeconds(3), exitCode: exitCode, stopRequested: true);
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddHours(1));
+
+        Assert.Equal(
+            new StatusText("∎", StatusKind.Stopped, LocalStart, $"stopped · exit {exitCode} · 2:03"),
+            text);
+    }
+
+    [Fact]
+    public void Exited_StoppedWithZeroCode_IsStopped()
+    {
+        ProcessSnapshot snapshot = Snap(ProcessState.Exited, Started, Started.AddSeconds(5), exitCode: 0, stopRequested: true);
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddMinutes(1));
+
+        Assert.Equal(new StatusText("∎", StatusKind.Stopped, LocalStart, "stopped · exit 0 · 0:05"), text);
+    }
+
+    [Fact]
+    public void Exited_StoppedWithLeftovers_IsStillWarning()
+    {
+        ProcessSnapshot snapshot = Snap(ProcessState.Exited, Started, Started.AddSeconds(5), exitCode: 255, leftovers: 1, stopRequested: true);
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddMinutes(1));
+
+        Assert.Equal(new StatusText("⚠", StatusKind.Warning, LocalStart, "exit 255 · 1 left"), text);
     }
 
     [Fact]
