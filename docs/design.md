@@ -231,3 +231,26 @@ an item with `items` is a group). The top level remains `groups` (groups only). 
   else runs the group.
 - List: nested groups are indented and collapsible; collapsed headers summarize all descendants. Marks
   are limited to sibling commands of one group.
+
+### Session tree (runtime)
+
+- `GroupEntry` has `Parent` (null at top level) and ordered mixed `Items`; `Commands`/`Groups` are its
+  direct children of each kind. `Session.Groups` is top level only; `AllEntries`/`BuildRows()` walk the
+  tree depth-first in file order.
+- Only sequential groups own a run (`SequenceRun`, at most one active per group). Its steps are
+  commands or child groups: a sequential child runs as a sub-run (registered as that group's active
+  run), a parallel child starts all its children; the step waits for the child's result. A parallel
+  group started outside any run starts its commands and its sequential children's runs and tracks
+  nothing itself.
+- Failure (non-zero exit, failure to start, cancellation) fails the step and cancels the remainder of
+  every enclosing sequence. Parallel siblings are independent: a failed branch does not cancel its
+  siblings; the parallel group itself fails as soon as any child fails.
+- Enter on a group: kill-first over the whole subtree (stopping / leftovers); otherwise run it, skipping
+  commands that are already running and dropping groups left with nothing to start. Refused with a
+  message when the plan overlaps an active run.
+- Esc/Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
+  On a command, it cancels the innermost run containing it (which then fails upward). F5 on a group
+  stops everything below, waits for leaders, then runs the group.
+- Edits on a group (mode change, move, reparent, remove) and moves/removal of items are refused while
+  the affected item or anything below it is part of a run. Reparenting into itself or a descendant is
+  refused.
