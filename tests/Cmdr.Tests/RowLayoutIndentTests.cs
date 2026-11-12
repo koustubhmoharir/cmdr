@@ -43,6 +43,28 @@ public sealed class RowLayoutIndentTests
         Assert.StartsWith(new string(' ', glyphColumn) + "↻", row.Text);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Mark_is_at_column_0_at_every_depth_while_glyph_and_name_stay_put(int depth)
+    {
+        CommandMainText marked = RowLayout.FormatCommandMain(60, marked: true, "↻", "web", depth);
+        CommandMainText unmarked = RowLayout.FormatCommandMain(60, marked: false, "↻", "web", depth);
+
+        Assert.Equal(RowLayout.MarkColumn, 0);
+        Assert.Equal("›", marked.Text.Substring(0, 1));
+        Assert.Equal(" ", unmarked.Text.Substring(0, 1));
+        Assert.Equal(new string(' ', 2 * depth + 1), marked.Text.Substring(1, 2 * depth + 1));
+        Assert.Equal(2 * depth + 2, marked.GlyphColumn);
+        Assert.Equal(2 * depth + 4, marked.NameColumn);
+        Assert.Equal("↻", marked.Text.Substring(marked.GlyphColumn, 1));
+        Assert.Equal("web", marked.Text.Substring(marked.NameColumn, 3));
+        Assert.Equal(unmarked.GlyphColumn, marked.GlyphColumn);
+        Assert.Equal(unmarked.NameColumn, marked.NameColumn);
+    }
+
     [Fact]
     public void Top_level_command_line_is_unchanged_by_the_default_depth()
     {
@@ -124,7 +146,7 @@ public sealed class RowLayoutIndentTests
         string text = RowLayout.FormatGroupRow(40, "nav", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: string.Empty, depth: 2);
 
         Assert.Equal(40, TextWidth.Columns(text));
-        Assert.Equal("    ▾ nav  [parallel]", text.TrimEnd());
+        Assert.Equal("    ⊟ nav  [parallel]", text.TrimEnd());
     }
 
     [Fact]
@@ -132,7 +154,7 @@ public sealed class RowLayoutIndentTests
     {
         string text = RowLayout.FormatGroupRow(60, "deep", GroupMode.Sequential, sequenceRunning: false, collapsed: true, summary: "2 failed", depth: 1);
 
-        Assert.Equal("  ▸ deep  [sequential]  2 failed", text.TrimEnd());
+        Assert.Equal("  ⊞ deep  [sequential]  2 failed", text.TrimEnd());
     }
 
     [Fact]
