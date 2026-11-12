@@ -29,7 +29,7 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
       "name": "build",
       "description": "optional",
       "mode": "sequential",
-      "commands": [
+      "items": [
         { "name": "restore", "program": "dotnet", "args": ["restore"] },
         { "name": "build", "program": "dotnet", "args": ["build"] }
       ]
@@ -37,7 +37,7 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
     {
       "name": "servers",
       "mode": "parallel",
-      "commands": [
+      "items": [
         {
           "name": "web",
           "description": "Frontend dev server.\nNeeds the api running first.",

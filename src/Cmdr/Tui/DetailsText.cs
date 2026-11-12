@@ -97,19 +97,30 @@ internal static class DetailsText
 
         CommandSpec spec = entry.Spec;
         IReadOnlyList<GroupSpec> ancestors = GroupTree.SpecChain(entry.Group);
-        LaunchSpec launch = LaunchSpec.From(ancestors, spec, configDir);
 
         var lines = new List<DetailsLine>
         {
             Line(
                 new DetailsSpan(windows ? "> " : "$ ", DetailsStyle.Prompt),
                 new DetailsSpan(CommandLineFormatter.ForSpec(spec, windows), DetailsStyle.Command)),
-            Line(
-                new DetailsSpan("cwd: ", DetailsStyle.Label),
-                new DetailsSpan(ConfigPaths.ResolveCwd(ancestors, spec, configDir), DetailsStyle.Path)),
         };
 
-        lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
+        // A cwd that cannot be resolved (e.g. it contains a NUL) is shown, not thrown: the launch reports it on start.
+        LaunchSpec? launch = null;
+        try
+        {
+            launch = LaunchSpec.From(ancestors, spec, configDir);
+        }
+        catch (Exception ex) when (IsPathError(ex))
+        {
+            lines.Add(InvalidCwdLine(ex));
+        }
+
+        if (launch is not null)
+        {
+            lines.Add(Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(launch.WorkingDirectory, DetailsStyle.Path)));
+            lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
+        }
 
         string pid = entry.Process.Snapshot.Pid?.ToString(CultureInfo.InvariantCulture) ?? "—";
         string log = entry.Process.Output.IsLogging ? entry.Process.Output.LogPath ?? "on" : "off";
@@ -188,15 +199,27 @@ internal static class DetailsText
                 new DetailsSpan(group.Mode == GroupMode.Sequential ? "sequential" : "parallel", DetailsStyle.Normal)),
         };
 
-        string resolved = ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir);
-        // The setting is shown only when it says something the resolved path does not (a relative or unnormalised path).
-        lines.Add(string.IsNullOrWhiteSpace(group.Cwd) || group.Cwd == resolved
-            ? Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(resolved, DetailsStyle.Path))
-            : Line(
-                new DetailsSpan("cwd: ", DetailsStyle.Label),
-                new DetailsSpan(group.Cwd, DetailsStyle.Path),
-                new DetailsSpan(" → ", DetailsStyle.Faint),
-                new DetailsSpan(resolved, DetailsStyle.Path)));
+        string? resolved = null;
+        try
+        {
+            resolved = ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir);
+        }
+        catch (Exception ex) when (IsPathError(ex))
+        {
+            lines.Add(InvalidCwdLine(ex));
+        }
+
+        if (resolved is not null)
+        {
+            // The setting is shown only when it says something the resolved path does not (a relative or unnormalised path).
+            lines.Add(string.IsNullOrWhiteSpace(group.Cwd) || group.Cwd == resolved
+                ? Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(resolved, DetailsStyle.Path))
+                : Line(
+                    new DetailsSpan("cwd: ", DetailsStyle.Label),
+                    new DetailsSpan(group.Cwd, DetailsStyle.Path),
+                    new DetailsSpan(" → ", DetailsStyle.Faint),
+                    new DetailsSpan(resolved, DetailsStyle.Path)));
+        }
 
         if (group.Env is not null)
         {
@@ -209,6 +232,11 @@ internal static class DetailsText
         lines.AddRange(DescriptionLines(group.Description));
         return lines;
     }
+
+    private static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException;
+
+    private static DetailsLine InvalidCwdLine(Exception ex) =>
+        Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan("invalid (" + ex.Message + ")", DetailsStyle.Unset));
 
     /// <summary>The lines of a description, with line breaks normalised. Empty for no description.</summary>
     public static List<DetailsLine> DescriptionLines(string? description)
