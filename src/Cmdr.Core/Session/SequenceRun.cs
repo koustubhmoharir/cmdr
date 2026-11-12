@@ -19,17 +19,20 @@ internal sealed class SequenceRun
     private readonly object _sync = new();
     private readonly List<PlanNode> _pending;
     private readonly List<CommandEntry> _planned;
+    private readonly IReadOnlyDictionary<string, string> _inputs;
     private readonly CancellationTokenSource _cts = new();
     private bool _cancelled;
     private bool _forced;
     private PlanNode? _current;
     private SequenceRun? _childRun;
 
-    internal SequenceRun(Session session, GroupEntry group, IReadOnlyList<PlanNode> steps)
+    /// <param name="inputs">The input values of the action that started the run; every command step and sub-run gets them.</param>
+    internal SequenceRun(Session session, GroupEntry group, IReadOnlyList<PlanNode> steps, IReadOnlyDictionary<string, string> inputs)
     {
         _session = session;
         Group = group;
         _pending = steps.ToList();
+        _inputs = inputs;
 
         var planned = new List<CommandEntry>();
         foreach (PlanNode step in steps)
@@ -217,7 +220,7 @@ internal sealed class SequenceRun
         GroupEntry group = step.Group!;
         if (group.Mode == GroupMode.Sequential)
         {
-            var child = new SequenceRun(_session, group, step.Children);
+            var child = new SequenceRun(_session, group, step.Children, _inputs);
             if (!_session.TryStart(child))
             {
                 _session.Unqueue(step);
@@ -242,7 +245,7 @@ internal sealed class SequenceRun
         }
 
         // Parallel: all branches start now; the step fails as soon as one fails, and siblings are not cancelled.
-        List<Task<bool>> branches = _session.StartBranches(step.Children, this);
+        List<Task<bool>> branches = _session.StartBranches(step.Children, this, _inputs);
         return await Session.AllSucceedAsync(branches, _cts.Token).ConfigureAwait(false);
     }
 
@@ -259,7 +262,7 @@ internal sealed class SequenceRun
             return false;
         }
 
-        if (!_session.StartEntry(entry) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
+        if (!_session.StartEntry(entry, _inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
         {
             return false;
         }

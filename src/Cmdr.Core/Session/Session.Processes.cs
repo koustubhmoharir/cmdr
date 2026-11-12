@@ -10,9 +10,10 @@ public sealed partial class Session
     /// Otherwise starts the targets that can start: parallel groups start each command now; sequential groups start a
     /// sequence of them in file order. Running commands are left alone.
     /// </summary>
+    /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message when something was not done, otherwise null.</returns>
     /// <exception cref="ArgumentException">The targets are not all in the same group.</exception>
-    public string? Activate(IReadOnlyList<CommandEntry> targets)
+    public string? Activate(IReadOnlyList<CommandEntry> targets, IReadOnlyDictionary<string, string>? inputs = null)
     {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
@@ -38,7 +39,7 @@ public sealed partial class Session
             return null;
         }
 
-        return StartCommands(group, startable);
+        return StartCommands(group, startable, Freeze(inputs));
     }
 
     /// <summary>
@@ -47,9 +48,10 @@ public sealed partial class Session
     /// group starts its startable commands now and its sequential sub-groups as runs, and tracks nothing itself. Items that
     /// cannot start are skipped, and groups left with nothing to start are dropped.
     /// </summary>
+    /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message when the group could not be started because it overlaps a running sequence; otherwise null.</returns>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public string? Activate(GroupEntry group)
+    public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null)
     {
         EnsureOwned(group);
 
@@ -64,7 +66,7 @@ public sealed partial class Session
             return null;
         }
 
-        return StartGroup(group);
+        return StartGroup(group, Freeze(inputs));
     }
 
     /// <summary>
@@ -118,16 +120,22 @@ public sealed partial class Session
     /// F5 on command rows: cancels the innermost runs containing the targets (and waits for the runs around them to end),
     /// stops the running or stopping targets and waits for their leaders to exit, then starts the targets that can start.
     /// </summary>
+    /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message naming targets that could not start, or the reason a sequence did not start; otherwise null.</returns>
     /// <exception cref="ArgumentException">The targets are not all in the same group.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled while waiting.</exception>
-    public async Task<string?> RestartAsync(IReadOnlyList<CommandEntry> targets, CancellationToken ct = default)
+    public async Task<string?> RestartAsync(
+        IReadOnlyList<CommandEntry> targets,
+        IReadOnlyDictionary<string, string>? inputs = null,
+        CancellationToken ct = default)
     {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
             return null;
         }
+
+        IReadOnlyDictionary<string, string> values = Freeze(inputs);
 
         List<SequenceRun> affected = ActiveRuns().Where(run => targets.Any(target => run.Contains(target))).ToList();
         CancelInnermostRuns(targets);
@@ -154,7 +162,7 @@ public sealed partial class Session
         var messages = new List<string>();
         if (startable.Count > 0)
         {
-            string? message = StartCommands(group, startable);
+            string? message = StartCommands(group, startable, values);
             if (message is not null)
             {
                 messages.Add(message);
@@ -173,12 +181,17 @@ public sealed partial class Session
     /// F5 on a group: cancels the runs at or below it and the enclosing runs that contain it, stops everything running below
     /// it and waits for the leaders to exit, then runs the group as Enter does (without the kill step).
     /// </summary>
+    /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>Messages about refused or blocked starts, or null.</returns>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled while waiting.</exception>
-    public async Task<string?> RestartAsync(GroupEntry group, CancellationToken ct = default)
+    public async Task<string?> RestartAsync(
+        GroupEntry group,
+        IReadOnlyDictionary<string, string>? inputs = null,
+        CancellationToken ct = default)
     {
         EnsureOwned(group);
+        IReadOnlyDictionary<string, string> values = Freeze(inputs);
 
         List<SequenceRun> cancelled = CancelRunsFor(group);
         await Task.WhenAll(cancelled.Select(run => run.Result)).WaitAsync(ct);
@@ -191,7 +204,7 @@ public sealed partial class Session
         var blocked = group.AllCommands.Where(entry => !entry.Process.CanStart).Select(entry => $"'{entry.Spec.Name}'").ToList();
 
         var messages = new List<string>();
-        string? message = StartGroup(group);
+        string? message = StartGroup(group, values);
         if (message is not null)
         {
             messages.Add(message);
@@ -203,6 +216,94 @@ public sealed partial class Session
         }
 
         return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
+    /// <summary>
+    /// The inputs that <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> would need for
+    /// these targets: none when it would only kill, or would start nothing. Empty when no input is needed.
+    /// </summary>
+    /// <exception cref="ArgumentException">The targets are not all in the same group.</exception>
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(IReadOnlyList<CommandEntry> targets)
+    {
+        GroupEntry? group = GroupOf(targets);
+        if (group is null || targets.Any(IsKillable))
+        {
+            return Array.Empty<InputPlaceholders.InputRequest>();
+        }
+
+        List<CommandEntry> startable = targets.Where(e => e.Process.CanStart).ToList();
+        if (startable.Count == 0)
+        {
+            return Array.Empty<InputPlaceholders.InputRequest>();
+        }
+
+        lock (_sync)
+        {
+            if (CommandsRefusal(group, startable) is not null)
+            {
+                return Array.Empty<InputPlaceholders.InputRequest>();
+            }
+        }
+
+        return RequestsFor(startable);
+    }
+
+    /// <summary>
+    /// The inputs that <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/> would need for this group: none
+    /// when it would only kill, or would be refused. Empty when no input is needed.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(GroupEntry group)
+    {
+        EnsureOwned(group);
+        if (group.AllCommands.Any(IsKillable))
+        {
+            return Array.Empty<InputPlaceholders.InputRequest>();
+        }
+
+        List<PlanNode> children = PlanChildren(group, e => e.Process.CanStart);
+        if (children.Count == 0)
+        {
+            return Array.Empty<InputPlaceholders.InputRequest>();
+        }
+
+        lock (_sync)
+        {
+            if (GroupRefusal(group, children) is not null)
+            {
+                return Array.Empty<InputPlaceholders.InputRequest>();
+            }
+        }
+
+        return RequestsFor(CollectCommands(children));
+    }
+
+    /// <summary>
+    /// The inputs that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// would need for these targets. Restart stops the running targets first, so targets that are running or stopping are
+    /// included as if they would start; whether they do depends on their exit. Empty when no input is needed.
+    /// </summary>
+    /// <exception cref="ArgumentException">The targets are not all in the same group.</exception>
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets)
+    {
+        GroupEntry? group = GroupOf(targets);
+        if (group is null)
+        {
+            return Array.Empty<InputPlaceholders.InputRequest>();
+        }
+
+        return RequestsFor(targets.Where(WillStartAfterStop));
+    }
+
+    /// <summary>
+    /// The inputs that <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/> would need for
+    /// this group. Running and stopping commands below it are included as in <see cref="InputsForRestart(IReadOnlyList{CommandEntry})"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(GroupEntry group)
+    {
+        EnsureOwned(group);
+        return RequestsFor(CollectCommands(PlanChildren(group, WillStartAfterStop)));
     }
 
     /// <summary>Toggles the log file of a command. Does not change the spec or the dirty flag.</summary>
@@ -252,20 +353,26 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Starts one command: enables its log file if configured, then launches it with the launch spec of its ancestors.
-    /// Returns false, with a system line in the output, if the launch could not be prepared.
+    /// Starts one command: substitutes the input values into a copy of its arguments, enables its log file if configured, then
+    /// launches it with the launch spec of its ancestors. Returns false, with a system line in the output, if the launch could
+    /// not be prepared, including when an input has no usable value. Nothing is launched or logged in that case.
     /// </summary>
-    internal bool StartEntry(CommandEntry entry)
+    internal bool StartEntry(CommandEntry entry, IReadOnlyDictionary<string, string> inputs)
     {
         CommandSpec spec = entry.Spec;
         try
         {
+            LaunchSpec launch = LaunchSpec.From(entry.Group.SpecChain(), spec, entry.Source.Dir) with
+            {
+                Args = InputPlaceholders.Substitute(spec.Args, inputs),
+            };
+
             if (spec.Log.Enabled)
             {
                 entry.Process.Output.EnableLog(ResolveLogPath(entry));
             }
 
-            entry.Process.Start(LaunchSpec.From(entry.Group.SpecChain(), spec, entry.Source.Dir));
+            entry.Process.Start(launch);
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or ObjectDisposedException or NotSupportedException)
@@ -282,11 +389,11 @@ public sealed partial class Session
     /// Starts the given commands of a group: in sequence for a sequential group, otherwise each at once. Refuses, with a
     /// message, when the group already has a sequence or a command is part of a running sequence.
     /// </summary>
-    private string? StartCommands(GroupEntry group, IReadOnlyList<CommandEntry> startable)
+    private string? StartCommands(GroupEntry group, IReadOnlyList<CommandEntry> startable, IReadOnlyDictionary<string, string> inputs)
     {
         if (group.Mode == GroupMode.Sequential)
         {
-            return StartSequence(group, startable);
+            return StartSequence(group, startable, inputs);
         }
 
         lock (_sync)
@@ -300,16 +407,16 @@ public sealed partial class Session
 
         foreach (CommandEntry entry in startable)
         {
-            StartEntry(entry);
+            StartEntry(entry, inputs);
         }
 
         return null;
     }
 
     /// <summary>Creates a sequence over the commands and starts it in the background. Returns a message if one cannot start.</summary>
-    private string? StartSequence(GroupEntry group, IReadOnlyList<CommandEntry> entries)
+    private string? StartSequence(GroupEntry group, IReadOnlyList<CommandEntry> entries, IReadOnlyDictionary<string, string> inputs)
     {
-        var run = new SequenceRun(this, group, entries.Select(e => new PlanNode(e)).ToList());
+        var run = new SequenceRun(this, group, entries.Select(e => new PlanNode(e)).ToList(), inputs);
 
         lock (_sync)
         {
@@ -332,9 +439,9 @@ public sealed partial class Session
     }
 
     /// <summary>Runs a group (see <see cref="Activate(GroupEntry)"/>) without the kill step. Returns a message when it is refused.</summary>
-    private string? StartGroup(GroupEntry group)
+    private string? StartGroup(GroupEntry group, IReadOnlyDictionary<string, string> inputs)
     {
-        List<PlanNode> children = PlanChildren(group);
+        List<PlanNode> children = PlanChildren(group, e => e.Process.CanStart);
         if (children.Count == 0)
         {
             return null;
@@ -343,12 +450,7 @@ public sealed partial class Session
         SequenceRun? run = null;
         lock (_sync)
         {
-            if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
-            {
-                return $"A sequence is already running in group '{group.Name}'.";
-            }
-
-            string? refusal = RefusalFor(children);
+            string? refusal = GroupRefusal(group, children);
             if (refusal is not null)
             {
                 return refusal;
@@ -356,7 +458,7 @@ public sealed partial class Session
 
             if (group.Mode == GroupMode.Sequential)
             {
-                run = new SequenceRun(this, group, children);
+                run = new SequenceRun(this, group, children, inputs);
                 Register(run);
             }
         }
@@ -368,30 +470,31 @@ public sealed partial class Session
         else
         {
             // Untracked: the branches run on their own; nothing waits for them.
-            StartBranches(children, owner: null);
+            StartBranches(children, owner: null, inputs);
         }
 
         return null;
     }
 
     /// <summary>
-    /// The plan of a group's startable items: commands that can start, and sub-groups that still have something to start.
+    /// The plan of a group's startable items: commands that <paramref name="startable"/> accepts, and sub-groups that still have
+    /// something to start.
     /// </summary>
-    private static List<PlanNode> PlanChildren(GroupEntry group)
+    private static List<PlanNode> PlanChildren(GroupEntry group, Func<CommandEntry, bool> startable)
     {
         var nodes = new List<PlanNode>();
         foreach (ItemEntry item in group.Items)
         {
             if (item is CommandEntry command)
             {
-                if (command.Process.CanStart)
+                if (startable(command))
                 {
                     nodes.Add(new PlanNode(command));
                 }
             }
             else if (item is GroupEntry child)
             {
-                List<PlanNode> children = PlanChildren(child);
+                List<PlanNode> children = PlanChildren(child, startable);
                 if (children.Count > 0)
                 {
                     nodes.Add(new PlanNode(child, children));
@@ -433,6 +536,33 @@ public sealed partial class Session
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The reason <see cref="StartCommands"/> would refuse these commands, or null. Caller holds <c>_sync</c>.
+    /// </summary>
+    private string? CommandsRefusal(GroupEntry group, IReadOnlyList<CommandEntry> startable)
+    {
+        if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
+        {
+            return $"A sequence is already running in group '{group.Name}'.";
+        }
+
+        CommandEntry? busy = startable.FirstOrDefault(IsBusyCommand);
+        return busy is null ? null : BusyMessage(busy);
+    }
+
+    /// <summary>
+    /// The reason <see cref="StartGroup"/> would refuse the plan of a group, or null. Caller holds <c>_sync</c>.
+    /// </summary>
+    private string? GroupRefusal(GroupEntry group, IReadOnlyList<PlanNode> children)
+    {
+        if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
+        {
+            return $"A sequence is already running in group '{group.Name}'.";
+        }
+
+        return RefusalFor(children);
     }
 
     /// <summary>
@@ -480,20 +610,20 @@ public sealed partial class Session
     /// run, and a parallel group recurses. Each branch completes with true on success. With an <paramref name="owner"/>
     /// run, a branch started after the owner was cancelled is stopped as the owner would stop it.
     /// </summary>
-    internal List<Task<bool>> StartBranches(IReadOnlyList<PlanNode> children, SequenceRun? owner)
+    internal List<Task<bool>> StartBranches(IReadOnlyList<PlanNode> children, SequenceRun? owner, IReadOnlyDictionary<string, string> inputs)
     {
         var branches = new List<Task<bool>>();
         foreach (PlanNode child in children)
         {
             if (child.Command is { } command)
             {
-                branches.Add(StartBranchCommand(command, owner));
+                branches.Add(StartBranchCommand(command, owner, inputs));
             }
             else if (child.Group is { } group)
             {
                 if (group.Mode == GroupMode.Sequential)
                 {
-                    var run = new SequenceRun(this, group, child.Children);
+                    var run = new SequenceRun(this, group, child.Children, inputs);
                     if (TryStart(run))
                     {
                         if (owner is { IsCancelled: true })
@@ -512,7 +642,7 @@ public sealed partial class Session
                 }
                 else
                 {
-                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner)));
+                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner, inputs)));
                 }
             }
         }
@@ -521,7 +651,7 @@ public sealed partial class Session
     }
 
     /// <summary>Starts a branch command and completes when its leader exits: true for exit code 0.</summary>
-    private Task<bool> StartBranchCommand(CommandEntry entry, SequenceRun? owner)
+    private Task<bool> StartBranchCommand(CommandEntry entry, SequenceRun? owner, IReadOnlyDictionary<string, string> inputs)
     {
         entry.IsQueued = false;
         if (owner is { IsCancelled: true })
@@ -535,7 +665,7 @@ public sealed partial class Session
             return Task.FromResult(false);
         }
 
-        if (!StartEntry(entry) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
+        if (!StartEntry(entry, inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
         {
             return Task.FromResult(false);
         }
@@ -745,5 +875,30 @@ public sealed partial class Session
     {
         ProcessState state = entry.Process.Snapshot.State;
         return state is ProcessState.Running or ProcessState.Stopping;
+    }
+
+    /// <summary>True if a restart would start the command: it can start now, or it is running or stopping and is stopped first.</summary>
+    private static bool WillStartAfterStop(CommandEntry entry) => entry.Process.CanStart || IsRunningOrStopping(entry);
+
+    private static readonly IReadOnlyDictionary<string, string> NoInputs = new Dictionary<string, string>();
+
+    /// <summary>A private copy of the input values, so that a running action does not see later changes. Null means no values.</summary>
+    private static IReadOnlyDictionary<string, string> Freeze(IReadOnlyDictionary<string, string>? inputs) =>
+        inputs is null ? NoInputs : new Dictionary<string, string>(inputs);
+
+    /// <summary>The distinct inputs the commands' arguments need, in first-seen order.</summary>
+    private static IReadOnlyList<InputPlaceholders.InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
+        InputPlaceholders.Requests(commands.Select(c => (IReadOnlyList<string>)c.Spec.Args).ToList());
+
+    /// <summary>The commands planned at or below the steps, in order.</summary>
+    private static List<CommandEntry> CollectCommands(IEnumerable<PlanNode> steps)
+    {
+        var commands = new List<CommandEntry>();
+        foreach (PlanNode step in steps)
+        {
+            step.CollectCommands(commands);
+        }
+
+        return commands;
     }
 }

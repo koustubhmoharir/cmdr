@@ -67,6 +67,13 @@ empty list; the first save creates it. `cmdr --send-ctrl-c <pid>` is an internal
 - Group `mode`: `parallel` (default) or `sequential`. Group names unique (case-insensitive) within a file;
   command names unique within their group.
 - `args` is an array, passed via `ProcessStartInfo.ArgumentList` (no quoting issues).
+- Input placeholders in `args`: `${input:NAME}` (value must not be empty) or `${input:NAME?}` (empty
+  allowed), anywhere inside an argument; NAME is `[A-Za-z0-9_.-]+`. `$${input:` is a literal `${input:`.
+  No other expansion happens in args. Malformed placeholders are validation errors.
+  Before Enter/F5 starts anything that needs inputs, one dialog asks for every distinct NAME of that action
+  (one value per name; required if any use lacks `?`); Enter = OK, Esc = cancel, and cancelling starts
+  nothing. Values are fixed for the whole action (later sequence steps use them), are not remembered for
+  the next run, and are not written to the output or log. The info strip and `c` show the placeholders.
 - `env`: values overlay the inherited environment; `null` removes a variable.
 - Relative `cwd` and `logsDir` resolve against the config file's directory; `logsDir` defaults to `logs`.
 - Relative `log.path` resolves against `logsDir`. Default log path: `<logsDir>/<group>/<command>.log`.

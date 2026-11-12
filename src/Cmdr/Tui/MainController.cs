@@ -646,10 +646,26 @@ internal sealed class MainController : IDisposable
 
         try
         {
+            IReadOnlyList<InputPlaceholders.InputRequest> requests = target switch
+            {
+                GroupTarget group => _session.InputsForActivate(group.Group),
+                CommandsTarget commands => _session.InputsForActivate(commands.Commands),
+                _ => Array.Empty<InputPlaceholders.InputRequest>(),
+            };
+            IReadOnlyDictionary<string, string>? inputs = null;
+            if (requests.Count > 0)
+            {
+                inputs = InputDialog.Ask(_app, TargetTitle(target), requests);
+                if (inputs is null)
+                {
+                    return;
+                }
+            }
+
             string? message = target switch
             {
-                GroupTarget group => _session.Activate(group.Group),
-                CommandsTarget commands => _session.Activate(commands.Commands),
+                GroupTarget group => _session.Activate(group.Group, inputs),
+                CommandsTarget commands => _session.Activate(commands.Commands, inputs),
                 _ => null,
             };
             if (message is not null)
@@ -662,6 +678,14 @@ internal sealed class MainController : IDisposable
             ShowMessage(ex.Message);
         }
     }
+
+    /// <summary>What an input dialog is about: the group's path, the command's name, or "N commands".</summary>
+    private static string TargetTitle(ActionTarget target) => target switch
+    {
+        GroupTarget group => GroupTree.PathText(group.Group, GroupOptions.Separator),
+        CommandsTarget { Commands.Count: 1 } commands => commands.Commands[0].Name,
+        _ => CommandsOf(target).Count + " commands",
+    };
 
     private void StopTargets(ListRow? focused, bool confirm)
     {
@@ -718,6 +742,30 @@ internal sealed class MainController : IDisposable
             return;
         }
 
+        IReadOnlyDictionary<string, string>? inputs = null;
+        try
+        {
+            IReadOnlyList<InputPlaceholders.InputRequest> requests = target switch
+            {
+                GroupTarget group => _session.InputsForRestart(group.Group),
+                CommandsTarget commands => _session.InputsForRestart(commands.Commands),
+                _ => Array.Empty<InputPlaceholders.InputRequest>(),
+            };
+            if (requests.Count > 0)
+            {
+                inputs = InputDialog.Ask(_app, TargetTitle(target), requests);
+                if (inputs is null)
+                {
+                    return;
+                }
+            }
+        }
+        catch (ArgumentException ex)
+        {
+            ShowMessage(ex.Message);
+            return;
+        }
+
         // Restart waits for processes to exit; it runs off the UI thread and reports back when it completes.
         _ = Task.Run(async () =>
         {
@@ -725,8 +773,8 @@ internal sealed class MainController : IDisposable
             try
             {
                 message = target is GroupTarget group
-                    ? await _session.RestartAsync(group.Group)
-                    : await _session.RestartAsync(((CommandsTarget)target).Commands);
+                    ? await _session.RestartAsync(group.Group, inputs)
+                    : await _session.RestartAsync(((CommandsTarget)target).Commands, inputs);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

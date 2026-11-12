@@ -371,4 +371,33 @@ public class ValidationTests
             "Group 'outer' › 'inner' › command 'tool': stop.input must not be empty when stop.method is 'input'.",
             Assert.Single(config.Validate()));
     }
+
+    [Fact]
+    public void MalformedInputPlaceholder_IsReportedWithCommandLabel()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Items = { new CommandSpec { Name = "x", Program = "p", Args = new List<string> { "ok", "${input:a b}" } } },
+                },
+            },
+        };
+
+        string error = Assert.Single(config.Validate());
+
+        Assert.Equal("Group 'g' › command 'x': args[1]: malformed input placeholder '${input:a b}'", error);
+    }
+
+    [Fact]
+    public void WellFormedInputPlaceholders_AndEscapes_AreValid()
+    {
+        var config = ValidConfig();
+        ((CommandSpec)config.Groups[1].Items[0]).Args = new List<string> { "${input:x}", "--n=${input:n?}", "$${input:literal}" };
+
+        Assert.Empty(config.Validate());
+    }
 }

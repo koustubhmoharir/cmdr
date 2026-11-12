@@ -94,6 +94,11 @@ public class CmdrConfig
                         errors.Add($"{label}: stop.input must not be empty when stop.method is 'input'.");
                     }
 
+                    foreach (string error in InputPlaceholders.Errors(cmd.Args))
+                    {
+                        errors.Add($"{label}: {error}");
+                    }
+
                     break;
 
                 case GroupSpec child:
