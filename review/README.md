@@ -2,7 +2,7 @@
 
 Reviewed baseline: `a06d405e01095309617069e43c5d4be9200c0ebc` (initial working tree clean).
 
-This directory contains six independent reviews by GPT 6.1 Sol (`gpt-6.1-sol`, high reasoning), followed by a consolidated report and implementation plan. Production code is unchanged. The consolidated result is 40 distinct findings (2 P1, 32 P2, 6 P3) plus one measured performance recommendation; duplicate evidence is reconciled in the report.
+This directory contains six independent reviews by GPT 6.1 Sol (`gpt-6.1-sol`, high reasoning), followed by a consolidated report and implementation plan. The original review made no production changes. Commit [`e961270`](https://github.com/koustubhmoharir/cmdr/commit/e961270) subsequently addressed 17 distinct findings; see [completed fixes](COMPLETED-FIXES.md). Remaining decisions, engineering work, and validation gaps are tracked in [deferred decisions and disposition](DESIGN-DECISIONS.md). The consolidated review result is 40 distinct findings (2 P1, 32 P2, 6 P3) plus one measured performance recommendation; duplicate evidence is reconciled in the report.
 
 ## Reading order
 
@@ -14,6 +14,8 @@ This directory contains six independent reviews by GPT 6.1 Sol (`gpt-6.1-sol`, h
 6. [Session tree and execution orchestration](05-session-orchestration.md)
 7. [Application UI and usability](06-ui-application.md)
 8. [Validation evidence and limitations](VALIDATION.md)
+9. [Completed fixes in e961270](COMPLETED-FIXES.md)
+10. [Deferred decisions and finding disposition](DESIGN-DECISIONS.md)
 
 ## What the application does
 
