@@ -209,6 +209,54 @@ public class ConfigStoreTests
     }
 
     [Fact]
+    public void Load_Utf8BomAndComments_IsAccepted()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("bom.json");
+        File.WriteAllBytes(path, [.. new System.Text.UTF8Encoding(true).GetPreamble(), .. System.Text.Encoding.UTF8.GetBytes("// comment\n{ \"groups\": [{ \"name\": \"g\", \"items\": [] }] }")]);
+
+        CmdrConfig config = ConfigStore.Load(path);
+
+        Assert.Equal("g", Assert.Single(config.Groups).Name);
+    }
+
+    [Fact]
+    public void Load_InvalidOpenedPath_IsConfigException()
+    {
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load("bad\0config.json"));
+
+        Assert.Contains("Invalid configuration path", ex.Message);
+    }
+
+    [Fact]
+    public void Load_InaccessibleParent_IsConfigExceptionInsteadOfDefaults()
+    {
+        if (!OperatingSystem.IsLinux() || Environment.UserName == "root")
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string parent = dir.File("private");
+        Directory.CreateDirectory(parent);
+        string path = Path.Combine(parent, "cmdr.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 7 }, path);
+        UnixFileMode originalMode = File.GetUnixFileMode(parent);
+        try
+        {
+            File.SetUnixFileMode(parent, UnixFileMode.None);
+
+            ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+
+            Assert.Contains("Could not read configuration", ex.Message);
+        }
+        finally
+        {
+            File.SetUnixFileMode(parent, originalMode);
+        }
+    }
+
+    [Fact]
     public void Load_IgnoresLegacyTopLevelCommandsKey()
     {
         using var dir = new TempDir();
@@ -297,6 +345,7 @@ public class ConfigStoreTests
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "Console" } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "tty" } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": 1 } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stdin": "pipe, console" } ] } ] }""")]
     public void Load_InvalidStdin_ThrowsConfigException(string json)
     {
         using var dir = new TempDir();
@@ -311,6 +360,7 @@ public class ConfigStoreTests
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "Detach" } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "keep" } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": 1 } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "leftovers": "track, detach" } ] } ] }""")]
     public void Load_InvalidLeftovers_ThrowsConfigException(string json)
     {
         using var dir = new TempDir();
@@ -324,6 +374,7 @@ public class ConfigStoreTests
     [Theory]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stop": { "method": "ctrlc" } } ] } ] }""")]
     [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stop": { "method": 3 } } ] } ] }""")]
+    [InlineData("""{ "groups": [ { "name": "g", "items": [ { "name": "a", "program": "p", "stop": { "method": "ctrlC, input", "input": "x" } } ] } ] }""")]
     public void Load_InvalidStopMethod_ThrowsConfigException(string json)
     {
         using var dir = new TempDir();
@@ -331,6 +382,20 @@ public class ConfigStoreTests
         File.WriteAllText(path, json);
 
         ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+        Assert.Contains(path, ex.Message);
+    }
+
+    [Theory]
+    [InlineData("parallel, sequential")]
+    [InlineData("parallel, parallel")]
+    public void Load_CompositeGroupMode_ThrowsConfigException(string mode)
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(new { groups = new[] { new { name = "g", mode, items = Array.Empty<object>() } } }));
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+
         Assert.Contains(path, ex.Message);
     }
 
@@ -346,6 +411,32 @@ public class ConfigStoreTests
         Assert.Contains(path, ex.Message);
         Assert.Contains("line 4", ex.Message);
         Assert.IsAssignableFrom<JsonException>(ex.InnerException);
+    }
+
+    [Fact]
+    public void Load_NestedTypedError_UsesWholeFileLine()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, "{\n  \"groups\": [\n    { \"name\": \"g\",\n      \"description\": \"é\",\n      \"items\": [\n        { \"name\": \"c\", \"program\": \"p\",\n          \"args\": 12 }\n      ] }\n  ]\n}");
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+
+        Assert.True(ex.Message.Contains("line 7", StringComparison.Ordinal), ex.Message);
+        Assert.Contains("$.args", ex.Message);
+    }
+
+    [Fact]
+    public void Load_DeepNestedTypedError_UsesWholeFileLine()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        File.WriteAllText(path, "{\n  \"groups\": [\n    { \"name\": \"outer\", \"items\": [\n      { \"name\": \"inner\", \"items\": [\n        { \"name\": \"c\", \"program\": \"p\",\n          \"args\": 12 }\n      ] }\n    ] }\n  ]\n}");
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+
+        Assert.True(ex.Message.Contains("line 6", StringComparison.Ordinal), ex.Message);
+        Assert.Contains("$.args", ex.Message);
     }
 
     [Fact]

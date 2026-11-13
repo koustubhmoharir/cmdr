@@ -27,4 +27,4 @@ public class StopSpec
 }
 
 /// <summary>String-only enum converter: rejects integer values such as <c>3</c>.</summary>
-internal sealed class StopMethodJsonConverter() : JsonStringEnumConverter<StopMethod>(namingPolicy: null, allowIntegerValues: false);
+internal sealed class StopMethodJsonConverter : StrictEnumJsonConverter<StopMethod> { }

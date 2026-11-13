@@ -113,6 +113,18 @@ public class SessionBaseConfigTests
     }
 
     [Fact]
+    public void Load_InvalidLogsDirectory_IsConfigException()
+    {
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig { LogsDir = "bad\0logs" }, dir.File("cmdr.json"));
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => CmdrSession.Load(dir.File("cmdr.json")));
+
+        Assert.Contains("logsDir", ex.Message);
+        Assert.Contains(dir.File("cmdr.json"), ex.Message);
+    }
+
+    [Fact]
     public void Buffer_FollowsBufferLinesOfTheFileTheCommandCameFrom()
     {
         using var dir = new TempDir();

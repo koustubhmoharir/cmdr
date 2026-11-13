@@ -22,4 +22,4 @@ public enum LeftoverMode
 }
 
 /// <summary>String-only enum converter: rejects integer values such as <c>1</c>.</summary>
-internal sealed class LeftoverModeJsonConverter() : JsonStringEnumConverter<LeftoverMode>(namingPolicy: null, allowIntegerValues: false);
+internal sealed class LeftoverModeJsonConverter : StrictEnumJsonConverter<LeftoverMode> { }

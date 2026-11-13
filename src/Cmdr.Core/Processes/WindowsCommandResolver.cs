@@ -51,13 +51,16 @@ internal static class WindowsCommandResolver
 
         if (IsPathLike(program))
         {
-            string basePath = IsRooted(program) ? program : JoinPath(workingDirectory, program);
+            string basePath = IsRooted(program) ? RootRelativePath(program, workingDirectory) : JoinPath(workingDirectory, program);
             return FirstExisting(Candidates(basePath, extensions), fileExists);
         }
 
         foreach (string directory in SearchDirectories(workingDirectory, pathVariable))
         {
-            string? found = FirstExisting(Candidates(JoinPath(directory, program), extensions), fileExists);
+            string absoluteDirectory = IsRooted(directory)
+                ? RootRelativePath(directory, workingDirectory)
+                : JoinPath(workingDirectory, directory);
+            string? found = FirstExisting(Candidates(JoinPath(absoluteDirectory, program), extensions), fileExists);
             if (found is not null)
             {
                 return found;
@@ -137,10 +140,38 @@ internal static class WindowsCommandResolver
     /// <summary>A drive-absolute path (<c>C:\</c> or <c>C:/</c>) or a UNC path (<c>\\</c>).</summary>
     private static bool IsRooted(string program) =>
         program.StartsWith(@"\\", StringComparison.Ordinal)
+        || program.StartsWith('\\')
+        || program.StartsWith('/')
         || (program.Length >= 3
             && char.IsAsciiLetter(program[0])
             && program[1] == ':'
             && (program[2] == '\\' || program[2] == '/'));
+
+    /// <summary>Expands a drive-rooted path such as <c>\tools\run.cmd</c> using the working directory's drive.</summary>
+    private static string RootRelativePath(string path, string workingDirectory)
+    {
+        if (path.StartsWith(@"\\", StringComparison.Ordinal)
+            || (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')))
+        {
+            return path;
+        }
+
+        if (workingDirectory.Length >= 2 && char.IsAsciiLetter(workingDirectory[0]) && workingDirectory[1] == ':')
+        {
+            return workingDirectory[..2] + path.Replace('/', '\\');
+        }
+
+        if (workingDirectory.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            string[] parts = workingDirectory[2..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 2)
+            {
+                return $@"\\{parts[0]}\{parts[1]}\" + path.TrimStart('\\', '/').Replace('/', '\\');
+            }
+        }
+
+        throw new ArgumentException("A root-relative Windows path requires a drive-qualified working directory.", nameof(workingDirectory));
+    }
 
     /// <summary>Joins with '\\'. An empty directory yields the name unchanged; a directory already ending in a separator is not given another.</summary>
     private static string JoinPath(string directory, string name)

@@ -1145,6 +1145,9 @@ internal sealed class MainController : IDisposable
     {
         _message = text;
         _messageUntil = DateTimeOffset.UtcNow + MessageDuration;
+        // A message replaces the cached hint display even when the hint text itself stays the same.
+        // Force ShowHints to redraw it when the message expires.
+        _shownHints = null;
         _status.Show(text, message: true);
     }
 

@@ -15,7 +15,14 @@ public sealed class ConfigSource
         IsBase = file.IsBase;
         BufferLines = file.Config.BufferLines;
         LogsDirSetting = file.Config.LogsDir;
-        LogsDir = ConfigPaths.ResolveLogsDir(file.Config, Dir);
+        try
+        {
+            LogsDir = ConfigPaths.ResolveLogsDir(file.Config, Dir);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ConfigException($"Configuration file '{file.Path}' has an invalid logsDir path: {ex.Message}", ex);
+        }
         DisplayPath = IsBase
             ? System.IO.Path.GetRelativePath(openedDir, file.Path)
             : System.IO.Path.GetFileName(file.Path);

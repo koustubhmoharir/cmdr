@@ -74,6 +74,23 @@ public class RecentFilesTests
     }
 
     [Fact]
+    public void Load_BomNormalizesAndDeduplicatesPathsAndDropsInvalidPath()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("recent.json");
+        string valid = dir.File("a.json");
+        string alias = Path.Combine(dir.Path, "sub", "..", "a.json");
+        string json = JsonSerializer.Serialize(new { files = new[] { valid, alias, dir.Path + "\0bad" } });
+        File.WriteAllBytes(path, [.. new System.Text.UTF8Encoding(true).GetPreamble(), .. System.Text.Encoding.UTF8.GetBytes(json)]);
+
+        RecentFiles recent = RecentFiles.Load(path);
+
+        Assert.Equal(new[] { valid }, recent.Files);
+        Assert.True(recent.Remove(alias));
+        Assert.Empty(recent.Files);
+    }
+
+    [Fact]
     public void Load_TruncatesToMaxEntries()
     {
         using var dir = new TempDir();

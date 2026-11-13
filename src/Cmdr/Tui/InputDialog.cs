@@ -19,6 +19,9 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
     private readonly IApplication _app;
     private readonly IReadOnlyList<InputPlaceholders.InputRequest> _requests;
     private readonly TextField[] _fields;
+    private readonly Label[] _labels;
+    private readonly View _form;
+    private readonly int _widestLabelWidth;
 
     /// <param name="app">The application, for the message boxes and the screen size.</param>
     /// <param name="what">What is being started, shown in the title: a command name, a group path or "N commands".</param>
@@ -37,23 +40,40 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
 
         // Labels are the names; optional inputs say so. The fields follow the longest label.
         List<string> labels = requests.Select(LabelOf).ToList();
-        int labelWidth = labels.Max(label => label.Length) + 1;
-        int fieldWidth = Math.Clamp(_app.Screen.Width - labelWidth - 6, MinFieldWidth, MaxFieldWidth);
-        Width = Math.Min(labelWidth + fieldWidth + 4, _app.Screen.Width);
+        _widestLabelWidth = labels.Max(label => label.Length) + 1;
+        int labelWidth = Math.Min(_widestLabelWidth, Math.Max(1, _app.Screen.Width - MinFieldWidth - 5));
+        int fieldWidth = Math.Clamp(_app.Screen.Width - labelWidth - 6, 1, MaxFieldWidth);
+        Width = Math.Max(1, Math.Min(labelWidth + fieldWidth + 4, _app.Screen.Width));
 
-        // Two border rows and the button area (a blank row, the buttons and their shadow). Fields beyond the screen height are not shown.
+        // Two border rows and the button area (a blank row, the buttons and their shadow).
         Height = Math.Min(requests.Count + 6, _app.Screen.Height);
 
         _fields = new TextField[requests.Count];
+        _labels = new Label[requests.Count];
+        _form = new View
+        {
+            X = 0,
+            Y = 0,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(3),
+            ContentSizeTracksViewport = false,
+            CanFocus = true,
+            TabStop = TabBehavior.TabGroup,
+        };
+        _form.SetContentHeight(requests.Count);
+        _form.ViewportSettings = ViewportSettingsFlags.ClipContentOnly;
         var views = new List<View>();
         for (int i = 0; i < requests.Count; i++)
         {
-            views.Add(new Label { Text = labels[i], X = 0, Y = i });
-            _fields[i] = new TextField { X = labelWidth, Y = i, Width = fieldWidth };
+            _labels[i] = new Label { Text = labels[i], X = 0, Y = i, Width = labelWidth };
+            views.Add(_labels[i]);
+            _fields[i] = new TextField { X = labelWidth, Y = i, Width = fieldWidth, TabStop = TabBehavior.TabStop };
             views.Add(_fields[i]);
+            _fields[i].HasFocusChanged += (_, _) => RevealFocusedField();
         }
 
-        Add(views.ToArray());
+        _form.Add(views.ToArray());
+        Add(_form);
 
         // OK and Enter in a text field both reach OnAccepting. Cancel ends the dialog without a result.
         var ok = new Button { Text = "_OK" };
@@ -69,6 +89,9 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
         // Terminal.Gui makes the last button added the default; Enter must mean OK.
         ok.IsDefault = true;
         cancel.IsDefault = false;
+
+        _form.ViewportChanged += (_, _) => ResizeFields();
+        ResizeFields();
     }
 
     /// <summary>
@@ -90,6 +113,39 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
 
     private static string LabelOf(InputPlaceholders.InputRequest request) =>
         request.AllowEmpty ? request.Name + " (optional)" : request.Name;
+
+    private void ResizeFields()
+    {
+        int labelWidth = Math.Min(_widestLabelWidth, Math.Max(1, _form.Viewport.Width - MinFieldWidth - 1));
+        int fieldWidth = Math.Max(1, Math.Min(MaxFieldWidth, _form.Viewport.Width - labelWidth - 1));
+        for (int i = 0; i < _fields.Length; i++)
+        {
+            _labels[i].Width = labelWidth;
+            _fields[i].X = labelWidth;
+            _fields[i].Width = fieldWidth;
+        }
+        RevealFocusedField();
+    }
+
+    private void RevealFocusedField()
+    {
+        TextField? focused = _fields.FirstOrDefault(field => field.HasFocus);
+        if (focused is null || _form.Viewport.Height <= 0)
+        {
+            return;
+        }
+
+        int focusedRow = Array.IndexOf(_fields, focused);
+        int top = _form.Viewport.Y;
+        if (focusedRow < top)
+        {
+            _form.Viewport = new System.Drawing.Rectangle(_form.Viewport.X, focusedRow, _form.Viewport.Width, _form.Viewport.Height);
+        }
+        else if (focusedRow >= top + _form.Viewport.Height)
+        {
+            _form.Viewport = new System.Drawing.Rectangle(_form.Viewport.X, focusedRow - _form.Viewport.Height + 1, _form.Viewport.Width, _form.Viewport.Height);
+        }
+    }
 
     /// <summary>OK, or Enter in a field: validate, and close only when the values are accepted.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

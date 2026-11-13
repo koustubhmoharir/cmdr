@@ -13,6 +13,8 @@ public sealed class AnsiLineParser
     private const char Esc = '\u001B';
     private const char Bel = '\u0007';
     private const char CsiC1 = '\u009B';
+    private const char OscC1 = '\u009D';
+    private const char StringTerminatorC1 = '\u009C';
     private const int MaxCsiParamLength = 256;
 
     private enum State
@@ -42,7 +44,7 @@ public sealed class AnsiLineParser
 
     /// <summary>Creates a parser for one output stream.</summary>
     /// <param name="source">The source tagged on every line this parser produces.</param>
-    /// <param name="maxLineLength">A line reaching this many characters is completed as if a newline was seen.</param>
+    /// <param name="maxLineLength">A line reaching this many UTF-16 code units is completed as if a newline was seen. A supplementary scalar is kept intact, so a limit of one may be exceeded by one code unit.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxLineLength"/> is not positive.</exception>
     public AnsiLineParser(OutputSource source, int maxLineLength = 65536)
     {
@@ -139,6 +141,7 @@ public sealed class AnsiLineParser
                 return;
             case '\u0090': // DCS
             case '\u0098': // SOS
+            case OscC1: // OSC
             case '\u009E': // PM
             case '\u009F': // APC
                 _state = State.StringSeq;
@@ -164,7 +167,7 @@ public sealed class AnsiLineParser
                 return;
         }
 
-        if (c < 0x20 || c == 0x7F)
+        if (c < 0x20 || (c >= 0x7F && c <= 0x9F))
         {
             return; // Other C0 controls and DEL are dropped.
         }
@@ -272,6 +275,7 @@ public sealed class AnsiLineParser
         switch (c)
         {
             case Bel:
+            case StringTerminatorC1:
                 _state = State.Normal;
                 return;
             case Esc:
@@ -289,7 +293,7 @@ public sealed class AnsiLineParser
 
     private void ProcessStringEscape(char c, List<OutputLine> completed)
     {
-        if (c == '\\')
+        if (c == '\\' || c == StringTerminatorC1)
         {
             _state = State.Normal; // ST terminates the string.
             return;
@@ -538,8 +542,9 @@ public sealed class AnsiLineParser
             return;
         }
 
-        _text.Length--;
-        if (_runs.Count > 0 && _runs[^1].Start >= _text.Length)
+        int removeLength = _text.Length >= 2 && char.IsLowSurrogate(_text[^1]) && char.IsHighSurrogate(_text[^2]) ? 2 : 1;
+        _text.Length -= removeLength;
+        while (_runs.Count > 0 && _runs[^1].Start >= _text.Length)
         {
             _runs.RemoveAt(_runs.Count - 1);
         }
@@ -549,9 +554,28 @@ public sealed class AnsiLineParser
     {
         ClearPendingOverwrite();
 
+        bool completesPair = char.IsLowSurrogate(c) && _text.Length > 0 && char.IsHighSurrogate(_text[^1]);
+        if (completesPair && _text.Length > 1 && _text.Length >= _maxLineLength)
+        {
+            SpanStyle pairStyle = _runs[^1].Style;
+            SpanStyle currentStyle = _style;
+            char high = _text[^1];
+            _text.Length--;
+            while (_runs.Count > 0 && _runs[^1].Start >= _text.Length)
+            {
+                _runs.RemoveAt(_runs.Count - 1);
+            }
+
+            CompleteLine(completed);
+            _style = pairStyle;
+            AppendChar(high, completed);
+            _style = currentStyle;
+        }
+
         // The line is completed before a character that would exceed the limit, so a line of exactly
         // maxLineLength characters followed by a newline yields one line.
-        if (_text.Length >= _maxLineLength)
+        completesPair = char.IsLowSurrogate(c) && _text.Length > 0 && char.IsHighSurrogate(_text[^1]);
+        if (_text.Length >= _maxLineLength && !completesPair)
         {
             CompleteLine(completed);
         }

@@ -89,17 +89,45 @@ public sealed class ColorMapTests
     }
 
     [Fact]
-    public void Inverse_swaps_foreground_and_background_after_defaults_are_resolved()
+    public void Inverse_uses_terminal_reverse_attribute()
     {
-        // Default foreground and background with inverse: the normal colors swap.
         Attribute defaultInverse = Map(new SpanStyle(AnsiColor.Default, AnsiColor.Default, TextAttrs.Inverse));
-        Assert.Equal(Normal.Background, defaultInverse.Foreground);
-        Assert.Equal(Normal.Foreground, defaultInverse.Background);
+        Assert.Equal(Normal.Foreground, defaultInverse.Foreground);
+        Assert.Equal(Normal.Background, defaultInverse.Background);
+        Assert.Equal(TextStyle.Reverse, defaultInverse.Style);
 
-        // Explicit red foreground with inverse: red becomes the background.
         Attribute explicitInverse = Map(new SpanStyle(AnsiColor.FromIndex(1), AnsiColor.Default, TextAttrs.Inverse));
-        Assert.Equal(Normal.Background, explicitInverse.Foreground);
-        Assert.Equal((Color)ColorName16.Red, explicitInverse.Background);
+        Assert.Equal((Color)ColorName16.Red, explicitInverse.Foreground);
+        Assert.Equal(Normal.Background, explicitInverse.Background);
+        Assert.Equal(TextStyle.Reverse, explicitInverse.Style);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Inverse_is_preserved_when_normal_colors_are_terminal_defaults(bool explicitForeground, bool explicitBackground)
+    {
+        var normal = new Attribute(explicitForeground ? new Color(1, 2, 3) : Color.None,
+            explicitBackground ? new Color(4, 5, 6) : Color.None, TextStyle.None);
+
+        Attribute attr = ColorMap.ToAttribute(new SpanStyle(AnsiColor.Default, AnsiColor.Default, TextAttrs.Inverse), OutputSource.StdOut, normal);
+
+        Assert.Equal(normal.Foreground, attr.Foreground);
+        Assert.Equal(normal.Background, attr.Background);
+        Assert.Equal(TextStyle.Reverse, attr.Style);
+    }
+
+    [Fact]
+    public void Selection_inversion_toggles_existing_inverse_video()
+    {
+        Attribute normal = new(Color.None, Color.None, TextStyle.None);
+        Attribute inverse = ColorMap.ToAttribute(
+            new SpanStyle(AnsiColor.Default, AnsiColor.Default, TextAttrs.Inverse), OutputSource.StdOut, normal);
+
+        Assert.Equal(TextStyle.None, OutputView.Invert(inverse).Style);
+        Assert.Equal(TextStyle.Reverse, OutputView.Invert(normal).Style);
     }
 
     [Fact]

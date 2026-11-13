@@ -9,20 +9,41 @@ namespace Cmdr.Core.Config;
 /// </summary>
 internal sealed class ItemSpecJsonConverter : JsonConverter<ItemSpec>
 {
+    private static readonly AsyncLocal<long> SourceOffset = new();
+
     /// <inheritdoc />
     /// <exception cref="JsonException">The object is neither or both of a group and a command, or is not an object.</exception>
     public override ItemSpec? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        using JsonDocument document = JsonDocument.ParseValue(ref reader);
-        JsonElement element = document.RootElement;
-
-        if (element.ValueKind != JsonValueKind.Object)
+        if (reader.TokenType != JsonTokenType.StartObject)
         {
             throw new JsonException("An item must be a JSON object.");
         }
 
-        bool isGroup = element.TryGetProperty("items", out _);
-        bool isCommand = element.TryGetProperty("program", out _);
+        // Inspect a copy to select the concrete type, then deserialize from the original reader.
+        // Nested serializers report item-local coordinates; the origin is tracked and translated by ConfigStore.
+        Utf8JsonReader scan = reader;
+        bool isGroup = false;
+        bool isCommand = false;
+        bool hasLegacyCommands = false;
+        while (scan.Read() && scan.TokenType != JsonTokenType.EndObject)
+        {
+            if (scan.TokenType != JsonTokenType.PropertyName)
+            {
+                continue;
+            }
+
+            string? property = scan.GetString();
+            if (!scan.Read())
+            {
+                break;
+            }
+
+            isGroup |= property == "items";
+            isCommand |= property == "program";
+            hasLegacyCommands |= property == "commands";
+            scan.Skip();
+        }
 
         if (isGroup && isCommand)
         {
@@ -31,20 +52,66 @@ internal sealed class ItemSpecJsonConverter : JsonConverter<ItemSpec>
 
         if (isGroup)
         {
-            return element.Deserialize(ConfigJsonContext.Default.GroupSpec);
+            return DeserializeGroup(ref reader);
         }
 
         if (isCommand)
         {
-            return element.Deserialize(ConfigJsonContext.Default.CommandSpec);
+            return DeserializeCommand(ref reader);
         }
 
-        if (element.TryGetProperty("commands", out _))
+        if (hasLegacyCommands)
         {
             throw new JsonException("Use 'items' instead of 'commands' in a group.");
         }
 
         throw new JsonException("An item must have 'program' (a command) or 'items' (a group).");
+    }
+
+    private static GroupSpec? DeserializeGroup(ref Utf8JsonReader reader)
+    {
+        long previousOffset = SourceOffset.Value;
+        long itemOffset = previousOffset + reader.TokenStartIndex;
+        SourceOffset.Value = itemOffset;
+        try
+        {
+            return JsonSerializer.Deserialize(ref reader, ConfigJsonContext.Default.GroupSpec);
+        }
+        catch (ItemSourceJsonException)
+        {
+            throw;
+        }
+        catch (JsonException ex)
+        {
+            throw new ItemSourceJsonException(ex, itemOffset);
+        }
+        finally
+        {
+            SourceOffset.Value = previousOffset;
+        }
+    }
+
+    private static CommandSpec? DeserializeCommand(ref Utf8JsonReader reader)
+    {
+        long previousOffset = SourceOffset.Value;
+        long itemOffset = previousOffset + reader.TokenStartIndex;
+        SourceOffset.Value = itemOffset;
+        try
+        {
+            return JsonSerializer.Deserialize(ref reader, ConfigJsonContext.Default.CommandSpec);
+        }
+        catch (ItemSourceJsonException)
+        {
+            throw;
+        }
+        catch (JsonException ex)
+        {
+            throw new ItemSourceJsonException(ex, itemOffset);
+        }
+        finally
+        {
+            SourceOffset.Value = previousOffset;
+        }
     }
 
     /// <inheritdoc />
@@ -63,4 +130,15 @@ internal sealed class ItemSpecJsonConverter : JsonConverter<ItemSpec>
                 throw new NotSupportedException($"Unsupported item type '{value.GetType().Name}'.");
         }
     }
+}
+
+internal sealed class ItemSourceJsonException : JsonException
+{
+    public ItemSourceJsonException(JsonException innerException, long sourceByteOffset)
+        : base(innerException.Message, innerException.Path, innerException.LineNumber, innerException.BytePositionInLine, innerException)
+    {
+        SourceByteOffset = sourceByteOffset;
+    }
+
+    public long SourceByteOffset { get; }
 }

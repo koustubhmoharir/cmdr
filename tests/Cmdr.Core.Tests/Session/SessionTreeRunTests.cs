@@ -11,6 +11,56 @@ namespace Cmdr.Core.Tests.Session;
 /// <summary>Runs of nested groups: sub-runs, parallel steps, failure and cancellation, Stop, Activate and Restart on groups.</summary>
 public class SessionTreeRunTests
 {
+    [Fact]
+    public async Task Activate_NewCommandInQueuedSequentialChild_IsRefusedWithoutDisruptingPlan()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string release = dir.File("release");
+        CmdrSession session = OpenWith(dir,
+            Seq("outer",
+                Sh("gate", $"while [ ! -f '{release}' ]; do sleep 0.02; done; echo released"),
+                Seq("inner", Sh("planned", "echo planned")),
+                Sh("after", "echo after")),
+            Group("independent", GroupMode.Parallel, Sh("sibling", "echo sibling"), Sh("movable", "echo moved")));
+        try
+        {
+            GroupEntry outer = session.Groups[0];
+            GroupEntry inner = outer.Groups[0];
+            CommandEntry gate = outer.Commands[0];
+            session.Activate(outer);
+            WaitUntil(() => gate.Process.Snapshot.State == ProcessState.Running, "outer gate running", gate.Process);
+
+            CommandEntry added = session.AddCommand(inner, Sh("added", "echo added"));
+            string? refusal = session.Activate(new[] { added });
+            Assert.Contains("running sequence", refusal, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ProcessState.NotStarted, added.Process.Snapshot.State);
+            Assert.False(added.IsQueued);
+
+            CommandEntry moved = session.Groups[1].Commands[1];
+            session.UpdateCommand(moved, Sh("moved", "echo moved"), inner);
+            string? moveRefusal = session.Activate(new[] { moved });
+            Assert.Contains("running sequence", moveRefusal, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ProcessState.NotStarted, moved.Process.Snapshot.State);
+
+            CommandEntry independent = session.Groups[1].Commands[0];
+            Assert.Null(session.Activate(new[] { independent }));
+            WaitForExited(independent.Process);
+            Assert.Equal(0, independent.Process.Snapshot.ExitCode);
+
+            File.WriteAllText(release, "go");
+            WaitUntil(() => !outer.IsSequenceRunning, "outer plan to finish", gate.Process);
+            Assert.Equal(ProcessState.Exited, inner.Commands[0].Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, added.Process.Snapshot.State);
+            Assert.Equal(ProcessState.Exited, outer.Commands[1].Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
     private const string Order = "order.txt";
 
     /// <summary>A command that appends its marker to the shared order file.</summary>

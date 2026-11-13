@@ -164,6 +164,17 @@ public class ItemSpecJsonTests
         Assert.Contains("use 'items' instead of 'commands'", ex.Message);
     }
 
+    [Theory]
+    [InlineData("{ \"groups\": [ { \"name\": \"build\", \"program\": \"dotnet\" } ] }")]
+    [InlineData("{ \"groups\": [ { \"name\": \"build\", \"program\": \"dotnet\", \"items\": [] } ] }")]
+    public void Load_TopLevelCommandShapeInGroups_IsRejected(string json)
+    {
+        ConfigException ex = LoadFails(json);
+
+        Assert.Contains("groups[0]", ex.Message);
+        Assert.Contains("program", ex.Message);
+    }
+
     [Fact]
     public void Load_LegacyNestedGroupCommands_IsRejectedWithItemPath()
     {

@@ -27,6 +27,7 @@ public sealed class ManagedProcess : IDisposable
     private Process? _process;
     private IProcessGroup? _group;
     private StreamWriter? _stdin;
+    private object? _stdinWriteLock;
     private Task? _stdOutPump;
     private Task? _stdErrPump;
     private TaskCompletionSource? _runExited;
@@ -122,6 +123,7 @@ public sealed class ManagedProcess : IDisposable
     {
         IProcessGroup? group;
         StreamWriter? stdin;
+        object? stdinWriteLock;
         string? input;
         string? inputAfterInterrupt;
         StopMethod method;
@@ -144,6 +146,7 @@ public sealed class ManagedProcess : IDisposable
 
             group = _group;
             stdin = _stdin;
+            stdinWriteLock = _stdinWriteLock;
             input = _stopInput;
             inputAfterInterrupt = _inputAfterInterrupt;
             method = _stopMethod;
@@ -157,12 +160,12 @@ public sealed class ManagedProcess : IDisposable
             bool interrupted = SignalGroup(group, g => g.Interrupt(), "stop failed");
             if (interrupted && inputAfterInterrupt is not null)
             {
-                WriteStopInput(stdin, inputAfterInterrupt);
+                WriteStopInput(stdin, stdinWriteLock, inputAfterInterrupt);
             }
         }
         else
         {
-            WriteStopInput(stdin, input);
+            WriteStopInput(stdin, stdinWriteLock, input);
         }
 
         if (stateChanged)
@@ -373,6 +376,11 @@ public sealed class ManagedProcess : IDisposable
         if (_stdin is not null)
         {
             _stdin.AutoFlush = true;
+            _stdinWriteLock = new object();
+        }
+        else
+        {
+            _stdinWriteLock = null;
         }
 
         _runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -618,6 +626,7 @@ public sealed class ManagedProcess : IDisposable
         _group?.Dispose();
         _group = null;
         _stdin = null;
+        _stdinWriteLock = null;
         _stdOutPump = null;
         _stdErrPump = null;
     }
@@ -642,7 +651,7 @@ public sealed class ManagedProcess : IDisposable
         }
     }
 
-    private void WriteStopInput(StreamWriter? stdin, string? input)
+    private void WriteStopInput(StreamWriter? stdin, object? stdinWriteLock, string? input)
     {
         try
         {
@@ -651,7 +660,12 @@ public sealed class ManagedProcess : IDisposable
                 throw new IOException("stdin is not available");
             }
 
-            stdin.Write(input ?? string.Empty);
+            // StreamWriter is not safe for concurrent writes. Keep this gate separate from _sync because a
+            // write can block on a full pipe and force kill must remain available while it does.
+            lock (stdinWriteLock ?? stdin)
+            {
+                stdin.Write(input ?? string.Empty);
+            }
         }
         catch (IOException ex)
         {

@@ -309,7 +309,7 @@ public sealed partial class Session
     /// <summary>Toggles the log file of a command. Does not change the spec or the dirty flag.</summary>
     public void ToggleLog(CommandEntry entry)
     {
-        ArgumentNullException.ThrowIfNull(entry);
+        EnsureOwned(entry);
 
         if (entry.Process.Output.IsLogging)
         {
@@ -527,6 +527,11 @@ public sealed partial class Session
                     return $"A sequence is already running in group '{group.Name}'.";
                 }
 
+                if (IsReservedSequentialGroup(group))
+                {
+                    return $"Group '{group.Name}' is already part of a running sequence.";
+                }
+
                 string? nested = RefusalFor(node.Children);
                 if (nested is not null)
                 {
@@ -560,6 +565,11 @@ public sealed partial class Session
         if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
         {
             return $"A sequence is already running in group '{group.Name}'.";
+        }
+
+        if (IsReservedSequentialGroup(group))
+        {
+            return $"Group '{group.Name}' is already part of a running sequence.";
         }
 
         return RefusalFor(children);
@@ -846,7 +856,13 @@ public sealed partial class Session
 
     /// <summary>True if the command is queued, or is the current or a pending step of an active run.</summary>
     private bool IsBusyCommand(CommandEntry entry) =>
-        entry.IsQueued || ActiveRuns().Any(run => run.Contains(entry));
+        entry.IsQueued
+        || ActiveRuns().Any(run => run.Contains(entry))
+        || IsReservedSequentialGroup(entry.Group);
+
+    /// <summary>Sequential groups planned by another run are reserved even for commands added after its plan was made.</summary>
+    private bool IsReservedSequentialGroup(GroupEntry group) =>
+        group.Mode == GroupMode.Sequential && ActiveRuns().Any(run => run.ContainsGroup(group));
 
     /// <summary>
     /// True if the group has an active run, is a step of one, contains a busy command, or contains a group that is busy.
@@ -862,12 +878,18 @@ public sealed partial class Session
     /// <summary>
     /// The commands of the targets. Throws when targets span several groups or were removed.
     /// </summary>
-    private static GroupEntry? GroupOf(IReadOnlyList<CommandEntry> targets)
+    private GroupEntry? GroupOf(IReadOnlyList<CommandEntry> targets)
     {
         ArgumentNullException.ThrowIfNull(targets);
         if (targets.Count == 0)
         {
             return null;
+        }
+
+        // Validate the full request before callers can mutate process, queue, or log state.
+        foreach (CommandEntry entry in targets)
+        {
+            EnsureOwned(entry);
         }
 
         GroupEntry group = targets[0].Group;
@@ -878,10 +900,6 @@ public sealed partial class Session
                 throw new ArgumentException("All targets must belong to the same group.", nameof(targets));
             }
 
-            if (entry.IsRemoved)
-            {
-                throw new ArgumentException($"Command '{entry.Spec.Name}' has been removed from the session.", nameof(targets));
-            }
         }
 
         return group;

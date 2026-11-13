@@ -33,6 +33,17 @@ public class WindowsCommandResolverTests
         Assert.Equal(@"C:\b\x.exe", WindowsCommandResolver.Resolve("x", WorkDir, @"C:\b;C:\a", ".exe", fs));
     }
 
+    [Theory]
+    [InlineData(@"tools", @"C:\child\tools\tool.exe")]
+    [InlineData(@".\node_modules\.bin", @"C:\child\.\node_modules\.bin\tool.exe")]
+    public void RelativePathEntriesAreBasedAtChildWorkingDirectory(string pathEntry, string expected)
+    {
+        string? found = WindowsCommandResolver.Resolve(
+            "tool", @"C:\child", pathEntry, ".exe", Files(expected));
+
+        Assert.Equal(expected, found);
+    }
+
     [Fact]
     public void PathExtOrderDecidesBetweenSameNamedFiles()
     {
@@ -120,6 +131,32 @@ public class WindowsCommandResolverTests
         Func<string, bool> fs = Files(@"\\server\share\run.cmd");
 
         Assert.Equal(@"\\server\share\run.CMD", WindowsCommandResolver.Resolve(@"\\server\share\run", @"C:\app", @"C:\bin", null, fs));
+    }
+
+    [Theory]
+    [InlineData(@"\tools\run", @"C:\tools\run.CMD")]
+    [InlineData("/tools/run", @"C:\tools\run.CMD")]
+    public void DriveRootedPathUsesDriveRootRatherThanChildDirectory(string program, string expected)
+    {
+        var candidates = new List<string>();
+        Func<string, bool> fs = path =>
+        {
+            candidates.Add(path);
+            return string.Equals(path, expected, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, @"C:\child\tools\run.CMD", StringComparison.OrdinalIgnoreCase);
+        };
+
+        Assert.Equal(expected, WindowsCommandResolver.Resolve(program, @"C:\child", null, null, fs));
+        Assert.Contains(expected, candidates, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DriveRootedPathUsesUncShareRootWhenWorkingDirectoryIsUnc()
+    {
+        const string expected = @"\\server\share\tools\run.CMD";
+
+        Assert.Equal(expected, WindowsCommandResolver.Resolve(
+            @"\tools\run", @"\\server\share\child", null, null, Files(expected)));
     }
 
     [Fact]

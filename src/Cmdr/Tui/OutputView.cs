@@ -746,7 +746,8 @@ internal sealed class OutputView : View
     /// Selected cells use the terminal's reverse video rather than swapped colors: a swap does nothing when a color is the
     /// terminal default (Color.None), which is the usual case for plain output.
     /// </summary>
-    private static Attribute Invert(Attribute attr) => new(attr.Foreground, attr.Background, attr.Style | TextStyle.Reverse);
+    internal static Attribute Invert(Attribute attr) => new(attr.Foreground, attr.Background,
+        attr.Style.HasFlag(TextStyle.Reverse) ? attr.Style & ~TextStyle.Reverse : attr.Style | TextStyle.Reverse);
 
     private static Attribute RowFill(Attribute normal, Color? cursorShade) =>
         cursorShade is { } shade ? new Attribute(normal.Foreground, shade, normal.Style) : normal;

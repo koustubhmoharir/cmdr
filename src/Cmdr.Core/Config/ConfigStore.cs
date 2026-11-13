@@ -20,12 +20,27 @@ public static class ConfigStore
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        if (!File.Exists(path))
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ConfigException($"Invalid configuration path '{path}': {ex.Message}", ex);
+        }
+        try
+        {
+            return Parse(fullPath);
+        }
+        catch (FileNotFoundException)
         {
             return new CmdrConfig();
         }
-
-        return Parse(path);
+        catch (DirectoryNotFoundException)
+        {
+            return new CmdrConfig();
+        }
     }
 
     /// <summary>
@@ -39,7 +54,15 @@ public static class ConfigStore
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        string fullPath = Path.GetFullPath(path);
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw new ConfigException($"Invalid configuration path '{path}': {ex.Message}", ex);
+        }
         StringComparer comparer = PathComparer;
         var chain = new List<ConfigFile>();
         var visited = new List<string>();
@@ -52,7 +75,15 @@ public static class ConfigStore
         while (!string.IsNullOrWhiteSpace(config.Base))
         {
             string importer = current;
-            string resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(importer)!, config.Base));
+            string resolved;
+            try
+            {
+                resolved = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(importer)!, config.Base));
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                throw new ConfigException($"Configuration file '{importer}' has an invalid base path '{config.Base}': {ex.Message}", ex);
+            }
 
             int cycleStart = visited.FindIndex(p => comparer.Equals(p, resolved));
             if (cycleStart >= 0)
@@ -61,12 +92,18 @@ public static class ConfigStore
                 throw new ConfigException($"Base files form a cycle: {string.Join(" → ", loop)}");
             }
 
-            if (!File.Exists(resolved))
+            try
             {
-                throw new ConfigException($"Base file '{resolved}' imported by '{importer}' does not exist.");
+                config = Parse(resolved);
             }
-
-            config = Parse(resolved);
+            catch (FileNotFoundException ex)
+            {
+                throw new ConfigException($"Base file '{resolved}' imported by '{importer}' does not exist.", ex);
+            }
+            catch (DirectoryNotFoundException ex)
+            {
+                throw new ConfigException($"Base file '{resolved}' imported by '{importer}' does not exist.", ex);
+            }
             chain.Add(new ConfigFile(resolved, config, IsBase: true));
             visited.Add(resolved);
             current = resolved;
@@ -111,7 +148,20 @@ public static class ConfigStore
     // Parses an existing file. Shared by Load (the opened file) and LoadChain (base files).
     private static CmdrConfig Parse(string path)
     {
-        byte[] bytes = File.ReadAllBytes(path);
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(path);
+        }
+        catch (Exception ex) when (ex is IOException and not FileNotFoundException and not DirectoryNotFoundException
+            or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            throw new ConfigException($"Could not read configuration file '{path}': {ex.Message}", ex);
+        }
+        if (bytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }))
+        {
+            bytes = bytes[3..];
+        }
         CmdrConfig? config;
         try
         {
@@ -121,6 +171,19 @@ public static class ConfigStore
             }
 
             config = JsonSerializer.Deserialize(bytes, ConfigJsonContext.Default.CmdrConfig);
+        }
+        catch (ItemSourceJsonException ex)
+        {
+            (long itemLine, long itemPosition) = Locate(bytes, ex.SourceByteOffset);
+            long relativeLine = ex.LineNumber ?? 0;
+            long line = itemLine + relativeLine;
+            long position = relativeLine == 0
+                ? itemPosition + (ex.BytePositionInLine ?? 0)
+                : (ex.BytePositionInLine ?? 0) + 1;
+            string detail = ex.Message.Split(" Path: ", StringSplitOptions.None)[0];
+            throw new ConfigException(
+                $"Malformed JSON in '{path}' at line {line}, position {position}: {detail} (path: {ex.Path ?? "<unknown>"}).",
+                ex);
         }
         catch (JsonException ex)
         {
@@ -136,6 +199,27 @@ public static class ConfigStore
 
         Normalize(config, path);
         return config;
+    }
+
+    private static (long Line, long Position) Locate(byte[] bytes, long byteOffset)
+    {
+        long line = 1;
+        long position = 1;
+        int end = (int)Math.Clamp(byteOffset, 0, bytes.LongLength);
+        for (int i = 0; i < end; i++)
+        {
+            if (bytes[i] == (byte)'\n')
+            {
+                line++;
+                position = 1;
+            }
+            else
+            {
+                position++;
+            }
+        }
+
+        return (line, position);
     }
 
     /// <summary>
@@ -201,6 +285,11 @@ public static class ConfigStore
         if (group.TryGetProperty("commands", out _))
         {
             throw new ConfigException($"Configuration file '{configPath}': {jsonPath} uses 'commands'; use 'items' instead of 'commands'.");
+        }
+
+        if (group.TryGetProperty("program", out _))
+        {
+            throw new ConfigException($"Configuration file '{configPath}': {jsonPath} has 'program' (a command) but appears in 'groups'.");
         }
 
         if (!group.TryGetProperty("items", out JsonElement items) || items.ValueKind != JsonValueKind.Array)

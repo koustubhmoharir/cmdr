@@ -105,6 +105,59 @@ public class ConfigChainTests
     }
 
     [Fact]
+    public void LoadChain_InvalidBasePath_IsConfigException()
+    {
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig { Base = "bad\0base.json" }, dir.File("cmdr.json"));
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.LoadChain(dir.File("cmdr.json")));
+
+        Assert.Contains("base path", ex.Message);
+        Assert.Contains(dir.File("cmdr.json"), ex.Message);
+    }
+
+    [Fact]
+    public void LoadChain_BomPrefixedBase_IsAccepted()
+    {
+        using var dir = new TempDir();
+        string basePath = dir.File("base.json");
+        byte[] body = System.Text.Encoding.UTF8.GetBytes("{ \"groups\": [{ \"name\": \"base\", \"items\": [] }] }");
+        File.WriteAllBytes(basePath, [.. new System.Text.UTF8Encoding(true).GetPreamble(), .. body]);
+        ConfigStore.Save(new CmdrConfig { Base = "base.json" }, dir.File("cmdr.json"));
+
+        IReadOnlyList<ConfigFile> chain = ConfigStore.LoadChain(dir.File("cmdr.json"));
+
+        Assert.Equal("base", Assert.Single(chain[0].Config.Groups).Name);
+    }
+
+    [Fact]
+    public void LoadChain_UnreadableBase_IsConfigException()
+    {
+        if (!OperatingSystem.IsLinux() || Environment.UserName == "root")
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string basePath = dir.File("base.json");
+        File.WriteAllText(basePath, "{}");
+        UnixFileMode originalMode = File.GetUnixFileMode(basePath);
+        try
+        {
+            File.SetUnixFileMode(basePath, UnixFileMode.None);
+            ConfigStore.Save(new CmdrConfig { Base = "base.json" }, dir.File("cmdr.json"));
+
+            ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.LoadChain(dir.File("cmdr.json")));
+            Assert.Contains("Could not read configuration", ex.Message);
+            Assert.Contains(basePath, ex.Message);
+        }
+        finally
+        {
+            File.SetUnixFileMode(basePath, originalMode);
+        }
+    }
+
+    [Fact]
     public void LoadChain_MissingOpenedFile_ReturnsSingleEmptyEntry()
     {
         using var dir = new TempDir();

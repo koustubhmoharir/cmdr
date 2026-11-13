@@ -139,6 +139,8 @@ public class SessionInputTests
             Assert.Null(session.Activate(new[] { a }, new Dictionary<string, string> { ["x"] = "hello" }));
 
             WaitForExited(a.Process);
+            // Exit markers follow a bounded drain; redirected output can still arrive afterward.
+            WaitForText(a.Process, "got:[hello]");
             Assert.Contains("got:[hello]", Text(a.Process), StringComparison.Ordinal);
             Assert.Equal("${input:x}", a.Spec.Args[^1]);
         }
@@ -164,6 +166,7 @@ public class SessionInputTests
             WaitUntil(() => !seq.IsSequenceRunning, "sequence to finish", second.Process);
 
             WaitForExited(second.Process);
+            WaitForText(second.Process, "got:[hello]");
             Assert.Contains("got:[hello]", Text(second.Process), StringComparison.Ordinal);
         }
         finally
@@ -190,6 +193,7 @@ public class SessionInputTests
             WaitUntil(() => !outer.IsSequenceRunning && !outer.Groups[0].IsSequenceRunning, "sequences to finish", deep.Process);
 
             WaitForExited(deep.Process);
+            WaitForText(deep.Process, "got:[nested]");
             Assert.Contains("got:[nested]", Text(deep.Process), StringComparison.Ordinal);
         }
         finally
@@ -245,6 +249,7 @@ public class SessionInputTests
             Assert.Null(session.Activate(new[] { req, opt }, empty));
 
             WaitForExited(opt.Process);
+            WaitForText(opt.Process, "got:[]");
             Assert.Contains("got:[]", Text(opt.Process), StringComparison.Ordinal);
             Assert.Equal(ProcessState.NotStarted, req.Process.Snapshot.State);
             Assert.Contains("failed to start: input 'x' must not be empty", Text(req.Process), StringComparison.Ordinal);

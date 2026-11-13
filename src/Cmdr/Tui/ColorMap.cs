@@ -34,7 +34,8 @@ internal static class ColorMap
 
     /// <summary>
     /// Builds the attribute for a styled span. Default colors come from <paramref name="normal"/>; stderr and system
-    /// lines without an explicit foreground get a tint. Inverse swaps foreground and background after defaults are resolved.
+    /// lines without an explicit foreground get a tint. Inverse is represented as a terminal text attribute so it also
+    /// works when either color is the terminal default.
     /// </summary>
     public static Attribute ToAttribute(SpanStyle style, OutputSource source, Attribute normal)
     {
@@ -65,11 +66,6 @@ internal static class ColorMap
         }
 
         Color bg = explicitBg ?? normal.Background;
-
-        if ((style.Attrs & TextAttrs.Inverse) != 0)
-        {
-            (fg, bg) = (bg, fg);
-        }
 
         return new Attribute(fg, bg, textStyle);
     }
@@ -130,6 +126,11 @@ internal static class ColorMap
         if (attrs.HasFlag(TextAttrs.Strikethrough))
         {
             style |= TextStyle.Strikethrough;
+        }
+
+        if (attrs.HasFlag(TextAttrs.Inverse))
+        {
+            style |= TextStyle.Reverse;
         }
 
         return style;

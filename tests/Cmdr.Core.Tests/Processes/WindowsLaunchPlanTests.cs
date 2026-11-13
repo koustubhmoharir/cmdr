@@ -34,6 +34,20 @@ public class WindowsLaunchPlanTests
     }
 
     [Fact]
+    public void RootRelativeBatchResolutionLaunchesTheRootLevelBatchFile()
+    {
+        string resolved = WindowsCommandResolver.Resolve(
+            @"\tools\run", @"C:\child", null, null,
+            path => string.Equals(path, @"C:\tools\run.CMD", StringComparison.OrdinalIgnoreCase))!;
+
+        WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch(
+            @"\tools\run", resolved, ComSpec, Array.Empty<string>());
+
+        Assert.Equal(ComSpec, plan.FileName);
+        Assert.Equal(WindowsCmdEscaping.BuildCmdArguments(@"C:\tools\run.CMD", Array.Empty<string>()), plan.Arguments);
+    }
+
+    [Fact]
     public void MissingComSpecFallsBackToCmdExe()
     {
         WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch("run", @"C:\tools\run.cmd", null, Array.Empty<string>());

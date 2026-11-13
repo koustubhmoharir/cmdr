@@ -64,12 +64,23 @@ public sealed class RecentFiles
                     break;
                 }
 
-                if (string.IsNullOrWhiteSpace(entry) || !Path.IsPathFullyQualified(entry) || !seen.Add(entry))
+                if (string.IsNullOrWhiteSpace(entry) || !Path.IsPathFullyQualified(entry))
                 {
                     continue;
                 }
 
-                files.Add(entry);
+                try
+                {
+                    string normalized = Path.GetFullPath(entry);
+                    if (seen.Add(normalized))
+                    {
+                        files.Add(normalized);
+                    }
+                }
+                catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    // A malformed entry should not prevent other recent files from loading.
+                }
             }
         }
 
@@ -166,6 +177,10 @@ public sealed class RecentFiles
             }
 
             byte[] bytes = File.ReadAllBytes(path);
+            if (bytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }))
+            {
+                bytes = bytes[3..];
+            }
             return JsonSerializer.Deserialize(bytes, RecentFilesJsonContext.Default.RecentFilesData);
         }
         catch (IOException)

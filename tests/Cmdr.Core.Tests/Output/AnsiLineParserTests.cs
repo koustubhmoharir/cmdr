@@ -122,6 +122,48 @@ public class AnsiLineParserTests
         Assert.Equal(new[] { "abcdefgh        x" }, Texts(Parse("abcdefgh\tx\n")));
     }
 
+    [Theory]
+    [InlineData("a\u009Dtitle\u0007VISIBLE\n")]
+    [InlineData("a\u001B]title\u009CVISIBLE\n")]
+    [InlineData("a\u0090payload\u009CVISIBLE\n")]
+    public void C1StringSequencesAreStrippedAcrossChunkBoundaries(string input)
+    {
+        for (int split = 0; split <= input.Length; split++)
+        {
+            Assert.Equal(new[] { "aVISIBLE" }, Texts(Parse(input[..split], input[split..])));
+        }
+
+        Assert.Equal(new[] { "aVISIBLE" }, Texts(Parse(input.Select(c => c.ToString()).ToArray())));
+    }
+
+    [Fact]
+    public void ForcedLineBreakDoesNotSplitSurrogatePair()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 3);
+        var lines = new List<OutputLine>();
+        parser.Feed("ab\uD83D", lines);
+        parser.Feed("\uDE00X\n", lines);
+
+        Assert.Equal(new[] { "ab", "😀X" }, Texts(lines));
+        Assert.All(lines, line => Assert.Equal(line.PlainText, System.Text.Encoding.UTF8.GetString(System.Text.Encoding.UTF8.GetBytes(line.PlainText))));
+
+        var tiny = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 1);
+        var tinyLines = new List<OutputLine>();
+        tiny.Feed("😀x\n", tinyLines);
+        Assert.Equal(new[] { "😀", "x" }, Texts(tinyLines));
+    }
+
+    [Fact]
+    public void BackspaceRemovesCompleteSupplementaryCharacter()
+    {
+        Assert.Equal(new[] { "X" }, Texts(Parse("😀", "\bX\n")));
+        List<OutputLine> styled = Parse("\u001B[31m\uD83D\u001B[0m\uDE00\bX\n");
+        Assert.Equal("X", styled[0].PlainText);
+        Assert.Single(styled[0].Spans);
+        Assert.Equal(SpanStyle.Default, styled[0].Spans[0].Style);
+    }
+
+
     [Fact]
     public void BackspaceRemovesLastCharacter()
     {

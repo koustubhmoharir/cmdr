@@ -53,4 +53,4 @@ public class GroupSpec : ItemSpec
 }
 
 /// <summary>String-only enum converter: rejects integer values such as <c>1</c>.</summary>
-internal sealed class GroupModeJsonConverter() : JsonStringEnumConverter<GroupMode>(namingPolicy: null, allowIntegerValues: false);
+internal sealed class GroupModeJsonConverter : StrictEnumJsonConverter<GroupMode> { }
