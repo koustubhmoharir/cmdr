@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Output;
@@ -128,8 +127,6 @@ public class ManagedProcessInterruptInputTests
             return new PreparedLaunch(launch.StartInfo, _input);
         }
 
-        public void Start(Process process, PreparedLaunch launch) => _inner.Start(process, launch);
-
-        public IProcessGroup Attach(Process process) => _inner.Attach(process);
+        public LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited) => _inner.Launch(launch, onExited);
     }
 }

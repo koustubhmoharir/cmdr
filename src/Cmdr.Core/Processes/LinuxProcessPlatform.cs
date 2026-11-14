@@ -42,18 +42,47 @@ internal sealed class LinuxProcessPlatform : IProcessPlatform
     }
 
     /// <inheritdoc />
-    public void Start(Process process, PreparedLaunch launch)
+    /// <remarks>Starts the leader and waits, bounded, until setsid has given it its own group. If that fails, the leader is killed.</remarks>
+    public LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited)
     {
-        ArgumentNullException.ThrowIfNull(process);
-        process.Start();
+        ArgumentNullException.ThrowIfNull(launch);
+        ArgumentNullException.ThrowIfNull(onExited);
+
+        var process = new ProcessLaunched(launch.StartInfo, onExited);
+        bool started = false;
+        try
+        {
+            process.Start();
+            started = true;
+            WaitForOwnGroup(process.Id);
+            return new LaunchedTree(process, new LinuxProcessGroup(process.Id));
+        }
+        catch
+        {
+            if (started)
+            {
+                KillLeader(process);
+            }
+
+            process.Dispose();
+            throw;
+        }
     }
 
-    /// <inheritdoc />
-    public IProcessGroup Attach(Process process)
+    private static void KillLeader(ProcessLaunched process)
     {
-        ArgumentNullException.ThrowIfNull(process);
-        WaitForOwnGroup(process.Id);
-        return new LinuxProcessGroup(process.Id);
+        try
+        {
+            process.Process.Kill();
+        }
+        catch (InvalidOperationException)
+        {
+            // Already exited.
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // Could not be killed; the original exception is the one reported.
+        }
     }
 
     /// <summary>

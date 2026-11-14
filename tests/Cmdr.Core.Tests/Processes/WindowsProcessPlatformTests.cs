@@ -123,34 +123,34 @@ public class WindowsProcessPlatformTests
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        // The leader is a plain process that outlives the group: after Detach and Dispose it must still be running.
-        var psi = new ProcessStartInfo("ping")
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        psi.ArgumentList.Add("-n");
-        psi.ArgumentList.Add("30");
-        psi.ArgumentList.Add("127.0.0.1");
-
-        using Process leader = Process.Start(psi)!;
+        // The leader outlives the group: after Detach and Dispose it must still be running.
+        using var dir = new TempDir();
+        var platform = new WindowsProcessPlatform();
+        PreparedLaunch launch = platform.Prepare(Exec("ping", new[] { "-n", "30", "127.0.0.1" }, dir.Path));
+        LaunchedTree tree = platform.Launch(launch, _ => { });
+        int pid = tree.Process.Id;
         try
         {
-            IProcessGroup group = new WindowsProcessPlatform().Attach(leader);
-            group.Detach();
-            group.Dispose();
+            tree.Group.Detach();
+            tree.Group.Dispose();
 
             Thread.Sleep(1000);
-            Assert.False(leader.HasExited);
+            using Process leader = Process.GetProcessById(pid);
+            Assert.False(leader.HasExited, $"ping (pid {pid}) exited after Detach + Dispose");
         }
         finally
         {
-            if (!leader.HasExited)
+            try
             {
+                using Process leader = Process.GetProcessById(pid);
                 leader.Kill(entireProcessTree: true);
             }
+            catch (ArgumentException)
+            {
+                // Already gone.
+            }
+
+            tree.Process.Dispose();
         }
     }
 

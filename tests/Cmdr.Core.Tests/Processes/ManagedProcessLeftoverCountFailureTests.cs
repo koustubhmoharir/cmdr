@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
@@ -179,9 +178,11 @@ public class ManagedProcessLeftoverCountFailureTests
 
         public PreparedLaunch Prepare(LaunchSpec spec) => _inner.Prepare(spec);
 
-        public void Start(Process process, PreparedLaunch launch) => _inner.Start(process, launch);
-
-        public IProcessGroup Attach(Process process) => new Group(_inner.Attach(process), this);
+        public LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited)
+        {
+            LaunchedTree tree = _inner.Launch(launch, onExited);
+            return tree with { Group = new Group(tree.Group, this) };
+        }
 
         private sealed class Group(IProcessGroup inner, FailingCountPlatform owner) : IProcessGroup
         {

@@ -812,7 +812,7 @@ internal sealed class MainController : IDisposable
         UpdateFocusedViews();
     }
 
-    /// <summary>Copies the command line of a command row, quoted for this platform. Group rows do nothing. Used by the list and the details strip.</summary>
+    /// <summary>Copies the command line of a command row: POSIX sh quoting, or PowerShell quoting on Windows. Group rows do nothing. Used by the list and the details strip.</summary>
     public void CopyCommandLine(ListRow? focused)
     {
         if (focused is not CommandRow command)
@@ -820,8 +820,9 @@ internal sealed class MainController : IDisposable
             return;
         }
 
-        string line = CommandLineFormatter.ForSpec(command.Entry.Spec, OperatingSystem.IsWindows());
-        CopyToClipboard(line, "Copied command line");
+        bool windows = OperatingSystem.IsWindows();
+        string line = CommandLineFormatter.ForSpec(command.Entry.Spec, powerShell: windows);
+        CopyToClipboard(line, windows ? "Copied command line (PowerShell)" : "Copied command line");
     }
 
     /// <summary>

@@ -166,7 +166,9 @@ run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`
 ### Windows: batch files (.cmd/.bat)
 
 `pnpm`, `npm`, `yarn` etc. are `.cmd` shims that CreateProcess cannot run directly. On Windows the
-program is resolved against the effective `PATH`/`PATHEXT` (cwd first). If it resolves to a
+program is resolved against the effective `PATH`/`PATHEXT` (cwd first; a path-like program only against
+the cwd; a name with a non-PATHEXT extension is tried as is, last). A program that does not resolve fails
+to start; it is never handed to CreateProcess's own search, which would look in cmdr's directory. If it resolves to a
 `.cmd`/`.bat`, it is launched as `%ComSpec% /d /s /c "<escaped command line>"` using cross-spawn's
 escaping rules. Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin, so
 after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin. Caveat: a child that
@@ -248,6 +250,8 @@ returns a notice that is written to the output.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
+- The command line shown in the info pane and copied with `c` is POSIX sh syntax, or PowerShell syntax on
+  Windows (`CommandLineFormatter`; a quoted program gets the `&` call operator).
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written via `app.Driver.WriteRaw(...)`.
 
 ## Implementation notes (from investigation)

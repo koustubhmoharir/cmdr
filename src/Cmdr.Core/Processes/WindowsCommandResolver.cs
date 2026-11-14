@@ -34,7 +34,9 @@ internal static class WindowsCommandResolver
     /// A program containing '\\' or '/' is path-like and is resolved only against <paramref name="workingDirectory"/>
     /// when relative. A bare name is searched in <paramref name="workingDirectory"/> first, then in the PATH entries.
     /// For each base path, a base that already has a PATHEXT extension is tried as is, then base + each PATHEXT
-    /// extension in order. A base without such an extension is never tried bare.
+    /// extension in order. Last, a base whose final segment has an extension that is not in PATHEXT is tried as is,
+    /// so that an explicitly named file such as <c>tool.bin</c> still runs. A base with no extension is never tried bare.
+    /// A null result is a start failure for the caller: it must not fall back to a native CreateProcess search.
     /// </remarks>
     public static string? Resolve(
         string program,
@@ -98,27 +100,31 @@ internal static class WindowsCommandResolver
 
     private static IEnumerable<string> Candidates(string basePath, IReadOnlyList<string> extensions)
     {
-        if (HasPathExtExtension(basePath, extensions))
+        string? extension = FinalExtension(basePath);
+        bool hasPathExtExtension = extension is not null && extensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+
+        if (hasPathExtExtension)
         {
             yield return basePath;
         }
 
-        foreach (string extension in extensions)
+        foreach (string pathExt in extensions)
         {
-            yield return basePath + extension;
+            yield return basePath + pathExt;
+        }
+
+        if (extension is not null && !hasPathExtExtension)
+        {
+            yield return basePath; // explicitly named file with a non-PATHEXT extension: tried last
         }
     }
 
-    private static bool HasPathExtExtension(string path, IReadOnlyList<string> extensions)
+    /// <summary>The extension of the final segment, including its dot (<c>.bin</c>), or null when the segment has no dot.</summary>
+    private static string? FinalExtension(string path)
     {
         int lastSeparator = path.LastIndexOfAny(['\\', '/']);
         int dot = path.LastIndexOf('.');
-        if (dot < 0 || dot < lastSeparator)
-        {
-            return false; // no dot in the final segment
-        }
-
-        return extensions.Contains(path[dot..], StringComparer.OrdinalIgnoreCase);
+        return dot < 0 || dot < lastSeparator ? null : path[dot..];
     }
 
     private static string? FirstExisting(IEnumerable<string> candidates, Func<string, bool> fileExists)
@@ -186,21 +192,39 @@ internal static class WindowsCommandResolver
     }
 
     /// <summary>
-    /// Decides how a program is started once resolved. A resolved <c>.cmd</c> or <c>.bat</c> file is run through the
-    /// command interpreter (<paramref name="comSpec"/>, or <c>cmd.exe</c> when missing) with a raw, escaped command
-    /// line; anything else is started directly with the argument list. An unresolved program keeps its name so that
-    /// Process.Start reports the failure.
+    /// Message for a program that <see cref="Resolve"/> could not find. Names the working directory for a relative
+    /// path-like program, and lists the PATHEXT extensions that were tried (the resolver default when unset).
     /// </summary>
-    /// <param name="program">The program as configured.</param>
-    /// <param name="resolvedPath">The path returned by <see cref="Resolve"/>, or null.</param>
-    /// <param name="comSpec">The ComSpec environment variable, or null.</param>
-    /// <param name="args">The configured arguments.</param>
-    public static WindowsLaunchPlan PlanLaunch(string program, string? resolvedPath, string? comSpec, IReadOnlyList<string> args)
+    internal static string NotFoundMessage(string program, string workingDirectory, string? pathExtVariable)
     {
         ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(workingDirectory);
+
+        string detail = !IsPathLike(program)
+            ? $"'{program}' was not found in the working directory or on PATH"
+            : IsRooted(program)
+                ? $"'{program}' was not found"
+                : $"'{program}' was not found relative to the working directory '{workingDirectory}'";
+
+        return $"{detail} (PATHEXT extensions tried: {string.Join(';', ParsePathExt(pathExtVariable))})";
+    }
+
+    /// <summary>
+    /// Decides how a program is started once resolved. A resolved <c>.cmd</c> or <c>.bat</c> file is run through the
+    /// command interpreter (<paramref name="comSpec"/>, or <c>cmd.exe</c> when missing) with a raw, escaped command
+    /// line; anything else is started directly with the argument list.
+    /// </summary>
+    /// <param name="program">The program as configured.</param>
+    /// <param name="resolvedPath">The path returned by <see cref="Resolve"/>. A program that did not resolve is not planned.</param>
+    /// <param name="comSpec">The ComSpec environment variable, or null.</param>
+    /// <param name="args">The configured arguments.</param>
+    public static WindowsLaunchPlan PlanLaunch(string program, string resolvedPath, string? comSpec, IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(program);
+        ArgumentNullException.ThrowIfNull(resolvedPath);
         ArgumentNullException.ThrowIfNull(args);
 
-        if (resolvedPath is not null && IsBatchFile(resolvedPath))
+        if (IsBatchFile(resolvedPath))
         {
             return new WindowsLaunchPlan(
                 FileName: string.IsNullOrEmpty(comSpec) ? "cmd.exe" : comSpec,
@@ -210,7 +234,7 @@ internal static class WindowsCommandResolver
         }
 
         return new WindowsLaunchPlan(
-            FileName: resolvedPath ?? program,
+            FileName: resolvedPath,
             Arguments: null,
             ArgumentList: args,
             InputAfterInterrupt: null);

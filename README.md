@@ -148,7 +148,7 @@ against the directory of the file.
 |---|---|---|
 | `name` | | Required. Unique (case-insensitive) among its siblings. |
 | `description` | | Shown in the info pane. |
-| `program` | | Required. The executable. On Windows, `.cmd`/`.bat` shims such as `pnpm` work. |
+| `program` | | Required. The executable. On Windows, `.cmd`/`.bat` shims such as `pnpm` work; a program not found in the working directory or on the command's `PATH` fails to start. |
 | `args` | `[]` | Arguments, one per array element (no shell quoting). May contain [input placeholders](#input-placeholders). |
 | `cwd` | | Working directory; relative to the group's. |
 | `env` | | Environment variables (see [Environment](#environment)). |
@@ -281,7 +281,7 @@ act on everything in the group. Marks are limited to one group.
 | ← / → | Collapse / expand a group |
 | Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 | Tab / Shift+Tab | Move focus: list → info → output |
-| c | Copy: the command line (list); the selection, else the command line (info); the selection, else the current line (output) |
+| c | Copy: the command line (list; PowerShell syntax on Windows); the selection, else the command line (info); the selection, else the current line (output) |
 | L | Turn the log file on or off for the focused command |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |

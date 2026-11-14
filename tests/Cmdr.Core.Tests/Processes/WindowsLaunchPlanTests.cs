@@ -72,13 +72,13 @@ public class WindowsLaunchPlanTests
     }
 
     [Fact]
-    public void UnresolvedProgramKeepsItsNameAndArgumentList()
+    public void ExplicitNonPathExtFileRunsDirectlyWithArgumentList()
     {
-        string[] args = { "start" };
+        string[] args = { "--check" };
 
-        WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch("pnpm", null, ComSpec, args);
+        WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch("tool.bin", @"C:\child\tool.bin", ComSpec, args);
 
-        Assert.Equal("pnpm", plan.FileName);
+        Assert.Equal(@"C:\child\tool.bin", plan.FileName);
         Assert.Null(plan.Arguments);
         Assert.Equal(args, plan.ArgumentList);
         Assert.Null(plan.InputAfterInterrupt);

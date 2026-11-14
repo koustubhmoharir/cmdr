@@ -21,7 +21,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
 {
     private const int ErrorAccessDenied = 5;
 
-    /// <summary>Serializes the process-wide standard input swap in <see cref="Start"/>.</summary>
+    /// <summary>Serializes the process-wide standard input swap in <see cref="StartWithNullStdin"/>.</summary>
     private static readonly object s_stdinLock = new();
 
     private readonly CtrlCHelperCommand _ctrlCHelper;
@@ -43,7 +43,10 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     /// <remarks>
     /// Resolves the program the way Windows would with PATHEXT applied, so shims such as <c>pnpm.cmd</c> launch.
     /// A resolved batch file runs through the command interpreter; see <see cref="WindowsCommandResolver.PlanLaunch"/>.
+    /// A program that does not resolve is a start failure. It is not handed to Process.Start, because CreateProcess
+    /// would search cmdr's own directory, the system directories and the parent PATH and could run a different file.
     /// </remarks>
+    /// <exception cref="FileNotFoundException">The program does not resolve under the child's working directory or PATH.</exception>
     public PreparedLaunch Prepare(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
@@ -67,12 +70,19 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         // The overlays go first so that PATH, PATHEXT and ComSpec are the effective values of this child.
         EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator);
 
+        string? pathExt = FindEnvironmentValue(psi.Environment, "PATHEXT");
         string? resolved = WindowsCommandResolver.Resolve(
             spec.Program,
             spec.WorkingDirectory,
             FindEnvironmentValue(psi.Environment, "PATH"),
-            FindEnvironmentValue(psi.Environment, "PATHEXT"),
+            pathExt,
             File.Exists);
+
+        if (resolved is null)
+        {
+            throw new FileNotFoundException(
+                WindowsCommandResolver.NotFoundMessage(spec.Program, spec.WorkingDirectory, pathExt));
+        }
 
         WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch(
             spec.Program,
@@ -119,25 +129,68 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
 
     /// <inheritdoc />
     /// <remarks>
-    /// For <see cref="PreparedLaunch.NullStdin"/> the start is wrapped so the child does not get cmdr's own input. Stdout
-    /// and stderr are redirected, so .NET starts the child with STARTF_USESTDHANDLES and, for the unredirected stdin,
-    /// passes the value of <c>GetStdHandle(STD_INPUT_HANDLE)</c> read during <see cref="Process.Start()"/>. Without this,
-    /// a command such as <c>dotnet watch</c> would read keys from cmdr's terminal. cmdr's handle is set to null only for
-    /// that call and restored right after. A null handle is what makes Windows give the child its new hidden console as
-    /// its input (expected behaviour; confirmed on Windows only by the user, not in this environment).
+    /// The process is started with <see cref="StartWithNullStdin"/> when <see cref="PreparedLaunch.NullStdin"/> is set, and
+    /// is then assigned to a new kill-on-close job. If the assignment fails, the leader is killed so that an untracked
+    /// process is never left running, and the failure is rethrown.
     /// </remarks>
-    /// <exception cref="Win32Exception">cmdr's standard input could not be changed or restored, or the process could not be started.</exception>
-    public void Start(Process process, PreparedLaunch launch)
+    /// <exception cref="Win32Exception">The process could not be started, cmdr's standard input could not be restored, or the job could not be created, configured or assigned.</exception>
+    public LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited)
     {
-        ArgumentNullException.ThrowIfNull(process);
         ArgumentNullException.ThrowIfNull(launch);
+        ArgumentNullException.ThrowIfNull(onExited);
 
-        if (!launch.NullStdin)
+        var process = new ProcessLaunched(launch.StartInfo, onExited);
+        try
         {
-            process.Start();
-            return;
+            if (launch.NullStdin)
+            {
+                StartWithNullStdin(process);
+            }
+            else
+            {
+                process.Start();
+            }
+        }
+        catch
+        {
+            process.Dispose();
+            throw;
         }
 
+        try
+        {
+            SafeJobHandle job = CreateKillOnCloseJob();
+            try
+            {
+                AssignLeader(job, process.Process);
+            }
+            catch
+            {
+                job.Dispose();
+                throw;
+            }
+
+            return new LaunchedTree(process, new WindowsProcessGroup(job, process.Id, _ctrlCHelper));
+        }
+        catch
+        {
+            KillUntracked(process.Process);
+            process.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Starts the child with a null standard input handle while cmdr's own is unrelated. Stdout and stderr are redirected,
+    /// so .NET starts the child with STARTF_USESTDHANDLES and, for the unredirected stdin, passes the value of
+    /// <c>GetStdHandle(STD_INPUT_HANDLE)</c> read during <see cref="Process.Start()"/>. Without this, a command such as
+    /// <c>dotnet watch</c> would read keys from cmdr's terminal. cmdr's handle is set to null only for that call and
+    /// restored right after. A null handle is what makes Windows give the child its new hidden console as its input
+    /// (expected behaviour; confirmed on Windows only by the user, not in this environment).
+    /// </summary>
+    /// <exception cref="Win32Exception">cmdr's standard input could not be changed or restored, or the process could not be started.</exception>
+    private static void StartWithNullStdin(ProcessLaunched process)
+    {
         lock (s_stdinLock)
         {
             // Saved as it is, whatever it is (a valid handle, or none): the same value is put back afterwards.
@@ -163,44 +216,12 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
                     int error = Marshal.GetLastPInvokeError();
                     if (started)
                     {
-                        KillUntracked(process);
+                        KillUntracked(process.Process);
                     }
 
                     throw new Win32Exception(error);
                 }
             }
-        }
-    }
-
-    /// <inheritdoc />
-    /// <remarks>
-    /// Creates a kill-on-close job and assigns the leader to it. If that fails, the leader is killed so that an
-    /// untracked process is never left running, and the failure is rethrown.
-    /// </remarks>
-    /// <exception cref="Win32Exception">The job could not be created or configured, or the leader could not be assigned.</exception>
-    public IProcessGroup Attach(Process process)
-    {
-        ArgumentNullException.ThrowIfNull(process);
-
-        try
-        {
-            SafeJobHandle job = CreateKillOnCloseJob();
-            try
-            {
-                AssignLeader(job, process);
-            }
-            catch
-            {
-                job.Dispose();
-                throw;
-            }
-
-            return new WindowsProcessGroup(job, process.Id, _ctrlCHelper);
-        }
-        catch
-        {
-            KillUntracked(process);
-            throw;
         }
     }
 

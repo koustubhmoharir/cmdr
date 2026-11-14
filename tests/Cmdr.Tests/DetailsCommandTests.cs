@@ -168,7 +168,7 @@ public sealed class DetailsCommandTests : IDisposable
         IReadOnlyList<DetailsLine> lines = DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';');
 
         Assert.Equal(
-            new[] { ("> ", DetailsStyle.Prompt), ("tool --flag \"two words\"", DetailsStyle.Command) },
+            new[] { ("> ", DetailsStyle.Prompt), ("tool --flag 'two words'", DetailsStyle.Command) },
             Spans(lines[0]));
     }
 
@@ -201,7 +201,7 @@ public sealed class DetailsCommandTests : IDisposable
     [Fact]
     public void The_prompt_is_not_part_of_the_copied_command_line()
     {
-        string copied = CommandLineFormatter.ForSpec(Run.Spec, windows: false);
+        string copied = CommandLineFormatter.ForSpec(Run.Spec, powerShell: false);
         IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal("tool --flag 'two words'", copied);
@@ -213,7 +213,7 @@ public sealed class DetailsCommandTests : IDisposable
     {
         IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: true, BaseEnvironment, ';'));
 
-        Assert.Equal("> tool --flag \"two words\"", lines[0]);
+        Assert.Equal("> tool --flag 'two words'", lines[0]);
         Assert.Equal("PATHX=base;/top", lines[3]);
     }
 

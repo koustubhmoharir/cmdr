@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Diagnostics;
 using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 
@@ -24,7 +23,7 @@ public sealed class ManagedProcess : IDisposable
     private readonly IProcessPlatform _platform;
 
     private ProcessSnapshot _snapshot = new(ProcessState.NotStarted, null, null, null, null, null, null, 0);
-    private Process? _process;
+    private ILaunchedProcess? _process;
     private IProcessGroup? _group;
     private RunPipes? _pipes;
     private readonly List<RunPipes> _livePipes = new();
@@ -346,53 +345,33 @@ public sealed class ManagedProcess : IDisposable
             }
         }
 
-        Process? process = null;
-        string? inputAfterInterrupt = null;
-        string? notice = null;
+        LaunchedTree launched;
+        string? inputAfterInterrupt;
+        string? notice;
         try
         {
             PreparedLaunch launch = _platform.Prepare(spec);
             inputAfterInterrupt = launch.InputAfterInterrupt;
             notice = launch.Notice;
-            process = new Process
-            {
-                StartInfo = launch.StartInfo,
-                EnableRaisingEvents = true,
-            };
 
-            // Subscribed before Start so an immediate exit is not missed. The handler waits for the lock,
-            // which Start holds until the run state below is in place.
-            process.Exited += (_, _) => OnExited(runId, process);
-            _platform.Start(process, launch);
+            // The exit callback may run before Launch returns. It waits for the lock, which this method holds until the run
+            // state below is in place, so an immediate exit is still recorded. A failed launch never calls it.
+            launched = _platform.Launch(launch, exited => OnExited(runId, exited));
         }
         catch (Exception ex)
         {
-            process?.Dispose();
             _snapshot = new ProcessSnapshot(ProcessState.FailedToStart, null, null, null, null, null, ex.Message, 0);
             Output.EndRun($"failed to start: {ex.Message}");
             return;
         }
 
-        IProcessGroup group;
-        try
-        {
-            // The platform kills the leader itself if attaching fails, so no untracked process is left running.
-            // _process is not yet set, so the Exited handler ignores this run.
-            group = _platform.Attach(process);
-        }
-        catch (Exception ex)
-        {
-            process.Dispose();
-            _snapshot = new ProcessSnapshot(ProcessState.FailedToStart, null, null, null, null, null, ex.Message, 0);
-            Output.EndRun($"failed to start: {ex.Message}");
-            return;
-        }
-
+        ILaunchedProcess process = launched.Process;
+        IProcessGroup group = launched.Group;
         _process = process;
         _group = group;
         _inputAfterInterrupt = inputAfterInterrupt;
-        // Process.StandardInput throws when stdin is not redirected (the Console stdin mode): then there is no writer.
-        StreamWriter? stdin = process.StartInfo.RedirectStandardInput ? process.StandardInput : null;
+        // The writer is null when stdin is not redirected (the Console stdin mode): then there is no writer.
+        StreamWriter? stdin = process.StandardInput;
         if (stdin is not null)
         {
             stdin.AutoFlush = true;
@@ -519,7 +498,7 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>Handles the leader's exit: waits briefly for output to drain, then records the exit and checks for leftovers.</summary>
-    private void OnExited(int runId, Process process)
+    private void OnExited(int runId, ILaunchedProcess process)
     {
         DateTimeOffset exitedAt = DateTimeOffset.Now;
         Task? stdOut;
@@ -611,7 +590,7 @@ public sealed class ManagedProcess : IDisposable
         return true;
     }
 
-    private bool IsCurrentRunLocked(int runId, Process process) =>
+    private bool IsCurrentRunLocked(int runId, ILaunchedProcess process) =>
         !_disposed && runId == _runId && ReferenceEquals(process, _process) && IsActiveLocked;
 
     /// <summary>

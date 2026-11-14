@@ -64,14 +64,90 @@ public class WindowsCommandResolverTests
     }
 
     [Fact]
-    public void ExtensionNotInPathExtIsNotTriedBare()
+    public void ExtensionNotInPathExtIsTriedLastAsExplicitlyNamed()
     {
         Func<string, bool> fs = Files(@"C:\bin\tool.txt");
 
-        Assert.Null(WindowsCommandResolver.Resolve("tool.txt", WorkDir, @"C:\bin", ".exe;.cmd", fs));
+        Assert.Equal(@"C:\bin\tool.txt", WindowsCommandResolver.Resolve("tool.txt", WorkDir, @"C:\bin", ".exe;.cmd", fs));
 
         Func<string, bool> withExe = Files(@"C:\bin\tool.txt", @"C:\bin\tool.txt.exe");
         Assert.Equal(@"C:\bin\tool.txt.exe", WindowsCommandResolver.Resolve("tool.txt", WorkDir, @"C:\bin", ".exe;.cmd", withExe));
+    }
+
+    [Fact]
+    public void PathExtCandidateWinsOverExplicitNonPathExtFileOfSameName()
+    {
+        Func<string, bool> fs = Files(@"C:\work\x.bin.EXE", @"C:\work\x.bin");
+
+        Assert.Equal(@"C:\work\x.bin.EXE", WindowsCommandResolver.Resolve("x.bin", WorkDir, null, ".EXE;.CMD", fs));
+    }
+
+    [Fact]
+    public void PathLikeNonPathExtFileUnderWorkingDirectoryResolves()
+    {
+        Func<string, bool> fs = Files(@"C:\child\.\tools\tool.bin");
+
+        Assert.Equal(@"C:\child\.\tools\tool.bin", WindowsCommandResolver.Resolve(@".\tools\tool.bin", @"C:\child", null, null, fs));
+    }
+
+    [Fact]
+    public void PathLikeProgramMissingUnderWorkingDirectoryIsNotFoundEvenIfElsewhere()
+    {
+        // The file exists under cmdr's own directory (or any other place) but not under the child's working directory.
+        Func<string, bool> fs = Files(@"C:\cmdr\tools\tool.exe", @"C:\cmdr\tools\tool.bin");
+
+        Assert.Null(WindowsCommandResolver.Resolve(@".\tools\tool.exe", @"C:\child", @"C:\cmdr;C:\bin", ".exe", fs));
+        Assert.Null(WindowsCommandResolver.Resolve(@".\tools\tool.bin", @"C:\child", @"C:\cmdr", ".exe", fs));
+    }
+
+    [Fact]
+    public void BareNameInCmdrDirectoryOnlyIsNotFound()
+    {
+        // cmdr's own directory is never searched: only the working directory and PATH entries are.
+        Func<string, bool> fs = Files(@"C:\cmdr\tool.exe", @"C:\cmdr\tool.bin");
+
+        Assert.Null(WindowsCommandResolver.Resolve("tool", WorkDir, @"C:\bin", ".exe", fs));
+        Assert.Null(WindowsCommandResolver.Resolve("tool.bin", WorkDir, @"C:\bin", ".exe", fs));
+    }
+
+    [Fact]
+    public void ExtensionlessPathLikeProgramIsNeverTriedBare()
+    {
+        Func<string, bool> fs = Files(@"C:\child\.\tools\tool");
+
+        Assert.Null(WindowsCommandResolver.Resolve(@".\tools\tool", @"C:\child", null, ".exe;.cmd", fs));
+    }
+
+    [Fact]
+    public void BareNonPathExtNameInPathDirectoryResolves()
+    {
+        Func<string, bool> fs = Files(@"C:\bin\tool.bin");
+
+        Assert.Equal(@"C:\bin\tool.bin", WindowsCommandResolver.Resolve("tool.bin", WorkDir, @"C:\bin", ".exe", fs));
+    }
+
+    [Fact]
+    public void NotFoundMessageForBareName()
+    {
+        Assert.Equal(
+            "'pnpm' was not found in the working directory or on PATH (PATHEXT extensions tried: .COM;.EXE;.BAT;.CMD)",
+            WindowsCommandResolver.NotFoundMessage("pnpm", WorkDir, null));
+    }
+
+    [Fact]
+    public void NotFoundMessageForRelativePathNamesWorkingDirectory()
+    {
+        Assert.Equal(
+            @"'.\tools\tool.exe' was not found relative to the working directory 'C:\child' (PATHEXT extensions tried: .EXE;.CMD)",
+            WindowsCommandResolver.NotFoundMessage(@".\tools\tool.exe", @"C:\child", ".EXE;.CMD"));
+    }
+
+    [Fact]
+    public void NotFoundMessageForRootedPathOmitsWorkingDirectory()
+    {
+        Assert.Equal(
+            @"'D:\tools\x' was not found (PATHEXT extensions tried: .EXE)",
+            WindowsCommandResolver.NotFoundMessage(@"D:\tools\x", WorkDir, ".EXE"));
     }
 
     [Fact]

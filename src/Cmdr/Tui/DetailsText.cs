@@ -115,7 +115,7 @@ internal static class DetailsText
         {
             Line(
                 new DetailsSpan(windows ? "> " : "$ ", DetailsStyle.Prompt),
-                new DetailsSpan(CommandLineFormatter.ForSpec(spec, windows), DetailsStyle.Command)),
+                new DetailsSpan(CommandLineFormatter.ForSpec(spec, powerShell: windows), DetailsStyle.Command)),
         };
 
         if (entry.IsReadOnly)

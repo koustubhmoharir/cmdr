@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace Cmdr.Core.Processes;
 
 /// <summary>Platform-specific launch and process-tree control.</summary>
@@ -12,12 +10,20 @@ internal interface IProcessPlatform
     PreparedLaunch Prepare(LaunchSpec spec);
 
     /// <summary>
-    /// Starts <paramref name="process"/>, which was built from <paramref name="launch"/>. Platforms may need to adjust
-    /// process-wide state around the start; see <see cref="PreparedLaunch.NullStdin"/>.
+    /// Starts the process described by <paramref name="launch"/> in its own process group or job, and returns it with
+    /// that group. Platforms may need to adjust process-wide state around the start; see
+    /// <see cref="PreparedLaunch.NullStdin"/>.
     /// </summary>
-    /// <exception cref="System.ComponentModel.Win32Exception">The process could not be started.</exception>
-    void Start(Process process, PreparedLaunch launch);
-
-    /// <summary>Attaches to a process that was just started from <see cref="Prepare"/>.</summary>
-    IProcessGroup Attach(Process process);
+    /// <param name="launch">The result of <see cref="Prepare"/>.</param>
+    /// <param name="onExited">
+    /// Invoked exactly once, on a thread-pool thread, after the leader exits. It may run before <see cref="Launch"/>
+    /// returns, so callers must tolerate that. It receives the same instance that <see cref="LaunchedTree.Process"/> returns.
+    /// </param>
+    /// <returns>The started leader and its group.</returns>
+    /// <exception cref="System.ComponentModel.Win32Exception">The process could not be started or attached to its group.</exception>
+    /// <remarks>
+    /// On failure nothing is left running or untracked: the platform kills whatever it started and disposes what it created,
+    /// and <paramref name="onExited"/> is not invoked for it.
+    /// </remarks>
+    LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited);
 }
