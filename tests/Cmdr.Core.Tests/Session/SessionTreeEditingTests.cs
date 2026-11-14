@@ -220,4 +220,109 @@ public class SessionTreeEditingTests
         Assert.Equal(new[] { "i1", "c2" }, inner.Commands.Select(x => x.Name));
         Assert.Empty(g.Commands);
     }
+
+    /// <summary>Adds groups g1 › g2 › … › g{levels} with AddGroup, each inside the previous one. Returns the deepest group.</summary>
+    private static GroupEntry AddChain(CmdrSession session, int levels)
+    {
+        GroupEntry? parent = null;
+        for (int level = 1; level <= levels; level++)
+        {
+            parent = session.AddGroup(parent, Settings($"g{level}"));
+        }
+
+        return parent!;
+    }
+
+    /// <summary>A group definition l1 › l2 › … › l{levels}, for loading into a session.</summary>
+    private static GroupSpec SpecChain(int levels)
+    {
+        GroupSpec? inner = null;
+        for (int level = levels; level >= 1; level--)
+        {
+            var group = new GroupSpec { Name = $"l{level}" };
+            if (inner is not null)
+            {
+                group.Items.Add(inner);
+            }
+
+            inner = group;
+        }
+
+        return inner!;
+    }
+
+    [Fact]
+    public void AddGroup_SixteenLevels_Allowed_SeventeenthRefused_NothingChanged()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenEmpty(dir);
+        GroupEntry deepest = AddChain(session, CmdrConfig.MaxGroupDepth);
+        Assert.Equal(CmdrConfig.MaxGroupDepth - 1, deepest.Depth);
+        string[] namesBefore = session.AllGroups.Select(g => g.Name).ToArray();
+        bool dirtyBefore = session.IsDirty;
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => session.AddGroup(deepest, Settings("too-deep")));
+
+        Assert.Equal("Cannot add a group inside 'g16': groups can be nested at most 16 levels deep.", ex.Message);
+        Assert.Equal(namesBefore, session.AllGroups.Select(g => g.Name));
+        Assert.Empty(deepest.Items);
+        Assert.Equal(dirtyBefore, session.IsDirty);
+    }
+
+    [Fact]
+    public void Save_SixteenLevelSession_Succeeds_AndLoadsBackWithSixteenLevels()
+    {
+        using var dir = new TempDir();
+        using (CmdrSession session = OpenEmpty(dir))
+        {
+            AddChain(session, CmdrConfig.MaxGroupDepth);
+
+            session.Save();
+        }
+
+        CmdrConfig reloaded = ConfigStore.Load(dir.File("cmdr.json"));
+        var names = new List<string>();
+        GroupSpec? group = Assert.Single(reloaded.Groups);
+        while (group is not null)
+        {
+            names.Add(group.Name);
+            group = group.Items.OfType<GroupSpec>().SingleOrDefault();
+        }
+
+        Assert.Equal(Enumerable.Range(1, CmdrConfig.MaxGroupDepth).Select(l => $"g{l}"), names);
+    }
+
+    [Fact]
+    public void UpdateGroup_MoveTwoLevelSubtreeUnderLevelFifteen_Refused_NothingChanged()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWith(
+            dir,
+            SpecChain(CmdrConfig.MaxGroupDepth - 1),
+            new GroupSpec { Name = "sub", Items = { new GroupSpec { Name = "subchild" } } });
+        GroupEntry sub = session.Groups[1];
+        GroupEntry level15 = session.AllGroups.Single(g => g.Name == "l15");
+        GroupEntry level14 = session.AllGroups.Single(g => g.Name == "l14");
+
+        Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(sub, Settings("renamed"), level15));
+
+        Assert.Equal("sub", sub.Name);
+        Assert.Null(sub.Parent);
+        Assert.Equal(new[] { "l1", "sub" }, session.Groups.Select(g => g.Name));
+        Assert.Empty(level15.Groups);
+        Assert.False(session.IsDirty);
+
+        session.UpdateGroup(sub, Settings("moved"), level14);
+
+        Assert.Same(level14, sub.Parent);
+        Assert.Equal(new[] { "l15", "moved" }, level14.Groups.Select(g => g.Name));
+        Assert.Equal("moved", sub.Name);
+        Assert.Equal(new[] { "l1" }, session.Groups.Select(g => g.Name));
+        Assert.True(session.IsDirty);
+
+        session.UpdateGroup(sub, Settings("top"), null);
+
+        Assert.Null(sub.Parent);
+        Assert.Equal("top", sub.Name);
+    }
 }

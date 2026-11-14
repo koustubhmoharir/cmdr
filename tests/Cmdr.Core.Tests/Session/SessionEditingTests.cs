@@ -421,4 +421,54 @@ public class SessionEditingTests
         Assert.Null(await session.RestartAsync(Array.Empty<CommandEntry>()));
         Assert.False(session.IsDirty);
     }
+
+    [Fact]
+    public void AddingCommandWhoseLogCollidesWithSibling_ValidateReportsAndSaveRefuses()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("a b", "true")));
+        string before = File.ReadAllText(dir.File("cmdr.json"));
+
+        session.AddCommand(session.Groups[0], Sh("a_b", "true"));
+
+        Assert.Contains(session.Validate(), e => e.Contains("Log path conflict", StringComparison.Ordinal));
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() => session.Save());
+        Assert.Contains("Log path conflict", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllText(dir.File("cmdr.json")));
+        Assert.True(session.IsDirty);
+    }
+
+    [Fact]
+    public void ConflictOnlyWithinBaseFile_DoesNotBlockSave()
+    {
+        using var dir = new TempDir();
+        string baseRel = Path.Combine("shared", "base.json");
+        ConfigStore.Save(new CmdrConfig { Groups = { Group("g", GroupMode.Parallel, Sh("a b", "true"), Sh("a_b", "true")) } }, dir.File(baseRel));
+        ConfigStore.Save(new CmdrConfig { Base = baseRel, Groups = { Group("h", GroupMode.Parallel, Sh("m", "true")) } }, dir.File("cmdr.json"));
+
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        session.AddCommand(session.Groups[^1], Sh("n", "true"));
+
+        // The base conflict is still reported on load, but it is not the opened file's error.
+        Assert.Contains(session.LoadErrors, e => e.Contains("Log path conflict", StringComparison.Ordinal));
+        Assert.Empty(session.Validate());
+        session.Save();
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void ConflictBetweenBaseAndOpenedFile_BlocksSave()
+    {
+        // The base shares the opened file's logs directory, so its command collides with the one added below.
+        using var dir = new TempDir();
+        const string baseRel = "base.json";
+        ConfigStore.Save(new CmdrConfig { Groups = { Group("g", GroupMode.Parallel, Sh("a b", "true")) } }, dir.File(baseRel));
+        ConfigStore.Save(new CmdrConfig { Base = baseRel, Groups = { Group("g", GroupMode.Parallel, Sh("m", "true")) } }, dir.File("cmdr.json"));
+
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        session.AddCommand(session.Groups[^1], Sh("a_b", "true"));
+
+        Assert.Single(session.Validate());
+        Assert.Throws<InvalidOperationException>(() => session.Save());
+    }
 }

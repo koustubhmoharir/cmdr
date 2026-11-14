@@ -116,7 +116,8 @@ public static class ConfigStore
     /// <summary>
     /// Validates each file of a chain (see <see cref="LoadChain"/>) on its own and returns all errors, in chain order. A group name
     /// may therefore repeat across files but not within one. Errors of base files are prefixed with the file's path relative to the
-    /// directory of the opened file (the last entry); errors of the opened file are not prefixed.
+    /// directory of the opened file (the last entry); errors of the opened file are not prefixed. The log paths of all commands of
+    /// the chain are then checked together (see <see cref="LogPathErrors"/>), after the per-file errors.
     /// </summary>
     public static IReadOnlyList<string> ValidateChain(IReadOnlyList<ConfigFile> chain)
     {
@@ -138,7 +139,157 @@ public static class ConfigStore
             }
         }
 
+        errors.AddRange(LogPathErrors(chain, onlyInvolvingOpened: false));
         return errors;
+    }
+
+    /// <summary>
+    /// Finds log path conflicts among all commands of a chain, whether or not their logs are enabled. Two commands conflict when their
+    /// resolved log paths are equal, or when one log path is a folder of the other (the other path starts with it and a directory
+    /// separator). Paths are compared with <see cref="PathComparer"/>. Each file's logs directory is used for its own commands.
+    /// Commands whose paths cannot be resolved are skipped here.
+    /// </summary>
+    /// <param name="chain">The files of the chain; the opened file is the last entry.</param>
+    /// <param name="onlyInvolvingOpened">True to keep only the errors where at least one involved command comes from the opened file.</param>
+    /// <returns>
+    /// One error per set of equal paths (in order of first occurrence), then one per folder conflict (in order of the folder's first
+    /// occurrence). Each error names the first command of a path, or every command for an equal path. Paths are relative to the
+    /// directory of the opened file.
+    /// </returns>
+    internal static IReadOnlyList<string> LogPathErrors(IReadOnlyList<ConfigFile> chain, bool onlyInvolvingOpened)
+    {
+        ArgumentNullException.ThrowIfNull(chain);
+
+        var errors = new List<string>();
+        if (chain.Count == 0)
+        {
+            return errors;
+        }
+
+        string openedDir = chain[^1].Dir;
+        var targets = new List<LogTarget>();
+        foreach (ConfigFile file in chain)
+        {
+            string logsDir;
+            try
+            {
+                logsDir = ConfigPaths.ResolveLogsDir(file.Config, file.Dir);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                continue;
+            }
+
+            string suffix = file.IsBase ? $" (in {Path.GetRelativePath(openedDir, file.Path)})" : "";
+            for (int g = 0; g < file.Config.Groups.Count; g++)
+            {
+                GroupSpec group = file.Config.Groups[g];
+                CollectLogTargets(group, CmdrConfig.TopLevelLabel(group, g), Array.Empty<GroupSpec>(), logsDir, suffix, !file.IsBase, targets);
+            }
+        }
+
+        StringComparer comparer = PathComparer;
+        var byPath = new Dictionary<string, List<LogTarget>>(comparer);
+        var paths = new List<string>();
+        foreach (LogTarget target in targets)
+        {
+            if (!byPath.TryGetValue(target.FullPath, out List<LogTarget>? sharing))
+            {
+                sharing = new List<LogTarget>();
+                byPath[target.FullPath] = sharing;
+                paths.Add(target.FullPath);
+            }
+
+            sharing.Add(target);
+        }
+
+        foreach (string path in paths)
+        {
+            List<LogTarget> sharing = byPath[path];
+            if (sharing.Count < 2 || (onlyInvolvingOpened && !sharing.Any(t => t.FromOpened)))
+            {
+                continue;
+            }
+
+            string verb = sharing.Count == 2 ? "both log" : "all log";
+            errors.Add($"Log path conflict: {JoinLabels(sharing.Select(t => t.Label))} {verb} to '{DisplayPath(openedDir, path)}'.");
+        }
+
+        foreach (string outer in paths)
+        {
+            string prefix = outer.EndsWith(Path.DirectorySeparatorChar) ? outer : outer + Path.DirectorySeparatorChar;
+            List<LogTarget> outerTargets = byPath[outer];
+            foreach (string inner in paths)
+            {
+                if (inner.Length <= prefix.Length || !comparer.Equals(inner[..prefix.Length], prefix))
+                {
+                    continue;
+                }
+
+                List<LogTarget> innerTargets = byPath[inner];
+                if (onlyInvolvingOpened && !outerTargets.Any(t => t.FromOpened) && !innerTargets.Any(t => t.FromOpened))
+                {
+                    continue;
+                }
+
+                errors.Add(
+                    $"Log path conflict: the log of {outerTargets[0].Label} ('{DisplayPath(openedDir, outer)}') is the folder of the log of " +
+                    $"{innerTargets[0].Label} ('{DisplayPath(openedDir, inner)}').");
+            }
+        }
+
+        return errors;
+    }
+
+    // A command's resolved log path, with its label (already suffixed for base files) and whether it comes from the opened file.
+    private sealed record LogTarget(string FullPath, string Label, bool FromOpened);
+
+    // Walks the items of a group depth-first, adding every command's resolved log path. Commands whose path cannot be resolved are skipped.
+    private static void CollectLogTargets(
+        GroupSpec parent,
+        string parentLabel,
+        IReadOnlyList<GroupSpec> ancestors,
+        string logsDir,
+        string suffix,
+        bool fromOpened,
+        List<LogTarget> targets)
+    {
+        List<GroupSpec> groupsIncludingParent = ancestors.Append(parent).ToList();
+        for (int i = 0; i < parent.Items.Count; i++)
+        {
+            ItemSpec item = parent.Items[i];
+            string label = $"{parentLabel} › {CmdrConfig.DescribeItem(item, i)}";
+            switch (item)
+            {
+                case CommandSpec cmd:
+                    try
+                    {
+                        string path = ConfigPaths.ResolveLogPath(groupsIncludingParent, cmd, logsDir);
+                        targets.Add(new LogTarget(path, label + suffix, fromOpened));
+                    }
+                    catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+                    {
+                        // Not reported here; the command's own settings are checked elsewhere.
+                    }
+
+                    break;
+
+                case GroupSpec child:
+                    CollectLogTargets(child, label, groupsIncludingParent, logsDir, suffix, fromOpened, targets);
+                    break;
+            }
+        }
+    }
+
+    private static string DisplayPath(string openedDir, string path) => Path.GetRelativePath(openedDir, path);
+
+    // "A", "A and B", "A, B and C".
+    private static string JoinLabels(IEnumerable<string> labels)
+    {
+        string[] items = labels.ToArray();
+        return items.Length <= 1
+            ? string.Join("", items)
+            : $"{string.Join(", ", items[..^1])} and {items[^1]}";
     }
 
     // Paths are compared case-insensitively where the file system usually is.
@@ -224,38 +375,17 @@ public static class ConfigStore
 
     /// <summary>
     /// Saves the configuration as indented UTF-8 JSON (no BOM, trailing newline).
-    /// Creates the parent directory if needed and replaces the file atomically.
+    /// Creates the parent directory if needed and replaces the file atomically. An existing file keeps its Unix permissions.
+    /// If <paramref name="path"/> is a symbolic link, its final target is replaced and the link is kept.
     /// </summary>
+    /// <exception cref="IOException">The path is a dangling symbolic link, or the file cannot be written.</exception>
     public static void Save(CmdrConfig config, string path)
     {
         ArgumentNullException.ThrowIfNull(config);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        string fullPath = Path.GetFullPath(path);
-        string directory = Path.GetDirectoryName(fullPath)!;
-        Directory.CreateDirectory(directory);
-
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(config, ConfigJsonContext.Default.CmdrConfig);
-
-        string tempPath = Path.Combine(directory, "." + Path.GetFileName(fullPath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-        try
-        {
-            using (FileStream stream = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            {
-                stream.Write(json);
-                stream.WriteByte((byte)'\n');
-                stream.Flush(flushToDisk: true);
-            }
-
-            File.Move(tempPath, fullPath, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
+        AtomicFile.Write(path, json);
     }
 
     // A group with "commands" is an old-format file (rejected even next to "items", which would silently drop it). Items are read by shape, so this is the only
@@ -324,11 +454,12 @@ public static class ConfigStore
                 throw new ConfigException($"Configuration file '{configPath}': groups[{g}] must be an object, not null.");
             }
 
-            NormalizeGroup(group, configPath, $"groups[{g}]");
+            NormalizeGroup(group, configPath, $"groups[{g}]", level: 1);
         }
     }
 
-    private static void NormalizeGroup(GroupSpec group, string configPath, string jsonPath)
+    // level is the nesting level of group (1 for a top-level group). A nested group deeper than CmdrConfig.MaxGroupDepth refuses the file.
+    private static void NormalizeGroup(GroupSpec group, string configPath, string jsonPath, int level)
     {
         group.Name ??= "";
         group.Items ??= new List<ItemSpec>();
@@ -347,7 +478,13 @@ public static class ConfigStore
             switch (item)
             {
                 case GroupSpec child:
-                    NormalizeGroup(child, configPath, itemPath);
+                    if (level + 1 > CmdrConfig.MaxGroupDepth)
+                    {
+                        throw new ConfigException(
+                            $"Configuration file '{configPath}': {itemPath} is nested deeper than {CmdrConfig.MaxGroupDepth} group levels.");
+                    }
+
+                    NormalizeGroup(child, configPath, itemPath, level + 1);
                     break;
 
                 case CommandSpec cmd:

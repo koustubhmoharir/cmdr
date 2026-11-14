@@ -7,6 +7,12 @@ namespace Cmdr.Core.Config;
 public class CmdrConfig
 {
     /// <summary>
+    /// Maximum number of nested group levels. A top-level group is level 1, a group inside it level 2, and so on; level
+    /// <see cref="MaxGroupDepth"/> is the deepest allowed. Enforced when loading, validating and editing.
+    /// </summary>
+    public const int MaxGroupDepth = 16;
+
+    /// <summary>
     /// Path of a base file this file imports. The base's groups and settings are loaded as well but not merged with this file's.
     /// A relative path resolves against the directory of this file. Null means no base (see <see cref="ConfigStore.LoadChain"/>).
     /// </summary>
@@ -47,15 +53,14 @@ public class CmdrConfig
         for (int g = 0; g < Groups.Count; g++)
         {
             GroupSpec group = Groups[g];
-            bool blank = string.IsNullOrWhiteSpace(group.Name);
-            string label = blank ? $"Group #{g + 1}" : $"Group '{group.Name}'";
+            string label = TopLevelLabel(group, g);
 
-            if (blank)
+            if (string.IsNullOrWhiteSpace(group.Name))
             {
                 errors.Add($"{label}: name must not be blank.");
             }
 
-            ValidateItems(group, label, errors);
+            ValidateItems(group, label, level: 1, errors);
         }
 
         foreach (KeyValuePair<string, List<int>> dup in FindDuplicates(Groups.Select(g => g.Name)))
@@ -68,9 +73,11 @@ public class CmdrConfig
 
     /// <summary>
     /// Validates the items of <paramref name="parent"/> and, recursively, of its nested groups. <paramref name="parentLabel"/>
-    /// identifies the parent in messages, e.g. <c>Group 'go-apps' › 'nav'</c>.
+    /// identifies the parent in messages, e.g. <c>Group 'go-apps' › 'nav'</c>. <paramref name="level"/> is the nesting level of
+    /// <paramref name="parent"/> (1 for a top-level group). A nested group deeper than <see cref="MaxGroupDepth"/> is reported
+    /// once and not validated further.
     /// </summary>
-    private static void ValidateItems(GroupSpec parent, string parentLabel, List<string> errors)
+    private static void ValidateItems(GroupSpec parent, string parentLabel, int level, List<string> errors)
     {
         for (int i = 0; i < parent.Items.Count; i++)
         {
@@ -113,7 +120,15 @@ public class CmdrConfig
                     break;
 
                 case GroupSpec child:
-                    ValidateItems(child, label, errors);
+                    if (level + 1 > MaxGroupDepth)
+                    {
+                        errors.Add($"{label}: groups can be nested at most {MaxGroupDepth} levels deep.");
+                    }
+                    else
+                    {
+                        ValidateItems(child, label, level + 1, errors);
+                    }
+
                     break;
             }
         }
@@ -194,8 +209,15 @@ public class CmdrConfig
     private static string FormatPositions(List<int> positions) =>
         string.Join(", ", positions.Select(p => $"#{p}"));
 
+    /// <summary>
+    /// Labels a top-level group in messages: <c>Group 'name'</c>, or <c>Group #n</c> when the name is blank, where n is the
+    /// 1-based position of the group in its file.
+    /// </summary>
+    internal static string TopLevelLabel(GroupSpec group, int index) =>
+        string.IsNullOrWhiteSpace(group.Name) ? $"Group #{index + 1}" : $"Group '{group.Name}'";
+
     /// <summary>Describes a nested item by its name, or by its 1-based position when the name is blank.</summary>
-    private static string DescribeItem(ItemSpec item, int index) => (item, string.IsNullOrWhiteSpace(item.Name)) switch
+    internal static string DescribeItem(ItemSpec item, int index) => (item, string.IsNullOrWhiteSpace(item.Name)) switch
     {
         (GroupSpec, true) => $"#{index + 1}",
         (GroupSpec, false) => $"'{item.Name}'",

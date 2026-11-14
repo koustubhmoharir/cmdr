@@ -138,7 +138,7 @@ against the directory of the file.
 | `expanded` | `true` | Whether the group starts expanded when the config is loaded. Collapsing it in the UI doesn't change the setting. |
 | `cwd` | | Working directory for everything inside; relative to the parent group's (top level: the config file's directory). |
 | `env` | | Environment variables for everything inside (see [Environment](#environment)). |
-| `items` | | Commands and nested groups, in display order. An item with `program` is a command; an item with `items` is a group. |
+| `items` | | Commands and nested groups, in display order. An item with `program` is a command; an item with `items` is a group. Groups nest at most 16 levels deep. |
 
 ### Commands
 
@@ -151,7 +151,7 @@ against the directory of the file.
 | `cwd` | | Working directory; relative to the group's. |
 | `env` | | Environment variables (see [Environment](#environment)). |
 | `stop` | `{ "method": "ctrlC" }` | How to stop gracefully: `ctrlC` (SIGINT on Linux, Ctrl+C on Windows) or `input`, which writes `stop.input` to the command's input (e.g. `"q\n"`). |
-| `log` | `{ "enabled": false }` | `enabled`: also write the output to a log file. `path`: the file, relative to `logsDir`; defaults to `<logsDir>/<group>/…/<command>.log`. |
+| `log` | `{ "enabled": false }` | `enabled`: also write the output to a log file. `path`: the file, relative to `logsDir`; defaults to `<logsDir>/<group>/…/<command>.log`. No two commands may resolve to the same log file (e.g. `a b` and `a_b`), across base files too. |
 | `leftovers` | `track` | What to do with processes still running after the command's main process exits (see [Leftover processes](#leftover-processes)). |
 | `ready` | | Output patterns that tell when the command is ready (see [Readiness](#readiness)). |
 | `stdin` | `pipe` | Windows only: `console` gives the command its own console as input (see [Windows](#windows)). |
@@ -195,6 +195,7 @@ the same group name may appear in different files.
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,
 but not edited, and their header shows the file they come from. Ctrl+S saves only the opened file.
+Saving keeps the file's permissions, and a config opened through a symbolic link is saved to the link's target.
 
 ## Running commands
 

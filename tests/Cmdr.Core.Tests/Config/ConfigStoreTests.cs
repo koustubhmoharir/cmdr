@@ -599,4 +599,179 @@ public class ConfigStoreTests
         Assert.Contains("\"logsDir\": \"../logs\"", File.ReadAllText(path));
         Assert.Equal("../logs", ConfigStore.Load(path).LogsDir);
     }
+
+    [Fact]
+    public void Save_KeepsExistingOwnerOnlyMode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+        ConfigStore.Save(new CmdrConfig { BufferLines = 2 }, path);
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+        Assert.Equal(2, ConfigStore.Load(path).BufferLines);
+        Assert.Equal(new[] { "cmdr.json" }, Directory.GetFiles(dir.Path).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void Save_KeepsExistingWorldWritableMode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The default umask would narrow a mode created from this one, so this proves the mode is set explicitly.
+        const UnixFileMode everyone = UnixFileMode.UserRead | UnixFileMode.UserWrite
+            | UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        ConfigStore.Save(new CmdrConfig(), path);
+        File.SetUnixFileMode(path, everyone);
+
+        ConfigStore.Save(new CmdrConfig { BufferLines = 3 }, path);
+
+        Assert.Equal(everyone, File.GetUnixFileMode(path));
+    }
+
+    [Fact]
+    public void Save_ThroughRelativeSymlink_UpdatesTargetAndKeepsLink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string target = dir.File("target.json");
+        string link = dir.File("linked.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, target);
+        File.CreateSymbolicLink(link, "target.json");
+
+        ConfigStore.Save(new CmdrConfig { BufferLines = 5 }, link);
+
+        Assert.Equal("target.json", new FileInfo(link).LinkTarget);
+        Assert.Equal(5, ConfigStore.Load(target).BufferLines);
+        Assert.Equal(5, ConfigStore.Load(link).BufferLines);
+        Assert.Equal(new[] { "linked.json", "target.json" }, Directory.GetFiles(dir.Path).Select(Path.GetFileName).Order());
+    }
+
+    [Fact]
+    public void Save_ThroughAbsoluteSymlink_UpdatesTargetAndKeepsLink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string target = dir.File("target.json");
+        string link = dir.File("linked.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, target);
+        File.CreateSymbolicLink(link, target);
+
+        ConfigStore.Save(new CmdrConfig { BufferLines = 6 }, link);
+
+        Assert.Equal(target, new FileInfo(link).LinkTarget);
+        Assert.Equal(6, ConfigStore.Load(target).BufferLines);
+        Assert.Equal(6, ConfigStore.Load(link).BufferLines);
+    }
+
+    [Fact]
+    public void Save_ThroughDanglingSymlink_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("a"));
+        Directory.CreateDirectory(dir.File("b"));
+        string link = dir.File(Path.Combine("a", "linked.json"));
+        string missing = Path.Combine("..", "b", "missing.json");
+        File.CreateSymbolicLink(link, missing);
+
+        IOException ex = Assert.Throws<IOException>(() => ConfigStore.Save(new CmdrConfig(), link));
+
+        Assert.Contains("which does not exist", ex.Message);
+        Assert.Equal(missing, new FileInfo(link).LinkTarget);
+        Assert.Equal(new[] { "linked.json" }, Directory.GetFiles(dir.File("a")).Select(Path.GetFileName));
+        Assert.Empty(Directory.GetFiles(dir.File("b")));
+        Assert.False(File.Exists(dir.File(Path.Combine("b", "missing.json"))));
+    }
+
+    /// <summary>
+    /// A chain of nested groups g1 › g2 › … › g{levels}. The deepest group holds a command with args, env, ready and stop set,
+    /// so the JSON is as deep as a real file gets.
+    /// </summary>
+    private static CmdrConfig NestedChain(int levels)
+    {
+        ItemSpec inner = new CommandSpec
+        {
+            Name = "run",
+            Program = "pnpm",
+            Args = { "start", "--port", "3000" },
+            Env = new Dictionary<string, string?> { ["FORCE_COLOR"] = "1" },
+            Ready = new ReadySpec { Pattern = "ready on", Busy = "compiling" },
+            Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
+        };
+        for (int level = levels; level >= 1; level--)
+        {
+            inner = new GroupSpec { Name = $"g{level}", Items = { inner } };
+        }
+
+        return new CmdrConfig { Groups = { (GroupSpec)inner } };
+    }
+
+    [Fact]
+    public void Nesting_SixteenLevels_SavesAndLoadsBackWithSameStructure()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        CmdrConfig original = NestedChain(CmdrConfig.MaxGroupDepth);
+
+        ConfigStore.Save(original, path);
+        CmdrConfig loaded = ConfigStore.Load(path);
+
+        GroupSpec group = Assert.Single(loaded.Groups);
+        for (int level = 2; level <= CmdrConfig.MaxGroupDepth; level++)
+        {
+            group = Assert.IsType<GroupSpec>(Assert.Single(group.Items));
+            Assert.Equal($"g{level}", group.Name);
+        }
+
+        CommandSpec command = Assert.IsType<CommandSpec>(Assert.Single(group.Items));
+        Assert.Equal("run", command.Name);
+        Assert.Equal(new[] { "start", "--port", "3000" }, command.Args);
+        Assert.Equal("1", command.Env["FORCE_COLOR"]);
+        Assert.Equal("ready on", command.Ready?.Pattern);
+        Assert.Equal("compiling", command.Ready?.Busy);
+        Assert.Equal(StopMethod.Input, command.Stop.Method);
+        Assert.Equal("q\n", command.Stop.Input);
+        Assert.Empty(loaded.Validate());
+    }
+
+    [Fact]
+    public void Nesting_SeventeenLevels_FailsToLoad()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("cmdr.json");
+        ConfigStore.Save(NestedChain(17), path);
+
+        ConfigException ex = Assert.Throws<ConfigException>(() => ConfigStore.Load(path));
+
+        Assert.Contains("nested deeper than 16 group levels", ex.Message);
+        // The level-17 group is reached through sixteen 'items[0]' steps from groups[0].
+        string itemPath = "groups[0]" + string.Concat(Enumerable.Repeat(".items[0]", 16));
+        Assert.Contains($"{itemPath} is nested deeper than 16 group levels.", ex.Message);
+    }
 }

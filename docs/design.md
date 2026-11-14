@@ -62,14 +62,22 @@ starting. Concurrent instances: last writer wins.
   `ready`/`base`/`cwd`/`env`), so saving does not churn existing files.
 - Loading does not validate; `CmdrConfig.Validate` returns messages and the UI decides (load errors are
   shown, save is refused while invalid). Names are checked per file, case-insensitively among siblings.
-- Saving writes a temp file next to the target and moves it over (atomic replace).
+- Saving (`AtomicFile`, also used for the recent-files store) writes a temp file next to the target and
+  moves it over (atomic replace). A symlink is followed to its final target, which is replaced in its own
+  directory so the link stays; a dangling link is an `IOException`. On Unix the temp file gets the
+  existing file's mode before any content is written; a new file gets the OS default. On Windows an
+  existing file is replaced with `File.Replace` to keep its ACL (unverified on Windows).
+- Groups nest at most `CmdrConfig.MaxGroupDepth` (16) levels, a top-level group being level 1. Loading a
+  deeper file is a `ConfigException`; `Validate` reports it, and `AddGroup`/`UpdateGroup` refuse to
+  exceed it.
 
 ### Base files
 
 `ConfigStore.LoadChain` follows `base` imports (relative to the importing file), deepest base first, the
 opened file last. Cycles are detected on full paths (case-insensitive on Windows and macOS). A missing
 opened file yields an empty config; a missing base file is an error. `ValidateChain` validates each file
-on its own and prefixes base-file errors with the path relative to the opened file.
+on its own and prefixes base-file errors with the path relative to the opened file, then checks the log
+paths of every command of the chain together (`LogPathErrors`).
 
 In the session each top-level group records its `ConfigSource` (path, directory, `bufferLines`,
 `logsDir`, `IsBase`); descendants share it. Launch specs, buffer sizes and log paths use the item's
@@ -84,7 +92,10 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
   `EnvLevel` per group with `env` plus the command's. `EnvExpansion.ApplyLevels` applies them outermost
   first; each level's values expand against the environment as it was before that level (so `${PATH}`
   is the parent's value). `${cwd}` is the effective cwd of the item that defines the value.
-- Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log` unless `log.path` is set.
+- Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log` unless `log.path` is set. Two commands with
+  the same log path, or whose log file would be another's folder, are a validation error, whether or not
+  their logs are enabled (logs can be toggled at runtime). `Session.Validate`/`Save` report only conflicts
+  involving an opened-file command, so a conflict inside a base file does not block saving.
 
 ### Input placeholders
 

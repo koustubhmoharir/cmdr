@@ -121,38 +121,17 @@ public sealed class RecentFiles
 
     /// <summary>
     /// Saves the list as indented UTF-8 JSON (no BOM, trailing newline), replacing the store atomically.
-    /// Creates the parent directory if needed.
+    /// Creates the parent directory if needed. An existing store keeps its Unix permissions, and a store path that is a symbolic
+    /// link keeps the link and updates its target. A dangling link is not saved.
     /// </summary>
-    /// <returns>True when saved; false instead of throwing on an I/O or access failure.</returns>
+    /// <returns>True when saved; false instead of throwing on an I/O or access failure (including a dangling link).</returns>
     public bool TrySave()
     {
         try
         {
-            string directory = Path.GetDirectoryName(StorePath)!;
-            Directory.CreateDirectory(directory);
-
             var data = new RecentFilesData { Files = new List<string?>(_files) };
             byte[] json = JsonSerializer.SerializeToUtf8Bytes(data, RecentFilesJsonContext.Default.RecentFilesData);
-
-            string tempPath = Path.Combine(directory, "." + Path.GetFileName(StorePath) + "." + Guid.NewGuid().ToString("N") + ".tmp");
-            try
-            {
-                using (FileStream stream = new(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    stream.Write(json);
-                    stream.WriteByte((byte)'\n');
-                    stream.Flush(flushToDisk: true);
-                }
-
-                File.Move(tempPath, StorePath, overwrite: true);
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
-            }
+            AtomicFile.Write(StorePath, json);
 
             return true;
         }

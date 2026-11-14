@@ -115,7 +115,9 @@ public sealed partial class Session : IDisposable
     /// Adds a group at the end of <paramref name="parent"/>'s items, or at the end of the top level when <paramref name="parent"/> is null.
     /// The group belongs to the file of its parent (the opened file at the top level).
     /// </summary>
-    /// <exception cref="InvalidOperationException"><paramref name="parent"/> comes from a base file.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// <paramref name="parent"/> comes from a base file; or the new group would be deeper than <see cref="CmdrConfig.MaxGroupDepth"/> levels.
+    /// </exception>
     public GroupEntry AddGroup(GroupEntry? parent, GroupSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -128,6 +130,11 @@ public sealed partial class Session : IDisposable
             {
                 EnsureOwned(parent);
                 EnsureEditable(parent);
+                if (parent.Depth + 2 > CmdrConfig.MaxGroupDepth)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot add a group inside '{parent.Name}': groups can be nested at most {CmdrConfig.MaxGroupDepth} levels deep.");
+                }
             }
 
             group = NewGroup(settings, parent?.Source ?? MainSource);
@@ -145,7 +152,9 @@ public sealed partial class Session : IDisposable
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The group comes from a base file; the group would be moved into a group of a base file; the group would be moved into
-    /// itself or one of its descendants; or its mode changes or it moves while the group or anything below it is part of a run.
+    /// itself or one of its descendants; the group and the groups below it would be deeper than <see cref="CmdrConfig.MaxGroupDepth"/>
+    /// levels at the new place; or its mode changes or it moves while the group or anything below it is part of a run.
+    /// Nothing changes when an exception is thrown.
     /// </exception>
     public void UpdateGroup(GroupEntry group, GroupSettings settings, GroupEntry? parent)
     {
@@ -170,6 +179,13 @@ public sealed partial class Session : IDisposable
                     {
                         throw new InvalidOperationException($"Cannot move group '{group.Name}' into itself or into one of its own groups.");
                     }
+                }
+
+                int newLevel = parent is null ? 1 : parent.Depth + 2;
+                if (newLevel + GroupHeight(group) - 1 > CmdrConfig.MaxGroupDepth)
+                {
+                    throw new InvalidOperationException(
+                        $"Cannot move group '{group.Name}' there: groups can be nested at most {CmdrConfig.MaxGroupDepth} levels deep.");
                 }
             }
 
@@ -401,17 +417,51 @@ public sealed partial class Session : IDisposable
         return config;
     }
 
-    /// <summary>Validation errors of the current state. Empty when it can be saved.</summary>
-    public IReadOnlyList<string> Validate() => BuildConfig().Validate();
+    /// <summary>
+    /// Validation errors of the current state. Empty when it can be saved. These are the opened file's own errors, followed by the
+    /// log path conflicts that involve a command of the opened file (see <see cref="ConfigStore.LogPathErrors"/>). Errors that are
+    /// only within base files do not block saving, though <see cref="LoadErrors"/> still reports them.
+    /// </summary>
+    public IReadOnlyList<string> Validate() => ValidateConfig(BuildConfig());
+
+    // The errors of the opened file's state, given its built configuration, then the log path conflicts with the base files.
+    private IReadOnlyList<string> ValidateConfig(CmdrConfig config)
+    {
+        var errors = new List<string>(config.Validate());
+        errors.AddRange(ConfigStore.LogPathErrors(BuildChain(config), onlyInvolvingOpened: true));
+        return errors;
+    }
 
     /// <summary>
-    /// Saves the configuration to <see cref="ConfigPath"/> and clears the dirty flag.
+    /// The current state of every file of the chain, in <see cref="Sources"/> order. The opened file uses <paramref name="mainConfig"/>
+    /// (see <see cref="BuildConfig"/>); each base file holds its top-level groups as they are now.
     /// </summary>
-    /// <exception cref="InvalidOperationException">The current state has validation errors; the errors are the message, one per line. Nothing is written.</exception>
+    private List<ConfigFile> BuildChain(CmdrConfig mainConfig)
+    {
+        var chain = new List<ConfigFile>(Sources.Count);
+        foreach (ConfigSource source in Sources)
+        {
+            CmdrConfig config = mainConfig;
+            if (!ReferenceEquals(source, MainSource))
+            {
+                config = new CmdrConfig { BufferLines = source.BufferLines, LogsDir = source.LogsDirSetting };
+                config.Groups.AddRange(_groups.Where(group => ReferenceEquals(group.Source, source)).Select(ToSpecTree));
+            }
+
+            chain.Add(new ConfigFile(source.Path, config, source.IsBase));
+        }
+
+        return chain;
+    }
+
+    /// <summary>
+    /// Saves the configuration to <see cref="ConfigPath"/> and clears the dirty flag. The state must pass <see cref="Validate"/>.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The current state has validation errors (see <see cref="Validate"/>); the errors are the message, one per line. Nothing is written.</exception>
     public void Save()
     {
         CmdrConfig config = BuildConfig();
-        IReadOnlyList<string> errors = config.Validate();
+        IReadOnlyList<string> errors = ValidateConfig(config);
         if (errors.Count > 0)
         {
             throw new InvalidOperationException(string.Join(Environment.NewLine, errors));
@@ -512,6 +562,18 @@ public sealed partial class Session : IDisposable
     }
 
     private static IEnumerable<ItemEntry> Walk(IEnumerable<ItemEntry> items) => GroupEntry.Walk(items);
+
+    /// <summary>Number of group levels in the subtree of <paramref name="group"/>: 1 when it has no child groups.</summary>
+    private static int GroupHeight(GroupEntry group)
+    {
+        int height = 1;
+        foreach (GroupEntry child in group.Groups)
+        {
+            height = Math.Max(height, 1 + GroupHeight(child));
+        }
+
+        return height;
+    }
 
     private static GroupEntry NewGroup(GroupSettings settings, ConfigSource source) =>
         new(settings.Name, settings.Description, settings.Mode, source)

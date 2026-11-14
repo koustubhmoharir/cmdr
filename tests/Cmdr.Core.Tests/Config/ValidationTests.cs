@@ -424,4 +424,42 @@ public class ValidationTests
 
         Assert.Empty(config.Validate());
     }
+
+    /// <summary>A chain of nested groups g1 › g2 › … › g{levels}, each with one child group; the deepest one holds a command.</summary>
+    private static CmdrConfig NestedChain(int levels)
+    {
+        ItemSpec inner = new CommandSpec { Name = "run", Program = "p" };
+        for (int level = levels; level >= 1; level--)
+        {
+            inner = new GroupSpec { Name = $"g{level}", Items = { inner } };
+        }
+
+        return new CmdrConfig { Groups = { (GroupSpec)inner } };
+    }
+
+    /// <summary>The label of the group at <paramref name="level"/> in <see cref="NestedChain"/>, as validation messages show it.</summary>
+    private static string NestedChainLabel(int level) =>
+        string.Join(" › ", Enumerable.Range(1, level).Select(l => l == 1 ? $"Group 'g{l}'" : $"'g{l}'"));
+
+    [Fact]
+    public void Nesting_SixteenLevels_IsValid()
+    {
+        Assert.Empty(NestedChain(CmdrConfig.MaxGroupDepth).Validate());
+    }
+
+    [Fact]
+    public void Nesting_SeventeenLevels_ReportsOneDepthErrorAtLevelSeventeen()
+    {
+        string error = Assert.Single(NestedChain(17).Validate());
+
+        Assert.Equal($"{NestedChainLabel(17)}: groups can be nested at most 16 levels deep.", error);
+    }
+
+    [Fact]
+    public void Nesting_TwentyLevels_ReportsOneDepthErrorOnly()
+    {
+        string error = Assert.Single(NestedChain(20).Validate());
+
+        Assert.Equal($"{NestedChainLabel(17)}: groups can be nested at most 16 levels deep.", error);
+    }
 }

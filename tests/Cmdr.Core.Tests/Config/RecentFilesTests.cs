@@ -234,6 +234,51 @@ public class RecentFilesTests
     }
 
     [Fact]
+    public void TrySave_KeepsExistingOwnerOnlyMode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string path = dir.File("recent.json");
+        var recent = RecentFiles.Load(path);
+        recent.Add(dir.File("a.json"));
+        Assert.True(recent.TrySave());
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        recent.Add(dir.File("b.json"));
+
+        Assert.True(recent.TrySave());
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+        Assert.Equal(new[] { dir.File("b.json"), dir.File("a.json") }, RecentFiles.Load(path).Files);
+    }
+
+    [Fact]
+    public void TrySave_ThroughSymlink_UpdatesTargetAndKeepsLink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string target = dir.File("recent-target.json");
+        string link = dir.File("recent.json");
+        Assert.True(RecentFiles.Load(target).TrySave());
+        File.CreateSymbolicLink(link, "recent-target.json");
+        var recent = RecentFiles.Load(link);
+        recent.Add(dir.File("a.json"));
+
+        Assert.True(recent.TrySave());
+
+        Assert.Equal("recent-target.json", new FileInfo(link).LinkTarget);
+        Assert.Equal(new[] { dir.File("a.json") }, RecentFiles.Load(target).Files);
+        Assert.Equal(new[] { dir.File("a.json") }, RecentFiles.Load(link).Files);
+    }
+
+    [Fact]
     public void TrySave_ReturnsFalse_WhenDirectoryCannotBeCreated()
     {
         using var dir = new TempDir();
