@@ -12,11 +12,20 @@ namespace Cmdr.Core.Session;
 /// Editing and process actions are called from the UI thread. Sequences run on background tasks and
 /// <see cref="ManagedProcess"/> events arrive on any thread, so <see cref="EntryChanged"/> may be raised from any thread.
 /// Handlers that touch UI state must marshal to the UI thread.
+/// <para>
+/// Locking: <c>_sync</c> guards the tree structure: the top-level list, the items of every group, <see cref="ItemEntry.Parent"/>
+/// and <see cref="ItemEntry.IsRemoved"/>. Every change to that structure happens while holding it, and so does every traversal
+/// that a background thread can run (restarts, sequence runs). Edits validate and mutate under the lock, then raise
+/// <see cref="StructureChanged"/> and dispose removed processes after releasing it. Events are never raised with the lock held,
+/// and neither are process starts, stops or disposals, file I/O or awaits. Lock order: the session lock first, then a
+/// sequence run's lock, then a <see cref="ManagedProcess"/> lock; never the reverse.
+/// </para>
 /// </remarks>
 public sealed partial class Session : IDisposable
 {
     private readonly object _sync = new();
     private readonly List<GroupEntry> _groups = new();
+    private readonly List<RestartOperation> _restarts = new();
     private readonly string? _base;
     private bool _isDirty;
     private volatile bool _disposed;
@@ -109,15 +118,22 @@ public sealed partial class Session : IDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(settings.Name);
-        if (parent is not null)
+
+        GroupEntry group;
+        lock (_sync)
         {
-            EnsureOwned(parent);
-            EnsureEditable(parent);
+            if (parent is not null)
+            {
+                EnsureOwned(parent);
+                EnsureEditable(parent);
+            }
+
+            group = NewGroup(settings, parent?.Source ?? MainSource);
+            Place(parent, group);
+            _isDirty = true;
         }
 
-        GroupEntry group = NewGroup(settings, parent?.Source ?? MainSource);
-        Place(parent, group);
-        MarkDirty();
+        RaiseStructureChanged();
         return group;
     }
 
@@ -131,46 +147,51 @@ public sealed partial class Session : IDisposable
     /// </exception>
     public void UpdateGroup(GroupEntry group, GroupSettings settings, GroupEntry? parent)
     {
-        EnsureOwned(group);
-        EnsureEditable(group);
-        ArgumentNullException.ThrowIfNull(settings);
-        ArgumentNullException.ThrowIfNull(settings.Name);
-        if (parent is not null)
+        lock (_sync)
         {
-            EnsureOwned(parent);
-            EnsureEditable(parent);
-        }
-
-        bool reparent = !ReferenceEquals(parent, group.Parent);
-        if (reparent)
-        {
-            for (GroupEntry? ancestor = parent; ancestor is not null; ancestor = ancestor.Parent)
+            EnsureOwned(group);
+            EnsureEditable(group);
+            ArgumentNullException.ThrowIfNull(settings);
+            ArgumentNullException.ThrowIfNull(settings.Name);
+            if (parent is not null)
             {
-                if (ReferenceEquals(ancestor, group))
+                EnsureOwned(parent);
+                EnsureEditable(parent);
+            }
+
+            bool reparent = !ReferenceEquals(parent, group.Parent);
+            if (reparent)
+            {
+                for (GroupEntry? ancestor = parent; ancestor is not null; ancestor = ancestor.Parent)
                 {
-                    throw new InvalidOperationException($"Cannot move group '{group.Name}' into itself or into one of its own groups.");
+                    if (ReferenceEquals(ancestor, group))
+                    {
+                        throw new InvalidOperationException($"Cannot move group '{group.Name}' into itself or into one of its own groups.");
+                    }
                 }
             }
+
+            if ((reparent || settings.Mode != group.Mode) && IsBusyGroup(group))
+            {
+                throw new InvalidOperationException($"Cannot change the mode or move group '{group.Name}' while it or something inside it is part of a run.");
+            }
+
+            if (reparent)
+            {
+                Unplace(group);
+                Place(parent, group);
+            }
+
+            group.Rename(settings.Name);
+            group.Description = settings.Description;
+            group.Mode = settings.Mode;
+            group.Cwd = settings.Cwd;
+            group.Env = CopyEnv(settings.Env);
+            group.Expanded = settings.Expanded;
+            _isDirty = true;
         }
 
-        if ((reparent || settings.Mode != group.Mode) && IsBusyGroup(group))
-        {
-            throw new InvalidOperationException($"Cannot change the mode or move group '{group.Name}' while it or something inside it is part of a run.");
-        }
-
-        if (reparent)
-        {
-            Unplace(group);
-            Place(parent, group);
-        }
-
-        group.Rename(settings.Name);
-        group.Description = settings.Description;
-        group.Mode = settings.Mode;
-        group.Cwd = settings.Cwd;
-        group.Env = CopyEnv(settings.Env);
-        group.Expanded = settings.Expanded;
-        MarkDirty();
+        RaiseStructureChanged();
     }
 
     /// <summary>Removes a group with everything below it and disposes their processes.</summary>
@@ -179,45 +200,59 @@ public sealed partial class Session : IDisposable
     /// </exception>
     public void RemoveGroup(GroupEntry group)
     {
-        EnsureOwned(group);
-        EnsureEditable(group);
-
-        if (IsBusyGroup(group))
+        var removedCommands = new List<CommandEntry>();
+        lock (_sync)
         {
-            throw new InvalidOperationException($"Cannot remove group '{group.Name}' while it or something inside it is part of a run.");
+            EnsureOwned(group);
+            EnsureEditable(group);
+
+            if (IsBusyGroup(group))
+            {
+                throw new InvalidOperationException($"Cannot remove group '{group.Name}' while it or something inside it is part of a run.");
+            }
+
+            List<CommandEntry> commands = group.AllCommands.ToList();
+            int active = commands.Count(c => c.IsActive);
+            if (active > 0)
+            {
+                throw new InvalidOperationException($"Cannot remove group '{group.Name}': {active} command(s) are running or have leftover processes.");
+            }
+
+            foreach (CommandEntry entry in commands)
+            {
+                MarkCommandRemoved(entry);
+                removedCommands.Add(entry);
+            }
+
+            foreach (GroupEntry removed in group.SelfAndDescendantGroups())
+            {
+                removed.IsRemoved = true;
+            }
+
+            Unplace(group);
+            _isDirty = true;
         }
 
-        List<CommandEntry> commands = group.AllCommands.ToList();
-        int active = commands.Count(c => c.IsActive);
-        if (active > 0)
-        {
-            throw new InvalidOperationException($"Cannot remove group '{group.Name}': {active} command(s) are running or have leftover processes.");
-        }
-
-        foreach (CommandEntry entry in commands)
-        {
-            DetachCommand(entry);
-        }
-
-        foreach (GroupEntry removed in group.SelfAndDescendantGroups())
-        {
-            removed.IsRemoved = true;
-        }
-
-        Unplace(group);
-        MarkDirty();
+        DisposeProcesses(removedCommands);
+        RaiseStructureChanged();
     }
 
     /// <summary>Adds a command at the end of a group. The spec is copied.</summary>
     /// <exception cref="InvalidOperationException">The group comes from a base file.</exception>
     public CommandEntry AddCommand(GroupEntry group, CommandSpec spec)
     {
-        EnsureOwned(group);
-        EnsureEditable(group);
-        ArgumentNullException.ThrowIfNull(spec);
+        CommandEntry entry;
+        lock (_sync)
+        {
+            EnsureOwned(group);
+            EnsureEditable(group);
+            ArgumentNullException.ThrowIfNull(spec);
 
-        CommandEntry entry = AttachCommand(group, spec.Clone());
-        MarkDirty();
+            entry = AttachCommand(group, spec.Clone());
+            _isDirty = true;
+        }
+
+        RaiseStructureChanged();
         return entry;
     }
 
@@ -231,27 +266,32 @@ public sealed partial class Session : IDisposable
     /// </exception>
     public void UpdateCommand(CommandEntry entry, CommandSpec spec, GroupEntry target)
     {
-        EnsureOwned(entry);
-        EnsureOwned(target);
-        EnsureEditable(entry);
-        EnsureEditable(target);
-        ArgumentNullException.ThrowIfNull(spec);
-
-        bool moving = !ReferenceEquals(target, entry.Group);
-        if (moving && IsBusyCommand(entry))
+        lock (_sync)
         {
-            throw new InvalidOperationException($"Cannot move '{entry.Spec.Name}' while it is queued or part of a running sequence.");
+            EnsureOwned(entry);
+            EnsureOwned(target);
+            EnsureEditable(entry);
+            EnsureEditable(target);
+            ArgumentNullException.ThrowIfNull(spec);
+
+            bool moving = !ReferenceEquals(target, entry.Group);
+            if (moving && IsBusyCommand(entry))
+            {
+                throw new InvalidOperationException($"Cannot move '{entry.Spec.Name}' while it is queued or part of a running sequence.");
+            }
+
+            entry.Spec = spec.Clone();
+
+            if (moving)
+            {
+                entry.Group.Detach(entry);
+                target.Attach(entry);
+            }
+
+            _isDirty = true;
         }
 
-        entry.Spec = spec.Clone();
-
-        if (moving)
-        {
-            entry.Group.Detach(entry);
-            target.Attach(entry);
-        }
-
-        MarkDirty();
+        RaiseStructureChanged();
     }
 
     /// <summary>Removes a command and disposes its process.</summary>
@@ -260,17 +300,23 @@ public sealed partial class Session : IDisposable
     /// </exception>
     public void RemoveCommand(CommandEntry entry)
     {
-        EnsureOwned(entry);
-        EnsureEditable(entry);
-
-        if (entry.IsActive || IsBusyCommand(entry))
+        lock (_sync)
         {
-            throw new InvalidOperationException($"Cannot remove '{entry.Spec.Name}' while it is running, queued or leftover processes remain.");
+            EnsureOwned(entry);
+            EnsureEditable(entry);
+
+            if (entry.IsActive || IsBusyCommand(entry))
+            {
+                throw new InvalidOperationException($"Cannot remove '{entry.Spec.Name}' while it is running, queued or leftover processes remain.");
+            }
+
+            entry.Group.Detach(entry);
+            MarkCommandRemoved(entry);
+            _isDirty = true;
         }
 
-        entry.Group.Detach(entry);
-        DetachCommand(entry);
-        MarkDirty();
+        DisposeProcesses(new[] { entry });
+        RaiseStructureChanged();
     }
 
     /// <summary>
@@ -284,46 +330,51 @@ public sealed partial class Session : IDisposable
     /// <exception cref="InvalidOperationException">The item comes from a base file.</exception>
     public bool MoveItem(ItemEntry item, int delta)
     {
-        EnsureOwned(item);
-        EnsureEditable(item);
-
-        if (delta == 0)
+        lock (_sync)
         {
-            return false;
-        }
+            EnsureOwned(item);
+            EnsureEditable(item);
 
-        GroupEntry? parent = item.Parent;
-        bool busy = item is GroupEntry group ? IsBusyGroup(group) : IsBusyCommand((CommandEntry)item);
-        if (busy || (parent is not null && IsBusyGroup(parent)))
-        {
-            return false;
-        }
-
-        if (parent is null)
-        {
-            int from = _groups.IndexOf((GroupEntry)item);
-            int to = from + delta;
-            int firstMain = _groups.FindIndex(group => ReferenceEquals(group.Source, MainSource));
-            if (to < firstMain || to >= _groups.Count)
+            if (delta == 0)
             {
                 return false;
             }
 
-            (_groups[from], _groups[to]) = (_groups[to], _groups[from]);
-        }
-        else
-        {
-            int from = parent.IndexOf(item);
-            int to = from + delta;
-            if (to < 0 || to >= parent.Items.Count)
+            GroupEntry? parent = item.Parent;
+            bool busy = item is GroupEntry group ? IsBusyGroup(group) : IsBusyCommand((CommandEntry)item);
+            if (busy || (parent is not null && IsBusyGroup(parent)))
             {
                 return false;
             }
 
-            parent.Swap(from, to);
+            if (parent is null)
+            {
+                int from = _groups.IndexOf((GroupEntry)item);
+                int to = from + delta;
+                int firstMain = _groups.FindIndex(group => ReferenceEquals(group.Source, MainSource));
+                if (to < firstMain || to >= _groups.Count)
+                {
+                    return false;
+                }
+
+                (_groups[from], _groups[to]) = (_groups[to], _groups[from]);
+            }
+            else
+            {
+                int from = parent.IndexOf(item);
+                int to = from + delta;
+                if (to < 0 || to >= parent.Items.Count)
+                {
+                    return false;
+                }
+
+                parent.Swap(from, to);
+            }
+
+            _isDirty = true;
         }
 
-        MarkDirty();
+        RaiseStructureChanged();
         return true;
     }
 
@@ -370,7 +421,16 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>All commands at any depth, depth-first in file order.</summary>
-    public IReadOnlyList<CommandEntry> AllEntries => Walk(_groups).OfType<CommandEntry>().ToList();
+    public IReadOnlyList<CommandEntry> AllEntries
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return Walk(_groups).OfType<CommandEntry>().ToList();
+            }
+        }
+    }
 
     /// <summary>
     /// The rows of the command list: each group header followed by its items, depth-first in file order. Nested groups
@@ -394,9 +454,16 @@ public sealed partial class Session : IDisposable
         return rows;
     }
 
-    /// <summary>Releases the session: cancels sequences, unsubscribes and disposes all processes. Does not kill processes on Linux.</summary>
+    /// <summary>
+    /// Releases the session: revokes pending restarts, cancels sequences, unsubscribes and disposes all processes. Does not kill
+    /// processes on Linux. A restart that was pending completes with <see cref="OperationCanceledException"/> and starts nothing.
+    /// </summary>
     public void Dispose()
     {
+        RevokeRestarts(_ => true, force: false);
+
+        List<SequenceRun> runs;
+        List<CommandEntry> entries;
         lock (_sync)
         {
             if (_disposed)
@@ -405,17 +472,20 @@ public sealed partial class Session : IDisposable
             }
 
             _disposed = true;
+            runs = ActiveRuns();
+            entries = AllEntries.ToList();
+            foreach (CommandEntry entry in entries)
+            {
+                MarkCommandRemoved(entry);
+            }
         }
 
-        foreach (SequenceRun run in ActiveRuns().ToList())
+        foreach (SequenceRun run in runs)
         {
             run.Cancel();
         }
 
-        foreach (CommandEntry entry in AllEntries)
-        {
-            DetachCommand(entry);
-        }
+        DisposeProcesses(entries);
     }
 
     internal void RaiseEntryChanged(CommandEntry entry)
@@ -490,7 +560,11 @@ public sealed partial class Session : IDisposable
         return entry;
     }
 
-    private void DetachCommand(CommandEntry entry)
+    /// <summary>
+    /// Marks a command removed and unsubscribes from its process. Caller holds <c>_sync</c>; the process itself is disposed by
+    /// <see cref="DisposeProcesses"/> after the lock is released.
+    /// </summary>
+    private static void MarkCommandRemoved(CommandEntry entry)
     {
         entry.IsRemoved = true;
         if (entry.ChangedHandler is { } handler)
@@ -498,11 +572,18 @@ public sealed partial class Session : IDisposable
             entry.Process.Changed -= handler;
             entry.ChangedHandler = null;
         }
-
-        entry.Process.Dispose();
     }
 
-    /// <summary>Puts an item at the end of its parent's items, or of the top level when <paramref name="parent"/> is null.</summary>
+    /// <summary>Disposes the processes of removed commands. Call without <c>_sync</c>.</summary>
+    private static void DisposeProcesses(IEnumerable<CommandEntry> removed)
+    {
+        foreach (CommandEntry entry in removed)
+        {
+            entry.Process.Dispose();
+        }
+    }
+
+    /// <summary>Puts an item at the end of its parent's items, or of the top level when <paramref name="parent"/> is null. Caller holds <c>_sync</c>.</summary>
     private void Place(GroupEntry? parent, ItemEntry item)
     {
         if (parent is null)
@@ -516,7 +597,7 @@ public sealed partial class Session : IDisposable
         }
     }
 
-    /// <summary>Takes an item out of its parent's items, or out of the top level.</summary>
+    /// <summary>Takes an item out of its parent's items, or out of the top level. Caller holds <c>_sync</c>.</summary>
     private void Unplace(ItemEntry item)
     {
         if (item.Parent is null)
@@ -552,25 +633,41 @@ public sealed partial class Session : IDisposable
         }
     }
 
+    /// <summary>Refuses a group that is not in the session tree. Takes <c>_sync</c>, so a check made alone is consistent.</summary>
     private void EnsureOwned(GroupEntry group)
     {
         ArgumentNullException.ThrowIfNull(group);
-        if (!IsAttached(group))
+        bool attached;
+        lock (_sync)
+        {
+            attached = IsAttached(group);
+        }
+
+        if (!attached)
         {
             throw new ArgumentException("The group does not belong to this session.", nameof(group));
         }
     }
 
+    /// <summary>Refuses a command that is not in the session tree. Takes <c>_sync</c>, so a check made alone is consistent.</summary>
     private void EnsureOwned(CommandEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        if (entry.IsRemoved || !IsAttached(entry.Group) || !entry.Group.HasItem(entry))
+        bool attached;
+        lock (_sync)
+        {
+            attached = !entry.IsRemoved && IsAttached(entry.Group) && entry.Group.HasItem(entry);
+        }
+
+        if (!attached)
         {
             throw new ArgumentException("The command does not belong to this session.", nameof(entry));
         }
     }
 
-    /// <summary>True if the group is in the session tree: not removed, and linked from the top level down to it.</summary>
+    /// <summary>
+    /// True if the group is in the session tree: not removed, and linked from the top level down to it. Caller holds <c>_sync</c>.
+    /// </summary>
     private bool IsAttached(GroupEntry group)
     {
         if (group.IsRemoved)
@@ -586,12 +683,7 @@ public sealed partial class Session : IDisposable
         return group.Parent.HasItem(group) && IsAttached(group.Parent);
     }
 
-    private void MarkDirty()
-    {
-        _isDirty = true;
-        RaiseStructureChanged();
-    }
-
+    /// <summary>Raises <see cref="StructureChanged"/>. Call without <c>_sync</c>.</summary>
     private void RaiseStructureChanged()
     {
         if (!_disposed)

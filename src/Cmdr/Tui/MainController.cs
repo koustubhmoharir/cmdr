@@ -776,7 +776,12 @@ internal sealed class MainController : IDisposable
                     ? await _session.RestartAsync(group.Group, inputs)
                     : await _session.RestartAsync(((CommandsTarget)target).Commands, inputs);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
+            {
+                // Revoked by Stop, force kill or quit before anything was started again.
+                message = "Restart cancelled";
+            }
+            catch (Exception ex)
             {
                 message = "Restart failed: " + ex.Message;
             }

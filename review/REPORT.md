@@ -1,6 +1,6 @@
 # Consolidated review and fix plan
 
-Baseline: `a06d405e01095309617069e43c5d4be9200c0ebc`. Review date: 2026-11-13. Six independent GPT 6.1 Sol reviewers examined the functional areas listed in [the review index](README.md). Production code is unchanged.
+Baseline: `a06d405e01095309617069e43c5d4be9200c0ebc`. Review date: 2026-11-13. Six independent GPT 6.1 Sol reviewers examined the functional areas listed in [the review index](README.md). Production code was unchanged at review time; current status is in [TRACKER.md](TRACKER.md).
 
 ## Assessment
 

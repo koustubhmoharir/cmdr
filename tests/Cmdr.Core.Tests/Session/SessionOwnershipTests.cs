@@ -65,4 +65,58 @@ public class SessionOwnershipTests
             Cleanup(session);
         }
     }
+
+    [Theory]
+    [InlineData(new[] { 1, 0 })]
+    [InlineData(new[] { 2, 0 })]
+    [InlineData(new[] { 0, 2, 1 })]
+    [InlineData(new[] { 0, 0 })]
+    [InlineData(new[] { 1, 1, 2 })]
+    public async Task CommandListActionsRejectTargetsOutOfFileOrderOrRepeated(int[] picks)
+    {
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sh("a", "echo a"), Sh("b", "echo b"), Sh("c", "echo c")));
+        try
+        {
+            CommandEntry[] commands = session.Groups[0].Commands.ToArray();
+            IReadOnlyList<CommandEntry> targets = picks.Select(i => commands[i]).ToList();
+
+            Assert.Throws<ArgumentException>(() => session.Activate(targets));
+            Assert.Throws<ArgumentException>(() => session.Stop(targets));
+            Assert.Throws<ArgumentException>(() => session.ForceKill(targets));
+            await Assert.ThrowsAsync<ArgumentException>(async () => await session.RestartAsync(targets));
+            Assert.Throws<ArgumentException>(() => session.InputsForActivate(targets));
+            Assert.Throws<ArgumentException>(() => session.InputsForRestart(targets));
+
+            Assert.All(commands, command =>
+            {
+                Assert.Equal(ProcessState.NotStarted, command.Process.Snapshot.State);
+                Assert.False(command.IsQueued);
+            });
+            Assert.False(session.Groups[0].IsSequenceRunning);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void CommandListActionsAcceptDistinctSubsetInFileOrder()
+    {
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sh("a", "echo a"), Sh("b", "echo b"), Sh("c", "echo c")));
+        try
+        {
+            CommandEntry[] commands = session.Groups[0].Commands.ToArray();
+            IReadOnlyList<CommandEntry> targets = new[] { commands[0], commands[2] };
+
+            Assert.Empty(session.InputsForActivate(targets));
+            Assert.Empty(session.InputsForRestart(targets));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
 }

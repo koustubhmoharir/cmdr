@@ -1,6 +1,6 @@
 # Completed review fixes
 
-This document records the changes delivered in commit [`e961270`](https://github.com/koustubhmoharir/cmdr/commit/e961270), addressing the review in commit `1af6ef9` of code baseline `a06d405`. It covers **17 distinct findings**; finding **06-04** duplicates **01-05** and is included with it, not counted twice. The remaining findings and design/engineering work are tracked in [DESIGN-DECISIONS.md](DESIGN-DECISIONS.md).
+This document records the changes delivered in commit [`e961270`](https://github.com/koustubhmoharir/cmdr/commit/e961270), addressing the review in commit `1af6ef9` of code baseline `a06d405`. It covers **17 distinct findings**; finding **06-04** duplicates **01-05** and is included with it, not counted twice. Remaining work is tracked in [TRACKER.md](TRACKER.md). Add a row for each later fix, with its commit.
 
 ## Findings and regression coverage
 
@@ -29,3 +29,11 @@ This document records the changes delivered in commit [`e961270`](https://github
 Validation recorded for implementation commit `e961270` used Linux and .NET SDK `10.0.404`: **651 Core tests and 579 UI tests passed (1,230 total)** with `dotnet test Cmdr.slnx --no-restore -m:4`. Native Windows behavior remains unverified. Some Windows tests return early on Linux, so they do not constitute Windows validation. In particular, Windows process containment/launch behavior for 03-01..04 was not established by this run.
 
 The 01-09 regressions assert whole-file line numbers for shallow and deeply nested errors, including Unicode before an item; the full enclosing JSON path remains limited as noted above. On narrow terminals, 06-03 can display clipped labels and one-cell fields.
+
+## Later fixes
+
+| Finding | Change | Commit |
+|---|---|---|
+| **05-05** | `Session._sync` guards the tree structure. Edits validate and mutate under it, and background traversals (restart, sequence runs) hold it. Events, process actions, I/O and awaits happen outside it. Test: `SessionConcurrencyTests`. | _pending_ |
+| **05-01 / 05-03** | A pending restart is a tracked `RestartOperation`. `StopAll`, `ForceKillAll`, `Dispose` and `Stop`/`ForceKill` of overlapping commands revoke it before stopping anything. A cancelled token is checked before any side effect, and the operation is checked again under the lock before starting. A blocked stop dispatch no longer blocks cancellation. The UI shows "Restart cancelled", and quit revokes pending restarts even when nothing is running. Tests: `SessionRestartOwnershipTests`. | _pending_ |
+| **05-06** | Command-list actions and their input preflight reject targets that are not distinct commands in file order (`ArgumentException`, before any side effect). Tests: `SessionOwnershipTests`. | _pending_ |

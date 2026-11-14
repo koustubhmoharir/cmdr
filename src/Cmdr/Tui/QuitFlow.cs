@@ -39,6 +39,8 @@ internal sealed class QuitFlow
         int active = _session.ActiveEntries.Count;
         if (active == 0)
         {
+            // Nothing is running, but a pending restart or a sequence between steps could still start something.
+            _session.StopAll();
             return true;
         }
 
