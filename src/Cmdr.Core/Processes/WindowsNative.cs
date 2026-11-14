@@ -64,14 +64,75 @@ internal static partial class WindowsNative
     [LibraryImport(Kernel32, EntryPoint = "GenerateConsoleCtrlEvent", SetLastError = true)]
     internal static partial int GenerateConsoleCtrlEvent(uint ctrlEvent, uint processGroupId);
 
-    /// <summary>STD_INPUT_HANDLE for <see cref="GetStdHandle"/> and <see cref="SetStdHandle"/> (-10 as a DWORD).</summary>
+    /// <summary>STD_INPUT_HANDLE for <see cref="GetStdHandle"/> (-10 as a DWORD).</summary>
     internal const uint StdInputHandle = unchecked((uint)-10);
 
     /// <summary>Returns this process's standard handle (the process-wide one, not a per-call value). Zero or -1 when there is none.</summary>
     [LibraryImport(Kernel32, EntryPoint = "GetStdHandle", SetLastError = true)]
     internal static partial nint GetStdHandle(uint standardHandle);
 
-    /// <summary>Sets this process's standard handle. Affects processes started later; a zero handle means none.</summary>
-    [LibraryImport(Kernel32, EntryPoint = "SetStdHandle", SetLastError = true)]
-    internal static partial int SetStdHandle(uint standardHandle, nint handle);
+    /// <summary>PROC_THREAD_ATTRIBUTE_HANDLE_LIST: with bInheritHandles, the child inherits only the listed handles (Windows Vista+).</summary>
+    internal const nint ProcThreadAttributeHandleList = 0x00020002;
+
+    /// <summary>PROC_THREAD_ATTRIBUTE_JOB_LIST: the child is created inside the listed jobs (Windows 10 version 1607+).</summary>
+    internal const nint ProcThreadAttributeJobList = 0x0002000D;
+
+    /// <summary>EXTENDED_STARTUPINFO_PRESENT: lpStartupInfo is a STARTUPINFOEXW with an attribute list.</summary>
+    internal const uint ExtendedStartupInfoPresent = 0x00080000;
+
+    /// <summary>CREATE_NO_WINDOW: the console application gets a new hidden console.</summary>
+    internal const uint CreateNoWindow = 0x08000000;
+
+    /// <summary>CREATE_UNICODE_ENVIRONMENT: the environment block is UTF-16.</summary>
+    internal const uint CreateUnicodeEnvironment = 0x00000400;
+
+    /// <summary>STARTF_USESTDHANDLES: hStdInput, hStdOutput and hStdError of STARTUPINFO are used (a zero value means none).</summary>
+    internal const int StartfUseStdHandles = 0x00000100;
+
+    /// <summary>
+    /// Initializes an attribute list. Called with a null list it fails with ERROR_INSUFFICIENT_BUFFER and sets <paramref name="size"/>
+    /// to the bytes needed (that is the sizing call).
+    /// </summary>
+    [LibraryImport(Kernel32, EntryPoint = "InitializeProcThreadAttributeList", SetLastError = true)]
+    internal static partial int InitializeProcThreadAttributeList(nint attributeList, int attributeCount, int flags, ref nint size);
+
+    [LibraryImport(Kernel32, EntryPoint = "UpdateProcThreadAttribute", SetLastError = true)]
+    internal static partial int UpdateProcThreadAttribute(
+        nint attributeList,
+        uint flags,
+        nint attribute,
+        nint value,
+        nint size,
+        nint previousValue,
+        nint returnSize);
+
+    [LibraryImport(Kernel32, EntryPoint = "DeleteProcThreadAttributeList")]
+    internal static partial void DeleteProcThreadAttributeList(nint attributeList);
+
+    /// <summary>
+    /// Creates a process. Strings are UTF-16. <paramref name="commandLine"/> is a writable, null-terminated UTF-16 buffer
+    /// (CreateProcessW may modify it), and <paramref name="environment"/> is a UTF-16 block with <see cref="CreateUnicodeEnvironment"/>.
+    /// Non-zero is success.
+    /// </summary>
+    [LibraryImport(Kernel32, EntryPoint = "CreateProcessW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial int CreateProcessW(
+        string? applicationName,
+        nint commandLine,
+        nint processAttributes,
+        nint threadAttributes,
+        int inheritHandles,
+        uint creationFlags,
+        nint environment,
+        string? currentDirectory,
+        ref STARTUPINFOEXW startupInfo,
+        out PROCESS_INFORMATION processInformation);
+
+    /// <summary>Reads a process's exit code. Valid once the process has exited; non-zero is success.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "GetExitCodeProcess", SetLastError = true)]
+    internal static partial int GetExitCodeProcess(nint process, out uint exitCode);
+
+
+    /// <summary>Reports whether <paramref name="process"/> is in <paramref name="job"/> (or any job, for a null job). <paramref name="result"/> is non-zero when it is.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "IsProcessInJob", SetLastError = true)]
+    internal static partial int IsProcessInJob(nint process, nint job, out int result);
 }

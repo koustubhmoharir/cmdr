@@ -163,6 +163,16 @@ run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`
   that writes to it is not killed by SIGPIPE. Starting the next run closes the old stdin; a pump closes
   its stream at EOF; `Dispose` closes every pipe of every run and output stops.
 
+### Windows: launch
+
+`WindowsProcessPlatform.Launch` calls `CreateProcessW` itself (not `Process.Start`) with a STARTUPINFOEX
+attribute list: `PROC_THREAD_ATTRIBUTE_JOB_LIST` creates the child inside its kill-on-close job, so nothing it
+spawns can escape the job (Windows 10 1607+), and `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits inheritance to the
+child's own pipe ends. Pipe creation until cmdr's client copies are closed runs under `InheritableHandleLock`,
+which the Ctrl+C helper's `Process.Start` also takes, so the helper cannot inherit another launch's pipe ends
+(third-party launchers in the process are not covered). Console stdin is a null stdin handle. The exit is a
+thread-pool wait on the process handle (`WindowsLaunchedProcess`). Linux keeps `Process` (`ProcessLaunched`).
+
 ### Windows: batch files (.cmd/.bat)
 
 `pnpm`, `npm`, `yarn` etc. are `.cmd` shims that CreateProcess cannot run directly. On Windows the

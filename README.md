@@ -306,8 +306,9 @@ terminal (password prompts from `sudo` or `ssh`, for example) fail with an error
 
 ### Windows
 
-Each command runs in its own hidden console, inside a job object, so all of its processes are killed if
-cmdr itself dies.
+Each command runs in its own hidden console, inside a job object from the moment it is created, so all of its
+processes (even ones it starts immediately) are tracked and are killed if cmdr itself dies. Requires Windows 10
+version 1607 or later.
 
 - `.cmd`/`.bat` programs (`pnpm`, `npm`, `yarn`, …) run through `cmd.exe`. After Ctrl+C, cmd asks
   "Terminate batch job (Y/N)?"; cmdr answers it.

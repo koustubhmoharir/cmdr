@@ -11,8 +11,7 @@ internal interface IProcessPlatform
 
     /// <summary>
     /// Starts the process described by <paramref name="launch"/> in its own process group or job, and returns it with
-    /// that group. Platforms may need to adjust process-wide state around the start; see
-    /// <see cref="PreparedLaunch.NullStdin"/>.
+    /// that group. The process must be in the group from its creation, so that nothing it starts can escape the group.
     /// </summary>
     /// <param name="launch">The result of <see cref="Prepare"/>.</param>
     /// <param name="onExited">

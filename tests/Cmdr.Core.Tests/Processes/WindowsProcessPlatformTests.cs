@@ -8,6 +8,7 @@ using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;
 namespace Cmdr.Core.Tests.Processes;
 
 /// <summary>End-to-end tests of <see cref="ManagedProcess"/> on Windows (job object supervision). Skipped elsewhere.</summary>
+[Collection("Windows processes")]
 public class WindowsProcessPlatformTests
 {
     private const int BufferLines = 1000;

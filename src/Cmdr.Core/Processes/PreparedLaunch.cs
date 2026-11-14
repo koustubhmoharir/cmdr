@@ -13,7 +13,8 @@ namespace Cmdr.Core.Processes;
 /// do something the launch asked for and the user needs to know it.
 /// </param>
 /// <param name="NullStdin">
-/// True when the platform must start the process with a null standard input handle while cmdr's own is unrelated (Windows
-/// console stdin). Only <see cref="IProcessPlatform.Launch"/> acts on it.
+/// True when the child must not inherit cmdr's standard input (Windows console stdin: the child gets its own hidden console).
+/// On Windows the child's standard input is then the null handle, because only the pipes that are redirected are passed to it.
+/// Only <see cref="IProcessPlatform.Launch"/> acts on it.
 /// </param>
 internal sealed record PreparedLaunch(ProcessStartInfo StartInfo, string? InputAfterInterrupt, string? Notice = null, bool NullStdin = false);

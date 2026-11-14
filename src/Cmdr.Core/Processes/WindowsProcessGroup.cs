@@ -20,6 +20,9 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     private readonly int _leaderPid;
     private readonly CtrlCHelperCommand _helper;
 
+    /// <summary>The job object handle, for tests that check membership. Valid until the group is disposed.</summary>
+    internal SafeJobHandle Job => _job;
+
     /// <summary>Wraps an existing job; takes ownership of <paramref name="job"/>.</summary>
     internal WindowsProcessGroup(SafeJobHandle job, int leaderPid, CtrlCHelperCommand helper)
     {
@@ -47,7 +50,15 @@ internal sealed class WindowsProcessGroup : IProcessGroup
             psi.ArgumentList.Add(arg);
         }
 
-        using Process helper = Process.Start(psi) ?? throw new Win32Exception("Could not start the Ctrl+C helper.");
+        // Only the start is serialized: Process.Start inherits every inheritable handle, so it must not run while a launch has
+        // its pipe client ends inheritable (see WindowsProcessPlatform.InheritableHandleLock). The wait below is not locked.
+        Process? started;
+        lock (WindowsProcessPlatform.InheritableHandleLock)
+        {
+            started = Process.Start(psi);
+        }
+
+        using Process helper = started ?? throw new Win32Exception("Could not start the Ctrl+C helper.");
         Task<string> stdErrText = helper.StandardError.ReadToEndAsync();
 
         if (!helper.WaitForExit(HelperTimeoutMilliseconds))

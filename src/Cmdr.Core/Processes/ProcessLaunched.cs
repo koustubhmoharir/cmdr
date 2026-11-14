@@ -3,8 +3,8 @@ using System.Diagnostics;
 namespace Cmdr.Core.Processes;
 
 /// <summary>
-/// <see cref="ILaunchedProcess"/> over <see cref="Process"/>. Shared by both platforms for now; the Windows launch
-/// will create its process directly, so this wrapper is expected to go.
+/// <see cref="ILaunchedProcess"/> over <see cref="Process"/>, used on Linux. Windows creates its process directly
+/// (<see cref="WindowsLaunchedProcess"/>), so that the child starts inside its job.
 /// </summary>
 internal sealed class ProcessLaunched : ILaunchedProcess
 {
