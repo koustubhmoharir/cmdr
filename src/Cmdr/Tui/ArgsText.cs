@@ -7,6 +7,17 @@ namespace Cmdr.Tui;
 /// </remarks>
 internal static class ArgsText
 {
+    /// <summary>
+    /// True when <see cref="Parse"/> of <see cref="Format"/> gives back exactly <paramref name="args"/>. False for arguments
+    /// that the one-per-line form cannot hold, such as an argument with a line break or a final <c>\r</c>.
+    /// </summary>
+    public static bool CanEdit(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+
+        return Parse(Format(args)).SequenceEqual(args, StringComparer.Ordinal);
+    }
+
     /// <summary>Joins the arguments with newlines.</summary>
     public static string Format(IReadOnlyList<string> args)
     {

@@ -74,4 +74,36 @@ public sealed class ArgsTextTests
     {
         Assert.Empty(ArgsText.Parse(ArgsText.Format(Array.Empty<string>())));
     }
+
+    [Theory]
+    [MemberData(nameof(EditableCases))]
+    public void CanEdit_is_true_when_the_arguments_survive_the_line_form(string[] args)
+    {
+        Assert.True(ArgsText.CanEdit(args));
+    }
+
+    public static IEnumerable<object[]> EditableCases()
+    {
+        yield return new object[] { new[] { "-c", "echo hi" } };
+        yield return new object[] { Array.Empty<string>() };
+        yield return new object[] { new[] { "a", "" } };
+        yield return new object[] { new[] { "", "" } };
+        yield return new object[] { new[] { "with space", "  padded  " } };
+        yield return new object[] { new[] { @"C:\temp\new", @"\\server\share\" } };
+    }
+
+    [Theory]
+    [MemberData(nameof(NotEditableCases))]
+    public void CanEdit_is_false_when_an_argument_cannot_be_written_one_per_line(string[] args)
+    {
+        Assert.False(ArgsText.CanEdit(args));
+    }
+
+    public static IEnumerable<object[]> NotEditableCases()
+    {
+        yield return new object[] { new[] { "-c", "echo first\necho second" } };
+        yield return new object[] { new[] { "a\r\nb" } };
+        yield return new object[] { new[] { "x\r" } };
+        yield return new object[] { new[] { "x\r", "y" } };
+    }
 }

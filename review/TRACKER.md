@@ -4,13 +4,7 @@ Remaining work from the 2026-11-13 review. **When an item is done, delete it her
 
 Work proceeds in the order of the sections below.
 
-## 1. Editing (package D)
-
-| ID | Pri | Decision / item |
-|---|---|---|
-| 06-01 / 06-02 | P2 | If an argument or env value contains a line break, make that field read-only in the command dialog, with a note to edit it in the JSON. Accepting the dialog keeps the original values. |
-
-## 2. Output and terminal text (package F)
+## 1. Output and terminal text (package F)
 
 | ID | Pri | Item |
 |---|---|---|
@@ -20,7 +14,7 @@ Work proceeds in the order of the sections below.
 | 04-10 | P2 | A growing partial line is copied quadratically. |
 | 04-11 | P3 | Row counting allocates every drawable cell (measured recommendation). |
 
-## 3. Windows (package E) — needs testing on Windows by the user
+## 2. Windows (package E) — needs testing on Windows by the user
 
 | ID | Pri | Decision / item |
 |---|---|---|
@@ -30,7 +24,7 @@ Work proceeds in the order of the sections below.
 
 ## Validation gaps (not tied to one item)
 
-- Native Windows: the fixed 03-02/03-04, plus everything in section 3 (Windows). Some Windows tests return early on Linux and are not evidence.
+- Native Windows: the fixed 03-02/03-04, plus everything in section 2 (Windows). Some Windows tests return early on Linux and are not evidence.
 - Package C on native Windows: saving over an existing file with `File.Replace` (keeps its ACL), and log path comparison being case-insensitive.
 - Package B on native Windows: a real job-query failure (02-01's only real trigger), pump shutdown on disposal of a detached run, and log files now opened with write sharing so writers of one file can take turns.
 - No CI, `global.json` SDK pin or NuGet lock file.

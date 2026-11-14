@@ -74,6 +74,8 @@ number to select an entry, Enter to open it, Del to remove it from the list, Esc
 that no longer exist are marked `(not found)`; opening one starts with an empty list, as above. With no
 recent files, `cmdr` prints the usage. Commands and groups can be added and edited in the UI or in the file.
 Changes made in the UI are saved only on Ctrl+S; unsaved changes are marked with `*` in the title.
+In the edit dialogs, arguments are one per line and environment variables `KEY=VALUE` lines; when an
+argument or a value contains a line break, that field is read-only (edit it in the file) and is kept as it is.
 
 ## Configuration
 

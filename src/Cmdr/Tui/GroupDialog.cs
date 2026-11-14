@@ -18,6 +18,8 @@ namespace Cmdr.Tui;
 /// </summary>
 /// <remarks>
 /// Two columns of fields so that the dialog fits an 80x24 terminal. <see cref="Result"/> is true when the group was committed.
+/// When the initial environment cannot be written in its line format (see <see cref="EnvText.CanEdit"/>) the field is
+/// read-only, and accepting the dialog keeps the environment exactly: edit it in the JSON.
 /// </remarks>
 internal sealed class GroupDialog : Dialog<bool>
 {
@@ -42,6 +44,9 @@ internal sealed class GroupDialog : Dialog<bool>
     private readonly TextView _description;
     private readonly TextView _env;
     private readonly CheckBox _expanded;
+
+    // The original environment when its field is read-only; null when the field is edited as text.
+    private readonly IReadOnlyDictionary<string, string?>? _keptEnv;
 
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups for the parent choices and the sibling names. Base groups are not offered.</param>
@@ -92,7 +97,11 @@ internal sealed class GroupDialog : Dialog<bool>
         };
         _cwd = Field(FieldX, 3, FieldWidth, initial.Cwd ?? string.Empty);
         _description = Area(0, 5, LeftWidth, 4, initial.Description ?? string.Empty);
-        _env = Area(RightX, 5, RightWidth, 4, EnvText.Format(initial.Env ?? new Dictionary<string, string?>()));
+        IReadOnlyDictionary<string, string?> initialEnv = initial.Env ?? new Dictionary<string, string?>();
+        bool envEditable = EnvText.CanEdit(initialEnv);
+        _keptEnv = envEditable ? null : new Dictionary<string, string?>(initialEnv);
+        _env = Area(RightX, 5, RightWidth, 4, EnvText.Format(initialEnv));
+        _env.ReadOnly = !envEditable;
         _expanded = new CheckBox
         {
             X = 0,
@@ -107,7 +116,7 @@ internal sealed class GroupDialog : Dialog<bool>
             Caption("Mode", 0, 2), _mode,
             Caption("Working dir", 0, 3), _cwd,
             Caption("Description", 0, 4), _description,
-            Caption("Env (KEY=VALUE, !KEY removes)", RightX, 4), _env,
+            Caption(envEditable ? "Env (KEY=VALUE, !KEY removes)" : "Env: read-only, edit the JSON", RightX, 4), _env,
             _expanded);
 
         // OK and Enter in a text field both reach OnAccepting. Cancel ends the dialog without committing.
@@ -170,7 +179,8 @@ internal sealed class GroupDialog : Dialog<bool>
             _mode.Value ?? GroupMode.Parallel,
             _cwd.Text,
             _env.Text,
-            _expanded.Value == CheckState.Checked);
+            _expanded.Value == CheckState.Checked,
+            _keptEnv);
 
         // Names are unique among the items of the parent the group would be in: groups and commands together. At top level
         // that is the groups of the opened file only; base groups are not changed by this group.

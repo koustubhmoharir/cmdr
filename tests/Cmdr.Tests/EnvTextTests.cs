@@ -108,4 +108,41 @@ public sealed class EnvTextTests
         Assert.Empty(result.Errors);
         Assert.Equal(env, result.Values);
     }
+
+    [Fact]
+    public void CanEdit_is_true_for_ordinary_values_removals_and_empty_values()
+    {
+        Assert.True(EnvText.CanEdit(new Dictionary<string, string?> { ["A"] = "1", ["B"] = null, ["C"] = string.Empty }));
+    }
+
+    [Fact]
+    public void CanEdit_is_true_for_no_variables()
+    {
+        Assert.True(EnvText.CanEdit(new Dictionary<string, string?>()));
+    }
+
+    [Fact]
+    public void CanEdit_is_true_for_values_with_equals_signs_and_backslashes()
+    {
+        Assert.True(EnvText.CanEdit(new Dictionary<string, string?> { ["OPTS"] = "a=b=c", ["PATH_LIKE"] = @"C:\bin\x" }));
+    }
+
+    [Theory]
+    [InlineData("first\nsecond")]
+    [InlineData("x\r\ny")]
+    [InlineData("value\r")]
+    [InlineData("first\nB=second")]
+    [InlineData("first\n!B")]
+    [InlineData("x\n\ny")]
+    public void CanEdit_is_false_for_values_the_line_form_cannot_hold(string value)
+    {
+        Assert.False(EnvText.CanEdit(new Dictionary<string, string?> { ["A"] = value }));
+    }
+
+    [Fact]
+    public void CanEdit_is_false_when_a_key_cannot_be_written()
+    {
+        Assert.False(EnvText.CanEdit(new Dictionary<string, string?> { [" PADDED"] = "1" }));
+        Assert.False(EnvText.CanEdit(new Dictionary<string, string?> { ["A=B"] = "1" }));
+    }
 }

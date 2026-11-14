@@ -211,4 +211,29 @@ public sealed class CommandFormTests
         Assert.Single(busy);
         Assert.StartsWith("Busy pattern is not a valid regular expression", busy[0]);
     }
+
+    [Fact]
+    public void Kept_args_and_env_are_not_parsed_and_are_copied_into_the_spec()
+    {
+        var keptArgs = new List<string> { "-c", "echo first\necho second", "x\r" };
+        var keptEnv = new Dictionary<string, string?> { ["A"] = "first\nB=second", ["C"] = null };
+        CommandFormValues values = Valid(env: "A=1\nbogus\n!", args: "unparsed\nargs") with { KeptArgs = keptArgs, KeptEnv = keptEnv };
+
+        Assert.Empty(CommandForm.Validate(values, Array.Empty<string>()));
+
+        CommandSpec spec = CommandForm.Build(values);
+        Assert.Equal(keptArgs, spec.Args);
+        Assert.Equal(keptEnv, spec.Env);
+        Assert.NotSame(keptArgs, spec.Args);
+        Assert.NotSame(keptEnv, spec.Env);
+    }
+
+    [Fact]
+    public void Without_kept_values_the_env_text_is_still_validated_and_parsed()
+    {
+        CommandFormValues values = Valid(env: "A=1\nbogus", args: "a\nb");
+
+        Assert.Single(CommandForm.Validate(values, Array.Empty<string>()));
+        Assert.Equal(new[] { "a", "b" }, CommandForm.Build(Valid(args: "a\nb")).Args);
+    }
 }

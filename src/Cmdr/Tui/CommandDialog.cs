@@ -19,6 +19,8 @@ namespace Cmdr.Tui;
 /// <remarks>
 /// Layout is two columns of fields so that the dialog fits an 80x24 terminal. <see cref="Result"/> is true when the
 /// command was committed.
+/// A field whose initial values cannot be written in its line format (see <see cref="ArgsText.CanEdit"/> and
+/// <see cref="EnvText.CanEdit"/>) is read-only, and accepting the dialog keeps those values exactly: edit them in the JSON.
 /// </remarks>
 internal sealed class CommandDialog : Dialog<bool>
 {
@@ -52,6 +54,10 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly TextField _readyPattern;
     private readonly TextField _busyPattern;
 
+    // The original args or env when their field is read-only; null when the field is edited as text.
+    private readonly IReadOnlyList<string>? _keptArgs;
+    private readonly IReadOnlyDictionary<string, string?>? _keptEnv;
+
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
     /// <param name="title">The dialog title, e.g. "Add command".</param>
@@ -76,6 +82,11 @@ internal sealed class CommandDialog : Dialog<bool>
         // Commands can only go into groups of the opened file; base groups are read-only.
         _groupOptions = GroupOptions.TargetChoices(GroupTree.Editable(session.AllGroups));
 
+        bool argsEditable = ArgsText.CanEdit(initial.Args);
+        bool envEditable = EnvText.CanEdit(initial.Env);
+        _keptArgs = argsEditable ? null : initial.Args.ToList();
+        _keptEnv = envEditable ? null : new Dictionary<string, string?>(initial.Env);
+
         Title = title;
         Width = DialogWidth;
         Height = DialogHeight;
@@ -96,9 +107,11 @@ internal sealed class CommandDialog : Dialog<bool>
         _cwd = Field(12, 3, LeftWidth - 12, initial.Cwd ?? string.Empty);
         _description = Area(0, 5, LeftWidth, 3, initial.Description ?? string.Empty);
         _env = Area(0, 9, LeftWidth, 3, EnvText.Format(initial.Env));
+        _env.ReadOnly = !envEditable;
 
         // Right column: how it runs and stops, and its log.
         _args = Area(RightX, 1, RightWidth, 4, ArgsText.Format(initial.Args));
+        _args.ReadOnly = !argsEditable;
         _method = new OptionSelector<StopMethod>
         {
             X = RightX + 5,
@@ -147,8 +160,9 @@ internal sealed class CommandDialog : Dialog<bool>
             Caption("Program", 0, 2), _program,
             Caption("Working dir", 0, 3), _cwd,
             Caption("Description", 0, 4), _description,
-            Caption("Environment", 0, 8), Caption("KEY=VALUE, !KEY removes", 13, 8), _env,
-            Caption("Arguments, one per line", RightX, 0), _args,
+            Caption("Environment", 0, 8),
+            Caption(envEditable ? "KEY=VALUE, !KEY removes" : "read-only, edit the JSON", 13, 8), _env,
+            Caption(argsEditable ? "Arguments, one per line" : "Arguments: read-only, edit the JSON", RightX, 0), _args,
             Caption("Stop", RightX, 5), _method,
             Caption("Stop input", RightX, 6), _stopInput,
             _logEnabled,
@@ -232,7 +246,9 @@ internal sealed class CommandDialog : Dialog<bool>
         DetachLeftovers: _detachLeftovers.Value == CheckState.Checked,
         Stdin: _stdin.Value ?? StdinMode.Pipe,
         ReadyPattern: _readyPattern.Text,
-        BusyPattern: _busyPattern.Text);
+        BusyPattern: _busyPattern.Text,
+        KeptArgs: _keptArgs,
+        KeptEnv: _keptEnv);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

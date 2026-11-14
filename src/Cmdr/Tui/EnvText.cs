@@ -10,7 +10,10 @@ internal sealed record EnvParseResult(IReadOnlyDictionary<string, string?> Value
 internal static class EnvText
 {
     /// <summary>Writes <c>KEY=VALUE</c> lines in dictionary order, and <c>!KEY</c> for null values.</summary>
-    /// <remarks>A value containing a line break cannot be written in this form; <see cref="Parse"/> reports it as an error.</remarks>
+    /// <remarks>
+    /// A value containing a line break cannot be written in this form, and the text may then parse differently; use
+    /// <see cref="CanEdit"/> to check whether a dictionary survives the round trip.
+    /// </remarks>
     public static string Format(IReadOnlyDictionary<string, string?> env)
     {
         ArgumentNullException.ThrowIfNull(env);
@@ -22,6 +25,32 @@ internal static class EnvText
         }
 
         return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// True when <see cref="Parse"/> of <see cref="Format"/> has no errors and gives back exactly <paramref name="env"/>: the
+    /// same keys and the same values, including removals (null). False for values the line form cannot hold, such as a value
+    /// with a line break, a final <c>\r</c>, or a line break that starts a new variable.
+    /// </summary>
+    public static bool CanEdit(IReadOnlyDictionary<string, string?> env)
+    {
+        ArgumentNullException.ThrowIfNull(env);
+
+        EnvParseResult result = Parse(Format(env));
+        if (result.Errors.Count > 0 || result.Values.Count != env.Count)
+        {
+            return false;
+        }
+
+        foreach (KeyValuePair<string, string?> entry in env)
+        {
+            if (!result.Values.TryGetValue(entry.Key, out string? value) || value != entry.Value)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Parses the lines. Errors name the line number; duplicate keys are errors.</summary>

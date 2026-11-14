@@ -127,4 +127,26 @@ public sealed class GroupFormTests : IDisposable
         Assert.False(GroupForm.Build(Values(expanded: false)).Expanded);
         Assert.True(GroupForm.Build(Values(expanded: true)).Expanded);
     }
+
+    [Fact]
+    public void Kept_env_is_not_parsed_and_is_copied_into_the_settings()
+    {
+        var keptEnv = new Dictionary<string, string?> { ["A"] = "x\r\ny", ["B"] = null };
+        GroupFormValues values = Values(env: "bogus\nA=unused") with { KeptEnv = keptEnv };
+
+        Assert.Empty(GroupForm.Validate(values, Array.Empty<string>()));
+
+        GroupSettings settings = GroupForm.Build(values);
+        Assert.Equal(keptEnv, settings.Env);
+        Assert.NotSame(keptEnv, settings.Env);
+    }
+
+    [Fact]
+    public void Empty_kept_env_becomes_null()
+    {
+        GroupFormValues values = Values(env: "bogus") with { KeptEnv = new Dictionary<string, string?>() };
+
+        Assert.Empty(GroupForm.Validate(values, Array.Empty<string>()));
+        Assert.Null(GroupForm.Build(values).Env);
+    }
 }

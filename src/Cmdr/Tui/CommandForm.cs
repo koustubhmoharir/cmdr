@@ -4,7 +4,11 @@ using Cmdr.Core.Session;
 
 namespace Cmdr.Tui;
 
-/// <summary>The text and choices of the command dialog, as the user left them.</summary>
+/// <summary>
+/// The text and choices of the command dialog, as the user left them. <paramref name="KeptArgs"/> and
+/// <paramref name="KeptEnv"/> are the original values to keep when the args or env field is read-only; the text of that
+/// field is then not parsed.
+/// </summary>
 internal sealed record CommandFormValues(
     string Name,
     string Description,
@@ -19,7 +23,9 @@ internal sealed record CommandFormValues(
     bool DetachLeftovers,
     StdinMode Stdin,
     string ReadyPattern = "",
-    string BusyPattern = "");
+    string BusyPattern = "",
+    IReadOnlyList<string>? KeptArgs = null,
+    IReadOnlyDictionary<string, string?>? KeptEnv = null);
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -49,10 +55,13 @@ internal static class CommandForm
             errors.Add("Program must not be blank.");
         }
 
-        EnvParseResult env = EnvText.Parse(values.Env);
-        foreach (string error in env.Errors)
+        // A kept environment is the original value of a read-only field: its text is not parsed.
+        if (values.KeptEnv is null)
         {
-            errors.Add("Env: " + error);
+            foreach (string error in EnvText.Parse(values.Env).Errors)
+            {
+                errors.Add("Env: " + error);
+            }
         }
 
         errors.AddRange(ValidateReady(values.ReadyPattern, values.BusyPattern));
@@ -96,9 +105,11 @@ internal static class CommandForm
             Name = values.Name.Trim(),
             Description = description,
             Program = values.Program.Trim(),
-            Args = ArgsText.Parse(values.Args).ToList(),
+            Args = values.KeptArgs is { } keptArgs ? keptArgs.ToList() : ArgsText.Parse(values.Args).ToList(),
             Cwd = cwd,
-            Env = new Dictionary<string, string?>(EnvText.Parse(values.Env).Values),
+            Env = values.KeptEnv is { } keptEnv
+                ? new Dictionary<string, string?>(keptEnv)
+                : new Dictionary<string, string?>(EnvText.Parse(values.Env).Values),
             Stop = new StopSpec
             {
                 Method = values.Method,
@@ -170,8 +181,18 @@ internal static class CommandForm
     }
 }
 
-/// <summary>The text and choices of the group dialog, as the user left them.</summary>
-internal sealed record GroupFormValues(string Name, string? Description, GroupMode Mode, string Cwd, string Env, bool Expanded);
+/// <summary>
+/// The text and choices of the group dialog, as the user left them. <paramref name="KeptEnv"/> is the original environment when
+/// the environment field is read-only; then <paramref name="Env"/> is not parsed.
+/// </summary>
+internal sealed record GroupFormValues(
+    string Name,
+    string? Description,
+    GroupMode Mode,
+    string Cwd,
+    string Env,
+    bool Expanded,
+    IReadOnlyDictionary<string, string?>? KeptEnv = null);
 
 /// <summary>Validation and conversion of the group dialog's values. Pure.</summary>
 internal static class GroupForm
@@ -218,9 +239,12 @@ internal static class GroupForm
         ArgumentNullException.ThrowIfNull(values);
 
         var errors = new List<string>(Validate(values.Name, siblingNames));
-        foreach (string error in EnvText.Parse(values.Env).Errors)
+        if (values.KeptEnv is null)
         {
-            errors.Add("Env: " + error);
+            foreach (string error in EnvText.Parse(values.Env).Errors)
+            {
+                errors.Add("Env: " + error);
+            }
         }
 
         return errors;
@@ -236,7 +260,7 @@ internal static class GroupForm
 
         string? description = string.IsNullOrWhiteSpace(values.Description) ? null : values.Description;
         string? cwd = string.IsNullOrWhiteSpace(values.Cwd) ? null : values.Cwd.Trim();
-        IReadOnlyDictionary<string, string?> env = EnvText.Parse(values.Env).Values;
+        IReadOnlyDictionary<string, string?> env = values.KeptEnv ?? EnvText.Parse(values.Env).Values;
 
         return new GroupSettings(
             values.Name.Trim(),
