@@ -6,10 +6,7 @@ Work proceeds in the order of the sections below.
 
 ## 1. Windows (package E) — needs testing on Windows by the user
 
-All items are implemented; what remains is the Windows test run listed under validation gaps.
-
-| ID | Pri | Decision / item |
-|---|---|---|
+All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows test run listed under validation gaps.
 
 ## Validation gaps (not tied to one item)
 
