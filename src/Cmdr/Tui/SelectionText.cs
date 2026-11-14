@@ -85,13 +85,12 @@ internal static class SelectionText
         var sb = new StringBuilder();
         int column = 0;
         bool previousIncluded = false;
-        foreach (Rune rune in text.EnumerateRunes())
+        foreach ((int offset, int length, int width) in TextWidth.Graphemes(text))
         {
-            int width = TextWidth.Width(rune);
             bool included;
             if (width == 0)
             {
-                // A combining mark belongs to the character before it.
+                // A zero-width grapheme (such as a lone combining mark) belongs to the character before it.
                 included = previousIncluded;
             }
             else
@@ -102,7 +101,7 @@ internal static class SelectionText
 
             if (included)
             {
-                sb.Append(rune.ToString());
+                sb.Append(text, offset, length);
             }
 
             column += width;

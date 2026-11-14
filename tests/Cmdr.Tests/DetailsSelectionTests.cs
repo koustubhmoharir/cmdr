@@ -193,4 +193,18 @@ public sealed class DetailsSelectionTests
             DetailsText.Plain(DetailsText.Wrap(lines, 6)),
             DetailsText.WrapRows(lines, 6).Select(row => row.Line.Text).ToList());
     }
+
+
+    [Fact]
+    public void Points_on_a_combining_mark_land_on_grapheme_boundaries()
+    {
+        IReadOnlyList<DetailsLine> lines = Lines("éx");
+        IReadOnlyList<DetailsRow> rows = DetailsText.WrapRows(lines, 10);
+        IReadOnlyList<string> texts = DetailsSelection.Texts(lines);
+
+        // Column 0 is the "e" with its mark: the caret goes before it or after the whole grapheme, never between them.
+        Assert.Equal(P(0, 0), DetailsSelection.PointAt(rows, texts, 0, 0));
+        Assert.Equal(P(0, 2), DetailsSelection.PointAt(rows, texts, 0, 1));
+        Assert.Equal(P(0, 3), DetailsSelection.PointAt(rows, texts, 0, 2));
+    }
 }

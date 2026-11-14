@@ -1,51 +1,85 @@
-using System.Text;
+using System.Globalization;
 using Cmdr.Core.Output;
 
 namespace Cmdr.Tui;
 
 /// <summary>
-/// Cell-based wrapping of output lines, the way a terminal wraps: a row takes cells until the next one would not fit, and
-/// nothing is dropped, so a line's display column is the same wrapped or not. Pure: no UI types.
+/// Cell-based wrapping of output lines, the way a terminal wraps: the cells are the grapheme clusters of the line's plain text,
+/// a row takes cells until the next one would not fit, and a grapheme is never split. Zero-width graphemes take no cell: they
+/// are not drawn, but they stay in the text, so copying the line includes them. Pure: no UI types.
 /// </summary>
 internal static class OutputWrap
 {
     /// <summary>
-    /// One drawable cell of a line: the rune (control characters are already spaces), its display column in the line,
-    /// its width in columns (1 or 2 for the usual characters) and the index of its span.
+    /// One drawable cell of a line: the grapheme's text (a grapheme that starts with a control character is the space that
+    /// draws it), its display column in the line, its width in columns and the index of the span that holds its first unit.
     /// </summary>
-    internal readonly record struct Cell(Rune Rune, int Column, int Width, int Span);
+    internal readonly record struct Cell(string Text, int Column, int Width, int Span);
 
     /// <summary>
-    /// The cells of a line in display order. Runes with no columns (such as combining marks) are skipped, control
-    /// characters take one column each, and wide characters take two.
+    /// The cells of a line in display order: one per grapheme cluster of <see cref="OutputLine.PlainText"/> that has a width.
+    /// Zero-width graphemes (such as a combining mark with no base before it) give no cell. A grapheme that starts with a control
+    /// character is a space of width 1. A grapheme that spans two spans belongs to the span of its first unit.
     /// </summary>
     public static List<Cell> Cells(OutputLine line)
     {
         ArgumentNullException.ThrowIfNull(line);
 
-        var cells = new List<Cell>(line.PlainText.Length);
+        string plain = line.PlainText;
+        var cells = new List<Cell>(plain.Length);
         int column = 0;
-        for (int span = 0; span < line.Spans.Count; span++)
+        int span = 0;
+        int spanEnd = line.Spans.Count > 0 ? line.Spans[0].Text.Length : 0;
+        int offset = 0;
+        while (offset < plain.Length)
         {
-            foreach (Rune original in line.Spans[span].Text.EnumerateRunes())
+            while (offset >= spanEnd)
             {
-                Rune rune = Rune.IsControl(original) ? new Rune(' ') : original;
-                int width = TextWidth.Width(rune);
-                if (width == 0)
-                {
-                    continue;
-                }
+                span++;
+                spanEnd += line.Spans[span].Text.Length;
+            }
 
-                cells.Add(new Cell(rune, column, width, span));
+            int length = StringInfo.GetNextTextElementLength(plain.AsSpan(offset));
+            int width = TextWidth.WidthOf(plain.AsSpan(offset, length));
+            if (width > 0)
+            {
+                string text = char.IsControl(plain[offset]) ? " " : plain.Substring(offset, length);
+                cells.Add(new Cell(text, column, width, span));
                 column += width;
             }
+
+            offset += length;
         }
 
         return cells;
     }
 
-    /// <summary>The number of rows the line wraps to in <paramref name="width"/> columns. Always at least 1.</summary>
-    public static int RowCount(OutputLine line, int width) => Rows(line, width).Count;
+    /// <summary>
+    /// The number of rows the line wraps to in <paramref name="width"/> columns. Always at least 1. Same rule as
+    /// <see cref="Rows(IReadOnlyList{int}, int)"/> on the widths of <see cref="Cells"/>, without building the cells.
+    /// </summary>
+    public static int RowCount(OutputLine line, int width)
+    {
+        ArgumentNullException.ThrowIfNull(line);
+
+        string plain = line.PlainText;
+        var breaker = new RowBreaker(width);
+        int rows = 1;
+        int offset = 0;
+        while (offset < plain.Length)
+        {
+            int length = StringInfo.GetNextTextElementLength(plain.AsSpan(offset));
+            int cellWidth = TextWidth.WidthOf(plain.AsSpan(offset, length));
+            if (cellWidth > 0 && breaker.Add(cellWidth))
+            {
+                rows++;
+            }
+
+            offset += length;
+        }
+
+        return rows;
+    }
 
     /// <summary>The rows of a line, as display-column ranges <c>[StartColumn, EndColumn)</c> of the line. See <see cref="Rows(IReadOnlyList{int}, int)"/>.</summary>
     public static List<(int StartColumn, int EndColumn)> Rows(OutputLine line, int width) =>
@@ -62,10 +96,8 @@ internal static class OutputWrap
     {
         ArgumentNullException.ThrowIfNull(widths);
 
-        int limit = Math.Max(1, width);
+        var breaker = new RowBreaker(width);
         var rows = new List<(int StartColumn, int EndColumn)>();
-        int start = 0;
-        int column = 0;
         foreach (int cellWidth in widths)
         {
             if (cellWidth <= 0)
@@ -73,17 +105,16 @@ internal static class OutputWrap
                 continue;
             }
 
-            // The current row holds [start, column). An empty row takes whatever comes, even a cell wider than the row.
-            if (column > start && column - start + cellWidth > limit)
+            // The current row is [Start, End) until the cell is added.
+            int start = breaker.Start;
+            int end = breaker.End;
+            if (breaker.Add(cellWidth))
             {
-                rows.Add((start, column));
-                start = column;
+                rows.Add((start, end));
             }
-
-            column += cellWidth;
         }
 
-        rows.Add((start, column));
+        rows.Add((breaker.Start, breaker.End));
         return rows;
     }
 
@@ -111,5 +142,43 @@ internal static class OutputWrap
         }
 
         return low;
+    }
+
+    /// <summary>
+    /// The row-breaking rule, the one place it is written: <see cref="Rows(IReadOnlyList{int}, int)"/> and
+    /// <see cref="RowCount"/> both use it, so they cannot diverge. Feed it cells of positive width, in order.
+    /// </summary>
+    private struct RowBreaker
+    {
+        private readonly int _limit;
+
+        public RowBreaker(int width)
+        {
+            _limit = Math.Max(1, width);
+            Start = 0;
+            End = 0;
+        }
+
+        /// <summary>The first column of the current row.</summary>
+        public int Start { get; private set; }
+
+        /// <summary>The column after the last cell of the current row.</summary>
+        public int End { get; private set; }
+
+        /// <summary>
+        /// Adds a cell of positive width. Returns true when the cell starts a new row; the row it closed is the range
+        /// [Start, End) as it was before the call. An empty row takes whatever comes, even a cell wider than the row.
+        /// </summary>
+        public bool Add(int cellWidth)
+        {
+            bool breaks = End > Start && End - Start + cellWidth > _limit;
+            if (breaks)
+            {
+                Start = End;
+            }
+
+            End += cellWidth;
+            return breaks;
+        }
     }
 }

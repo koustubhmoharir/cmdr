@@ -13,9 +13,12 @@ namespace Cmdr.Tui;
 /// Shows the output buffer of one command. Long lines wrap to the view width, cell by cell like a terminal; nothing is
 /// dropped, and copy takes the original lines. Scrolling moves by screen rows, tail-follows by default. The view has a
 /// cursor line (shown while focused, all its rows shaded) and an optional selection (a line selection from Shift+arrows,
-/// or a character selection from the mouse). Scrolling up or moving the cursor off the last line pauses following; End, or
-/// moving back onto the last line, resumes it. The cursor and the top are remembered by absolute line number, so they
-/// stay put as old lines are evicted. UI thread only.
+/// or a character selection from the mouse). Scrolling up, moving the cursor off the last line, or a mouse press pauses
+/// following. End resumes it, and so does arriving at the tail: the last page of rows with the cursor on the last line (not
+/// merely the last line with its earlier rows in view), by wheel, cursor keys, or a click without a drag. Following stays
+/// paused during a drag. The cursor and the top are remembered by absolute line number, so they
+/// stay put as old lines are evicted. A selection or cursor on a partial line follows that line when another stream completes
+/// a line in front of it (see <see cref="PartialPins"/>). UI thread only.
 /// </summary>
 internal sealed class OutputView : View
 {
@@ -34,10 +37,21 @@ internal sealed class OutputView : View
     private ScrollPosition _top;
     private long _cursorLine;
 
+    // Set when the paused cursor is on a partial line: the line's identity, so that it can be found again if its number
+    // changes (see Revalidate). Null for a completed line, which keeps its number.
+    private PartialPin? _cursorPin;
+    private long _pinVersion = -1;
+
     private SelectionState? _selection;
     private bool _dragging;
 
-    private readonly record struct SelectionState(SelectionPoint Anchor, SelectionPoint Active, bool LineMode);
+    // The pins are set for endpoints on partial lines only (see PinAt).
+    private readonly record struct SelectionState(
+        SelectionPoint Anchor,
+        SelectionPoint Active,
+        bool LineMode,
+        PartialPin? AnchorPin = null,
+        PartialPin? ActivePin = null);
 
     /// <summary>A line with its cells, the attribute of each span, and the column range of each of its rows.</summary>
     private sealed record PreparedLine(
@@ -138,14 +152,17 @@ internal sealed class OutputView : View
         _following = true;
         _top = default;
         _cursorLine = 0;
+        _cursorPin = null;
         _selection = null;
         _lastVersion = -1;
+        _pinVersion = -1;
         SetNeedsDraw();
     }
 
     /// <summary>Called on the UI thread every 100 ms. Redraws when the buffer changed.</summary>
     public void Tick()
     {
+        Revalidate();
         long version = _buffer?.Version ?? -1;
         if (version != _lastVersion)
         {
@@ -325,7 +342,113 @@ internal sealed class OutputView : View
         return true;
     }
 
-    private Geometry Measure(OutputBuffer buffer) => new(buffer, Viewport.Width, Viewport.Height);
+    /// <summary>
+    /// Measures the buffer for an operation. Every operation that reads a selection or the cursor measures first, so the
+    /// stored coordinates are checked against the buffer before they are used.
+    /// </summary>
+    private Geometry Measure(OutputBuffer buffer)
+    {
+        Revalidate();
+        return new(buffer, Viewport.Width, Viewport.Height);
+    }
+
+    /// <summary>
+    /// Moves the selection endpoints and the paused cursor that are on partial lines to where their lines are now, after the
+    /// buffer changed. A partial line moves to a later number when another stream or a system line completes a line in front
+    /// of it, so its stored number then names other text. Each pin is found again by its source and text (see
+    /// <see cref="PartialPins"/>). A selection endpoint whose line is gone (rewritten or evicted) clears the selection; the
+    /// cursor keeps its number, clamped as usual. Checked only when the buffer's version changed.
+    /// </summary>
+    private void Revalidate()
+    {
+        OutputBuffer? buffer = _buffer;
+        if (buffer is null)
+        {
+            return;
+        }
+
+        // Read the version before the lines: a change made in between is seen by the next check.
+        long version = buffer.Version;
+        if (version == _pinVersion)
+        {
+            return;
+        }
+
+        _pinVersion = version;
+        if (_following)
+        {
+            _cursorPin = null;
+        }
+
+        if (_selection is null && _cursorPin is null)
+        {
+            return;
+        }
+
+        long first = buffer.FirstLineNumber;
+        long last = first + buffer.Count - 1;
+        Func<long, OutputLine?> lineAt = number => LineAt(buffer, number);
+
+        if (_selection is { } s)
+        {
+            SelectionPoint? anchor = Track(s.Anchor, s.AnchorPin, first, last, lineAt);
+            SelectionPoint? active = Track(s.Active, s.ActivePin, first, last, lineAt);
+            _selection = anchor is { } a && active is { } b ? Select(buffer, a, b, s.LineMode) : null;
+        }
+
+        if (_cursorPin is { } pin)
+        {
+            long? line = PartialPins.Find(pin, _cursorLine, first, last, lineAt);
+            if (line is { } l)
+            {
+                _cursorLine = l;
+            }
+
+            _cursorPin = line is { } found ? PinAt(buffer, found) : null;
+        }
+    }
+
+    /// <summary>The point's line as found again by its pin: the same point, moved to the pinned line's new number, or null when it is gone.</summary>
+    private static SelectionPoint? Track(SelectionPoint point, PartialPin? pin, long first, long last, Func<long, OutputLine?> lineAt)
+    {
+        if (pin is not { } p)
+        {
+            return point;
+        }
+
+        long? line = PartialPins.Find(p, point.Line, first, last, lineAt);
+        return line is { } l ? point with { Line = l } : null;
+    }
+
+    /// <summary>The pin for a line: its identity when it is a partial line (number at or after <see cref="OutputBuffer.NextLineNumber"/>), otherwise null.</summary>
+    private static PartialPin? PinAt(OutputBuffer buffer, long line)
+    {
+        if (line < buffer.NextLineNumber)
+        {
+            return null;
+        }
+
+        OutputLine? found = LineAt(buffer, line);
+        return found is null ? null : PartialPin.For(found);
+    }
+
+    /// <summary>The retained line with an absolute number, or null when it is not retained.</summary>
+    private static OutputLine? LineAt(OutputBuffer buffer, long number)
+    {
+        (long first, IReadOnlyList<OutputLine> lines) = ReadLines(buffer, number, 1);
+        return first == number && lines.Count == 1 ? lines[0] : null;
+    }
+
+    /// <summary>A selection between two points, with the pins of the points that are on partial lines.</summary>
+    private static SelectionState Select(OutputBuffer buffer, SelectionPoint anchor, SelectionPoint active, bool lineMode) =>
+        new(anchor, active, lineMode, PinAt(buffer, anchor.Line), PinAt(buffer, active.Line));
+
+    /// <summary>Sets the paused cursor's line, with its pin.</summary>
+    private void SetCursorLine(OutputBuffer buffer, long line)
+    {
+        _cursorLine = line;
+        _cursorPin = PinAt(buffer, line);
+    }
 
     /// <summary>The position of the top row: the stored one, or the last page while following.</summary>
     private ScrollPosition TopPosition(Geometry geometry) => _following ? geometry.MaxTop : geometry.Clamp(_top);
@@ -343,7 +466,7 @@ internal sealed class OutputView : View
         }
 
         _top = TopPosition(geometry);
-        _cursorLine = CursorLine(geometry);
+        SetCursorLine(geometry.Buffer, CursorLine(geometry));
         _following = false;
     }
 
@@ -378,13 +501,13 @@ internal sealed class OutputView : View
         }
 
         _top = geometry.EnsureVisible(top, target);
-        _cursorLine = target;
-        _following = target == geometry.Last;
+        SetCursorLine(geometry.Buffer, target);
+        _following = target == geometry.Last && _top == geometry.MaxTop;
 
         if (extend)
         {
             SelectionPoint anchor = _selection?.Anchor ?? new SelectionPoint(from, 0);
-            _selection = new SelectionState(anchor, new SelectionPoint(target, 0), LineMode: true);
+            _selection = Select(geometry.Buffer, anchor, new SelectionPoint(target, 0), lineMode: true);
         }
 
         SetNeedsDraw();
@@ -403,7 +526,7 @@ internal sealed class OutputView : View
         ScrollPosition target = geometry.ScrollBy(TopPosition(geometry), delta);
         Pause(geometry);
         _top = target;
-        _following = delta > 0 && target == geometry.MaxTop;
+        _following = !_dragging && delta > 0 && target == geometry.MaxTop;
         SetNeedsDraw();
         return true;
     }
@@ -421,9 +544,10 @@ internal sealed class OutputView : View
             return true;
         }
 
-        _top = new ScrollPosition(geometry.First, 0);
-        _cursorLine = geometry.First;
-        _following = geometry.Last == geometry.First;
+        ScrollPosition top = new(geometry.First, 0);
+        _top = top;
+        SetCursorLine(geometry.Buffer, geometry.First);
+        _following = top == geometry.MaxTop && geometry.First == geometry.Last;
         SetNeedsDraw();
         return true;
     }
@@ -436,6 +560,7 @@ internal sealed class OutputView : View
         }
 
         _following = true;
+        _cursorPin = null;
         SetNeedsDraw();
         return true;
     }
@@ -493,9 +618,9 @@ internal sealed class OutputView : View
 
         Pause(geometry);
         SelectionPoint point = PointAt(geometry, mouse.Position?.Y ?? 0, mouse.Position?.X ?? 0);
-        _cursorLine = point.Line;
-        _following = point.Line == geometry.Last;
-        _selection = new SelectionState(point, point, LineMode: false);
+        SetCursorLine(geometry.Buffer, point.Line);
+        _following = false;
+        _selection = Select(geometry.Buffer, point, point, lineMode: false);
         _dragging = true;
         App?.Mouse.GrabMouse(this);
         SetNeedsDraw();
@@ -533,22 +658,40 @@ internal sealed class OutputView : View
         }
 
         geometry = Measure(_buffer);
+        if (_selection is not { } selection)
+        {
+            // The anchor's line was rewritten or evicted while autoscrolling, which cleared the selection.
+            return;
+        }
+
         Pause(geometry);
         SelectionPoint point = PointAt(geometry, row, column);
-        _cursorLine = point.Line;
-        _following = point.Line == geometry.Last;
-        SelectionState selection = _selection.Value;
-        _selection = selection with { Active = point };
+        SetCursorLine(geometry.Buffer, point.Line);
+        _following = false;
+        _selection = Select(geometry.Buffer, selection.Anchor, point, selection.LineMode);
         SetNeedsDraw();
     }
 
-    /// <summary>Left release: releases the grab. A press without a drag leaves no selection.</summary>
+    /// <summary>
+    /// Left release: releases the grab. A press without a drag leaves no selection. Following resumes only when the viewport
+    /// is at the tail and the cursor is on the last line, so a plain click there keeps following.
+    /// </summary>
     private void EndDrag()
     {
+        Revalidate();
         StopDrag();
         if (_selection is { LineMode: false } s && s.Anchor == s.Active)
         {
             _selection = null;
+        }
+
+        if (_selection is null && _buffer is not null)
+        {
+            Geometry geometry = Measure(_buffer);
+            if (geometry.Total > 0)
+            {
+                _following = CursorLine(geometry) == geometry.Last && TopPosition(geometry) == geometry.MaxTop;
+            }
         }
 
         SetNeedsDraw();
@@ -574,6 +717,7 @@ internal sealed class OutputView : View
             return false;
         }
 
+        Revalidate();
         if (_selection is { } s)
         {
             SelectionRange range = SelectionRange.Between(s.Anchor, s.Active, s.LineMode);
@@ -703,7 +847,7 @@ internal sealed class OutputView : View
                 runStart = offset;
             }
 
-            run.Append(cell.Rune.ToString());
+            run.Append(cell.Text);
             drawn = offset + cell.Width;
         }
 

@@ -91,4 +91,24 @@ public sealed class TextWrapTests
             text.Replace(" ", string.Empty),
             string.Concat(lines).Replace(" ", string.Empty));
     }
+
+    [Fact]
+    public void Truncate_keeps_a_combining_mark_with_its_base()
+    {
+        // "e" with U+0301 is one column; the cut lands after "x" and the ellipsis takes the last column.
+        Assert.Equal("éx…", TextWidth.Truncate("éxyz", 3));
+        Assert.Equal("éxyz", TextWidth.Truncate("éxyz", 4));
+    }
+
+    [Fact]
+    public void Columns_counts_each_grapheme_once()
+    {
+        Assert.Equal(4, TextWidth.Columns("éx日"));
+    }
+
+    [Fact]
+    public void Wrap_keeps_a_combining_mark_with_its_base_at_a_break()
+    {
+        Assert.Equal(new[] { "ab", "éc" }, TextWidth.Wrap("ab éc", 2));
+    }
 }

@@ -6,6 +6,8 @@ namespace Cmdr.Core.Output;
 /// Turns a stream of text chunks, possibly containing ANSI escape sequences, into <see cref="OutputLine"/>s.
 /// SGR sequences are applied to the style of subsequent text; all other escape sequences are dropped.
 /// Escape sequences may be split across chunks at any character.
+/// A tab pads with spaces to the next multiple of eight display columns (see <see cref="DisplayWidth"/>), so wide
+/// characters and combining marks count as the terminal draws them.
 /// </summary>
 /// <remarks>Not thread-safe. Use one instance per stream.</remarks>
 public sealed class AnsiLineParser
@@ -27,13 +29,25 @@ public sealed class AnsiLineParser
         StringEscape,
     }
 
-    private readonly record struct Run(int Start, SpanStyle Style);
+    private const int InitialCapacity = 64;
+    private const int InitialRunCapacity = 4;
 
     private readonly OutputSource _source;
     private readonly int _maxLineLength;
-    private readonly StringBuilder _text = new();
-    private readonly List<Run> _runs = new();
     private readonly StringBuilder _csiParams = new();
+
+    // The current line: _chars[0.._length) and _runs[0.._runCount) (run start index and style).
+    private char[] _chars = new char[InitialCapacity];
+    private int _length;
+    private (int Start, SpanStyle Style)[] _runs = new (int Start, SpanStyle Style)[InitialRunCapacity];
+    private int _runCount;
+
+    // Published snapshots (partial lines) may share _chars and _runs. They cover [0.._publishedLength) and
+    // [0.._publishedRuns). Writing below those indices first moves to fresh arrays (see EnsureWritable), so a snapshot
+    // never changes. Pure appends past them need no copy.
+    private bool _shared;
+    private int _publishedLength;
+    private int _publishedRuns;
 
     private SpanStyle _style = SpanStyle.Default;
     private State _state = State.Normal;
@@ -41,6 +55,11 @@ public sealed class AnsiLineParser
     private bool _overwritePending;
     private bool _csiHasIntermediate;
     private bool _csiOverflow;
+
+    // An already-measured prefix of the current line, so that tabs do not re-measure the whole line. Always 0/0 or a point
+    // just after tab spaces, and reset whenever the line is cleared or shortened below it.
+    private int _widthCheckpointLength;
+    private int _widthCheckpointColumns;
 
     /// <summary>Creates a parser for one output stream.</summary>
     /// <param name="source">The source tagged on every line this parser produces.</param>
@@ -53,8 +72,25 @@ public sealed class AnsiLineParser
         _maxLineLength = maxLineLength;
     }
 
-    /// <summary>The current incomplete line, or null if it is empty.</summary>
-    public OutputLine? Partial => _text.Length == 0 ? null : BuildLine();
+    /// <summary>
+    /// The current incomplete line, or null if it is empty. Taking it does not copy the text: the line's spans and text are
+    /// built when first read, and later writes to this parser never change what a returned line shows.
+    /// </summary>
+    public OutputLine? Partial
+    {
+        get
+        {
+            if (_length == 0)
+            {
+                return null;
+            }
+
+            _shared = true;
+            _publishedLength = Math.Max(_publishedLength, _length);
+            _publishedRuns = Math.Max(_publishedRuns, _runCount);
+            return OutputLine.FromPartial(_source, _chars, _length, _runs, _runCount);
+        }
+    }
 
     /// <summary>
     /// Parses <paramref name="chunk"/>, appending each completed line to <paramref name="completed"/>.
@@ -84,7 +120,7 @@ public sealed class AnsiLineParser
         _state = State.Normal;
         ResetCsi();
 
-        if (_text.Length > 0)
+        if (_length > 0)
         {
             CompleteLine(completed);
         }
@@ -151,12 +187,7 @@ public sealed class AnsiLineParser
                 return;
             case '\t':
                 ClearPendingOverwrite();
-                int spaces = 8 - (_text.Length % 8);
-                for (int i = 0; i < spaces; i++)
-                {
-                    AppendChar(' ', completed);
-                }
-
+                AppendTab(completed);
                 return;
             case '\b':
                 Backspace();
@@ -537,16 +568,64 @@ public sealed class AnsiLineParser
 
     private void Backspace()
     {
-        if (_overwritePending || _text.Length == 0)
+        if (_overwritePending || _length == 0)
         {
             return;
         }
 
-        int removeLength = _text.Length >= 2 && char.IsLowSurrogate(_text[^1]) && char.IsHighSurrogate(_text[^2]) ? 2 : 1;
-        _text.Length -= removeLength;
-        while (_runs.Count > 0 && _runs[^1].Start >= _text.Length)
+        int removeLength = _length >= 2 && char.IsLowSurrogate(_chars[_length - 1]) && char.IsHighSurrogate(_chars[_length - 2]) ? 2 : 1;
+        _length -= removeLength;
+        DropRunsFromLength();
+
+        ResetWidthCheckpointIfAbove();
+    }
+
+    /// <summary>
+    /// Pads to the next tab stop: the next multiple of eight display columns. The width of the text before the tab is
+    /// found from the checkpoint, so only text appended since the previous tab is measured.
+    /// </summary>
+    private void AppendTab(List<OutputLine> completed)
+    {
+        int columns = MeasureLineColumns();
+        int spaces = 8 - (columns % 8);
+
+        int completedBefore = completed.Count;
+        for (int i = 0; i < spaces; i++)
         {
-            _runs.RemoveAt(_runs.Count - 1);
+            AppendChar(' ', completed);
+        }
+
+        // A forced break in the middle of the spaces leaves only the spaces written after it on the current line.
+        // Otherwise the line holds the measured text plus the spaces. Each space is one column.
+        bool broke = completed.Count != completedBefore;
+        SetWidthCheckpoint(_length, broke ? _length : columns + spaces);
+    }
+
+    /// <summary>Display columns of the current line. Measures only the text after the checkpoint, then moves the checkpoint to the end.</summary>
+    private int MeasureLineColumns()
+    {
+        int length = _length;
+        int columns = _widthCheckpointColumns;
+        if (length > _widthCheckpointLength)
+        {
+            columns += DisplayWidth.Of(new ReadOnlySpan<char>(_chars, _widthCheckpointLength, length - _widthCheckpointLength));
+        }
+
+        SetWidthCheckpoint(length, columns);
+        return columns;
+    }
+
+    private void SetWidthCheckpoint(int length, int columns)
+    {
+        _widthCheckpointLength = length;
+        _widthCheckpointColumns = columns;
+    }
+
+    private void ResetWidthCheckpointIfAbove()
+    {
+        if (_widthCheckpointLength > _length)
+        {
+            SetWidthCheckpoint(0, 0);
         }
     }
 
@@ -554,17 +633,16 @@ public sealed class AnsiLineParser
     {
         ClearPendingOverwrite();
 
-        bool completesPair = char.IsLowSurrogate(c) && _text.Length > 0 && char.IsHighSurrogate(_text[^1]);
-        if (completesPair && _text.Length > 1 && _text.Length >= _maxLineLength)
+        bool completesPair = char.IsLowSurrogate(c) && _length > 0 && char.IsHighSurrogate(_chars[_length - 1]);
+        if (completesPair && _length > 1 && _length >= _maxLineLength)
         {
-            SpanStyle pairStyle = _runs[^1].Style;
+            SpanStyle pairStyle = _runs[_runCount - 1].Style;
             SpanStyle currentStyle = _style;
-            char high = _text[^1];
-            _text.Length--;
-            while (_runs.Count > 0 && _runs[^1].Start >= _text.Length)
-            {
-                _runs.RemoveAt(_runs.Count - 1);
-            }
+            char high = _chars[_length - 1];
+            _length--;
+            DropRunsFromLength();
+
+            ResetWidthCheckpointIfAbove();
 
             CompleteLine(completed);
             _style = pairStyle;
@@ -574,18 +652,73 @@ public sealed class AnsiLineParser
 
         // The line is completed before a character that would exceed the limit, so a line of exactly
         // maxLineLength characters followed by a newline yields one line.
-        completesPair = char.IsLowSurrogate(c) && _text.Length > 0 && char.IsHighSurrogate(_text[^1]);
-        if (_text.Length >= _maxLineLength && !completesPair)
+        completesPair = char.IsLowSurrogate(c) && _length > 0 && char.IsHighSurrogate(_chars[_length - 1]);
+        if (_length >= _maxLineLength && !completesPair)
         {
             CompleteLine(completed);
         }
 
-        if (_runs.Count == 0 || _runs[^1].Style != _style)
+        EnsureWritable();
+        if (_length == _chars.Length)
         {
-            _runs.Add(new Run(_text.Length, _style));
+            Replace(_chars.Length * 2, _runs.Length);
         }
 
-        _text.Append(c);
+        if (_runCount == 0 || _runs[_runCount - 1].Style != _style)
+        {
+            AddRun(_length, _style);
+        }
+
+        _chars[_length++] = c;
+    }
+
+    /// <summary>Removes runs that start at or after the current length (their text was removed).</summary>
+    private void DropRunsFromLength()
+    {
+        while (_runCount > 0 && _runs[_runCount - 1].Start >= _length)
+        {
+            _runCount--;
+        }
+    }
+
+    private void AddRun(int start, SpanStyle style)
+    {
+        if (_runCount == _runs.Length)
+        {
+            Replace(_chars.Length, _runs.Length * 2);
+        }
+
+        _runs[_runCount++] = (start, style);
+    }
+
+    /// <summary>
+    /// Called before writing at <see cref="_length"/> or <see cref="_runCount"/>. If a published snapshot covers that index,
+    /// the kept prefix moves to fresh arrays first, so the snapshot keeps its text.
+    /// </summary>
+    private void EnsureWritable()
+    {
+        if (_shared && (_length < _publishedLength || _runCount < _publishedRuns))
+        {
+            Replace(_chars.Length, _runs.Length);
+        }
+    }
+
+    /// <summary>
+    /// Copies the kept prefix of the current line into new arrays of the given capacities. The old arrays are left as they
+    /// are, so any snapshot referring to them is unaffected.
+    /// </summary>
+    private void Replace(int charCapacity, int runCapacity)
+    {
+        var chars = new char[charCapacity];
+        Array.Copy(_chars, chars, _length);
+        var runs = new (int Start, SpanStyle Style)[runCapacity];
+        Array.Copy(_runs, runs, _runCount);
+
+        _chars = chars;
+        _runs = runs;
+        _shared = false;
+        _publishedLength = 0;
+        _publishedRuns = 0;
     }
 
     /// <summary>Applies a pending bare CR: the existing content is discarded when new content is written.</summary>
@@ -600,8 +733,15 @@ public sealed class AnsiLineParser
 
     private void ClearLine()
     {
-        _text.Clear();
-        _runs.Clear();
+        _length = 0;
+        _runCount = 0;
+        if (_shared)
+        {
+            // The published arrays keep their text; the parser continues in fresh ones.
+            Replace(InitialCapacity, InitialRunCapacity);
+        }
+
+        SetWidthCheckpoint(0, 0);
     }
 
     private void CompleteLine(List<OutputLine> completed)
@@ -613,12 +753,12 @@ public sealed class AnsiLineParser
 
     private OutputLine BuildLine()
     {
-        var spans = new StyledSpan[_runs.Count];
-        for (int i = 0; i < _runs.Count; i++)
+        var spans = new StyledSpan[_runCount];
+        for (int i = 0; i < _runCount; i++)
         {
             int start = _runs[i].Start;
-            int end = i + 1 < _runs.Count ? _runs[i + 1].Start : _text.Length;
-            spans[i] = new StyledSpan(_text.ToString(start, end - start), _runs[i].Style);
+            int end = i + 1 < _runCount ? _runs[i + 1].Start : _length;
+            spans[i] = new StyledSpan(new string(_chars, start, end - start), _runs[i].Style);
         }
 
         return new OutputLine(_source, spans);

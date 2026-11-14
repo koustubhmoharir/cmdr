@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Cmdr.Core.Output;
 using static Cmdr.Core.Tests.Output.OutputTestHelpers;
 
@@ -690,5 +691,250 @@ public class AnsiLineParserTests
     public void ConstructorRejectsNonPositiveMaxLength()
     {
         Assert.Throws<ArgumentOutOfRangeException>(() => new AnsiLineParser(OutputSource.StdOut, 0));
+    }
+
+    [Theory]
+    [InlineData("ab\tX\n", 8, 6)]
+    [InlineData("日\tX\n", 8, 6)]
+    [InlineData("\U0001F600\tX\n", 8, 6)]
+    [InlineData("e\u0301\tX\n", 8, 7)]
+    [InlineData("12345678\tX\n", 16, 8)]
+    [InlineData("abc\rd\tX\n", 8, 7)]
+    [InlineData("日日\b\tX\n", 8, 6)]
+    public void TabStopIsMeasuredInDisplayColumns(string input, int expectedColumn, int expectedSpaces)
+    {
+        (int column, int spaces) = TabStop(input);
+        Assert.Equal(expectedColumn, column);
+        Assert.Equal(expectedSpaces, spaces);
+    }
+
+    [Fact]
+    public void ConsecutiveTabsStopEveryEightColumns()
+    {
+        string text = Texts(Parse("\t\t\t\tX\n"))[0];
+        Assert.Equal(32, DisplayWidth.Of(text[..^1]));
+        Assert.Equal('X', text[^1]);
+    }
+
+    [Fact]
+    public void TabAfterWideCharactersAcrossChunksKeepsColumn()
+    {
+        List<OutputLine> lines = Parse("日", "日", "\t", "X\n");
+        Assert.Equal(new[] { "日日    X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void TabAfterForcedBreakInsideSpacesStaysConsistent()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 6);
+        var lines = new List<OutputLine>();
+        parser.Feed("abcd\tX\tY", lines);
+        parser.Flush(lines);
+        Assert.Equal(new[] { "abcd  ", "  X   ", "  Y" }, Texts(lines));
+    }
+
+    [Theory]
+    [InlineData("ab\tX\n")]
+    [InlineData("日\tX\tY\n")]
+    [InlineData("\U0001F600\tX\n")]
+    [InlineData("e\u0301\tX\t\tY\n")]
+    [InlineData("abc\rd\tX\n")]
+    [InlineData("日日\b\tX\n")]
+    [InlineData("\t\t\t\tX\n")]
+    public void TabsSplitAtEveryPositionGiveSameResult(string input)
+    {
+        string[] expected = Describe(Parse(input));
+        for (int split = 0; split <= input.Length; split++)
+        {
+            Assert.Equal(expected, Describe(Parse(input[..split], input[split..])));
+        }
+    }
+
+    /// <summary>What the eager path gives for the same input: the completed line built by <c>BuildLine</c>.</summary>
+    private static string[] EagerDescription(string input) => Describe(Parse(input + "\n"));
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedByLaterAppends()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var sink = new List<OutputLine>();
+        parser.Feed("abc", sink);
+        OutputLine? first = parser.Partial;
+
+        parser.Feed("def", sink);
+
+        Assert.Equal("abc", first!.PlainText);
+        Assert.Equal("abcdef", parser.Partial!.PlainText);
+        Assert.Empty(sink);
+    }
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedByBackspaceAndRewrite()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var sink = new List<OutputLine>();
+        parser.Feed("\u001b[31mab\u001b[0mc", sink);
+        OutputLine? before = parser.Partial;
+        string[] expected = EagerDescription("\u001b[31mab\u001b[0mc");
+
+        parser.Feed("\b\b\b\u001b[32mZ", sink);
+
+        Assert.Equal(expected, Describe(new[] { before! }));
+        Assert.Equal(new[] { "Z" }, Texts(new[] { parser.Partial! }));
+        Assert.Equal(EagerDescription("\u001b[32mZ"), Describe(new[] { parser.Partial! }));
+    }
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedByCarriageReturnOverwrite()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var sink = new List<OutputLine>();
+        parser.Feed("abc", sink);
+        OutputLine? before = parser.Partial;
+
+        // The old text stays visible until new content arrives.
+        parser.Feed("\r", sink);
+        Assert.Equal("abc", parser.Partial!.PlainText);
+
+        parser.Feed("xy", sink);
+
+        Assert.Equal("abc", before!.PlainText);
+        Assert.Equal("xy", parser.Partial!.PlainText);
+        Assert.Empty(sink);
+    }
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedByForcedBreakAtMaxLength()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var sink = new List<OutputLine>();
+        parser.Feed("abcd", sink);
+        OutputLine? before = parser.Partial;
+
+        parser.Feed("e", sink);
+
+        Assert.Equal("abcd", before!.PlainText);
+        Assert.Equal(new[] { "abcd" }, Texts(sink));
+        Assert.Equal("e", parser.Partial!.PlainText);
+    }
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedByForcedBreakThatSplitsSurrogatePair()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 3);
+        var sink = new List<OutputLine>();
+        parser.Feed("ab\uD83D", sink);
+        OutputLine? before = parser.Partial;
+
+        parser.Feed("\uDE00", sink);
+
+        Assert.Equal("ab\uD83D", before!.PlainText);
+        Assert.Equal(new[] { "ab" }, Texts(sink));
+        Assert.Equal("\uD83D\uDE00", parser.Partial!.PlainText);
+    }
+
+    [Fact]
+    public void PartialSnapshotIsUnchangedWhenLineCompletes()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var sink = new List<OutputLine>();
+        parser.Feed("\u001b[1mbold\u001b[0m plain", sink);
+        OutputLine? before = parser.Partial;
+        string[] expected = EagerDescription("\u001b[1mbold\u001b[0m plain");
+
+        parser.Feed("\nnext", sink);
+
+        Assert.Equal(expected, Describe(new[] { before! }));
+        Assert.Equal(expected, Describe(sink));
+        Assert.Equal("next", parser.Partial!.PlainText);
+    }
+
+    [Fact]
+    public void PartialSnapshotMatchesEagerPathForStyledInput()
+    {
+        const string input = "\u001b[31mred\u001b[0m \u001b[1;4mbold\u001b[22;24m \u001b[38;2;1;2;3mrgb\u001b[0m\tTAB\u001b[7m\u001b[41mX";
+        string[] expected = EagerDescription(input);
+
+        // Fed one character at a time, with a snapshot taken after every character.
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var sink = new List<OutputLine>();
+        OutputLine? last = null;
+        foreach (char c in input)
+        {
+            parser.Feed(c.ToString(), sink);
+            last = parser.Partial;
+        }
+
+        Assert.Empty(sink);
+        Assert.Equal(expected, Describe(new[] { last! }));
+    }
+
+    [Fact]
+    public void ConcurrentReadersSeeConsistentPartialSnapshots()
+    {
+        const int count = 4000;
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 1_000_000);
+        var published = new ConcurrentQueue<(int Length, OutputLine Line)>();
+
+        Task writer = Task.Run(() =>
+        {
+            var sink = new List<OutputLine>();
+            for (int i = 1; i <= count; i++)
+            {
+                parser.Feed("a", sink);
+                published.Enqueue((i, parser.Partial!));
+            }
+        });
+
+        var seen = new List<(int Length, OutputLine Line)>();
+        Task reader = Task.Run(() =>
+        {
+            while (true)
+            {
+                if (published.TryDequeue(out var item))
+                {
+                    CheckSnapshot(item.Length, item.Line);
+                    seen.Add(item);
+                }
+                else if (writer.IsCompleted && published.IsEmpty)
+                {
+                    // Checked in this order, so nothing enqueued before the writer finished is missed.
+                    break;
+                }
+                else
+                {
+                    Thread.Yield();
+                }
+            }
+        });
+
+        Assert.True(Task.WhenAll(writer, reader).Wait(TimeSpan.FromSeconds(10)), "readers or writer did not finish");
+
+        // A second pass over everything read, now that the writer has finished.
+        foreach (var (length, line) in seen)
+        {
+            CheckSnapshot(length, line);
+        }
+
+        Assert.Equal(count, seen.Count);
+    }
+
+    private static void CheckSnapshot(int length, OutputLine line)
+    {
+        string text = line.PlainText;
+        Assert.Equal(length, text.Length);
+        Assert.Equal(-1, text.AsSpan().IndexOfAnyExcept('a'));
+        Assert.Equal(text, string.Concat(line.Spans.Select(s => s.Text)));
+    }
+
+    /// <summary>The display column where the 'X' after the single tab starts, and the number of spaces the tab wrote.</summary>
+    private static (int Column, int Spaces) TabStop(string input)
+    {
+        string text = Texts(Parse(input))[0];
+        int x = text.IndexOf('X', StringComparison.Ordinal);
+        Assert.True(x >= 0);
+        string before = text[..x];
+        int spaces = before.Length - before.TrimEnd(' ').Length;
+        return (DisplayWidth.Of(before), spaces);
     }
 }

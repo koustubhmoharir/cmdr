@@ -37,6 +37,26 @@ public class CommandOutputTests : IDisposable
     }
 
     [Fact]
+    public void LongPartialLineWrittenInTinyChunksAllocatesLinearly()
+    {
+        const int length = 32_768;
+        _output.BeginRun(Start);
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < length; i++)
+        {
+            _output.WriteStdOut("a");
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        // Copying the whole partial line on every chunk allocated about 1 GB here.
+        Assert.True(allocated < 32 * 1024 * 1024, $"allocated {allocated} bytes");
+        IReadOnlyList<OutputLine> lines = _output.Buffer.GetLines(0, _output.Buffer.Count);
+        Assert.Equal(new string('a', length), lines[^1].PlainText);
+    }
+
+    [Fact]
     public void BeginRunAppendsStartedMarkerAsSystemLine()
     {
         _output.BeginRun(Start);

@@ -1,33 +1,56 @@
+using System.Globalization;
 using System.Text;
-using Terminal.Gui.Text;
+using Cmdr.Core.Output;
 
 namespace Cmdr.Tui;
 
 /// <summary>A wrapped line of styled spans: its UTF-16 range <c>[Start, End)</c> in the cleaned plain text, and its spans.</summary>
 internal sealed record WrappedSpans<T>(int Start, int End, IReadOnlyList<(string Text, T Style)> Spans);
 
-/// <summary>Column-based text measuring and fitting. Widths follow Terminal.Gui's rune widths, so wide characters count as two columns.</summary>
+/// <summary>
+/// Column-based text measuring and fitting. Text is measured and cut by grapheme cluster (see <see cref="Graphemes"/>), so a
+/// base character with its combining marks, or an emoji sequence, is one unit that is never split. Widths come from
+/// <see cref="DisplayWidth"/>, which the UI sets to Terminal.Gui's measure.
+/// </summary>
 internal static class TextWidth
 {
     private const char Ellipsis = '…';
 
-    /// <summary>Number of terminal columns the text occupies. Control characters count as one column each.</summary>
+    /// <summary>
+    /// The grapheme clusters of <paramref name="text"/>, in order: the UTF-16 offset and length of each, and its display width
+    /// (see <see cref="WidthOf"/>). Zero-width graphemes are included, with width 0.
+    /// </summary>
+    public static IEnumerable<(int Offset, int Length, int Width)> Graphemes(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        int offset = 0;
+        while (offset < text.Length)
+        {
+            int length = StringInfo.GetNextTextElementLength(text.AsSpan(offset));
+            yield return (offset, length, WidthOf(text.AsSpan(offset, length)));
+            offset += length;
+        }
+    }
+
+    /// <summary>
+    /// The width of one grapheme: 1 when it starts with a control character (the control character is drawn as a space), and
+    /// otherwise <see cref="DisplayWidth.OfGrapheme"/>. Zero-width graphemes give 0.
+    /// </summary>
+    public static int WidthOf(ReadOnlySpan<char> grapheme) =>
+        !grapheme.IsEmpty && char.IsControl(grapheme[0]) ? 1 : DisplayWidth.OfGrapheme(grapheme);
+
+    /// <summary>Number of terminal columns the text occupies, after <see cref="Clean"/>. Control characters count as one column each.</summary>
     public static int Columns(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        int total = 0;
-        foreach (Rune rune in text.EnumerateRunes())
-        {
-            total += Width(rune);
-        }
-
-        return total;
+        return DisplayWidth.Of(Clean(text));
     }
 
     /// <summary>
     /// The longest prefix of <paramref name="text"/> that fits in <paramref name="width"/> columns. When the text is cut,
-    /// the last column holds an ellipsis. The result is not padded.
+    /// the last column holds an ellipsis. The result is not padded. Zero-width graphemes before the cut are kept.
     /// </summary>
     public static string Truncate(string text, int width)
     {
@@ -39,18 +62,18 @@ internal static class TextWidth
         }
 
         string clean = Clean(text);
-        if (Columns(clean) <= width)
+        if (DisplayWidth.Of(clean) <= width)
         {
             return clean;
         }
 
         var sb = new StringBuilder();
         int used = 0;
-        foreach (Rune rune in clean.EnumerateRunes())
+        foreach ((int offset, int length, int w) in Graphemes(clean))
         {
-            int w = Width(rune);
             if (w == 0)
             {
+                sb.Append(clean, offset, length);
                 continue;
             }
 
@@ -59,7 +82,7 @@ internal static class TextWidth
                 break;
             }
 
-            sb.Append(rune.ToString());
+            sb.Append(clean, offset, length);
             used += w;
         }
 
@@ -93,8 +116,8 @@ internal static class TextWidth
 
     /// <summary>
     /// Wraps the text into lines of at most <paramref name="width"/> columns. A line breaks after the last space that fits, and
-    /// spaces at a break are dropped; a token longer than the width is broken where it does not fit. Control characters become
-    /// spaces. Empty text gives one empty line; a width that is not positive gives no lines.
+    /// spaces at a break are dropped; a token longer than the width is broken where it does not fit, never inside a grapheme.
+    /// Control characters become spaces. Empty text gives one empty line; a width that is not positive gives no lines.
     /// </summary>
     public static IReadOnlyList<string> Wrap(string text, int width)
     {
@@ -116,7 +139,8 @@ internal static class TextWidth
 
     /// <summary>
     /// The breaks of <see cref="WrapSpans{T}"/>, with the range of the cleaned plain text that each line shows: its UTF-16
-    /// offsets <c>[Start, End)</c>. The spaces dropped at a break lie between one line's End and the next line's Start.
+    /// offsets <c>[Start, End)</c>. The spaces dropped at a break lie between one line's End and the next line's Start. A
+    /// grapheme takes the style of its first UTF-16 unit.
     /// </summary>
     internal static List<WrappedSpans<T>> WrapSpanRanges<T>(IReadOnlyList<(string Text, T Style)> spans, int width)
     {
@@ -132,19 +156,19 @@ internal static class TextWidth
             at += text.Length;
         }
 
+        // Segment after cleaning, so a control character is a grapheme of its own (a space).
+        string cleaned = Clean(plain);
         var cells = new List<(string Text, int Width)>();
         var styles = new List<T>();
         var offsets = new List<int>(); // The UTF-16 offset of each cell, then the end of the text.
-        int offset = 0;
-        foreach (Rune rune in Clean(plain).EnumerateRunes())
+        foreach ((int offset, int length, int cellWidth) in Graphemes(cleaned))
         {
-            cells.Add((rune.ToString(), Width(rune)));
+            cells.Add((cleaned.Substring(offset, length), cellWidth));
             styles.Add(styleAt[offset]);
             offsets.Add(offset);
-            offset += rune.Utf16SequenceLength;
         }
 
-        offsets.Add(offset);
+        offsets.Add(cleaned.Length);
 
         var lines = new List<WrappedSpans<T>>();
         foreach ((int start, int end) in WrapRanges(cells, width))
@@ -167,7 +191,7 @@ internal static class TextWidth
     }
 
     /// <summary>
-    /// The breaking rules of <see cref="Wrap(string, int)"/>, on cells (one per rune: its text and its width). Each line is the
+    /// The breaking rules of <see cref="Wrap(string, int)"/>, on cells (one per grapheme: its text and its width). Each line is the
     /// range of cells it holds, <c>[Start, End)</c>; the cells that fall between one line's end and the next line's start are
     /// the spaces dropped at a break. Empty cells give one empty range; a width that is not positive gives none.
     /// </summary>
@@ -238,9 +262,9 @@ internal static class TextWidth
         return ranges;
     }
 
-    /// <summary>The cells of cleaned text: one per rune, with its width.</summary>
+    /// <summary>The cells of cleaned text: one per grapheme, with its text and width.</summary>
     private static List<(string Text, int Width)> Cells(string cleaned) =>
-        cleaned.EnumerateRunes().Select(rune => (rune.ToString(), Width(rune))).ToList();
+        Graphemes(cleaned).Select(g => (cleaned.Substring(g.Offset, g.Length), g.Width)).ToList();
 
     private static string Join(IReadOnlyList<(string Text, int Width)> cells, int start, int end)
     {
@@ -287,7 +311,7 @@ internal static class TextWidth
         return total;
     }
 
-    /// <summary>Replaces control characters with spaces, so they cannot disturb the layout.</summary>
+    /// <summary>Replaces control characters with spaces, so they cannot disturb the layout. Keeps the UTF-16 length.</summary>
     public static string Clean(string text)
     {
         if (text.All(c => !char.IsControl(c)))
@@ -302,15 +326,5 @@ internal static class TextWidth
         }
 
         return sb.ToString();
-    }
-
-    internal static int Width(Rune rune)
-    {
-        if (Rune.IsControl(rune))
-        {
-            return 1;
-        }
-
-        return Math.Max(0, rune.GetColumns());
     }
 }

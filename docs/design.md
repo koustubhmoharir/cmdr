@@ -203,7 +203,17 @@ returns a notice that is written to the output.
   spans, tagged stdout/stderr; partial lines are kept per stream.
 - ANSI parser: SGR (16/256/24-bit colors, bold, dim, italic, underline, inverse, reset) is rendered;
   all other escape sequences (CSI, OSC, etc.) are dropped. Bare `\r` (not followed by `\n`) resets the
-  current line, so progress bars overwrite in place.
+  current line, so progress bars overwrite in place. A tab pads to the next multiple of 8 display columns.
+- Display width (`DisplayWidth`, Core): measured per grapheme cluster (`StringInfo` text element), with a
+  pluggable per-grapheme measure. Core's default is a small table (zero-width marks/format characters,
+  East Asian wide and emoji ranges); the UI assembly's module initializer (`DisplayWidthSetup`) plugs in
+  Terminal.Gui's measure, so tab expansion, wrapping, truncation, selection and drawing all agree with what
+  Terminal.Gui draws. A grapheme is never split. Zero-width graphemes (a lone combining mark) take no
+  column and are not drawn, but stay in the text and in copies.
+- Partial lines: the parser keeps the current line in its own arrays, and a published partial
+  (`OutputLine.FromPartial`) shares them without copying; spans and text are built on first read.
+  Writes below a published length first move the parser to fresh arrays (copy-on-write), so publishing
+  after every chunk is O(1) amortized.
 - Starting a run clears the in-memory buffer (`OutputBuffer.Clear`); every appended line has already been
   queued for the log with its text, so the log keeps all runs.
 - Log file: enabled per command or toggled at runtime; when enabled mid-run the current run's buffer is
@@ -232,8 +242,8 @@ returns a notice that is written to the output.
   back to logical lines (`DetailsText.WrapRows`) so a mouse selection is kept in logical coordinates
   (survives the once-a-second refresh) and copies wrapped lines as one line, restoring the spaces
   dropped at breaks.
-- **Output pane** (`OutputView`): cell wrap like a terminal (`OutputWrap`; nothing dropped, so display
-  columns equal line columns). The scroll position is (line, row within line) (`OutputScroll`); only the
+- **Output pane** (`OutputView`): cell wrap like a terminal (`OutputWrap`, one cell per grapheme, so
+  display columns equal line columns; `RowCount` counts rows without building cells). The scroll position is (line, row within line) (`OutputScroll`); only the
   lines an operation reaches are wrapped. The cursor is a logical line; following shows the last page.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take

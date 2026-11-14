@@ -69,11 +69,127 @@ public sealed class OutputWrapTests
     }
 
     [Fact]
-    public void Zero_width_rune_takes_no_column_and_is_skipped()
+    public void Combining_mark_stays_with_its_base_in_one_cell()
     {
-        // U+0301 (combining acute accent) has no columns of its own.
-        Assert.Equal(new[] { (0, 2) }, OutputWrap.Rows(Line("áb"), 2));
-        Assert.Equal(new[] { 'a', 'b' }, OutputWrap.Cells(Line("áb")).Select(cell => cell.Rune.ToString()[0]));
+        // "e" followed by U+0301 (combining acute accent) is one grapheme, so it is one cell.
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("éx"));
+
+        Assert.Equal(new[] { "é", "x" }, cells.Select(cell => cell.Text));
+        Assert.Equal(new[] { 0, 1 }, cells.Select(cell => cell.Column));
+        Assert.Equal(new[] { 1, 1 }, cells.Select(cell => cell.Width));
+        Assert.Equal(new[] { (0, 2) }, OutputWrap.Rows(Line("éx"), 2));
+    }
+
+    [Fact]
+    public void Multiple_combining_marks_stay_in_the_base_cell()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("á̂b"));
+
+        Assert.Equal(new[] { "á̂", "b" }, cells.Select(cell => cell.Text));
+        Assert.Equal(new[] { 0, 1 }, cells.Select(cell => cell.Column));
+    }
+
+    [Fact]
+    public void Combining_mark_at_a_wrap_boundary_stays_with_its_base_on_the_same_row()
+    {
+        // "abc" fills the row of width 3; the base "d" with its mark starts the next row whole.
+        OutputLine line = Line("abcd́");
+
+        Assert.Equal(new[] { (0, 3), (3, 4) }, OutputWrap.Rows(line, 3));
+        Assert.Equal("d́", OutputWrap.Cells(line)[3].Text);
+        Assert.Equal(2, OutputWrap.RowCount(line, 3));
+    }
+
+    [Fact]
+    public void Combining_mark_in_the_next_span_joins_its_base_cell_and_takes_the_base_span()
+    {
+        var line = new OutputLine(
+            OutputSource.StdOut,
+            new[]
+            {
+                new StyledSpan("e", SpanStyle.Default),
+                new StyledSpan("́x", new SpanStyle(AnsiColor.Default, AnsiColor.Default, TextAttrs.Bold)),
+            });
+
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(line);
+
+        Assert.Equal(new[] { "é", "x" }, cells.Select(cell => cell.Text));
+        Assert.Equal(new[] { 0, 1 }, cells.Select(cell => cell.Span));
+        Assert.Equal(new[] { 0, 1 }, cells.Select(cell => cell.Column));
+    }
+
+    [Fact]
+    public void Leading_combining_mark_gives_no_cell_and_the_plain_text_is_unchanged()
+    {
+        OutputLine line = Line("́a");
+
+        Assert.Equal("́a", line.PlainText);
+        Assert.Equal(new[] { "a" }, OutputWrap.Cells(line).Select(cell => cell.Text));
+        Assert.Equal(0, OutputWrap.Cells(line)[0].Column);
+        Assert.Equal(new[] { (0, 1) }, OutputWrap.Rows(line, 5));
+    }
+
+    [Fact]
+    public void Zwj_family_emoji_is_one_cell_with_the_width_of_its_grapheme()
+    {
+        const string family = "\U0001F468‍\U0001F469‍\U0001F467";
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line(family + "x"));
+
+        Assert.Equal(2, cells.Count);
+        Assert.Equal(family, cells[0].Text);
+        Assert.Equal(0, cells[0].Column);
+        Assert.Equal(DisplayWidth.OfGrapheme(family), cells[0].Width);
+        Assert.Equal(cells[0].Width, cells[1].Column);
+    }
+
+    [Fact]
+    public void Control_character_grapheme_is_a_space_of_width_one()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("a\tb"));
+
+        Assert.Equal(new[] { "a", " ", "b" }, cells.Select(cell => cell.Text));
+        Assert.Equal(new[] { 1, 1, 1 }, cells.Select(cell => cell.Width));
+    }
+
+    [Fact]
+    public void RowCount_equals_the_number_of_rows_for_every_width()
+    {
+        OutputLine[] lines =
+        {
+            Line("hello world, this is ascii text"),
+            Line("日本語 テキスト 日本"),
+            Line("éâ x́y", "z̈̈w"),
+            Line("\U0001F468‍\U0001F469‍\U0001F467 ok \U0001F600\U0001F600"),
+            Line("a\tb\u0001c\rd"),
+            Line("́lead and 日́x"),
+            Line("각 🇯🇵"),
+            Line(""),
+            Line(),
+        };
+
+        foreach (OutputLine line in lines)
+        {
+            for (int width = 1; width <= 12; width++)
+            {
+                Assert.Equal(OutputWrap.Rows(line, width).Count, OutputWrap.RowCount(line, width));
+            }
+        }
+    }
+
+    [Fact]
+    public void RowCount_does_not_allocate_per_cell_or_row()
+    {
+        OutputLine line = Line(new string('a', 65_536));
+        OutputWrap.RowCount(line, 80); // Warm up.
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        for (int i = 0; i < 10; i++)
+        {
+            OutputWrap.RowCount(line, 80);
+        }
+
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(allocated < 1024, $"RowCount allocated {allocated} bytes over 10 calls");
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using Cmdr.Core.Output;
 using Cmdr.Tui;
 
 namespace Cmdr.Tests;
@@ -126,5 +127,25 @@ public sealed class SelectionTextTests
         Assert.False(chars.Covers(3, 0, 1));
         Assert.True(lines.Covers(2, 50, 1));
         Assert.False(lines.Covers(0, 0, 1));
+    }
+
+
+    [Fact]
+    public void Slice_keeps_a_combining_mark_with_its_base()
+    {
+        // The mark belongs to the "e" cell, so the first column selects "e" with its mark.
+        Assert.Equal("é", SelectionText.Slice("éx", 0, 0));
+        Assert.Equal("x", SelectionText.Slice("éx", 1, 1));
+        Assert.Equal("éx", SelectionText.Slice("éx", 0, 5));
+    }
+
+    [Fact]
+    public void Slice_keeps_a_zwj_emoji_whole()
+    {
+        const string family = "\U0001F468‍\U0001F469‍\U0001F467";
+        int width = DisplayWidth.OfGrapheme(family);
+
+        Assert.Equal(family, SelectionText.Slice(family + "x", width - 1, width - 1));
+        Assert.Equal("x", SelectionText.Slice(family + "x", width, width));
     }
 }

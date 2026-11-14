@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace Cmdr.Tui;
@@ -97,8 +98,9 @@ internal static class DetailsSelection
         int offset = row.Start;
         while (offset < row.End)
         {
-            (Rune rune, int length) = RuneAt(text, offset);
-            int width = TextWidth.Width(rune);
+            // The row starts and ends on grapheme boundaries, so the grapheme at offset is whole within the row.
+            int length = StringInfo.GetNextTextElementLength(text.AsSpan(offset, row.End - offset));
+            int width = TextWidth.WidthOf(text.AsSpan(offset, length));
             if (target < cells + width)
             {
                 bool before = (target - cells) * 2 < width;
