@@ -128,6 +128,16 @@ public class StatusFormatterTests
     }
 
     [Fact]
+    public void Exited_WithUnknownLeftoverCount_IsWarningWithQuestionMark()
+    {
+        ProcessSnapshot snapshot = Snap(ProcessState.Exited, Started, Started.AddSeconds(5), exitCode: 0) with { LeftoverCountUnknown = true };
+
+        StatusText text = StatusFormatter.Format(snapshot, queued: false, Started.AddMinutes(1));
+
+        Assert.Equal(new StatusText("⚠", StatusKind.Warning, LocalStart, "exit 0 · ? left"), text);
+    }
+
+    [Fact]
     public void Exited_ZeroCode_IsSuccessWithRuntime()
     {
         ProcessSnapshot snapshot = Snap(ProcessState.Exited, Started, Started.AddSeconds(5), exitCode: 0);

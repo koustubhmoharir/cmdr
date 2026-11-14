@@ -5,10 +5,10 @@ namespace Cmdr.Tests;
 
 public sealed class EnterHintTests
 {
-    private static EnterTarget Startable() => new(ProcessState.NotStarted, 0, CanStart: true);
-    private static EnterTarget Running() => new(ProcessState.Running, 0, CanStart: false);
-    private static EnterTarget Stopping() => new(ProcessState.Stopping, 0, CanStart: false);
-    private static EnterTarget ExitedWithLeftovers() => new(ProcessState.Exited, 2, CanStart: false);
+    private static EnterTarget Startable() => new(ProcessState.NotStarted, false, CanStart: true);
+    private static EnterTarget Running() => new(ProcessState.Running, false, CanStart: false);
+    private static EnterTarget Stopping() => new(ProcessState.Stopping, false, CanStart: false);
+    private static EnterTarget ExitedWithLeftovers() => new(ProcessState.Exited, true, CanStart: false);
 
     [Fact]
     public void Startable_targets_say_Start()
@@ -32,7 +32,7 @@ public sealed class EnterHintTests
     [Fact]
     public void Exited_without_leftovers_can_be_started()
     {
-        var exited = new EnterTarget(ProcessState.Exited, 0, CanStart: true);
+        var exited = new EnterTarget(ProcessState.Exited, false, CanStart: true);
 
         Assert.Equal("Start", EnterHint.Describe(new[] { exited }, sequenceBlocksStart: false));
     }

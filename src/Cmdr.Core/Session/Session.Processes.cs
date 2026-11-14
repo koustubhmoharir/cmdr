@@ -1276,7 +1276,7 @@ public sealed partial class Session
     private static bool IsKillable(CommandEntry entry)
     {
         ProcessSnapshot snapshot = entry.Process.Snapshot;
-        return snapshot.State == ProcessState.Stopping || (snapshot.State == ProcessState.Exited && snapshot.LeftoverCount > 0);
+        return snapshot.State == ProcessState.Stopping || (snapshot.State == ProcessState.Exited && snapshot.HasLeftovers);
     }
 
     private static bool IsRunningOrStopping(CommandEntry entry)

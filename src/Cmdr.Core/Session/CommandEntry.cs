@@ -43,7 +43,7 @@ public sealed class CommandEntry : ItemEntry
         get
         {
             ProcessSnapshot snapshot = Process.Snapshot;
-            return snapshot.State is ProcessState.Running or ProcessState.Stopping || snapshot.LeftoverCount > 0;
+            return snapshot.State is ProcessState.Running or ProcessState.Stopping || snapshot.HasLeftovers;
         }
     }
 

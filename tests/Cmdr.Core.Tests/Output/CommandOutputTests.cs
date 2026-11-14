@@ -23,7 +23,12 @@ public class CommandOutputTests : IDisposable
 
     private static string Lines(params string[] lines) => string.Concat(lines.Select(l => l + Environment.NewLine));
 
-    private string ReadLog(string path) => File.ReadAllText(path);
+    /// <summary>Reads a log file once the background writers of <paramref name="output"/> (default: the shared one) are idle.</summary>
+    private string ReadLog(string path, CommandOutput? output = null)
+    {
+        Assert.True((output ?? _output).WaitForLogWrites(TimeSpan.FromSeconds(10)), "log writes did not finish");
+        return File.ReadAllText(path);
+    }
 
     [Fact]
     public void ConstructorRejectsNonPositiveBufferSize()
@@ -235,6 +240,7 @@ public class CommandOutputTests : IDisposable
         _output.EnableLog(path);
         _output.WriteStdOut("héllo\n");
         _output.DisableLog();
+        Assert.True(_output.WaitForLogWrites(TimeSpan.FromSeconds(10)));
 
         byte[] bytes = File.ReadAllBytes(path);
         Assert.False(bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF);
@@ -390,7 +396,7 @@ public class CommandOutputTests : IDisposable
         output.EnableLog(path);
         output.DisableLog();
 
-        Assert.Equal(Lines(StartMarker(Start), "3", "4", "5"), ReadLog(path));
+        Assert.Equal(Lines(StartMarker(Start), "3", "4", "5"), ReadLog(path, output));
         output.Dispose();
     }
 
@@ -541,7 +547,7 @@ public class CommandOutputTests : IDisposable
         output.Dispose();
 
         Assert.False(output.IsLogging);
-        Assert.Equal(Lines("kept"), ReadLog(path));
+        Assert.Equal(Lines("kept"), ReadLog(path, output));
     }
 
     [Fact]
@@ -556,7 +562,7 @@ public class CommandOutputTests : IDisposable
     public void ProcessLinesCompleted_ReportsCompletedProcessLinesOnly()
     {
         var notified = new List<OutputLine>();
-        _output.ProcessLinesCompleted += lines => notified.AddRange(lines);
+        _output.ProcessLinesCompleted += (_, lines) => notified.AddRange(lines);
 
         _output.BeginRun(Start);
         _output.WriteStdOut("a\nb");
@@ -573,7 +579,7 @@ public class CommandOutputTests : IDisposable
     public void ProcessLinesCompleted_ReportsPlainTextWithoutAnsi()
     {
         var notified = new List<OutputLine>();
-        _output.ProcessLinesCompleted += lines => notified.AddRange(lines);
+        _output.ProcessLinesCompleted += (_, lines) => notified.AddRange(lines);
 
         _output.WriteStdOut("\u001B[31mred\u001B[0m\n");
 
@@ -585,7 +591,7 @@ public class CommandOutputTests : IDisposable
     {
         int countSeen = -1;
         string? lastSeen = null;
-        _output.ProcessLinesCompleted += lines =>
+        _output.ProcessLinesCompleted += (_, lines) =>
         {
             countSeen = _output.Buffer.Count;
             lastSeen = _output.Buffer.GetLines(_output.Buffer.Count - 1, 1)[0].PlainText;
@@ -602,10 +608,68 @@ public class CommandOutputTests : IDisposable
     public void ProcessLinesCompleted_HandlerMayReadTheOutputWithoutDeadlock()
     {
         bool logging = true;
-        _output.ProcessLinesCompleted += _ => logging = _output.IsLogging;
+        _output.ProcessLinesCompleted += (_, _) => logging = _output.IsLogging;
 
         _output.WriteStdOut("line\n");
 
         Assert.False(logging);
+    }
+
+    [Fact]
+    public void OutputOfAnEarlierRunIsDroppedAfterTheNextRunBegins()
+    {
+        string path = _temp.File("stale.log");
+        _output.EnableLog(path);
+        var notified = new List<(long Run, string Text)>();
+        _output.ProcessLinesCompleted += (run, lines) => notified.AddRange(lines.Select(l => (run, l.PlainText)));
+
+        long first = _output.BeginRun(Start);
+        _output.WriteStdOut(first, "old\npar\u001B[3");
+        _output.EndRun("exit 0");
+
+        // Before the next run begins, the first run's output is still shown, after its end marker.
+        _output.WriteStdErr(first, "late\n");
+
+        var secondStart = Start.AddMinutes(1);
+        long second = _output.BeginRun(secondStart);
+        Assert.NotEqual(first, second);
+        _output.WriteStdOut(second, "new");
+        _output.WriteStdOut(first, "tial\nOLD_READY\n");
+        _output.WriteStdErr(first, "OLD_READY\n");
+        _output.WriteStdOut(second, "\n");
+        _output.DisableLog();
+
+        string[] expected = { StartMarker(secondStart), CommandOutput.StaleOutputNotice, "new" };
+        Assert.Equal(expected, BufferTexts(_output.Buffer));
+        Assert.Equal(new[] { (first, "old"), (first, "late"), (second, "new") }, notified);
+        Assert.Equal(
+            Lines(StartMarker(Start), "old", "par", "=== exit 0 ===", "late", StartMarker(secondStart), CommandOutput.StaleOutputNotice, "new"),
+            ReadLog(path));
+    }
+
+    [Fact]
+    public void StaleOutputNoticeIsWrittenOncePerRun()
+    {
+        long first = _output.BeginRun(Start);
+        long second = _output.BeginRun(Start);
+        _output.WriteStdOut(first, "a\n");
+        _output.WriteStdOut(first, "b\n");
+        Assert.Equal(new[] { StartMarker(Start), CommandOutput.StaleOutputNotice }, BufferTexts(_output.Buffer));
+
+        _output.BeginRun(Start);
+        _output.WriteStdOut(second, "c\n");
+        _output.WriteStdOut(first, "d\n");
+        Assert.Equal(new[] { StartMarker(Start), CommandOutput.StaleOutputNotice }, BufferTexts(_output.Buffer));
+    }
+
+    [Fact]
+    public void ProcessOutputAfterDisposeIsDropped()
+    {
+        long run = _output.BeginRun(Start);
+        _output.Dispose();
+        _output.WriteStdOut(run, "after\n");
+        _output.WriteStdErr("after\n");
+
+        Assert.Equal(new[] { StartMarker(Start) }, BufferTexts(_output.Buffer));
     }
 }

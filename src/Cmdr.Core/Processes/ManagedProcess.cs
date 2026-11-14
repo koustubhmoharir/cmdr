@@ -26,10 +26,9 @@ public sealed class ManagedProcess : IDisposable
     private ProcessSnapshot _snapshot = new(ProcessState.NotStarted, null, null, null, null, null, null, 0);
     private Process? _process;
     private IProcessGroup? _group;
-    private StreamWriter? _stdin;
-    private object? _stdinWriteLock;
-    private Task? _stdOutPump;
-    private Task? _stdErrPump;
+    private RunPipes? _pipes;
+    private readonly List<RunPipes> _livePipes = new();
+    private long _outputRun;
     private TaskCompletionSource? _runExited;
     private StopMethod _stopMethod;
     private string? _stopInput;
@@ -40,6 +39,7 @@ public sealed class ManagedProcess : IDisposable
     private int _runId;
     private ReadinessMatcher? _readiness;
     private Timer? _leftoverTimer;
+    private bool _leftoverDetachPending;
     private bool _disposed;
 
     /// <summary>Creates a supervisor whose output buffer keeps up to <paramref name="bufferLines"/> lines.</summary>
@@ -106,7 +106,7 @@ public sealed class ManagedProcess : IDisposable
             if (!CanStartLocked)
             {
                 throw new InvalidOperationException(
-                    $"Cannot start: state is {_snapshot.State}, {_snapshot.LeftoverCount} leftover process(es) running.");
+                    $"Cannot start: state is {_snapshot.State}, {LeftoverTextLocked()} leftover process(es) running.");
             }
 
             StartLocked(spec);
@@ -145,8 +145,8 @@ public sealed class ManagedProcess : IDisposable
             };
 
             group = _group;
-            stdin = _stdin;
-            stdinWriteLock = _stdinWriteLock;
+            stdin = _pipes?.Stdin;
+            stdinWriteLock = _pipes?.StdinWriteLock;
             input = _stopInput;
             inputAfterInterrupt = _inputAfterInterrupt;
             method = _stopMethod;
@@ -190,7 +190,7 @@ public sealed class ManagedProcess : IDisposable
             }
 
             bool valid = IsActiveLocked
-                || (_snapshot.State == ProcessState.Exited && _snapshot.LeftoverCount > 0);
+                || (_snapshot.State == ProcessState.Exited && _snapshot.HasLeftovers);
             if (!valid)
             {
                 return;
@@ -253,7 +253,7 @@ public sealed class ManagedProcess : IDisposable
             if (!CanStartLocked)
             {
                 throw new InvalidOperationException(
-                    $"Cannot restart: {_snapshot.LeftoverCount} process(es) from the previous run are still running.");
+                    $"Cannot restart: {LeftoverTextLocked()} process(es) from the previous run are still running.");
             }
         }
 
@@ -261,11 +261,13 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Stops the leader/leftover tracking and closes the process handle and output log.
+    /// Stops the leader/leftover tracking, closes the process handle, the redirected pipes of every run (ending their output
+    /// readers) and the output log. Output is no longer written afterwards.
     /// </summary>
     /// <remarks>
-    /// Does not kill anything on Linux. On Windows, disposing the group closes its job object, which kills any processes
-    /// still in it (KILL_ON_JOB_CLOSE); this is intentional.
+    /// Does not kill anything on Linux; a surviving process that writes to a closed pipe gets the usual SIGPIPE or write error.
+    /// On Windows, disposing the group closes its job object, which kills any processes still in it (KILL_ON_JOB_CLOSE); this
+    /// is intentional.
     /// </remarks>
     public void Dispose()
     {
@@ -283,14 +285,30 @@ public sealed class ManagedProcess : IDisposable
             _process = null;
             _group?.Dispose();
             _group = null;
-            _stdin = null;
+            _pipes = null;
             Output.Dispose();
+            foreach (RunPipes pipes in _livePipes)
+            {
+                pipes.Abort();
+            }
+        }
+    }
+
+    /// <summary>Runs whose output readers have not both ended yet. For tests.</summary>
+    internal int LivePipeCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _livePipes.Count;
+            }
         }
     }
 
     private bool CanStartLocked =>
         _snapshot.State is ProcessState.NotStarted or ProcessState.Exited or ProcessState.FailedToStart
-        && _snapshot.LeftoverCount == 0;
+        && !_snapshot.HasLeftovers;
 
     private bool IsActiveLocked => _snapshot.State is ProcessState.Running or ProcessState.Stopping;
 
@@ -300,6 +318,7 @@ public sealed class ManagedProcess : IDisposable
         int runId = ++_runId;
         ReleaseRunResourcesLocked();
         StopLeftoverTimerLocked();
+        _leftoverDetachPending = false;
         _readiness = null;
 
         _stopMethod = spec.StopMethod;
@@ -310,7 +329,8 @@ public sealed class ManagedProcess : IDisposable
         _runExited = null;
 
         DateTimeOffset now = DateTimeOffset.Now;
-        Output.BeginRun(now);
+        long outputRun = Output.BeginRun(now);
+        _outputRun = outputRun;
 
         ReadinessMatcher? readiness = null;
         if (spec.Ready is not null)
@@ -372,16 +392,15 @@ public sealed class ManagedProcess : IDisposable
         _group = group;
         _inputAfterInterrupt = inputAfterInterrupt;
         // Process.StandardInput throws when stdin is not redirected (the Console stdin mode): then there is no writer.
-        _stdin = process.StartInfo.RedirectStandardInput ? process.StandardInput : null;
-        if (_stdin is not null)
+        StreamWriter? stdin = process.StartInfo.RedirectStandardInput ? process.StandardInput : null;
+        if (stdin is not null)
         {
-            _stdin.AutoFlush = true;
-            _stdinWriteLock = new object();
+            stdin.AutoFlush = true;
         }
-        else
-        {
-            _stdinWriteLock = null;
-        }
+
+        var pipes = new RunPipes(outputRun, process.StandardOutput, process.StandardError, stdin);
+        _pipes = pipes;
+        _livePipes.Add(pipes);
 
         _runExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _readiness = readiness;
@@ -399,8 +418,8 @@ public sealed class ManagedProcess : IDisposable
             ReadinessSince: readiness is null ? null : now);
         // The pumps run on the thread pool, never on this thread. A pump's output callbacks take this object's lock, so a pump
         // that read synchronously here would take the output's notify lock while holding this one, against the lock order.
-        _stdOutPump = Task.Run(() => PumpAsync(process.StandardOutput, isStdErr: false));
-        _stdErrPump = Task.Run(() => PumpAsync(process.StandardError, isStdErr: true));
+        pipes.StdOutPump = Task.Run(() => PumpAsync(pipes, pipes.StdOut, isStdErr: false));
+        pipes.StdErrPump = Task.Run(() => PumpAsync(pipes, pipes.StdErr, isStdErr: true));
         if (notice is not null)
         {
             Output.WriteSystem(notice);
@@ -411,12 +430,12 @@ public sealed class ManagedProcess : IDisposable
     /// Applies the readiness patterns to the lines a run just completed. Runs on the pump thread, outside every lock of this
     /// object. Matching happens before taking the lock, so a slow pattern does not hold it.
     /// </summary>
-    private void OnProcessLinesCompleted(IReadOnlyList<OutputLine> lines)
+    private void OnProcessLinesCompleted(long outputRun, IReadOnlyList<OutputLine> lines)
     {
         ReadinessMatcher? matcher;
         lock (_sync)
         {
-            matcher = _readiness;
+            matcher = outputRun == _outputRun ? _readiness : null;
         }
 
         if (matcher is null)
@@ -432,8 +451,9 @@ public sealed class ManagedProcess : IDisposable
 
         lock (_sync)
         {
-            // The matcher check drops lines that belong to an earlier run, which can still be pumped after a new run began.
-            if (_disposed || !ReferenceEquals(matcher, _readiness) || !IsActiveLocked || _snapshot.Readiness == phase)
+            // The run check drops lines of an earlier run, in case a new run began while the lines were being matched.
+            if (_disposed || outputRun != _outputRun || !ReferenceEquals(matcher, _readiness) || !IsActiveLocked
+                || _snapshot.Readiness == phase)
             {
                 return;
             }
@@ -444,37 +464,57 @@ public sealed class ManagedProcess : IDisposable
         RaiseChanged();
     }
 
-    /// <summary>Reads one output stream until EOF, forwarding raw chunks (no line splitting) to <see cref="Output"/>.</summary>
-    private async Task PumpAsync(StreamReader reader, bool isStdErr)
+    /// <summary>
+    /// Reads one output stream of a run until EOF, forwarding raw chunks (no line splitting) to <see cref="Output"/> tagged
+    /// with the run, so the output drops them once a newer run has begun. Keeps reading after that: a process left over from
+    /// the run may still hold the pipe, and closing it would make that process's writes fail. Closes the stream at the end.
+    /// </summary>
+    private async Task PumpAsync(RunPipes pipes, StreamReader reader, bool isStdErr)
     {
         char[] buffer = new char[ReadBufferChars];
+        CancellationToken ct = pipes.Aborted;
         try
         {
             while (true)
             {
-                int read = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false);
-                if (read == 0)
+                int read = await reader.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
+                if (read == 0 || ct.IsCancellationRequested)
                 {
                     break;
                 }
 
                 if (isStdErr)
                 {
-                    Output.WriteStdErr(buffer.AsSpan(0, read));
+                    Output.WriteStdErr(pipes.OutputRun, buffer.AsSpan(0, read));
                 }
                 else
                 {
-                    Output.WriteStdOut(buffer.AsSpan(0, read));
+                    Output.WriteStdOut(pipes.OutputRun, buffer.AsSpan(0, read));
                 }
             }
         }
         catch (IOException)
         {
-            // The pipe was closed (process disposed or killed). Nothing more to read.
+            // The pipe broke. Nothing more to read.
         }
         catch (ObjectDisposedException)
         {
-            // The process handle was disposed while reading.
+            // The stream was closed by Dispose while reading.
+        }
+        catch (OperationCanceledException)
+        {
+            // Dispose aborted the read.
+        }
+        finally
+        {
+            reader.Dispose();
+            if (pipes.PumpFinished())
+            {
+                lock (_sync)
+                {
+                    _livePipes.Remove(pipes);
+                }
+            }
         }
     }
 
@@ -491,8 +531,8 @@ public sealed class ManagedProcess : IDisposable
                 return;
             }
 
-            stdOut = _stdOutPump;
-            stdErr = _stdErrPump;
+            stdOut = _pipes?.StdOutPump;
+            stdErr = _pipes?.StdErrPump;
         }
 
         // Drain before writing the exit marker so output is not written after it. Bounded, because an orphaned
@@ -525,8 +565,11 @@ public sealed class ManagedProcess : IDisposable
                 ReadinessSince = null,
             };
 
-            int leftovers = _group?.CountLiveProcesses() ?? 0;
-            bool detached = leftovers > 0 && TryDetachLeftoversLocked(leftovers);
+            // A failed count must not prevent recording the exit: the run is finished either way. The leftovers are then
+            // unknown, and the poll retries; detaching is decided when a count first succeeds.
+            int? leftovers = TryCountLeftoversLocked();
+            bool detached = leftovers > 0 && TryDetachLeftoversLocked(leftovers.Value);
+            _leftoverDetachPending = leftovers is null;
 
             Output.EndRun($"exited with code {exitCode}");
             _runExited?.TrySetResult();
@@ -571,17 +614,46 @@ public sealed class ManagedProcess : IDisposable
     private bool IsCurrentRunLocked(int runId, Process process) =>
         !_disposed && runId == _runId && ReferenceEquals(process, _process) && IsActiveLocked;
 
-    /// <summary>Stores the leftover count, starting or stopping the poll timer as needed. Returns true if the count changed.</summary>
-    private bool SetLeftoverCountLocked(int count)
+    /// <summary>
+    /// Counts the live processes in the group. Returns null when the count fails; the first failure of a streak writes a
+    /// system line. A missing group (released or detached) has none. Caller holds the lock.
+    /// </summary>
+    private int? TryCountLeftoversLocked()
     {
-        bool changed = false;
-        if (_snapshot.LeftoverCount != count)
+        if (_group is null)
         {
-            _snapshot = _snapshot with { LeftoverCount = count };
-            changed = true;
+            return 0;
         }
 
-        if (count > 0)
+        try
+        {
+            return _group.CountLiveProcesses();
+        }
+        catch (Exception ex)
+        {
+            // Any failure is contained: this runs on a timer or process-exit callback, where an exception ends the host.
+            if (!_snapshot.LeftoverCountUnknown)
+            {
+                Output.WriteSystem($"leftover check failed: {ex.Message}, retrying");
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Stores the leftover count (null: unknown, keeping the last known count), starting or stopping the poll timer as needed.
+    /// Returns true if the snapshot changed.
+    /// </summary>
+    private bool SetLeftoverCountLocked(int? count)
+    {
+        ProcessSnapshot before = _snapshot;
+        _snapshot = count is int known
+            ? _snapshot with { LeftoverCount = known, LeftoverCountUnknown = false }
+            : _snapshot with { LeftoverCountUnknown = true };
+        bool changed = _snapshot != before;
+
+        if (_snapshot.HasLeftovers)
         {
             _leftoverTimer ??= new Timer(OnLeftoverTick, _runId, LeftoverPollInterval, LeftoverPollInterval);
         }
@@ -603,7 +675,18 @@ public sealed class ManagedProcess : IDisposable
                 return;
             }
 
-            changed = SetLeftoverCountLocked(_group.CountLiveProcesses());
+            int? count = TryCountLeftoversLocked();
+            if (count > 0 && _leftoverDetachPending && TryDetachLeftoversLocked(count.Value))
+            {
+                count = 0;
+            }
+
+            if (count is not null)
+            {
+                _leftoverDetachPending = false;
+            }
+
+            changed = SetLeftoverCountLocked(count);
         }
 
         if (changed)
@@ -612,23 +695,27 @@ public sealed class ManagedProcess : IDisposable
         }
     }
 
+    private string LeftoverTextLocked() =>
+        _snapshot.LeftoverCountUnknown ? "an unknown number of" : _snapshot.LeftoverCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     private void StopLeftoverTimerLocked()
     {
         _leftoverTimer?.Dispose();
         _leftoverTimer = null;
     }
 
-    /// <summary>Releases the previous run's process handle, group and pipes. Caller holds the lock.</summary>
+    /// <summary>
+    /// Releases the previous run's process handle, group and stdin pipe. Its output readers keep draining until the pipes reach
+    /// EOF (see <see cref="PumpAsync"/>); the output drops what they read from now on. Caller holds the lock.
+    /// </summary>
     private void ReleaseRunResourcesLocked()
     {
         _process?.Dispose();
         _process = null;
         _group?.Dispose();
         _group = null;
-        _stdin = null;
-        _stdinWriteLock = null;
-        _stdOutPump = null;
-        _stdErrPump = null;
+        _pipes?.CloseStdin();
+        _pipes = null;
     }
 
     /// <summary>Delivers a signal to the group. Returns true if it was delivered without error.</summary>
@@ -680,5 +767,74 @@ public sealed class ManagedProcess : IDisposable
     private void RaiseChanged()
     {
         Changed?.Invoke(this);
+    }
+
+    /// <summary>The redirected pipes of one run and the tasks reading its output. Owned by the supervisor until both readers end.</summary>
+    private sealed class RunPipes
+    {
+        private readonly CancellationTokenSource _abort = new();
+        private int _pumpsRunning = 2;
+
+        public RunPipes(long outputRun, StreamReader stdOut, StreamReader stdErr, StreamWriter? stdin)
+        {
+            OutputRun = outputRun;
+            StdOut = stdOut;
+            StdErr = stdErr;
+            Stdin = stdin;
+            StdinWriteLock = stdin is null ? null : new object();
+        }
+
+        /// <summary>The output run the chunks read from these pipes belong to.</summary>
+        public long OutputRun { get; }
+
+        public StreamReader StdOut { get; }
+
+        public StreamReader StdErr { get; }
+
+        /// <summary>The stdin writer, or null when stdin is not redirected.</summary>
+        public StreamWriter? Stdin { get; }
+
+        /// <summary>
+        /// Serializes writes to <see cref="Stdin"/>: StreamWriter is not safe for concurrent writes. Separate from the supervisor's
+        /// lock because a write can block on a full pipe and force kill must remain available while it does.
+        /// </summary>
+        public object? StdinWriteLock { get; }
+
+        public Task? StdOutPump { get; set; }
+
+        public Task? StdErrPump { get; set; }
+
+        /// <summary>Cancelled when the supervisor is disposed.</summary>
+        public CancellationToken Aborted => _abort.Token;
+
+        /// <summary>Records that one reader ended. Returns true for the second.</summary>
+        public bool PumpFinished() => Interlocked.Decrement(ref _pumpsRunning) == 0;
+
+        /// <summary>
+        /// Closes the stdin pipe. The underlying stream is closed directly, not the writer: a stop input write may be blocked on
+        /// it, and disposing the writer would flush through the same blocked pipe.
+        /// </summary>
+        public void CloseStdin() => CloseQuietly(Stdin?.BaseStream);
+
+        /// <summary>Cancels the readers and closes every pipe.</summary>
+        public void Abort()
+        {
+            _abort.Cancel();
+            CloseQuietly(StdOut.BaseStream);
+            CloseQuietly(StdErr.BaseStream);
+            CloseStdin();
+        }
+
+        private static void CloseQuietly(Stream? stream)
+        {
+            try
+            {
+                stream?.Dispose();
+            }
+            catch (IOException)
+            {
+                // The pipe is being abandoned.
+            }
+        }
     }
 }

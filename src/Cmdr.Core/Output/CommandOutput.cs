@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 
 namespace Cmdr.Core.Output;
 
@@ -9,10 +8,17 @@ namespace Cmdr.Core.Output;
 /// </summary>
 /// <remarks>
 /// All methods are thread-safe. Stdout and stderr may be written from different threads; work is serialized
-/// so buffer order and log order match.
+/// so buffer order and log order match. Log writes happen on a background writer, never on the caller's thread, so a stalled
+/// log file does not block output or callers (see <see cref="EnableLog"/>).
 /// </remarks>
-public sealed class CommandOutput : IDisposable
+public sealed partial class CommandOutput : IDisposable
 {
+    /// <summary>
+    /// How many lines may wait for the log writer beyond those replayed when logging starts. When more are waiting, the
+    /// writer is considered stalled and logging is disabled.
+    /// </summary>
+    internal const int LogQueueCapacity = 10_000;
+
     private readonly object _sync = new();
     private readonly object _notifySync = new();
     private readonly OutputBuffer _buffer;
@@ -21,10 +27,18 @@ public sealed class CommandOutput : IDisposable
     private AnsiLineParser _stdOutParser = new(OutputSource.StdOut);
     private AnsiLineParser _stdErrParser = new(OutputSource.StdErr);
     private long? _runFirstLine;
-    private StreamWriter? _log;
-    private string? _logPath;
+    private readonly List<LogWriter> _unfinishedLogs = new();
+    private LogWriter? _log;
     private string? _lastLoggedPath;
+
+    // Lines numbered below this have been flushed to _lastLoggedPath. Advanced by the writer after each successful flush only.
     private long _nextUnloggedLine;
+    private long _run;
+    private bool _staleOutputNoticeWritten;
+    private bool _disposed;
+
+    /// <summary>The system line written the first time output from an earlier run is dropped during a run.</summary>
+    public const string StaleOutputNotice = "discarding output from processes left over by the previous run";
 
     /// <summary>Creates the pipeline with a buffer retaining up to <paramref name="bufferLines"/> completed lines.</summary>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="bufferLines"/> is not positive.</exception>
@@ -37,15 +51,17 @@ public sealed class CommandOutput : IDisposable
     public OutputBuffer Buffer => _buffer;
 
     /// <summary>
-    /// Raised with the lines that a call to <see cref="WriteStdOut"/> or <see cref="WriteStdErr"/> completed: process output
-    /// only, not system lines and not partial lines. Lines are already in <see cref="Buffer"/> when this is raised.
+    /// Raised with the run and the lines that a call to <see cref="WriteStdOut(long, ReadOnlySpan{char})"/> or
+    /// <see cref="WriteStdErr(long, ReadOnlySpan{char})"/> (or their current-run forms) completed: process output only, not
+    /// system lines and not partial lines. Lines are already in <see cref="Buffer"/> when this is raised. The run is the value
+    /// <see cref="BeginRun"/> returned; by the time a handler runs, a newer run may have begun.
     /// </summary>
     /// <remarks>
     /// Raised on the writing thread, after the internal lock is released, so a handler may call back into this object's
     /// read members. Notifications are serialized and follow buffer order, also across stdout and stderr. A handler
     /// must not write output itself (it would be notified re-entrantly) and must not block on another thread that writes output.
     /// </remarks>
-    public event Action<IReadOnlyList<OutputLine>>? ProcessLinesCompleted;
+    public event Action<long, IReadOnlyList<OutputLine>>? ProcessLinesCompleted;
 
     /// <summary>Whether output is currently being written to a log file.</summary>
     public bool IsLogging
@@ -66,7 +82,7 @@ public sealed class CommandOutput : IDisposable
         {
             lock (_sync)
             {
-                return _logPath;
+                return _log?.Path;
             }
         }
     }
@@ -74,31 +90,45 @@ public sealed class CommandOutput : IDisposable
     /// <summary>
     /// Starts a new run: clears the in-memory buffer (output of previous runs; the log file is not affected),
     /// resets both parsers, discards any partial lines, and appends a
-    /// <c>=== started yyyy-MM-dd HH:mm:ss ===</c> marker (local time).
+    /// <c>=== started yyyy-MM-dd HH:mm:ss ===</c> marker (local time). From now on, process output written for an earlier
+    /// run is dropped.
     /// </summary>
-    public void BeginRun(DateTimeOffset startedAt)
+    /// <returns>The identity of the new run, to pass to <see cref="WriteStdOut(long, ReadOnlySpan{char})"/> and
+    /// <see cref="WriteStdErr(long, ReadOnlySpan{char})"/>.</returns>
+    public long BeginRun(DateTimeOffset startedAt)
     {
         lock (_sync)
         {
+            _run++;
+            _staleOutputNoticeWritten = false;
             _stdOutParser = new AnsiLineParser(OutputSource.StdOut);
             _stdErrParser = new AnsiLineParser(OutputSource.StdErr);
 
-            // Clear also drops partial lines. Every line already appended to the buffer has been written
-            // to the log (each public method flushes), so clearing loses nothing from the log.
+            // Clear also drops partial lines. Every line already appended to the buffer has been queued for the log
+            // with its text, so clearing loses nothing from the log.
             _buffer.Clear();
 
             _runFirstLine = _buffer.NextLineNumber;
             string stamp = startedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
             AppendSystemLocked($"=== started {stamp} ===");
-            FlushLogLocked();
+            return _run;
         }
     }
 
-    /// <summary>Writes a chunk of standard output.</summary>
-    public void WriteStdOut(ReadOnlySpan<char> chunk) => WriteProcessChunk(OutputSource.StdOut, chunk);
+    /// <summary>Writes a chunk of standard output for the current run.</summary>
+    public void WriteStdOut(ReadOnlySpan<char> chunk) => WriteProcessChunk(null, OutputSource.StdOut, chunk);
 
-    /// <summary>Writes a chunk of standard error.</summary>
-    public void WriteStdErr(ReadOnlySpan<char> chunk) => WriteProcessChunk(OutputSource.StdErr, chunk);
+    /// <summary>
+    /// Writes a chunk of standard output for <paramref name="run"/>. The chunk is dropped if a newer run has begun (the first
+    /// such chunk in a run adds <see cref="StaleOutputNotice"/>) or this object is disposed.
+    /// </summary>
+    public void WriteStdOut(long run, ReadOnlySpan<char> chunk) => WriteProcessChunk(run, OutputSource.StdOut, chunk);
+
+    /// <summary>Writes a chunk of standard error for the current run.</summary>
+    public void WriteStdErr(ReadOnlySpan<char> chunk) => WriteProcessChunk(null, OutputSource.StdErr, chunk);
+
+    /// <summary>Writes a chunk of standard error for <paramref name="run"/>; see <see cref="WriteStdOut(long, ReadOnlySpan{char})"/>.</summary>
+    public void WriteStdErr(long run, ReadOnlySpan<char> chunk) => WriteProcessChunk(run, OutputSource.StdErr, chunk);
 
     /// <summary>Appends a system line (or several, if <paramref name="message"/> contains newlines).</summary>
     public void WriteSystem(string message)
@@ -108,7 +138,6 @@ public sealed class CommandOutput : IDisposable
         lock (_sync)
         {
             AppendSystemLocked(message);
-            FlushLogLocked();
         }
     }
 
@@ -135,17 +164,25 @@ public sealed class CommandOutput : IDisposable
             _buffer.SetPartial(OutputSource.StdErr, null);
 
             AppendSystemLocked($"=== {summary} ===");
-            FlushLogLocked();
         }
     }
 
     /// <summary>
     /// Starts writing completed lines to <paramref name="path"/> (appending). If already logging to the same
-    /// full path this does nothing; if logging elsewhere, the old file is closed first. The retained lines of
-    /// the current run are written first, then new lines as they complete.
-    /// On an open or write failure, logging is disabled and a <c>log disabled: ...</c> system line is added
-    /// to the buffer. This method does not throw for I/O errors.
+    /// full path this does nothing; if logging elsewhere, the old log is closed first (its writer finishes the lines already
+    /// given to it). The retained lines of the current run that have not reached this file yet are written first, then new
+    /// lines as they complete.
     /// </summary>
+    /// <remarks>
+    /// <para>The file is opened on the calling thread, so an open failure is reported immediately. Writing happens on a
+    /// background writer.</para>
+    /// <para>On an open or write failure, logging is disabled and a <c>log disabled: ...</c> system line is added to the buffer
+    /// (not to the log). If more than <see cref="LogQueueCapacity"/> lines wait for a writer that is not making progress, it is
+    /// abandoned the same way with <c>log disabled: log writer stalled</c>.</para>
+    /// <para>Re-enabling the same file after a failure writes the retained lines that were never flushed to it. Lines of a
+    /// batch whose write or flush failed count as not written, so some of them may appear twice in the file.</para>
+    /// <para>This method does not throw for I/O errors.</para>
+    /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="path"/> is null, empty or invalid.</exception>
     public void EnableLog(string path)
     {
@@ -155,55 +192,67 @@ public sealed class CommandOutput : IDisposable
 
         lock (_sync)
         {
-            if (_log is not null && PathEquals(fullPath, _logPath))
+            if (_disposed || IsLoggingToLocked(fullPath))
             {
+                return;
+            }
+        }
+
+        // Opened outside the lock: opening can stall too (for example on a network drive), and output keeps flowing meanwhile.
+        FileStream stream;
+        try
+        {
+            string? directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            // Write sharing allows an earlier writer of the same file to finish while this one waits for its turn.
+            stream = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+        }
+        catch (Exception ex) when (IsIoFailure(ex))
+        {
+            lock (_sync)
+            {
+                CloseLogLocked();
+                AppendNoticeLocked($"log disabled: {ex.Message}");
+            }
+
+            return;
+        }
+
+        lock (_sync)
+        {
+            if (_disposed || IsLoggingToLocked(fullPath))
+            {
+                // Disposed, or a concurrent call started logging to this file meanwhile.
+                stream.Dispose();
                 return;
             }
 
             bool samePathAsLast = PathEquals(fullPath, _lastLoggedPath);
             CloseLogLocked();
-
-            FileStream? stream = null;
-            try
-            {
-                string? directory = Path.GetDirectoryName(fullPath);
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                stream = new FileStream(fullPath, FileMode.Append, FileAccess.Write, FileShare.Read);
-                _log = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                stream = null;
-                _logPath = fullPath;
-            }
-            catch (Exception ex) when (IsIoFailure(ex))
-            {
-                stream?.Dispose();
-                DisableLogAfterFailureLocked(ex.Message);
-                return;
-            }
-
             _lastLoggedPath = fullPath;
             if (!samePathAsLast)
             {
                 _nextUnloggedLine = 0;
             }
 
-            // Lines already written to this same file are not repeated. Otherwise the current run's
-            // retained lines are written from its first line.
-            if (_runFirstLine is long runFirst)
+            var writer = new LogWriter(this, fullPath, stream, _buffer.NextLineNumber);
+            _log = writer;
+            _unfinishedLogs.Add(writer);
+            if (!HasEarlierWriterLocked(writer))
             {
-                long from = Math.Max(runFirst, _nextUnloggedLine);
-                long actual = Math.Max(from, _buffer.FirstLineNumber);
-                AppendToLogLocked(_buffer.GetCompletedLinesFrom(actual), actual);
+                StartWriterLocked(writer);
             }
-
-            FlushLogLocked();
         }
     }
 
-    /// <summary>Stops logging, flushing and closing the file. Does nothing if not logging.</summary>
+    /// <summary>
+    /// Stops logging. Does nothing if not logging. The writer finishes the lines already given to it in the background, then
+    /// closes the file; see <see cref="WaitForLogWrites"/>.
+    /// </summary>
     public void DisableLog()
     {
         lock (_sync)
@@ -212,10 +261,40 @@ public sealed class CommandOutput : IDisposable
         }
     }
 
-    /// <summary>Closes the log file, if open.</summary>
+    /// <summary>
+    /// Waits until every line given to a log writer so far has been written and flushed, or its writer has failed or been
+    /// abandoned, and closed writers have closed their files. Returns false if that did not happen within <paramref name="timeout"/>.
+    /// </summary>
+    public bool WaitForLogWrites(TimeSpan timeout)
+    {
+        Task[] pending;
+        lock (_sync)
+        {
+            pending = _unfinishedLogs.Select(w => ReferenceEquals(w, _log) ? w.WhenIdleLocked() : w.Completion).ToArray();
+        }
+
+        try
+        {
+            return Task.WaitAll(pending, timeout);
+        }
+        catch (AggregateException)
+        {
+            // Writer tasks do not fault; their failures are reported as notices.
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Stops logging (the writer finishes in the background, as with <see cref="DisableLog"/>). Process output written
+    /// afterwards is dropped.
+    /// </summary>
     public void Dispose()
     {
-        DisableLog();
+        lock (_sync)
+        {
+            _disposed = true;
+            CloseLogLocked();
+        }
     }
 
     /// <summary>
@@ -227,19 +306,38 @@ public sealed class CommandOutput : IDisposable
     /// The handler runs outside <c>_sync</c>, so a handler may take an owner's lock as long as that owner does not write
     /// process output while holding it.
     /// </remarks>
-    private void WriteProcessChunk(OutputSource source, ReadOnlySpan<char> chunk)
+    private void WriteProcessChunk(long? run, OutputSource source, ReadOnlySpan<char> chunk)
     {
         lock (_notifySync)
         {
             IReadOnlyList<OutputLine> completed;
+            long current;
             lock (_sync)
             {
+                // Checked under the same lock as BeginRun, so a chunk of an earlier run can never reach the new run's parser.
+                if (_disposed)
+                {
+                    return;
+                }
+
+                if (run is long r && r != _run)
+                {
+                    if (!_staleOutputNoticeWritten && r < _run)
+                    {
+                        _staleOutputNoticeWritten = true;
+                        AppendSystemLocked(StaleOutputNotice);
+                    }
+
+                    return;
+                }
+
+                current = _run;
                 completed = WriteChunkLocked(source == OutputSource.StdOut ? _stdOutParser : _stdErrParser, source, chunk);
             }
 
             if (completed.Count > 0)
             {
-                ProcessLinesCompleted?.Invoke(completed);
+                ProcessLinesCompleted?.Invoke(current, completed);
             }
         }
     }
@@ -254,7 +352,6 @@ public sealed class CommandOutput : IDisposable
         _completed.Clear();
 
         _buffer.SetPartial(source, parser.Partial);
-        FlushLogLocked();
         return completed;
     }
 
@@ -295,74 +392,103 @@ public sealed class CommandOutput : IDisposable
         AppendToLogLocked(lines, first);
     }
 
-    /// <summary>
-    /// Writes lines to the log, whose first line has absolute number <paramref name="firstNumber"/>.
-    /// Advances <see cref="_nextUnloggedLine"/> past each line written.
-    /// </summary>
+    /// <summary>Gives lines to the log writer, if logging; the first line has absolute number <paramref name="firstNumber"/>.</summary>
     private void AppendToLogLocked(IReadOnlyList<OutputLine> lines, long firstNumber)
     {
-        if (_log is null)
+        if (_log is not null && !_log.EnqueueLocked(lines, firstNumber))
         {
-            return;
-        }
-
-        try
-        {
-            for (int i = 0; i < lines.Count; i++)
-            {
-                _log.Write(lines[i].PlainText);
-                _log.Write(Environment.NewLine);
-                _nextUnloggedLine = firstNumber + i + 1;
-            }
-        }
-        catch (Exception ex) when (IsIoFailure(ex))
-        {
-            DisableLogAfterFailureLocked(ex.Message);
+            DisableLogAfterFailureLocked(_log, "log writer stalled");
         }
     }
 
-    private void FlushLogLocked()
+    /// <summary>Records that <paramref name="writer"/> flushed every line numbered below <paramref name="next"/>.</summary>
+    private void CommitLoggedLocked(LogWriter writer, long next)
     {
-        if (_log is null)
+        if (PathEquals(writer.Path, _lastLoggedPath))
         {
-            return;
-        }
-
-        try
-        {
-            _log.Flush();
-        }
-        catch (Exception ex) when (IsIoFailure(ex))
-        {
-            DisableLogAfterFailureLocked(ex.Message);
+            _nextUnloggedLine = Math.Max(_nextUnloggedLine, next);
         }
     }
 
-    private void DisableLogAfterFailureLocked(string message)
+    /// <summary>
+    /// Abandons <paramref name="writer"/> after a failure and, if it is the current log, disables logging with a notice.
+    /// A writer that was already closed fails silently, as closing a failed file always has.
+    /// </summary>
+    private void DisableLogAfterFailureLocked(LogWriter writer, string message)
     {
-        CloseLogLocked();
-        _buffer.Append(new[] { new OutputLine(OutputSource.System, new[] { new StyledSpan($"log disabled: {message}", SpanStyle.Default) }) });
+        writer.AbandonLocked();
+        if (ReferenceEquals(writer, _log))
+        {
+            _log = null;
+            AppendNoticeLocked($"log disabled: {message}");
+        }
     }
 
-    /// <summary>Closes the log quietly. Errors while flushing a failed log are ignored.</summary>
+    /// <summary>Adds a system line to the buffer only, not to the log.</summary>
+    private void AppendNoticeLocked(string message) =>
+        _buffer.Append(new[] { new OutputLine(OutputSource.System, new[] { new StyledSpan(message, SpanStyle.Default) }) });
+
+    /// <summary>Closes the current log, if any; its writer finishes the lines already given to it.</summary>
     private void CloseLogLocked()
     {
-        if (_log is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _log.Dispose();
-        }
-        catch (Exception ex) when (IsIoFailure(ex))
-        {
-            // The file is being abandoned; nothing more can be done.
-        }
-
+        _log?.CloseLocked();
         _log = null;
-        _logPath = null;
+    }
+
+    private bool IsLoggingToLocked(string fullPath) => _log is not null && PathEquals(fullPath, _log.Path);
+
+    /// <summary>True when an unfinished writer created before <paramref name="writer"/> writes the same file.</summary>
+    private bool HasEarlierWriterLocked(LogWriter writer)
+    {
+        foreach (LogWriter other in _unfinishedLogs)
+        {
+            if (ReferenceEquals(other, writer))
+            {
+                return false;
+            }
+
+            if (PathEquals(other.Path, writer.Path))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Starts a writer once no earlier writer of its file is unfinished, first giving it the current run's retained lines that
+    /// the file is missing: those from the run's first line, or from the first line not yet flushed to this file, up to the
+    /// first line it received live.
+    /// </summary>
+    private void StartWriterLocked(LogWriter writer)
+    {
+        if (_runFirstLine is long runFirst)
+        {
+            long flushed = PathEquals(writer.Path, _lastLoggedPath) ? _nextUnloggedLine : 0;
+            long from = Math.Max(Math.Max(runFirst, flushed), _buffer.FirstLineNumber);
+            if (from < writer.FirstLiveLine)
+            {
+                IReadOnlyList<OutputLine> retained = _buffer.GetCompletedLinesFrom(from);
+                int count = (int)Math.Min(retained.Count, writer.FirstLiveLine - from);
+                writer.PrependLocked(retained.Take(count).ToList(), from);
+            }
+        }
+
+        writer.StartLocked();
+    }
+
+    /// <summary>Removes a finished writer and starts the next waiting writer of the same file, if any.</summary>
+    private void OnLogWriterFinishedLocked(LogWriter writer)
+    {
+        _unfinishedLogs.Remove(writer);
+        foreach (LogWriter other in _unfinishedLogs.ToList())
+        {
+            if (!other.Started && PathEquals(other.Path, writer.Path) && !HasEarlierWriterLocked(other))
+            {
+                StartWriterLocked(other);
+            }
+        }
     }
 
     private static bool IsIoFailure(Exception ex) =>

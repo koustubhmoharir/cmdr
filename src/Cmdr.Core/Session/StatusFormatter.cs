@@ -103,12 +103,13 @@ public static class StatusFormatter
             case ProcessState.FailedToStart:
                 return new StatusText("✗", StatusKind.Failure, NoValue, "failed to start");
 
-            case ProcessState.Exited when snapshot.LeftoverCount > 0:
+            case ProcessState.Exited when snapshot.HasLeftovers:
                 return new StatusText(
                     "⚠",
                     StatusKind.Warning,
                     started,
-                    FormattableString.Invariant($"exit {ExitCodeText(snapshot)} · {snapshot.LeftoverCount} left"));
+                    FormattableString.Invariant(
+                        $"exit {ExitCodeText(snapshot)} · {(snapshot.LeftoverCountUnknown ? "?" : snapshot.LeftoverCount)} left"));
 
             case ProcessState.Exited when snapshot.StopRequested:
                 return new StatusText(

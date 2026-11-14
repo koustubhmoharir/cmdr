@@ -115,7 +115,11 @@ console and a process can be attached to one console at a time: cmdr stays on th
 short-lived copy of itself attaches to the command's hidden console to send the event.
 
 States: `NotStarted | Running | Stopping(since) | Exited(code) | FailedToStart(message)`, plus
-`LeftoverCount` after exit (polled while > 0). Restart = graceful stop, wait for exit, start. Tracked per
+`LeftoverCount` after exit (polled while > 0). If a count fails (the Windows job query can throw), the
+failure is contained at the exit/timer callback, the exit is still recorded, and `LeftoverCountUnknown`
+is set: the status shows `? left`, a `leftover check failed: …, retrying` line is written once per failure
+streak, and the command counts as having leftovers (`HasLeftovers`: no start, quit waits, Enter kills)
+until a count succeeds. With `leftovers: detach`, detaching waits for that first successful count. Restart = graceful stop, wait for exit, start. Tracked per
 run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`, readiness.
 
 - **Stopped vs failed.** `ProcessSnapshot.StopRequested` is set when a graceful stop or force kill was
@@ -137,9 +141,16 @@ run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`
 - **Readiness.** `CommandOutput.ProcessLinesCompleted` reports completed stdout/stderr lines (no system
   or partial lines) after the buffer lock is released, under a separate notify lock that keeps
   notifications in buffer order. `ReadinessMatcher` (compiled regexes, 200 ms timeout) evaluates them on
-  the pump thread outside `ManagedProcess`'s lock, then the verdict is applied under it (a matcher
-  reference check drops lines of an earlier run). Lock order: output notify lock → `ManagedProcess`
+  the pump thread outside `ManagedProcess`'s lock, then the verdict is applied under it (a run
+  check drops lines of an earlier run). Lock order: output notify lock → `ManagedProcess`
   lock; the pumps are started with `Task.Run` so no pump runs on a thread holding the process lock.
+- **Run pipes.** Each run owns its redirected pipes and pump tasks (`RunPipes`). Chunks are tagged with
+  the output run that `CommandOutput.BeginRun` returned; `CommandOutput` drops chunks of an earlier run
+  under the same lock as `BeginRun`, writing `discarding output from processes left over by the previous
+  run` once per run. Output of a finished run is still shown (after its exit marker) until the next
+  start. Old pumps keep draining rather than closing the pipe, like a terminal, so a detached process
+  that writes to it is not killed by SIGPIPE. Starting the next run closes the old stdin; a pump closes
+  its stream at EOF; `Dispose` closes every pipe of every run and output stops.
 
 ### Windows: batch files (.cmd/.bat)
 
@@ -183,10 +194,18 @@ returns a notice that is written to the output.
   all other escape sequences (CSI, OSC, etc.) are dropped. Bare `\r` (not followed by `\n`) resets the
   current line, so progress bars overwrite in place.
 - Starting a run clears the in-memory buffer (`OutputBuffer.Clear`); every appended line has already been
-  written to the log, so the log keeps all runs.
+  queued for the log with its text, so the log keeps all runs.
 - Log file: enabled per command or toggled at runtime; when enabled mid-run the current run's buffer is
   written first, then output streams live. Appends; each run starts with `=== started <timestamp> ===`;
   ANSI codes are stripped.
+- Log writing happens on a background writer per log session (`CommandOutput.LogWriter`), so nothing
+  waits for log I/O: not the pumps, not snapshots, not force kill. The file is opened on the caller's
+  thread, outside the output lock, so an open failure is reported at once. Writers of the same file take
+  turns and seek to the end before each batch. More than 10,000 lines waiting (beyond the replayed ones)
+  means the writer is stalled: it is abandoned with `log disabled: log writer stalled`. The "already
+  logged" mark advances only after a successful flush, so re-enabling the same file after a failure
+  replays what never reached it (a failed batch may appear twice). `Session.Dispose` waits up to 2 s in
+  total for log writes.
 
 ## UI
 

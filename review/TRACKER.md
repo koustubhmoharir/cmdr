@@ -4,17 +4,7 @@ Remaining work from the 2026-11-13 review. **When an item is done, delete it her
 
 Work proceeds in the order of the sections below.
 
-## 1. Process run resource ownership (package B)
-
-| ID | Pri | Item |
-|---|---|---|
-| 02-01 | P1 | An exception from a leftover-process count query terminates the host. Contain it, and treat it as unknown, never as zero. |
-| 02-02 | P2 | Output from an old run's pumps reaches the next run and can falsely mark it ready. |
-| 02-03 | P2 | Disposal and run release don't dispose redirected streams or stop pumps. |
-| 02-05 | P2 | Force kill waits behind log I/O while holding the lifecycle lock; snapshots block too. |
-| 04-09 | P2 | The log cursor advances before a flush succeeds, so a failed flush loses lines. |
-
-## 2. Configuration persistence (package C)
+## 1. Configuration persistence (package C)
 
 | ID | Pri | Decision / item |
 |---|---|---|
@@ -23,13 +13,13 @@ Work proceeds in the order of the sections below.
 | 01-02 | P2 | Two commands resolving to the same log path, whether default or explicit, is a validation error. Existing default paths don't change. |
 | 01-10 | P3 | One nesting limit of 16 group levels, enforced on load, validation and editing (adding/moving groups). |
 
-## 3. Editing (package D)
+## 2. Editing (package D)
 
 | ID | Pri | Decision / item |
 |---|---|---|
 | 06-01 / 06-02 | P2 | If an argument or env value contains a line break, make that field read-only in the command dialog, with a note to edit it in the JSON. Accepting the dialog keeps the original values. |
 
-## 4. Output and terminal text (package F)
+## 3. Output and terminal text (package F)
 
 | ID | Pri | Item |
 |---|---|---|
@@ -39,7 +29,7 @@ Work proceeds in the order of the sections below.
 | 04-10 | P2 | A growing partial line is copied quadratically. |
 | 04-11 | P3 | Row counting allocates every drawable cell (measured recommendation). |
 
-## 5. Windows (package E) — needs testing on Windows by the user
+## 4. Windows (package E) — needs testing on Windows by the user
 
 | ID | Pri | Decision / item |
 |---|---|---|
@@ -49,6 +39,7 @@ Work proceeds in the order of the sections below.
 
 ## Validation gaps (not tied to one item)
 
-- Native Windows: the fixed 03-02/03-04, plus everything in section 6. Some Windows tests return early on Linux and are not evidence.
+- Native Windows: the fixed 03-02/03-04, plus everything in section 4 (Windows). Some Windows tests return early on Linux and are not evidence.
+- Package B on native Windows: a real job-query failure (02-01's only real trigger), pump shutdown on disposal of a detached run, and log files now opened with write sharing so writers of one file can take turns.
 - No CI, `global.json` SDK pin or NuGet lock file.
 - No physical-terminal or clipboard testing; no sustained memory/handle measurement.

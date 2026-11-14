@@ -85,7 +85,7 @@ internal static class ProcessTestHelpers
         {
             process.ForceKill();
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
-            while (process.Snapshot.LeftoverCount > 0 && DateTime.UtcNow < deadline)
+            while (process.Snapshot.HasLeftovers && DateTime.UtcNow < deadline)
             {
                 Thread.Sleep(20);
             }

@@ -235,7 +235,11 @@ force-kills it (and anything it left over). cmdr never force-kills on its own.
 ### Leftover processes
 
 When a command's main process exits but processes it started are still running, the command shows `⚠`
-and can't start again until they are gone; Enter force-kills them.
+and can't start again until they are gone; Enter force-kills them. If cmdr can't count them, it shows
+`? left` and treats them as still running until a count succeeds.
+
+Output that such processes write after the command is started again is not shown; cmdr writes
+`discarding output from processes left over by the previous run` once instead.
 
 Some tools leave processes running on purpose, such as `dotnet build` (MSBuild nodes) or Gradle (its
 daemon). For those, set `"leftovers": "detach"`: when the main process exits on its own or after a

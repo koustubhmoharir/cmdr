@@ -1175,7 +1175,7 @@ internal sealed class MainController : IDisposable
         ActionTarget? target = TargetOf(FocusedRow);
         IReadOnlyList<CommandEntry> targets = target is null ? Array.Empty<CommandEntry>() : CommandsOf(target);
         var enterTargets = targets
-            .Select(e => new EnterTarget(e.Process.Snapshot.State, e.Process.Snapshot.LeftoverCount, e.Process.CanStart))
+            .Select(e => new EnterTarget(e.Process.Snapshot.State, e.Process.Snapshot.HasLeftovers, e.Process.CanStart))
             .ToList();
         GroupEntry? hintGroup = target switch
         {

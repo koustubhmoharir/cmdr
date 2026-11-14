@@ -4,9 +4,9 @@ namespace Cmdr.Tui;
 
 /// <summary>What Enter does to one target, as far as the hint is concerned.</summary>
 /// <param name="State">The process state of the command.</param>
-/// <param name="LeftoverCount">Processes left over after the leader exited.</param>
+/// <param name="HasLeftovers">Whether processes may be left over after the leader exited (a positive or unknown count).</param>
 /// <param name="CanStart">Whether the command may be started now.</param>
-internal readonly record struct EnterTarget(ProcessState State, int LeftoverCount, bool CanStart);
+internal readonly record struct EnterTarget(ProcessState State, bool HasLeftovers, bool CanStart);
 
 /// <summary>
 /// The word shown after "Enter" in the hint bar. Mirrors <c>Session.Activate</c>: when any target is stopping or exited
@@ -27,7 +27,7 @@ internal static class EnterHint
         bool start = false;
         foreach (EnterTarget target in targets)
         {
-            if (target.State == ProcessState.Stopping || (target.State == ProcessState.Exited && target.LeftoverCount > 0))
+            if (target.State == ProcessState.Stopping || (target.State == ProcessState.Exited && target.HasLeftovers))
             {
                 kill = true;
             }

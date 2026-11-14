@@ -12,7 +12,7 @@ public enum ProcessState
     /// <summary>A graceful stop was requested and the leader is still running.</summary>
     Stopping,
 
-    /// <summary>The leader has exited. Descendants may still be alive (see <see cref="ProcessSnapshot.LeftoverCount"/>).</summary>
+    /// <summary>The leader has exited. Descendants may still be alive (see <see cref="ProcessSnapshot.HasLeftovers"/>).</summary>
     Exited,
 
     /// <summary>The leader could not be launched.</summary>

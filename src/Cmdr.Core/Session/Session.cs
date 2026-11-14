@@ -23,6 +23,8 @@ namespace Cmdr.Core.Session;
 /// </remarks>
 public sealed partial class Session : IDisposable
 {
+    private static readonly TimeSpan LogFlushOnDisposeTimeout = TimeSpan.FromSeconds(2);
+
     private readonly object _sync = new();
     private readonly List<GroupEntry> _groups = new();
     private readonly List<RestartOperation> _restarts = new();
@@ -455,8 +457,9 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>
-    /// Releases the session: revokes pending restarts, cancels sequences, unsubscribes and disposes all processes. Does not kill
-    /// processes on Linux. A restart that was pending completes with <see cref="OperationCanceledException"/> and starts nothing.
+    /// Releases the session: revokes pending restarts, cancels sequences, unsubscribes and disposes all processes, then waits up
+    /// to two seconds in total for their logs to be written. Does not kill processes on Linux. A restart that was pending
+    /// completes with <see cref="OperationCanceledException"/> and starts nothing.
     /// </summary>
     public void Dispose()
     {
@@ -486,6 +489,18 @@ public sealed partial class Session : IDisposable
         }
 
         DisposeProcesses(entries);
+
+        // Logs are written in the background; give them a moment to reach their files before the process ends. A stalled
+        // log file must not hold up quitting, so the wait is bounded for all of them together.
+        DateTime deadline = DateTime.UtcNow + LogFlushOnDisposeTimeout;
+        foreach (CommandEntry entry in entries)
+        {
+            TimeSpan left = deadline - DateTime.UtcNow;
+            if (left <= TimeSpan.Zero || !entry.Process.Output.WaitForLogWrites(left))
+            {
+                break;
+            }
+        }
     }
 
     internal void RaiseEntryChanged(CommandEntry entry)

@@ -14,6 +14,9 @@ namespace Cmdr.Core.Processes;
 /// <param name="Readiness">Readiness of the current run, from the command's ready patterns. <see cref="ProcessReadiness.None"/> when
 /// the command has none, or is not running.</param>
 /// <param name="ReadinessSince">When the current <see cref="Readiness"/> phase began; null when <see cref="Readiness"/> is None.</param>
+/// <param name="LeftoverCountUnknown">True when the last attempt to count leftover processes failed. The command is then treated
+/// as having leftovers (see <see cref="HasLeftovers"/>) until a later count succeeds; <see cref="LeftoverCount"/> keeps the last
+/// known count.</param>
 public sealed record ProcessSnapshot(
     ProcessState State,
     int? Pid,
@@ -25,7 +28,12 @@ public sealed record ProcessSnapshot(
     int LeftoverCount,
     bool StopRequested = false,
     ProcessReadiness Readiness = ProcessReadiness.None,
-    DateTimeOffset? ReadinessSince = null);
+    DateTimeOffset? ReadinessSince = null,
+    bool LeftoverCountUnknown = false)
+{
+    /// <summary>True when processes from the latest run may still be alive after its leader exited: a positive count, or an unknown one.</summary>
+    public bool HasLeftovers => LeftoverCount > 0 || LeftoverCountUnknown;
+}
 
 /// <summary>Readiness of a running command, as declared by its ready patterns.</summary>
 public enum ProcessReadiness
