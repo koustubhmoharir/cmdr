@@ -128,7 +128,7 @@ public class SessionRestartBoundaryTests
 
         using var dir = new TempDir();
         string release = dir.File("release");
-        CommandSpec old = Sh("old", $"trap '' INT; echo ready; while [ ! -f '{release}' ]; do sleep 0.05; done");
+        CommandSpec old = Sh("old", $"trap '' INT; echo ready; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done");
         CmdrSession session = OpenWith(dir, Group("original", GroupMode.Sequential, old), Group("destination", GroupMode.Parallel));
         GroupEntry original = session.Groups[0];
         GroupEntry destination = session.Groups[1];
@@ -166,7 +166,7 @@ public class SessionRestartBoundaryTests
 
         using var dir = new TempDir();
         string release = dir.File("release");
-        CommandSpec old = Sh("old", $"trap '' INT; echo ready; while [ ! -f '{release}' ]; do sleep 0.05; done");
+        CommandSpec old = Sh("old", $"trap '' INT; echo ready; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done");
         CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, old));
         GroupEntry group = session.Groups[0];
         CommandEntry a = group.Commands[0];

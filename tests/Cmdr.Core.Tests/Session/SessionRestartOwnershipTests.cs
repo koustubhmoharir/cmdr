@@ -85,7 +85,7 @@ public class SessionRestartOwnershipTests
         using var dir = new TempDir();
         string release = dir.File("release");
         // Ignores Ctrl+C and keeps running until the test releases it, so the restart waits for its exit.
-        string script = $"trap '' INT; echo \"pid:$$\"; while [ ! -f '{release}' ]; do sleep 0.05; done";
+        string script = $"trap '' INT; echo \"pid:$$\"; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done";
         CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("gated", script)));
         try
         {
@@ -120,7 +120,7 @@ public class SessionRestartOwnershipTests
         string marker = dir.File("starts.txt");
         string release = dir.File("release");
         // Dispose does not kill on Linux, so the shell is released by the file at the end of the test.
-        string script = $"trap '' INT; echo start >> '{marker}'; while [ ! -f '{release}' ]; do sleep 0.05; done";
+        string script = $"trap '' INT; echo start >> '{marker}'; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done";
         CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("gated", script)));
         try
         {
