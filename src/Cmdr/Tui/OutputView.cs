@@ -892,7 +892,13 @@ internal sealed class OutputView : View
     private static PreparedLine Prepare(OutputLine line, int width, Attribute normal)
     {
         List<OutputWrap.Cell> cells = OutputWrap.Cells(line);
-        Attribute[] spanAttributes = line.Spans.Select(span => ColorMap.ToAttribute(span.Style, line.Source, normal)).ToArray();
+        ReadOnlySpan<StyleRun> runs = line.Runs;
+        var spanAttributes = new Attribute[runs.Length];
+        for (int i = 0; i < runs.Length; i++)
+        {
+            spanAttributes[i] = ColorMap.ToAttribute(runs[i].Style, line.Source, normal);
+        }
+
         return new PreparedLine(cells, spanAttributes, OutputWrap.Rows(cells.Select(cell => cell.Width).ToList(), width));
     }
 

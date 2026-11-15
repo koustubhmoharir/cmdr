@@ -29,14 +29,14 @@ internal static class OutputWrap
         var cells = new List<Cell>(plain.Length);
         int column = 0;
         int span = 0;
-        int spanEnd = line.Spans.Count > 0 ? line.Spans[0].Text.Length : 0;
+        int spanEnd = line.Runs.Length > 0 ? line.RunEnd(0) : 0;
         int offset = 0;
         while (offset < plain.Length)
         {
             while (offset >= spanEnd)
             {
                 span++;
-                spanEnd += line.Spans[span].Text.Length;
+                spanEnd = line.RunEnd(span);
             }
 
             int length = StringInfo.GetNextTextElementLength(plain.AsSpan(offset));

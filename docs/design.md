@@ -268,8 +268,13 @@ acting, or captures a snapshot and acts only on that.
 
 ## Output
 
-- Ring buffer of lines (`bufferLines`) with absolute line numbers, each line a sequence of styled
-  spans, tagged stdout/stderr; partial lines are kept per stream.
+- Ring buffer of lines (`bufferLines`) with absolute line numbers, tagged stdout/stderr; partial lines are kept
+  per stream. A line stores its text once (`PlainText`) plus style runs (`StyleRun`: start index and style); a
+  line that is one default-styled run shares a static run array. `Spans` (a string per run) is built on demand
+  and drawing doesn't use it. SGR parameters are parsed from spans, so color changes allocate nothing. Measured
+  (2026-11-15, 10,000-line buffer): about 100 bytes per line plus 2 bytes per character for plain output, about
+  410 bytes for a typical colored log line of 87 characters. The buffer is bounded in lines, not bytes: a line can
+  reach the 65,536-unit forced-break limit.
 - ANSI parser: SGR (16/256/24-bit colors, bold, dim, italic, underline, inverse, reset) is rendered;
   all other escape sequences (CSI, OSC, etc.) are dropped. Bare `\r` (not followed by `\n`) resets the
   current line, so progress bars overwrite in place. A tab pads to the next multiple of 8 display columns.
@@ -284,7 +289,7 @@ acting, or captures a snapshot and acts only on that.
   scalar (a ZWJ emoji part or a second flag half continues the grapheme). Zero-width graphemes (a lone combining
   mark, U+200B) take no column and are not drawn, in the output and the info pane, but stay in the text and in copies.
 - Partial lines: the parser keeps the current line in its own arrays, and a published partial
-  (`OutputLine.FromPartial`) shares them without copying; spans and text are built on first read.
+  (`OutputLine.FromPartial`) shares them without copying; its text and runs are built on first read.
   Writes below a published length first move the parser to fresh arrays (copy-on-write), so publishing
   after every chunk is O(1) amortized. Each line has an `Identity`, shared by a partial's snapshots and its
   completed form; the output pane pins a selection end or paused cursor on a partial line by identity plus

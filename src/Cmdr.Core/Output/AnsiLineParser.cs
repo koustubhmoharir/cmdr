@@ -1,5 +1,3 @@
-using System.Text;
-
 namespace Cmdr.Core.Output;
 
 /// <summary>
@@ -34,7 +32,9 @@ public sealed class AnsiLineParser
 
     private readonly OutputSource _source;
     private readonly int _maxLineLength;
-    private readonly StringBuilder _csiParams = new();
+    // The parameter text of the current CSI sequence, up to MaxCsiParamLength characters (longer ones set _csiOverflow).
+    private readonly char[] _csiParams = new char[MaxCsiParamLength];
+    private int _csiParamLength;
 
     // The current line: _chars[0.._length) and _runs[0.._runCount) (run start index and style).
     private char[] _chars = new char[InitialCapacity];
@@ -264,9 +264,9 @@ public sealed class AnsiLineParser
     {
         if (c >= 0x30 && c <= 0x3F)
         {
-            if (_csiParams.Length < MaxCsiParamLength)
+            if (_csiParamLength < MaxCsiParamLength)
             {
-                _csiParams.Append(c);
+                _csiParams[_csiParamLength++] = c;
             }
             else
             {
@@ -286,7 +286,7 @@ public sealed class AnsiLineParser
         {
             if (c == 'm' && !_csiHasIntermediate && !_csiOverflow && IsSgrParamText())
             {
-                ApplySgr(_csiParams.ToString());
+                ApplySgr(_csiParams.AsSpan(0, _csiParamLength));
             }
 
             _state = State.Normal; // Any other CSI sequence is dropped.
@@ -340,14 +340,14 @@ public sealed class AnsiLineParser
 
     private void ResetCsi()
     {
-        _csiParams.Clear();
+        _csiParamLength = 0;
         _csiHasIntermediate = false;
         _csiOverflow = false;
     }
 
     private bool IsSgrParamText()
     {
-        for (int i = 0; i < _csiParams.Length; i++)
+        for (int i = 0; i < _csiParamLength; i++)
         {
             char c = _csiParams[i];
             if (!(c >= '0' && c <= '9') && c != ';' && c != ':')
@@ -359,15 +359,20 @@ public sealed class AnsiLineParser
         return true;
     }
 
-    private void ApplySgr(string parameters)
+    // Parsed from spans into ranges on the stack, so a color change allocates nothing.
+    private void ApplySgr(ReadOnlySpan<char> parameters)
     {
-        string[] groups = parameters.Split(';');
+        // MaxCsiParamLength characters hold at most MaxCsiParamLength + 1 groups.
+        Span<Range> ranges = stackalloc Range[MaxCsiParamLength + 1];
+        Span<Range> groups = ranges[..parameters.Split(ranges, ';')];
         for (int i = 0; i < groups.Length; i++)
         {
-            int code = ParseNumber(groups[i].Split(':')[0]);
+            ReadOnlySpan<char> group = parameters[groups[i]];
+            int colon = group.IndexOf(':');
+            int code = ParseNumber(colon < 0 ? group : group[..colon]);
             if (code == 38 || code == 48)
             {
-                i = ApplyExtendedColor(code == 38, groups, i);
+                i = ApplyExtendedColor(code == 38, parameters, groups, i);
             }
             else
             {
@@ -377,30 +382,34 @@ public sealed class AnsiLineParser
     }
 
     /// <summary>Handles 38/48 in either semicolon or colon form. Returns the index of the last group consumed.</summary>
-    private int ApplyExtendedColor(bool foreground, string[] groups, int i)
+    private int ApplyExtendedColor(bool foreground, ReadOnlySpan<char> parameters, ReadOnlySpan<Range> groups, int i)
     {
-        string[] sub = groups[i].Split(':');
-        if (sub.Length > 1)
+        ReadOnlySpan<char> group = parameters[groups[i]];
+        if (group.Contains(':'))
         {
             // Colon form: 38:5:n, 38:2:r:g:b, 38:2::r:g:b, 38:2:cs:r:g:b. The colorspace id is skipped when present.
-            int mode = ParseNumber(sub[1]);
+            // Up to 7 parts are told apart; more than that leaves the remainder in the last one, and is ignored like any count
+            // other than the forms above.
+            Span<Range> parts = stackalloc Range[7];
+            int partCount = group.Split(parts, ':');
+            int mode = ParseNumber(group[parts[1]]);
             if (mode == 5)
             {
-                if (sub.Length > 2)
+                if (partCount > 2)
                 {
-                    SetIndexed(foreground, ParseNumber(sub[2]));
+                    SetIndexed(foreground, ParseNumber(group[parts[2]]));
                 }
             }
             else if (mode == 2)
             {
-                int count = sub.Length - 2;
+                int count = partCount - 2;
                 if (count == 3)
                 {
-                    SetRgb(foreground, sub[2], sub[3], sub[4]);
+                    SetRgb(foreground, group[parts[2]], group[parts[3]], group[parts[4]]);
                 }
                 else if (count == 4)
                 {
-                    SetRgb(foreground, sub[3], sub[4], sub[5]);
+                    SetRgb(foreground, group[parts[3]], group[parts[4]], group[parts[5]]);
                 }
             }
 
@@ -413,12 +422,12 @@ public sealed class AnsiLineParser
             return i;
         }
 
-        int semicolonMode = ParseNumber(groups[i + 1]);
+        int semicolonMode = ParseNumber(parameters[groups[i + 1]]);
         if (semicolonMode == 5)
         {
             if (i + 2 < groups.Length)
             {
-                SetIndexed(foreground, ParseNumber(groups[i + 2]));
+                SetIndexed(foreground, ParseNumber(parameters[groups[i + 2]]));
             }
 
             return Math.Min(i + 2, groups.Length - 1);
@@ -428,7 +437,7 @@ public sealed class AnsiLineParser
         {
             if (i + 4 < groups.Length)
             {
-                SetRgb(foreground, groups[i + 2], groups[i + 3], groups[i + 4]);
+                SetRgb(foreground, parameters[groups[i + 2]], parameters[groups[i + 3]], parameters[groups[i + 4]]);
             }
 
             return Math.Min(i + 4, groups.Length - 1);
@@ -520,7 +529,7 @@ public sealed class AnsiLineParser
         SetColor(foreground, AnsiColor.FromIndex((byte)index));
     }
 
-    private void SetRgb(bool foreground, string r, string g, string b)
+    private void SetRgb(bool foreground, ReadOnlySpan<char> r, ReadOnlySpan<char> g, ReadOnlySpan<char> b)
     {
         int rv = ParseNumber(r);
         int gv = ParseNumber(g);
@@ -543,7 +552,7 @@ public sealed class AnsiLineParser
     private static bool IsByte(int value) => value >= 0 && value <= 255;
 
     /// <summary>Parses a decimal number. Empty means 0. Returns -1 for anything non-numeric or too long.</summary>
-    private static int ParseNumber(string s)
+    private static int ParseNumber(ReadOnlySpan<char> s)
     {
         if (s.Length == 0)
         {
@@ -836,16 +845,5 @@ public sealed class AnsiLineParser
         _overwritePending = false;
     }
 
-    private OutputLine BuildLine()
-    {
-        var spans = new StyledSpan[_runCount];
-        for (int i = 0; i < _runCount; i++)
-        {
-            int start = _runs[i].Start;
-            int end = i + 1 < _runCount ? _runs[i + 1].Start : _length;
-            spans[i] = new StyledSpan(new string(_chars, start, end - start), _runs[i].Style);
-        }
-
-        return new OutputLine(_source, spans, _identity);
-    }
+    private OutputLine BuildLine() => OutputLine.FromParser(_source, _chars, _length, _runs, _runCount, _identity);
 }

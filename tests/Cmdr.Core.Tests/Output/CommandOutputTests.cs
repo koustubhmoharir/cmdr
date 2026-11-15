@@ -56,6 +56,43 @@ public class CommandOutputTests : IDisposable
         Assert.Equal(new string('a', length), lines[^1].PlainText);
     }
 
+    /// <summary>Bytes allocated per line while writing <paramref name="count"/> copies of <paramref name="line"/> (after a warm-up).</summary>
+    private static double AllocatedPerLine(string line, int count)
+    {
+        using var output = new CommandOutput(count + 100);
+        output.BeginRun(Start);
+        output.WriteStdOut(line + "\n");
+        string chunk = string.Concat(Enumerable.Repeat(line + "\n", count));
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        output.WriteStdOut(chunk);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        return allocated / (double)count;
+    }
+
+    [Fact]
+    public void ColoredLinesStoreTheirTextOnce_AndColorChangesAllocateNothing()
+    {
+        // 87 visible characters in 9 escapes: the line's text is 196 bytes, its runs about 170 more.
+        const string line = "\x1b[32minfo\x1b[0m: Microsoft.Hosting.Lifetime[1]\x1b[0m \x1b[36m12:00:00\x1b[0m Now listening on: \x1b[1;38;2;1;2;3mhttp://localhost:5000\x1b[0m";
+
+        double perLine = AllocatedPerLine(line, 2000);
+
+        // About 410 bytes. A string per span (the text kept twice) made it about 750, and string-split color parameters about
+        // 600 more.
+        Assert.True(perLine < 550, $"allocated {perLine:F0} bytes per line");
+    }
+
+    [Fact]
+    public void ShortPlainLinesAllocateLittleMoreThanTheirText()
+    {
+        double perLine = AllocatedPerLine("12345", 2000);
+
+        // About 100 bytes: the 40-byte string and the line object. A run array per line made it about 140; building spans
+        // through lists made it about 360.
+        Assert.True(perLine < 120, $"allocated {perLine:F0} bytes per line");
+    }
+
     [Fact]
     public void BeginRunAppendsStartedMarkerAsSystemLine()
     {
