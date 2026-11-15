@@ -149,4 +149,48 @@ public sealed class GroupFormTests : IDisposable
         Assert.Empty(GroupForm.Validate(values, Array.Empty<string>()));
         Assert.Null(GroupForm.Build(values).Env);
     }
+
+    [Fact]
+    public void Kept_name_and_cwd_are_saved_exactly()
+    {
+        GroupFormValues values = Values(name: "typed", cwd: "typed") with
+        {
+            KeptName = new KeptValue(" nav\n"),
+            KeptCwd = new KeptValue("\n../web\n"),
+        };
+
+        Assert.Empty(GroupForm.Validate(values, Array.Empty<string>()));
+
+        GroupSettings settings = GroupForm.Build(values);
+        Assert.Equal(" nav\n", settings.Name);
+        Assert.Equal("\n../web\n", settings.Cwd);
+    }
+
+    [Fact]
+    public void Kept_empty_cwd_stays_empty_and_kept_null_stays_null()
+    {
+        Assert.Equal(string.Empty, GroupForm.Build(Values(cwd: "  ") with { KeptCwd = new KeptValue(string.Empty) }).Cwd);
+        Assert.Null(GroupForm.Build(Values(cwd: "  ") with { KeptCwd = new KeptValue(null) }).Cwd);
+    }
+
+    [Fact]
+    public void Edited_name_and_cwd_are_trimmed()
+    {
+        GroupSettings settings = GroupForm.Build(Values(name: " nav ", cwd: " ../web "));
+
+        Assert.Equal("nav", settings.Name);
+        Assert.Equal("../web", settings.Cwd);
+    }
+
+    [Fact]
+    public void Kept_name_is_validated_as_saved()
+    {
+        IReadOnlyList<string> clash = GroupForm.Validate(Values(name: "typed") with { KeptName = new KeptValue(" FIRST ") }, new[] { "first" });
+        IReadOnlyList<string> blank = GroupForm.Validate(Values(name: "typed") with { KeptName = new KeptValue("  ") }, Array.Empty<string>());
+
+        Assert.Single(clash);
+        Assert.Contains("already named", clash[0]);
+        Assert.Single(blank);
+        Assert.StartsWith("Name", blank[0]);
+    }
 }

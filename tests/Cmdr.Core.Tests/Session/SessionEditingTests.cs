@@ -38,14 +38,18 @@ public class SessionEditingTests
             Env = new Dictionary<string, string?> { ["FORCE_COLOR"] = "1", ["GONE"] = null },
             Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
             Log = new LogSpec { Enabled = true, Path = "logs/web.log" },
+            Ready = new ReadySpec { Pattern = "listening on\nport", Busy = "rebuilding" },
+            Leftovers = LeftoverMode.Detach,
         };
+        // Console stdin is not allowed with the Input stop method, so it is set on a second command.
+        var worker = new CommandSpec { Name = "worker", Program = "sh", Stdin = StdinMode.Console };
         var config = new CmdrConfig
         {
             BufferLines = 500,
             Groups = new List<GroupSpec>
             {
                 new() { Name = "build", Description = "desc", Mode = GroupMode.Sequential, Items = new List<ItemSpec> { Sh("restore", "true") } },
-                new() { Name = "servers", Items = new List<ItemSpec> { web } },
+                new() { Name = "servers", Items = new List<ItemSpec> { web, worker } },
             },
         };
         string path = dir.File("cmdr.json");
@@ -61,7 +65,7 @@ public class SessionEditingTests
         Assert.Equal(GroupMode.Sequential, built.Groups[0].Mode);
         Assert.Equal(GroupMode.Parallel, built.Groups[1].Mode);
 
-        var loaded = (CommandSpec)built.Groups[1].Items.Single();
+        var loaded = built.Groups[1].Items.OfType<CommandSpec>().Single(command => command.Name == "web");
         Assert.Equal("multi\nline", loaded.Description);
         Assert.Equal("pnpm", loaded.Program);
         Assert.Equal(new[] { "start" }, loaded.Args);
@@ -73,6 +77,11 @@ public class SessionEditingTests
         Assert.Equal("q\n", loaded.Stop.Input);
         Assert.True(loaded.Log.Enabled);
         Assert.Equal("logs/web.log", loaded.Log.Path);
+        Assert.NotNull(loaded.Ready);
+        Assert.Equal("listening on\nport", loaded.Ready!.Pattern);
+        Assert.Equal("rebuilding", loaded.Ready.Busy);
+        Assert.Equal(LeftoverMode.Detach, loaded.Leftovers);
+        Assert.Equal(StdinMode.Console, built.Groups[1].Items.OfType<CommandSpec>().Single(command => command.Name == "worker").Stdin);
 
         Assert.Empty(session.LoadErrors);
         Assert.False(session.IsDirty);

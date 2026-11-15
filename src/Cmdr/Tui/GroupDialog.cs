@@ -5,6 +5,7 @@ using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
+using static Cmdr.Tui.DialogControls;
 
 // See CommandDialog: TextView is the multi-line control of Terminal.Gui 2.5.0.
 #pragma warning disable CS0618
@@ -19,7 +20,8 @@ namespace Cmdr.Tui;
 /// <remarks>
 /// Two columns of fields so that the dialog fits an 80x24 terminal. <see cref="Result"/> is true when the group was committed.
 /// When the initial environment cannot be written in its line format (see <see cref="EnvText.CanEdit"/>) the field is
-/// read-only, and accepting the dialog keeps the environment exactly: edit it in the JSON.
+/// read-only, and accepting the dialog keeps the environment exactly: edit it in the JSON. The name and working dir fields work
+/// the same way as the single-line fields of the command dialog (see <see cref="FieldDraft"/>).
 /// </remarks>
 internal sealed class GroupDialog : Dialog<bool>
 {
@@ -44,6 +46,11 @@ internal sealed class GroupDialog : Dialog<bool>
     private readonly TextView _description;
     private readonly TextView _env;
     private readonly CheckBox _expanded;
+    private readonly Label _multilineHint;
+
+    // The originals of the name and working dir fields (see FieldDraft).
+    private readonly FieldDraft _nameDraft;
+    private readonly FieldDraft _cwdDraft;
 
     // The original environment when its field is read-only; null when the field is edited as text.
     private readonly IReadOnlyDictionary<string, string?>? _keptEnv;
@@ -85,7 +92,9 @@ internal sealed class GroupDialog : Dialog<bool>
             Value = _parentOptions[initialIndex].Label,
         };
 
-        _name = Field(FieldX, 1, FieldWidth, initial.Name);
+        _nameDraft = new FieldDraft(initial.Name);
+        _cwdDraft = new FieldDraft(initial.Cwd);
+        _name = Field(FieldX, 1, FieldWidth, _nameDraft);
         _mode = new OptionSelector<GroupMode>
         {
             X = FieldX,
@@ -95,7 +104,7 @@ internal sealed class GroupDialog : Dialog<bool>
             Orientation = Terminal.Gui.ViewBase.Orientation.Horizontal,
             Value = initial.Mode,
         };
-        _cwd = Field(FieldX, 3, FieldWidth, initial.Cwd ?? string.Empty);
+        _cwd = Field(FieldX, 3, FieldWidth, _cwdDraft);
         _description = Area(0, 5, LeftWidth, 4, initial.Description ?? string.Empty);
         IReadOnlyDictionary<string, string?> initialEnv = initial.Env ?? new Dictionary<string, string?>();
         bool envEditable = EnvText.CanEdit(initialEnv);
@@ -109,6 +118,20 @@ internal sealed class GroupDialog : Dialog<bool>
             Text = "Expanded on load",
             Value = initial.Expanded ? CheckState.Checked : CheckState.UnChecked,
         };
+        bool anyReadOnlyLine = !_nameDraft.Editable || !_cwdDraft.Editable;
+        // The hint row is just above the button area, which covers the last content rows: the dialog grows by one row to show it.
+        if (anyReadOnlyLine)
+        {
+            Height = DialogHeight + 1;
+        }
+
+        _multilineHint = new Label
+        {
+            X = 0,
+            Y = 10,
+            Width = DialogWidth - 4,
+            Text = anyReadOnlyLine ? "Read-only: a value has a line break. Edit it in the JSON." : string.Empty,
+        };
 
         Add(
             Caption("Parent", 0, 0), _parent,
@@ -117,7 +140,8 @@ internal sealed class GroupDialog : Dialog<bool>
             Caption("Working dir", 0, 3), _cwd,
             Caption("Description", 0, 4), _description,
             Caption(envEditable ? "Env (KEY=VALUE, !KEY removes)" : "Env: read-only, edit the JSON", RightX, 4), _env,
-            _expanded);
+            _expanded,
+            _multilineHint);
 
         // OK and Enter in a text field both reach OnAccepting. Cancel ends the dialog without committing.
         var ok = new Button { Text = "_OK" };
@@ -154,22 +178,6 @@ internal sealed class GroupDialog : Dialog<bool>
         return index >= 0 ? _parentOptions[index] : _parentOptions[0];
     }
 
-    private static Label Caption(string text, int x, int y) => new() { Text = text, X = x, Y = y };
-
-    private static TextField Field(int x, int y, int width, string text) =>
-        new() { X = x, Y = y, Width = width, Text = text };
-
-    private static TextView Area(int x, int y, int width, int height, string text) => new()
-    {
-        X = x,
-        Y = y,
-        Width = width,
-        Height = height,
-        Multiline = true,
-        TabKeyAddsTab = false,
-        Text = text,
-    };
-
     private bool TryCommit()
     {
         GroupOption parent = SelectedParent();
@@ -180,7 +188,9 @@ internal sealed class GroupDialog : Dialog<bool>
             _cwd.Text,
             _env.Text,
             _expanded.Value == CheckState.Checked,
-            _keptEnv);
+            _keptEnv,
+            KeptName: _nameDraft.KeptIfUnchanged(_name.Text),
+            KeptCwd: _cwdDraft.KeptIfUnchanged(_cwd.Text));
 
         // Names are unique among the items of the parent the group would be in: groups and commands together. At top level
         // that is the groups of the opened file only; base groups are not changed by this group.

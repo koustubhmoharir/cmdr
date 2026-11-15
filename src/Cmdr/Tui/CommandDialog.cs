@@ -5,6 +5,7 @@ using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
+using static Cmdr.Tui.DialogControls;
 
 // TextView is marked obsolete in Terminal.Gui 2.5.0 in favour of an editor package that is not in use here. It is still
 // the multi-line text control of this version, and the dialogs need one for description, args and env.
@@ -21,6 +22,8 @@ namespace Cmdr.Tui;
 /// command was committed.
 /// A field whose initial values cannot be written in its line format (see <see cref="ArgsText.CanEdit"/> and
 /// <see cref="EnvText.CanEdit"/>) is read-only, and accepting the dialog keeps those values exactly: edit them in the JSON.
+/// The single-line fields work the same way (see <see cref="FieldDraft"/>): a value with a line break is read-only, and a
+/// value that is not edited is saved exactly; only edited text is trimmed.
 /// </remarks>
 internal sealed class CommandDialog : Dialog<bool>
 {
@@ -53,6 +56,15 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly OptionSelector<StdinMode> _stdin;
     private readonly TextField _readyPattern;
     private readonly TextField _busyPattern;
+    private readonly Label _multilineHint;
+
+    // The originals of the single-line fields (see FieldDraft).
+    private readonly FieldDraft _nameDraft;
+    private readonly FieldDraft _programDraft;
+    private readonly FieldDraft _cwdDraft;
+    private readonly FieldDraft _logPathDraft;
+    private readonly FieldDraft _readyDraft;
+    private readonly FieldDraft _busyDraft;
 
     // The original args or env when their field is read-only; null when the field is edited as text.
     private readonly IReadOnlyList<string>? _keptArgs;
@@ -87,6 +99,13 @@ internal sealed class CommandDialog : Dialog<bool>
         _keptArgs = argsEditable ? null : initial.Args.ToList();
         _keptEnv = envEditable ? null : new Dictionary<string, string?>(initial.Env);
 
+        _nameDraft = new FieldDraft(initial.Name);
+        _programDraft = new FieldDraft(initial.Program);
+        _cwdDraft = new FieldDraft(initial.Cwd);
+        _logPathDraft = new FieldDraft(initial.Log.Path);
+        _readyDraft = new FieldDraft(initial.Ready?.Pattern);
+        _busyDraft = new FieldDraft(initial.Ready?.Busy);
+
         Title = title;
         Width = DialogWidth;
         Height = DialogHeight;
@@ -102,9 +121,9 @@ internal sealed class CommandDialog : Dialog<bool>
             Value = _groupOptions[initialIndex].Label,
         };
 
-        _name = Field(12, 1, LeftWidth - 12, initial.Name);
-        _program = Field(12, 2, LeftWidth - 12, initial.Program);
-        _cwd = Field(12, 3, LeftWidth - 12, initial.Cwd ?? string.Empty);
+        _name = Field(12, 1, LeftWidth - 12, _nameDraft);
+        _program = Field(12, 2, LeftWidth - 12, _programDraft);
+        _cwd = Field(12, 3, LeftWidth - 12, _cwdDraft);
         _description = Area(0, 5, LeftWidth, 3, initial.Description ?? string.Empty);
         _env = Area(0, 9, LeftWidth, 3, EnvText.Format(initial.Env));
         _env.ReadOnly = !envEditable;
@@ -130,7 +149,7 @@ internal sealed class CommandDialog : Dialog<bool>
             Text = "Log to file",
             Value = initial.Log.Enabled ? CheckState.Checked : CheckState.UnChecked,
         };
-        _logPath = Field(RightX + 10, 8, RightWidth - 10, initial.Log.Path ?? string.Empty);
+        _logPath = Field(RightX + 10, 8, RightWidth - 10, _logPathDraft);
         _logHint = new Label { X = RightX, Y = 9, Width = RightWidth, Height = 2 };
         _detachLeftovers = new CheckBox
         {
@@ -150,8 +169,23 @@ internal sealed class CommandDialog : Dialog<bool>
         };
 
         // Left column, below the environment: the readiness patterns, one line each (see CommandForm for the rules).
-        _readyPattern = Field(12, 12, LeftWidth - 12, initial.Ready?.Pattern ?? string.Empty);
-        _busyPattern = Field(12, 13, LeftWidth - 12, initial.Ready?.Busy ?? string.Empty);
+        _readyPattern = Field(12, 12, LeftWidth - 12, _readyDraft);
+        _busyPattern = Field(12, 13, LeftWidth - 12, _busyDraft);
+        bool anyReadOnlyLine = new[] { _nameDraft, _programDraft, _cwdDraft, _logPathDraft, _readyDraft, _busyDraft }
+            .Any(draft => !draft.Editable);
+        // The hint row is just above the button area, which covers the last content rows: the dialog grows by one row to show it.
+        if (anyReadOnlyLine)
+        {
+            Height = DialogHeight + 1;
+        }
+
+        _multilineHint = new Label
+        {
+            X = 0,
+            Y = 14,
+            Width = DialogWidth - 4,
+            Text = anyReadOnlyLine ? "Read-only: a value has a line break. Edit it in the JSON." : string.Empty,
+        };
 
         View[] root =
         {
@@ -172,6 +206,7 @@ internal sealed class CommandDialog : Dialog<bool>
             Caption("Input", RightX, 12), _stdin,
             Caption("Ready regex", 0, 12), _readyPattern,
             Caption("Busy regex", 0, 13), _busyPattern,
+            _multilineHint,
         };
         Add(root);
 
@@ -206,22 +241,6 @@ internal sealed class CommandDialog : Dialog<bool>
         }
     }
 
-    private static Label Caption(string text, int x, int y) => new() { Text = text, X = x, Y = y };
-
-    private static TextField Field(int x, int y, int width, string text) =>
-        new() { X = x, Y = y, Width = width, Text = text };
-
-    private static TextView Area(int x, int y, int width, int height, string text) => new()
-    {
-        X = x,
-        Y = y,
-        Width = width,
-        Height = height,
-        Multiline = true,
-        TabKeyAddsTab = false,
-        Text = text,
-    };
-
     private void UpdateLogHint()
     {
         // The group and all its ancestors, outermost first: the default log folder has one level per group.
@@ -248,7 +267,13 @@ internal sealed class CommandDialog : Dialog<bool>
         ReadyPattern: _readyPattern.Text,
         BusyPattern: _busyPattern.Text,
         KeptArgs: _keptArgs,
-        KeptEnv: _keptEnv);
+        KeptEnv: _keptEnv,
+        KeptName: _nameDraft.KeptIfUnchanged(_name.Text),
+        KeptProgram: _programDraft.KeptIfUnchanged(_program.Text),
+        KeptCwd: _cwdDraft.KeptIfUnchanged(_cwd.Text),
+        KeptLogPath: _logPathDraft.KeptIfUnchanged(_logPath.Text),
+        KeptReadyPattern: _readyDraft.KeptIfUnchanged(_readyPattern.Text),
+        KeptBusyPattern: _busyDraft.KeptIfUnchanged(_busyPattern.Text));
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

@@ -236,4 +236,114 @@ public sealed class CommandFormTests
         Assert.Single(CommandForm.Validate(values, Array.Empty<string>()));
         Assert.Equal(new[] { "a", "b" }, CommandForm.Build(Valid(args: "a\nb")).Args);
     }
+
+    [Fact]
+    public void Kept_single_line_values_are_saved_exactly_and_not_trimmed()
+    {
+        CommandFormValues values = Valid() with
+        {
+            KeptName = new KeptValue("  build  "),
+            KeptProgram = new KeptValue(" sh "),
+            KeptCwd = new KeptValue("  ../web  "),
+            KeptLogPath = new KeptValue(string.Empty),
+            KeptReadyPattern = new KeptValue("listening\non port"),
+            KeptBusyPattern = new KeptValue(null),
+        };
+
+        Assert.Empty(CommandForm.Validate(values, new[] { "other" }));
+
+        CommandSpec spec = CommandForm.Build(values);
+        Assert.Equal("  build  ", spec.Name);
+        Assert.Equal(" sh ", spec.Program);
+        Assert.Equal("  ../web  ", spec.Cwd);
+        Assert.Equal(string.Empty, spec.Log.Path);
+        Assert.NotNull(spec.Ready);
+        Assert.Equal("listening\non port", spec.Ready!.Pattern);
+        Assert.Null(spec.Ready.Busy);
+    }
+
+    [Fact]
+    public void Kept_null_stays_null_and_kept_empty_stays_empty_whatever_the_text()
+    {
+        CommandFormValues values = Valid() with
+        {
+            Cwd = "  typed  ",
+            LogPath = "  typed  ",
+            KeptCwd = new KeptValue(null),
+            KeptLogPath = new KeptValue(string.Empty),
+        };
+
+        CommandSpec spec = CommandForm.Build(values);
+
+        Assert.Null(spec.Cwd);
+        Assert.Equal(string.Empty, spec.Log.Path);
+    }
+
+    [Fact]
+    public void Edited_single_line_values_are_trimmed_and_blank_optional_values_are_null()
+    {
+        CommandFormValues values = Valid() with { Name = " tool ", Program = " /opt/run ", Cwd = "   ", LogPath = " logs/x.log " };
+
+        CommandSpec spec = CommandForm.Build(values);
+
+        Assert.Equal("tool", spec.Name);
+        Assert.Equal("/opt/run", spec.Program);
+        Assert.Null(spec.Cwd);
+        Assert.Equal("logs/x.log", spec.Log.Path);
+    }
+
+    [Fact]
+    public void Edited_ready_and_busy_patterns_are_saved_as_typed()
+    {
+        // As before the kept values: a regular expression is not trimmed; blank means no pattern.
+        CommandSpec spec = CommandForm.Build(Valid() with { ReadyPattern = "  ok  ", BusyPattern = "  busy  " });
+
+        Assert.Equal("  ok  ", spec.Ready!.Pattern);
+        Assert.Equal("  busy  ", spec.Ready.Busy);
+    }
+
+    [Fact]
+    public void Kept_name_is_validated_as_saved()
+    {
+        IReadOnlyList<string> clash = CommandForm.Validate(Valid() with { KeptName = new KeptValue(" Build ") }, new[] { "build" });
+        IReadOnlyList<string> blank = CommandForm.Validate(Valid(name: "build") with { KeptName = new KeptValue("   ") }, Array.Empty<string>());
+
+        Assert.Single(clash);
+        Assert.Contains("already named", clash[0]);
+        Assert.Single(blank);
+        Assert.Contains("Name must not be blank", blank[0]);
+    }
+
+    [Fact]
+    public void Kept_program_is_validated_as_saved()
+    {
+        IReadOnlyList<string> errors = CommandForm.Validate(Valid(program: "sh") with { KeptProgram = new KeptValue(" ") }, Array.Empty<string>());
+
+        Assert.Single(errors);
+        Assert.Contains("Program", errors[0]);
+    }
+
+    [Fact]
+    public void Kept_multiline_ready_pattern_is_validated_as_saved()
+    {
+        IReadOnlyList<string> invalid = CommandForm.Validate(Valid() with { KeptReadyPattern = new KeptValue("(open\nx") }, Array.Empty<string>());
+        IReadOnlyList<string> valid = CommandForm.Validate(
+            Valid() with { ReadyPattern = "(open", KeptReadyPattern = new KeptValue("(?x)\n  ready \n  now") },
+            Array.Empty<string>());
+
+        Assert.Single(invalid);
+        Assert.StartsWith("Ready pattern is not a valid regular expression", invalid[0]);
+        Assert.Empty(valid);
+    }
+
+    [Fact]
+    public void Kept_busy_pattern_without_a_ready_pattern_is_an_error()
+    {
+        IReadOnlyList<string> errors = CommandForm.Validate(
+            Valid() with { ReadyPattern = " ", KeptBusyPattern = new KeptValue("rebuild\nnow") },
+            Array.Empty<string>());
+
+        Assert.Single(errors);
+        Assert.Equal("Busy pattern needs a ready pattern.", errors[0]);
+    }
 }
