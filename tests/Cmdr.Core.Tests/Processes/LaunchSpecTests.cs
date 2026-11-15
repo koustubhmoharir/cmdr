@@ -108,4 +108,61 @@ public class LaunchSpecTests
 
         Assert.Equal(Path.GetFullPath(Path.Combine(absolute, "x")), spec.WorkingDirectory);
     }
+
+    [Fact]
+    public void Constructor_CopiesArgsLevelsAndReady_SoCallerEditsDoNotReachTheSpec()
+    {
+        var args = new List<string> { "a" };
+        var env = new Dictionary<string, string?> { ["X"] = "1" };
+        var levels = new List<EnvLevel> { new(env, "/w") };
+        var ready = new ReadySpec { Pattern = "up" };
+
+        var spec = new LaunchSpec("p", args, "/w", levels, "/w", StopMethod.CtrlC, null, Ready: ready);
+        args.Add("b");
+        env["X"] = "2";
+        env["Y"] = "3";
+        levels.Add(new EnvLevel(new Dictionary<string, string?>(), "/v"));
+        ready.Pattern = "changed";
+
+        Assert.Equal(new[] { "a" }, spec.Args);
+        Assert.Single(spec.EnvLevels);
+        Assert.Equal("1", spec.EnvLevels[0].Env["X"]);
+        Assert.False(spec.EnvLevels[0].Env.ContainsKey("Y"));
+        Assert.Equal("up", spec.Ready!.Pattern);
+        Assert.IsNotType<List<string>>(spec.Args);
+    }
+
+    [Fact]
+    public void With_CopiesTheReplacedCollections()
+    {
+        var spec = new LaunchSpec("p", new[] { "a" }, "/w", Array.Empty<EnvLevel>(), "/w", StopMethod.CtrlC, null);
+        var args = new List<string> { "b" };
+        var ready = new ReadySpec { Pattern = "up" };
+
+        LaunchSpec changed = spec with { Args = args, Ready = ready };
+        args.Add("c");
+        ready.Pattern = "changed";
+
+        Assert.Equal(new[] { "b" }, changed.Args);
+        Assert.Equal("up", changed.Ready!.Pattern);
+    }
+
+    [Fact]
+    public void From_LaterConfigEditsDoNotReachTheSpec()
+    {
+        using var dir = new TempDir();
+        var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["G"] = "1" } };
+        var cmd = new CommandSpec { Name = "a", Program = "p", Args = new List<string> { "x" }, Env = new Dictionary<string, string?> { ["C"] = "1" }, Ready = new ReadySpec { Pattern = "up" } };
+
+        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path);
+        group.Env["G"] = "2";
+        cmd.Env["C"] = "2";
+        cmd.Args.Add("y");
+        cmd.Ready.Pattern = "changed";
+
+        Assert.Equal("1", spec.EnvLevels[0].Env["G"]);
+        Assert.Equal("1", spec.EnvLevels[1].Env["C"]);
+        Assert.Equal(new[] { "x" }, spec.Args);
+        Assert.Equal("up", spec.Ready!.Pattern);
+    }
 }

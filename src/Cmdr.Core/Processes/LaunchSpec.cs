@@ -3,8 +3,9 @@ using Cmdr.Core.Config;
 namespace Cmdr.Core.Processes;
 
 /// <summary>
-/// A fully resolved launch request: every relative path is resolved and every collection is a private copy,
-/// so later edits to the configuration do not affect a process that is already launched.
+/// A fully resolved launch request: every relative path is resolved, and the constructor (and a <c>with</c> expression) takes
+/// a private copy of every collection and of <see cref="Ready"/>, so later edits to the configuration, or to the lists the
+/// caller passed, do not affect a process that is already launched.
 /// </summary>
 /// <param name="Program">Executable to launch.</param>
 /// <param name="Args">Arguments, passed without quoting.</param>
@@ -31,6 +32,15 @@ public sealed record LaunchSpec(
     StdinMode Stdin = StdinMode.Pipe,
     ReadySpec? Ready = null)
 {
+    /// <summary>Arguments, passed without quoting. A private copy.</summary>
+    public IReadOnlyList<string> Args { get; init => field = CopyArgs(value); } = CopyArgs(Args);
+
+    /// <summary>Environment overlays, outermost first. A private copy, down to each level's dictionary.</summary>
+    public IReadOnlyList<EnvLevel> EnvLevels { get; init => field = CopyLevels(value); } = CopyLevels(EnvLevels);
+
+    /// <summary>Readiness patterns, or null. A private copy: <see cref="ReadySpec"/> is mutable.</summary>
+    public ReadySpec? Ready { get; init => field = value?.Clone(); } = Ready?.Clone();
+
     /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
     /// each environment level are resolved against <paramref name="configDir"/>.
@@ -50,16 +60,16 @@ public sealed record LaunchSpec(
             cwd = ConfigPaths.ResolveDir(group.Cwd, cwd);
             if (group.Env is not null)
             {
-                levels.Add(new EnvLevel(new Dictionary<string, string?>(group.Env), cwd));
+                levels.Add(new EnvLevel(group.Env, cwd));
             }
         }
 
         string workingDirectory = ConfigPaths.ResolveDir(spec.Cwd, cwd);
-        levels.Add(new EnvLevel(new Dictionary<string, string?>(spec.Env), workingDirectory));
+        levels.Add(new EnvLevel(spec.Env, workingDirectory));
 
         return new LaunchSpec(
             spec.Program,
-            spec.Args.ToArray(),
+            spec.Args,
             workingDirectory,
             levels,
             Path.GetFullPath(configDir),
@@ -67,6 +77,25 @@ public sealed record LaunchSpec(
             spec.Stop.Input,
             spec.Leftovers,
             spec.Stdin,
-            spec.Ready?.Clone());
+            spec.Ready);
+    }
+
+    private static string[] CopyArgs(IReadOnlyList<string> args)
+    {
+        ArgumentNullException.ThrowIfNull(args);
+        return [.. args];
+    }
+
+    private static EnvLevel[] CopyLevels(IReadOnlyList<EnvLevel> levels)
+    {
+        ArgumentNullException.ThrowIfNull(levels);
+        var copy = new EnvLevel[levels.Count];
+        for (int i = 0; i < copy.Length; i++)
+        {
+            EnvLevel level = levels[i] ?? throw new ArgumentException("An environment level is null.", nameof(levels));
+            copy[i] = new EnvLevel(new Dictionary<string, string?>(level.Env), level.Cwd);
+        }
+
+        return copy;
     }
 }
