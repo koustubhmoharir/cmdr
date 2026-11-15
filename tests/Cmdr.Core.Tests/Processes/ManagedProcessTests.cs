@@ -12,6 +12,14 @@ public class ManagedProcessTests
 {
     private const int BufferLines = 1000;
 
+    /// <summary>
+    /// Starts a background sleep and prints "ready" once it ignores SIGINT, as non-interactive sh arranges for background jobs.
+    /// The shell sets that in the forked child, which may run after the shell's next command, so the script waits for bit 2 of
+    /// the child's SigIgn mask (a last hex digit of 2, 3, 6, 7, a, b, e or f).
+    /// </summary>
+    private const string BackgroundSleepIgnoringCtrlC =
+        "sleep 30 & bg=$!; while ! grep -q '^SigIgn:.*[2367abef]$' /proc/$bg/status; do sleep 0.01; done; echo ready";
+
     [Fact]
     public void CapturesStdoutStderrAndExitCode()
     {
@@ -116,7 +124,8 @@ public class ManagedProcessTests
 
             p.RequestStop();
             ProcessSnapshot stopping = p.Snapshot;
-            Assert.Equal(ProcessState.Stopping, stopping.State);
+            // The signal is delivered inside RequestStop, so the shell may already have exited and been recorded.
+            Assert.True(stopping.State is ProcessState.Stopping or ProcessState.Exited, $"state after RequestStop: {stopping.State}");
             Assert.NotNull(stopping.StopRequestedAt);
 
             WaitForExited(p);
@@ -318,9 +327,9 @@ public class ManagedProcessTests
         var p = new ManagedProcess(BufferLines);
         try
         {
-            p.Start(Sh("sleep 30 & echo ready; sleep 30", dir.Path));
+            p.Start(Sh(BackgroundSleepIgnoringCtrlC + "; sleep 30", dir.Path));
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
+            // Wait until the background sleep ignores Ctrl+C; an earlier Ctrl+C would kill the shell itself.
             WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
 
             p.RequestStop();
@@ -577,10 +586,10 @@ public class ManagedProcessTests
         int? leaderPid = null;
         try
         {
-            LaunchSpec spec = Sh("sleep 30 & echo ready; sleep 30", dir.Path) with { Leftovers = LeftoverMode.Detach };
+            LaunchSpec spec = Sh(BackgroundSleepIgnoringCtrlC + "; sleep 30", dir.Path) with { Leftovers = LeftoverMode.Detach };
             p.Start(spec);
             WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            // Wait until the background sleep is started; an earlier Ctrl+C would kill the shell itself.
+            // Wait until the background sleep ignores Ctrl+C; an earlier Ctrl+C would kill the shell itself.
             WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "shell ready", p);
             leaderPid = p.Snapshot.Pid;
 

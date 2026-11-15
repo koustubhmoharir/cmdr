@@ -66,7 +66,7 @@ public sealed class AnsiLineParser
 
     /// <summary>Creates a parser for one output stream.</summary>
     /// <param name="source">The source tagged on every line this parser produces.</param>
-    /// <param name="maxLineLength">A line reaching this many UTF-16 code units is completed as if a newline was seen. A supplementary scalar is kept intact, so a limit of one may be exceeded by one code unit.</param>
+    /// <param name="maxLineLength">A line reaching this many UTF-16 code units is completed as if a newline was seen. The last grapheme is kept intact by moving it to the next line; only a grapheme that is the whole line is split, except a supplementary scalar, for which a limit of one may be exceeded by one code unit.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxLineLength"/> is not positive.</exception>
     public AnsiLineParser(OutputSource source, int maxLineLength = 65536)
     {
@@ -636,29 +636,22 @@ public sealed class AnsiLineParser
     {
         ClearPendingOverwrite();
 
-        bool completesPair = char.IsLowSurrogate(c) && _length > 0 && char.IsHighSurrogate(_chars[_length - 1]);
-        if (completesPair && _length > 1 && _length >= _maxLineLength)
+        // The line is completed before a character that would exceed the limit, so a line of exactly maxLineLength characters
+        // followed by a newline yields one line. A character that continues the last grapheme (the low half of a surrogate
+        // pair, a combining mark, a joiner...) takes that whole grapheme to the new line, so a grapheme is not split. When the
+        // grapheme is the whole line it cannot move: a surrogate pair then stays together (the line exceeds the limit by one
+        // code unit), and anything longer is split.
+        if (_length >= _maxLineLength)
         {
-            SpanStyle pairStyle = _runs[_runCount - 1].Style;
-            SpanStyle currentStyle = _style;
-            char high = _chars[_length - 1];
-            _length--;
-            DropRunsFromLength();
-
-            ResetWidthCheckpointIfAbove();
-
-            CompleteLine(completed);
-            _style = pairStyle;
-            AppendChar(high, completed);
-            _style = currentStyle;
-        }
-
-        // The line is completed before a character that would exceed the limit, so a line of exactly
-        // maxLineLength characters followed by a newline yields one line.
-        completesPair = char.IsLowSurrogate(c) && _length > 0 && char.IsHighSurrogate(_chars[_length - 1]);
-        if (_length >= _maxLineLength && !completesPair)
-        {
-            CompleteLine(completed);
+            int graphemeStart = StartOfGraphemeContinuedBy(c);
+            if (graphemeStart > 0)
+            {
+                MoveTailToNewLine(graphemeStart, completed);
+            }
+            else if (!(graphemeStart == 0 && _length == 1 && char.IsLowSurrogate(c) && char.IsHighSurrogate(_chars[0])))
+            {
+                CompleteLine(completed);
+            }
         }
 
         EnsureWritable();
@@ -673,6 +666,77 @@ public sealed class AnsiLineParser
         }
 
         _chars[_length++] = c;
+    }
+
+    /// <summary>Longest grapheme tail examined at a forced break; a longer grapheme is split there.</summary>
+    private const int MaxCarriedGrapheme = 64;
+
+    /// <summary>
+    /// The index where the line's last grapheme starts if <paramref name="c"/> would continue it, or -1 when <paramref name="c"/>
+    /// starts a new grapheme (or the grapheme is longer than <see cref="MaxCarriedGrapheme"/>).
+    /// </summary>
+    private int StartOfGraphemeContinuedBy(char c)
+    {
+        if (_length == 0)
+        {
+            return -1;
+        }
+
+        int windowStart = Math.Max(0, _length - MaxCarriedGrapheme);
+        var window = new string(_chars, windowStart, _length - windowStart) + c;
+        int start = 0;
+        int lastStart = 0;
+        while (start < window.Length)
+        {
+            lastStart = start;
+            start += System.Globalization.StringInfo.GetNextTextElementLength(window, start);
+        }
+
+        // c starts its own grapheme when the last one begins at c; a grapheme reaching back to the window's start may be longer.
+        if (lastStart == window.Length - 1 || (lastStart == 0 && windowStart > 0))
+        {
+            return -1;
+        }
+
+        return windowStart + lastStart;
+    }
+
+    /// <summary>Completes the line before <paramref name="from"/>, and starts the next line with the characters after it, in their styles.</summary>
+    private void MoveTailToNewLine(int from, List<OutputLine> completed)
+    {
+        var carried = new List<(char Char, SpanStyle Style)>(_length - from);
+        for (int i = from; i < _length; i++)
+        {
+            carried.Add((_chars[i], StyleAt(i)));
+        }
+
+        _length = from;
+        DropRunsFromLength();
+        ResetWidthCheckpointIfAbove();
+        CompleteLine(completed);
+
+        SpanStyle currentStyle = _style;
+        foreach ((char ch, SpanStyle style) in carried)
+        {
+            _style = style;
+            AppendChar(ch, completed);
+        }
+
+        _style = currentStyle;
+    }
+
+    /// <summary>The style of the character at <paramref name="index"/>: that of the last run starting at or before it.</summary>
+    private SpanStyle StyleAt(int index)
+    {
+        for (int r = _runCount - 1; r >= 0; r--)
+        {
+            if (_runs[r].Start <= index)
+            {
+                return _runs[r].Style;
+            }
+        }
+
+        return _style;
     }
 
     /// <summary>Removes runs that start at or after the current length (their text was removed).</summary>

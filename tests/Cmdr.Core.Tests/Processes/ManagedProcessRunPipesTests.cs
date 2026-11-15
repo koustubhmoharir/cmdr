@@ -120,9 +120,12 @@ public class ManagedProcessRunPipesTests
             p.Start(Sh($"echo BEFORE; {WaitFor("go")}; echo AFTER >&2; sleep 30", dir.Path));
             WaitForText(p, "BEFORE");
             leader = p.Snapshot.Pid;
-            long versionBefore = p.Output.Buffer.Version;
 
+            // Read after Dispose: one chunk changes the buffer twice (its completed lines, then its partial line), so a
+            // version read as soon as BEFORE shows could miss the second change. Dispose takes the output lock that every
+            // chunk holds, so no change of a chunk read before it can follow.
             p.Dispose();
+            long versionBefore = p.Output.Buffer.Version;
             WaitUntil(() => p.LivePipeCount == 0, "the readers to end after disposal");
 
             // Linux disposal does not kill: the child is still alive and runs on, but its output goes nowhere.

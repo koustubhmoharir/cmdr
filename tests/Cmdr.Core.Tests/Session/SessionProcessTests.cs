@@ -390,7 +390,11 @@ public class SessionProcessTests
             WaitForExited(entry.Process);
 
             string logPath = dir.File(Path.Combine("logs", "g", "hello.log"));
-            WaitUntil(() => File.Exists(logPath) && File.ReadAllText(logPath).Contains("hello", StringComparison.Ordinal), "log to contain output", entry.Process);
+            // The log is written in batches on a background thread: the exit marker can follow the output in a later batch.
+            WaitUntil(
+                () => File.Exists(logPath) && File.ReadAllText(logPath).Contains("=== exited with code 0 ===", StringComparison.Ordinal),
+                "log to contain the exit marker",
+                entry.Process);
             string logText = File.ReadAllText(logPath);
             Assert.Contains("hello", logText, StringComparison.Ordinal);
             Assert.Contains("=== exited with code 0 ===", logText, StringComparison.Ordinal);

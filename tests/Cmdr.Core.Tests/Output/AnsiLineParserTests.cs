@@ -155,6 +155,54 @@ public class AnsiLineParserTests
     }
 
     [Fact]
+    public void ForcedLineBreakMovesABaseWithItsCombiningMarkToTheNextLine()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 3);
+        var lines = new List<OutputLine>();
+        parser.Feed("abe", lines);
+        parser.Feed("\u0301X\n", lines); // the mark arrives in a later chunk
+
+        Assert.Equal(new[] { "ab", "e\u0301X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void ForcedLineBreakAtTheDefaultLimitKeepsTheCombiningMark()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var lines = new List<OutputLine>();
+        parser.Feed(new string('a', 65_535) + "e\u0301X\n", lines);
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(65_535, lines[0].PlainText.Length);
+        Assert.Equal("e\u0301X", lines[1].PlainText);
+    }
+
+    [Fact]
+    public void ForcedLineBreakMovesAZwjSequenceWhole_InItsStyles()
+    {
+        // 👩‍💻 is U+1F469 ZWJ U+1F4BB: five UTF-16 code units, one grapheme.
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 6);
+        List<OutputLine> lines = new();
+        parser.Feed("ab\u001B[31m\uD83D\uDC69\u200D\uD83D", lines);
+        parser.Feed("\uDCBB\u001B[0mX\n", lines);
+
+        Assert.Equal(new[] { "ab", "\uD83D\uDC69\u200D\uD83D\uDCBBX" }, Texts(lines));
+        Assert.Equal(new[] { "\uD83D\uDC69\u200D\uD83D\uDCBB", "X" }, lines[1].Spans.Select(span => span.Text));
+        Assert.NotEqual(SpanStyle.Default, lines[1].Spans[0].Style);
+        Assert.Equal(SpanStyle.Default, lines[1].Spans[1].Style);
+    }
+
+    [Fact]
+    public void GraphemeThatIsTheWholeLineIsSplitAtTheLimit()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 2);
+        var lines = new List<OutputLine>();
+        parser.Feed("e\u0301\u0302\n", lines);
+
+        Assert.Equal(new[] { "e\u0301", "\u0302" }, Texts(lines));
+    }
+
+    [Fact]
     public void BackspaceRemovesCompleteSupplementaryCharacter()
     {
         Assert.Equal(new[] { "X" }, Texts(Parse("😀", "\bX\n")));

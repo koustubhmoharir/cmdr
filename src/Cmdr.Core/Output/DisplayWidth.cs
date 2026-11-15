@@ -15,7 +15,7 @@ namespace Cmdr.Core.Output;
 /// </remarks>
 public static class DisplayWidth
 {
-    private static Func<string, int> _graphemeWidth = DefaultGraphemeWidth;
+    private static Measure _measure = new(DefaultGraphemeWidth);
 
     /// <summary>
     /// The width in terminal columns of one grapheme cluster (a <see cref="StringInfo"/> text element). Results below 0
@@ -28,8 +28,8 @@ public static class DisplayWidth
     /// <exception cref="ArgumentNullException">The value is null.</exception>
     public static Func<string, int> GraphemeWidth
     {
-        get => _graphemeWidth;
-        set => _graphemeWidth = value ?? throw new ArgumentNullException(nameof(value));
+        get => _measure.Width;
+        set => _measure = new Measure(value ?? throw new ArgumentNullException(nameof(value)));
     }
 
     /// <summary>The display width of <paramref name="text"/>: the sum of <see cref="GraphemeWidth"/> over its grapheme clusters.</summary>
@@ -56,7 +56,9 @@ public static class DisplayWidth
 
     /// <summary>
     /// The width of one grapheme cluster: <see cref="GraphemeWidth"/>, at least 0. A single printable ASCII character is 1
-    /// without calling it (every measure agrees), so plain text is measured without allocating.
+    /// without calling it (every measure agrees). The width of any other single-scalar grapheme is cached per measure, so
+    /// plain and CJK text are measured without allocating; only graphemes of several scalars (a base with marks, an emoji
+    /// sequence) call the measure with a new string.
     /// </summary>
     public static int OfGrapheme(ReadOnlySpan<char> grapheme)
     {
@@ -65,7 +67,64 @@ public static class DisplayWidth
             return 1;
         }
 
-        return grapheme.IsEmpty ? 0 : Math.Max(0, _graphemeWidth(grapheme.ToString()));
+        return grapheme.IsEmpty ? 0 : _measure.Of(grapheme);
+    }
+
+    /// <summary>A grapheme measure with a cache of its single-scalar widths. Immutable apart from the cache.</summary>
+    private sealed class Measure(Func<string, int> width)
+    {
+        private const byte Unknown = byte.MaxValue;
+
+        // Widths of single BMP characters, filled on first use (Unknown until then). Races only store equal values.
+        private readonly byte[] _bmp = CreateBmpCache();
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> _supplementary = new();
+
+        public Func<string, int> Width { get; } = width;
+
+        public int Of(ReadOnlySpan<char> grapheme)
+        {
+            if (grapheme.Length == 1)
+            {
+                char c = grapheme[0];
+                byte cached = Volatile.Read(ref _bmp[c]);
+                if (cached != Unknown)
+                {
+                    return cached;
+                }
+
+                int measured = Measured(grapheme);
+                if (measured < Unknown)
+                {
+                    Volatile.Write(ref _bmp[c], (byte)measured);
+                }
+
+                return measured;
+            }
+
+            if (grapheme.Length == 2 && char.IsSurrogatePair(grapheme[0], grapheme[1]))
+            {
+                int scalar = char.ConvertToUtf32(grapheme[0], grapheme[1]);
+                if (_supplementary.TryGetValue(scalar, out int known))
+                {
+                    return known;
+                }
+
+                int measured = Measured(grapheme);
+                _supplementary.TryAdd(scalar, measured);
+                return measured;
+            }
+
+            return Measured(grapheme);
+        }
+
+        private int Measured(ReadOnlySpan<char> grapheme) => Math.Max(0, Width(grapheme.ToString()));
+
+        private static byte[] CreateBmpCache()
+        {
+            var cache = new byte[char.MaxValue + 1];
+            Array.Fill(cache, Unknown);
+            return cache;
+        }
     }
 
     /// <summary>

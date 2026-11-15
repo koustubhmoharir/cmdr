@@ -20,6 +20,14 @@ public class CommandOutputLogWriterTests
     private static string StartMarker(DateTimeOffset startedAt) =>
         "=== started " + startedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " ===";
 
+    /// <summary>Runs <paramref name="action"/> on a new thread; true if it returned within <paramref name="timeout"/>.</summary>
+    private static bool CompletesWithin(Action action, TimeSpan timeout)
+    {
+        var thread = new Thread(() => action()) { IsBackground = true };
+        thread.Start();
+        return thread.Join(timeout);
+    }
+
     private static string Lines(params string[] lines) => string.Concat(lines.Select(l => l + Environment.NewLine));
 
     [Fact]
@@ -35,10 +43,11 @@ public class CommandOutputLogWriterTests
             fifo.EnableLogOn(output);
             output.BeginRun(Start);
 
-            // Far more than the pipe holds, so the writer blocks; then more lines than the queue takes.
+            // Far more than the pipe holds, so the writer blocks; then more lines than the queue takes. How many lines the
+            // blocked writer took in its batch depends on when its thread ran, so write until logging is disabled (bounded).
             string line = new string('x', 200) + "\n";
             var watch = Stopwatch.StartNew();
-            for (int i = 0; i < CommandOutput.LogQueueCapacity + 2000; i++)
+            for (int i = 0; i < CommandOutput.LogQueueCapacity * 3 && output.IsLogging; i++)
             {
                 output.WriteStdOut(line);
             }
@@ -61,7 +70,7 @@ public class CommandOutputLogWriterTests
     }
 
     [Fact]
-    public async Task ForceKillAndSnapshotsDoNotWaitForAStalledLog()
+    public void ForceKillAndSnapshotsDoNotWaitForAStalledLog()
     {
         if (!OperatingSystem.IsLinux()) return;
 
@@ -76,10 +85,9 @@ public class CommandOutputLogWriterTests
             Assert.True(p.Output.IsLogging);
             Assert.False(p.Output.WaitForLogWrites(TimeSpan.FromMilliseconds(200)), "the log should be stalled");
 
-            Task kill = Task.Run(p.ForceKill);
-            Assert.Same(kill, await Task.WhenAny(kill, Task.Delay(Prompt)));
-            Task<ProcessSnapshot> snapshot = Task.Run(() => p.Snapshot);
-            Assert.Same(snapshot, await Task.WhenAny(snapshot, Task.Delay(Prompt)));
+            // Dedicated threads, not the thread pool: the test measures whether the calls block, not how soon the pool runs them.
+            Assert.True(CompletesWithin(p.ForceKill, Prompt), "ForceKill waited for the stalled log");
+            Assert.True(CompletesWithin(() => _ = p.Snapshot, Prompt), "Snapshot waited for the stalled log");
             WaitForExited(p);
             Assert.True(p.Snapshot.StopRequested);
 
@@ -125,7 +133,11 @@ public class CommandOutputLogWriterTests
             output.DisableLog();
             Assert.True(output.WaitForLogWrites(TimeSpan.FromSeconds(10)));
 
-            Assert.Equal(Lines(StartMarker(Start), "a", "b", notice, "c"), File.ReadAllText(path));
+            // The notice is wherever the failure happened relative to "b": the writer may fail before or after "b" is written.
+            // Either way the file now holds every line once, in the buffer's order.
+            string[] expected = BufferTexts(output.Buffer);
+            Assert.Equal(new[] { StartMarker(Start), "a", "b", "c", notice }.Order(), expected.Order());
+            Assert.Equal(Lines(expected), File.ReadAllText(path));
         }
         finally
         {

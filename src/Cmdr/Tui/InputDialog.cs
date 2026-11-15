@@ -43,10 +43,12 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
         _widestLabelWidth = labels.Max(label => label.Length) + 1;
         int labelWidth = Math.Min(_widestLabelWidth, Math.Max(1, _app.Screen.Width - MinFieldWidth - 5));
         int fieldWidth = Math.Clamp(_app.Screen.Width - labelWidth - 6, 1, MaxFieldWidth);
-        Width = Math.Max(1, Math.Min(labelWidth + fieldWidth + 4, _app.Screen.Width));
+
+        // Sized from the screen at every layout, so the dialog follows the terminal when it is resized.
+        Width = Dim.Func(_ => DialogWidth(_app.Screen.Width));
 
         // Two border rows and the button area (a blank row, the buttons and their shadow).
-        Height = Math.Min(requests.Count + 6, _app.Screen.Height);
+        Height = Dim.Func(_ => Math.Max(1, Math.Min(requests.Count + 6, _app.Screen.Height)));
 
         _fields = new TextField[requests.Count];
         _labels = new Label[requests.Count];
@@ -113,6 +115,14 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
 
     private static string LabelOf(InputPlaceholders.InputRequest request) =>
         request.AllowEmpty ? request.Name + " (optional)" : request.Name;
+
+    /// <summary>The dialog's width on a screen this wide: room for the longest label and a field, within the screen.</summary>
+    private int DialogWidth(int screenWidth)
+    {
+        int labelWidth = Math.Min(_widestLabelWidth, Math.Max(1, screenWidth - MinFieldWidth - 5));
+        int fieldWidth = Math.Clamp(screenWidth - labelWidth - 6, 1, MaxFieldWidth);
+        return Math.Max(1, Math.Min(labelWidth + fieldWidth + 4, screenWidth));
+    }
 
     private void ResizeFields()
     {

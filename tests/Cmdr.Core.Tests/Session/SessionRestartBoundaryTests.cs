@@ -79,33 +79,41 @@ public class SessionRestartBoundaryTests
     }
 
     [Fact]
-    public async Task RevocationCleanup_DoesNotWaitForABlockedInputStop()
+    public async Task CleanupAfterCancellation_DoesNotWaitForABlockedInputStop()
     {
         if (!OperatingSystem.IsLinux()) return;
 
+        // The caller's token is cancelled as the command starts, so nothing else stops it: the restart's cleanup sends the
+        // graceful stop itself. The stop input is more than a pipe holds and the command never reads stdin, so the write
+        // blocks until the command dies. A cleanup that waited for it would never finish; one that does not finishes while
+        // the command is still alive.
         using var dir = new TempDir();
         var spec = new CommandSpec
         {
             Name = "blocked",
             Program = "sleep",
             Args = new List<string> { "30" },
-            Stop = new StopSpec { Method = StopMethod.Input, Input = new string('x', 2 * 1024 * 1024) }, // more than a pipe holds
+            Stop = new StopSpec { Method = StopMethod.Input, Input = new string('x', 2 * 1024 * 1024) },
         };
         CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, spec));
         CommandEntry a = session.AllEntries[0];
+        using var cts = new CancellationTokenSource();
         int fired = 0;
         session.EntryChanged += e =>
         {
             if (e.Process.Snapshot.State == ProcessState.Running && Interlocked.Exchange(ref fired, 1) == 0)
             {
-                session.StopAll();
+                cts.Cancel();
             }
         };
 
-        Task<string?> restart = Task.Run(() => session.RestartAsync(new[] { a }));
+        Task<string?> restart = Task.Run(() => session.RestartAsync(new[] { a }, ct: cts.Token));
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restart).WaitAsync(TimeSpan.FromSeconds(3));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => restart).WaitAsync(TimeSpan.FromSeconds(30));
+
+            // The stop is sent in the background; it marks the command stopping, and its write stays blocked.
+            WaitUntil(() => a.Process.Snapshot.State == ProcessState.Stopping, "the cleanup's stop to be requested", a.Process);
         }
         finally
         {

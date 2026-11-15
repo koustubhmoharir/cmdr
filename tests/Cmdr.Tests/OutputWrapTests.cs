@@ -176,11 +176,14 @@ public sealed class OutputWrapTests
         }
     }
 
-    [Fact]
-    public void RowCount_does_not_allocate_per_cell_or_row()
+    [Theory]
+    [InlineData("a")]
+    [InlineData("日")]
+    [InlineData("😀")]
+    public void RowCount_does_not_allocate_per_cell_or_row(string unit)
     {
-        OutputLine line = Line(new string('a', 65_536));
-        OutputWrap.RowCount(line, 80); // Warm up.
+        OutputLine line = Line(string.Concat(Enumerable.Repeat(unit, 65_536 / unit.Length)));
+        OutputWrap.RowCount(line, 80); // Warm up (fills the width cache).
 
         long before = GC.GetAllocatedBytesForCurrentThread();
         for (int i = 0; i < 10; i++)

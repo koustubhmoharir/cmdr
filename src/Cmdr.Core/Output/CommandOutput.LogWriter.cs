@@ -5,7 +5,9 @@ namespace Cmdr.Core.Output;
 public sealed partial class CommandOutput
 {
     /// <summary>
-    /// Writes one log session's lines to its file on a background task, so no caller waits for log I/O. State is guarded by
+    /// Writes one log session's lines to its file on a dedicated background thread, so no caller waits for log I/O. The writes
+    /// are synchronous and block while the file system does (a stalled network share or pipe can block indefinitely), so they
+    /// must not run on the thread pool, whose threads the output pumps and process callbacks need. State is guarded by
     /// the owning <see cref="CommandOutput"/>'s lock; members ending in <c>Locked</c> must be called with it held.
     /// </summary>
     /// <remarks>
@@ -81,7 +83,8 @@ public sealed partial class CommandOutput
         public void StartLocked()
         {
             Started = true;
-            _ = Task.Run(RunAsync);
+            var thread = new Thread(Run) { IsBackground = true, Name = "cmdr log writer" };
+            thread.Start();
         }
 
         /// <summary>Accepts no more lines; the writer finishes the queued ones, then closes the file.</summary>
@@ -121,7 +124,7 @@ public sealed partial class CommandOutput
             }
         }
 
-        private async Task RunAsync()
+        private void Run()
         {
             string? failure = null;
             try
@@ -156,7 +159,7 @@ public sealed partial class CommandOutput
 
                     if (batch is null)
                     {
-                        await _wake.WaitAsync().ConfigureAwait(false);
+                        _wake.Wait();
                         continue;
                     }
 
@@ -181,8 +184,9 @@ public sealed partial class CommandOutput
                     }
                 }
             }
-            catch (Exception ex) when (IsIoFailure(ex))
+            catch (Exception ex)
             {
+                // Any failure disables the log: an exception escaping this thread would end the process.
                 failure = ex.Message;
             }
             finally
