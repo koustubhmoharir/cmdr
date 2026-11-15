@@ -212,6 +212,8 @@ public sealed partial class Session
     /// <summary>
     /// F5 on command rows: cancels the innermost runs containing the targets (and waits for the runs around them to end),
     /// stops the running or stopping targets and waits for their leaders to exit, then starts the targets that can start.
+    /// Same as <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// followed by <see cref="RunRestartAsync"/>.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message naming targets that could not start, or the reason a sequence did not start; otherwise null.</returns>
@@ -226,74 +228,38 @@ public sealed partial class Session
         IReadOnlyDictionary<string, string>? inputs = null,
         CancellationToken ct = default)
     {
+        return await RunRestartAsync(PrepareRestart(targets, inputs, ct));
+    }
+
+    /// <summary>
+    /// First half of <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>:
+    /// registers a restart of the targets as pending, without stopping or starting anything. From then on, Stop, ForceKill,
+    /// StopAll, ForceKillAll and Dispose revoke it until <see cref="RunRestartAsync"/> runs it. Does not raise events, wait
+    /// or touch processes, so it is cheap enough to call on a UI thread. Returns a restart with nothing to do when the targets
+    /// are empty; running that returns null.
+    /// </summary>
+    /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was already cancelled.</exception>
+    public PreparedRestart PrepareRestart(
+        IReadOnlyList<CommandEntry> targets,
+        IReadOnlyDictionary<string, string>? inputs = null,
+        CancellationToken ct = default)
+    {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
-            return null;
+            return new PreparedRestart(this, null, null, Array.Empty<SequenceRun>(), NoInputs);
         }
 
         ct.ThrowIfCancellationRequested();
         IReadOnlyDictionary<string, string> values = Freeze(inputs);
+        List<CommandEntry> targetList = targets.ToList();
 
-        RestartOperation op;
-        List<SequenceRun> affected;
         lock (_sync)
         {
-            affected = ActiveRuns().Where(run => targets.Any(target => run.Contains(target))).ToList();
-            op = RegisterRestartLocked(group, new HashSet<CommandEntry>(targets), commandsMustStayInGroup: true, ct);
-        }
-
-        try
-        {
-            CancelInnermostRuns(targets);
-            await Task.WhenAll(affected.Select(run => run.Result)).WaitAsync(op.Token);
-
-            List<CommandEntry> running;
-            lock (_sync)
-            {
-                running = targets.Where(IsRunningOrStopping).ToList();
-            }
-
-            await StopAndAwaitExitAsync(running, op);
-
-            var startable = new List<CommandEntry>();
-            var blocked = new List<string>();
-            lock (_sync)
-            {
-                ThrowIfRevokedLocked(op);
-                foreach (CommandEntry entry in targets)
-                {
-                    if (entry.Process.CanStart)
-                    {
-                        startable.Add(entry);
-                    }
-                    else
-                    {
-                        blocked.Add($"'{entry.Spec.Name}'");
-                    }
-                }
-            }
-
-            var messages = new List<string>();
-            if (startable.Count > 0)
-            {
-                string? message = StartCommands(group, startable, values, op);
-                if (message is not null)
-                {
-                    messages.Add(message);
-                }
-            }
-
-            if (blocked.Count > 0)
-            {
-                messages.Add($"Cannot start {string.Join(", ", blocked)}: leftover processes from an earlier run are still running.");
-            }
-
-            return messages.Count == 0 ? null : string.Join(" ", messages);
-        }
-        finally
-        {
-            EndRestart(op);
+            List<SequenceRun> affected = ActiveRuns().Where(run => targetList.Any(target => run.Contains(target))).ToList();
+            RestartOperation op = RegisterRestartLocked(group, new HashSet<CommandEntry>(targetList), commandsMustStayInGroup: true, ct);
+            return new PreparedRestart(this, op, targetList, affected, values);
         }
     }
 
@@ -301,6 +267,8 @@ public sealed partial class Session
     /// F5 on a group: cancels the runs at or below it and the enclosing runs that contain it, stops everything running below
     /// it and waits for the leaders to exit, then runs the group as Enter does (without the kill step). The restart covers the
     /// group's commands as they are when it is called.
+    /// Same as <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// followed by <see cref="RunRestartAsync"/>.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>Messages about refused or blocked starts, or null.</returns>
@@ -315,59 +283,179 @@ public sealed partial class Session
         IReadOnlyDictionary<string, string>? inputs = null,
         CancellationToken ct = default)
     {
+        return await RunRestartAsync(PrepareRestart(group, inputs, ct));
+    }
+
+    /// <summary>
+    /// First half of <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>: registers a
+    /// restart of the group's commands as they are now, as pending, without stopping or starting anything. Revocation works
+    /// as for <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was already cancelled.</exception>
+    public PreparedRestart PrepareRestart(
+        GroupEntry group,
+        IReadOnlyDictionary<string, string>? inputs = null,
+        CancellationToken ct = default)
+    {
         EnsureOwned(group);
         ct.ThrowIfCancellationRequested();
         IReadOnlyDictionary<string, string> values = Freeze(inputs);
 
-        RestartOperation op;
-        List<SequenceRun> cancelled;
         lock (_sync)
         {
-            op = RegisterRestartLocked(group, new HashSet<CommandEntry>(group.AllCommands), commandsMustStayInGroup: false, ct);
+            RestartOperation op = RegisterRestartLocked(group, new HashSet<CommandEntry>(group.AllCommands), commandsMustStayInGroup: false, ct);
+            return new PreparedRestart(this, op, null, Array.Empty<SequenceRun>(), values);
+        }
+    }
+
+    /// <summary>
+    /// Second half of a restart: runs a restart made by <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// or <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>. Stops what must stop,
+    /// waits for it, and starts what can start, as <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// does. Call it once per prepared restart, from any thread, and not on a thread that must not wait.
+    /// </summary>
+    /// <returns>Messages about refused or blocked starts, or null. Null for a prepared restart with nothing to do.</returns>
+    /// <exception cref="ArgumentException">The prepared restart was made by another session.</exception>
+    /// <exception cref="InvalidOperationException">The prepared restart has already been run.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// The restart was revoked (Stop, ForceKill, StopAll, ForceKillAll or Dispose) or its caller's token was cancelled after it was
+    /// prepared, before it started anything. Nothing is started then. A revocation that arrives while the restart starts
+    /// things stops what was started and throws too.
+    /// </exception>
+    public async Task<string?> RunRestartAsync(PreparedRestart prepared)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        if (!ReferenceEquals(prepared.Owner, this))
+        {
+            throw new ArgumentException("The prepared restart was made by another session.", nameof(prepared));
+        }
+
+        if (!prepared.Claim())
+        {
+            throw new InvalidOperationException("The prepared restart has already been run.");
+        }
+
+        RestartOperation? op = prepared.Operation;
+        if (op is null)
+        {
+            return null;
         }
 
         try
         {
-            cancelled = CancelRunsFor(group);
-            await Task.WhenAll(cancelled.Select(run => run.Result)).WaitAsync(op.Token);
-
-            List<CommandEntry> running;
+            // Nothing is stopped or started by a restart that was revoked while it waited.
             lock (_sync)
             {
-                running = group.AllCommands.Where(entry => op.Commands.Contains(entry) && IsRunningOrStopping(entry)).ToList();
+                if (IsRevokedLocked(op))
+                {
+                    throw new OperationCanceledException(op.Token);
+                }
             }
 
-            await StopAndAwaitExitAsync(running, op);
-
-            // Leftovers are checked before starting: a command started below is not a blocked one.
-            List<string> blocked;
-            lock (_sync)
-            {
-                ThrowIfRevokedLocked(op);
-                blocked = group.AllCommands
-                    .Where(entry => op.Commands.Contains(entry) && !entry.Process.CanStart)
-                    .Select(entry => $"'{entry.Spec.Name}'")
-                    .ToList();
-            }
-
-            var messages = new List<string>();
-            string? message = StartGroup(group, values, op);
-            if (message is not null)
-            {
-                messages.Add(message);
-            }
-
-            if (blocked.Count > 0)
-            {
-                messages.Add($"Cannot start {string.Join(", ", blocked)}: leftover processes from an earlier run are still running.");
-            }
-
-            return messages.Count == 0 ? null : string.Join(" ", messages);
+            return prepared.Targets is null
+                ? await RunGroupRestartAsync(op, prepared.Values)
+                : await RunCommandRestartAsync(op, prepared.Targets, prepared.Affected, prepared.Values);
         }
         finally
         {
             EndRestart(op);
         }
+    }
+
+    /// <summary>The body of a restart of commands, after it was registered. Ends the restart's registration only in the caller.</summary>
+    private async Task<string?> RunCommandRestartAsync(
+        RestartOperation op,
+        IReadOnlyList<CommandEntry> targets,
+        IReadOnlyList<SequenceRun> affected,
+        IReadOnlyDictionary<string, string> values)
+    {
+        CancelInnermostRuns(targets);
+        await Task.WhenAll(affected.Select(run => run.Result)).WaitAsync(op.Token);
+
+        List<CommandEntry> running;
+        lock (_sync)
+        {
+            running = targets.Where(IsRunningOrStopping).ToList();
+        }
+
+        await StopAndAwaitExitAsync(running, op);
+
+        var startable = new List<CommandEntry>();
+        var blocked = new List<string>();
+        lock (_sync)
+        {
+            ThrowIfRevokedLocked(op);
+            foreach (CommandEntry entry in targets)
+            {
+                if (entry.Process.CanStart)
+                {
+                    startable.Add(entry);
+                }
+                else
+                {
+                    blocked.Add($"'{entry.Spec.Name}'");
+                }
+            }
+        }
+
+        var messages = new List<string>();
+        if (startable.Count > 0)
+        {
+            string? message = StartCommands(op.Group, startable, values, op);
+            if (message is not null)
+            {
+                messages.Add(message);
+            }
+        }
+
+        if (blocked.Count > 0)
+        {
+            messages.Add($"Cannot start {string.Join(", ", blocked)}: leftover processes from an earlier run are still running.");
+        }
+
+        return messages.Count == 0 ? null : string.Join(" ", messages);
+    }
+
+    /// <summary>The body of a restart of a group, after it was registered.</summary>
+    private async Task<string?> RunGroupRestartAsync(RestartOperation op, IReadOnlyDictionary<string, string> values)
+    {
+        GroupEntry group = op.Group;
+        List<SequenceRun> cancelled = CancelRunsFor(group);
+        await Task.WhenAll(cancelled.Select(run => run.Result)).WaitAsync(op.Token);
+
+        List<CommandEntry> running;
+        lock (_sync)
+        {
+            running = group.AllCommands.Where(entry => op.Commands.Contains(entry) && IsRunningOrStopping(entry)).ToList();
+        }
+
+        await StopAndAwaitExitAsync(running, op);
+
+        // Leftovers are checked before starting: a command started below is not a blocked one.
+        List<string> blocked;
+        lock (_sync)
+        {
+            ThrowIfRevokedLocked(op);
+            blocked = group.AllCommands
+                .Where(entry => op.Commands.Contains(entry) && !entry.Process.CanStart)
+                .Select(entry => $"'{entry.Spec.Name}'")
+                .ToList();
+        }
+
+        var messages = new List<string>();
+        string? message = StartGroup(group, values, op);
+        if (message is not null)
+        {
+            messages.Add(message);
+        }
+
+        if (blocked.Count > 0)
+        {
+            messages.Add($"Cannot start {string.Join(", ", blocked)}: leftover processes from an earlier run are still running.");
+        }
+
+        return messages.Count == 0 ? null : string.Join(" ", messages);
     }
 
     /// <summary>
@@ -851,15 +939,35 @@ public sealed partial class Session
         }
     }
 
-    /// <summary>Starts a registered run in the background. Events are raised outside the lock.</summary>
+    /// <summary>
+    /// Starts a registered run in the background. Events are raised outside the lock. Every caller that registers a run calls
+    /// this, and it starts the run even if a handler throws while the planned commands are announced, so a registered run is
+    /// never left without a task. The run's <see cref="SequenceRun.Result"/> settles only after <see cref="RunAsync"/> has
+    /// returned, that is after the run has been removed from its group.
+    /// </summary>
     private void Launch(SequenceRun run)
     {
-        foreach (CommandEntry entry in run.PlannedCommands)
+        try
         {
-            RaiseEntryChanged(entry);
+            foreach (CommandEntry entry in run.PlannedCommands)
+            {
+                RaiseEntryChanged(entry);
+            }
         }
-
-        run.Result = Task.Run(() => run.RunAsync());
+        finally
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    run.SettleResult(await run.RunAsync().ConfigureAwait(false));
+                }
+                catch (Exception ex)
+                {
+                    run.FailResult(ex);
+                }
+            });
+        }
     }
 
     /// <summary>

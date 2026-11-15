@@ -275,4 +275,48 @@ public class SessionRestartBoundaryTests
             Cleanup(session);
         }
     }
+
+    [Fact]
+    public async Task RestartWhileASequenceIsBeingLaunched_WaitsForTheRunToEnd_AndStartsTheCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sh("a", "echo \"pid:$$\"; exec sleep 30")));
+        GroupEntry group = session.Groups[0];
+        CommandEntry a = group.Commands[0];
+        using var released = new ManualResetEventSlim(false);
+        int blocked = 0;
+        session.EntryChanged += e =>
+        {
+            // Launch announces the planned commands after the run is registered and before the run is started. Holding the
+            // activating thread here leaves the run registered and not yet running.
+            if (e == a && e.IsQueued && Interlocked.Exchange(ref blocked, 1) == 0)
+            {
+                released.Wait(TimeSpan.FromSeconds(30));
+            }
+        };
+
+        try
+        {
+            Task<string?> activation = Task.Run(() => session.Activate(group));
+            WaitUntil(() => Volatile.Read(ref blocked) == 1, "the activation to be held while its run is registered");
+
+            Task<string?> restart = Task.Run(() => session.RestartAsync(new[] { a }));
+            WaitUntil(() => !a.IsQueued, "the restart to cancel the registered run");
+            Thread.Sleep(200); // lets the restart reach the point where it looks at the group's active run
+            released.Set();
+
+            Assert.Null(await activation.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Null(await restart.WaitAsync(TimeSpan.FromSeconds(10)));
+            WaitForText(a.Process, "pid:");
+            Assert.Equal(ProcessState.Running, a.Process.Snapshot.State);
+            Assert.Single(Regex.Matches(Text(a.Process), "pid:"));
+        }
+        finally
+        {
+            released.Set();
+            Cleanup(session);
+        }
+    }
 }

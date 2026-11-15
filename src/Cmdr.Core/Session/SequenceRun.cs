@@ -21,6 +21,7 @@ internal sealed class SequenceRun
     private readonly List<CommandEntry> _planned;
     private readonly IReadOnlyDictionary<string, string> _inputs;
     private readonly CancellationTokenSource _cts = new();
+    private readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private bool _cancelled;
     private bool _forced;
     private PlanNode? _current;
@@ -46,8 +47,19 @@ internal sealed class SequenceRun
     /// <summary>The group this run belongs to.</summary>
     internal GroupEntry Group { get; }
 
-    /// <summary>Completes with true when every step succeeded, false when the run failed or was cancelled. Set when the run is started.</summary>
-    internal Task<bool> Result { get; set; } = Task.FromResult(false);
+    /// <summary>
+    /// Completes with true when every step succeeded, false when the run failed or was cancelled, or faults if running it threw.
+    /// It completes only after the run has left its group (<see cref="Session.FinishSequence"/>), so waiting for it never
+    /// sees a run that is still registered. Settled by <see cref="SettleResult"/> or <see cref="FailResult"/> from
+    /// <see cref="Session"/>'s launch, which is the only place a run is started.
+    /// </summary>
+    internal Task<bool> Result => _result.Task;
+
+    /// <summary>Completes <see cref="Result"/> with the outcome of <see cref="RunAsync"/>. Called once, after the run has ended.</summary>
+    internal void SettleResult(bool completed) => _result.TrySetResult(completed);
+
+    /// <summary>Faults <see cref="Result"/> when <see cref="RunAsync"/> threw. Called once, after the run has ended.</summary>
+    internal void FailResult(Exception exception) => _result.TrySetException(exception);
 
     /// <summary>Every command planned in this run, in order (including inside group steps).</summary>
     internal IReadOnlyList<CommandEntry> PlannedCommands => _planned;

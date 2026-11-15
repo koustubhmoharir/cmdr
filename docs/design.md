@@ -142,9 +142,13 @@ StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. Rev
 start, and once more after a batch, when whatever was started is stopped again (a graceful stop is sent in the
 background, never waited for). Where it registers or starts, the restart also checks under the tree lock that its
 group is still in the tree and, for a restart of commands, that every target is still in that group; otherwise it
-is cancelled. A group restart starts only the commands the group had when it was called. F5 on commands a pending
-restart covers (`Session.PendingRestartsOf`) does not start another restart: it asks "Keep waiting" (default) or "Force
-kill now", which kills them without revoking the restart (`ForceKillForPendingRestart`). Tracked per
+is cancelled. A group restart starts only the commands the group had when it was called. F5 registers its restart on
+the UI thread (`Session.PrepareRestart`) and only then runs it in the background (`RunRestartAsync`), so a Stop or quit
+that comes first revokes it. F5 on commands a pending restart covers (`Session.PendingRestartsOf`) does not start
+another restart: it asks "Keep waiting" (default) or "Force kill now", which kills them without revoking the restart
+(`ForceKillForPendingRestart`). Each answer of `PendingRestartsOf` names the run the restart waits for, and the kill
+applies only to that run while the restart is still pending, so a dialog left open never kills the replacement run.
+A sequence's `Result` completes only after the run has left its group. Tracked per
 run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`, readiness.
 
 - **Stopped vs failed.** `ProcessSnapshot.StopRequested` is set when a graceful stop or force kill was

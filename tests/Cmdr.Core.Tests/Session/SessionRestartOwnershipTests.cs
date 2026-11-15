@@ -259,6 +259,142 @@ public class SessionRestartOwnershipTests
         }
     }
 
+    [Fact]
+    public async Task PreparedRestartRevokedByStopAll_RunThrowsAndNeverStartsCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await AssertPreparedRestartRevokedAsync((session, _) => session.StopAll());
+    }
+
+    [Fact]
+    public async Task PreparedRestartRevokedByStopOfTheCommand_RunThrowsAndNeverStartsCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        await AssertPreparedRestartRevokedAsync((session, entry) => Assert.Null(session.Stop(new[] { entry })));
+    }
+
+    [Fact]
+    public async Task PreparedRestartRevokedByDispose_RunThrowsAndNeverStartsCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("idle", "echo idle")));
+        try
+        {
+            CommandEntry entry = session.Groups[0].Commands[0];
+            PreparedRestart prepared = session.PrepareRestart(new[] { entry });
+
+            session.Dispose();
+
+            await AssertCancelledAsync(session.RunRestartAsync(prepared));
+            Assert.Equal(ProcessState.NotStarted, entry.Process.Snapshot.State);
+        }
+        finally
+        {
+            session.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task PreparedGroupRestartRevokedByStopAll_RunThrowsAndNeverStartsCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("idle", "echo idle")));
+        try
+        {
+            GroupEntry group = session.Groups[0];
+            CommandEntry entry = group.Commands[0];
+            PreparedRestart prepared = session.PrepareRestart(group);
+
+            session.StopAll();
+
+            await AssertCancelledAsync(session.RunRestartAsync(prepared));
+            Assert.Equal(ProcessState.NotStarted, entry.Process.Snapshot.State);
+            Assert.Empty(session.ActiveEntries);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task PreparedRestartRun_StartsTheCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sleeper("a")));
+        try
+        {
+            CommandEntry entry = session.Groups[0].Commands[0];
+            PreparedRestart prepared = session.PrepareRestart(new[] { entry });
+            Assert.Equal(ProcessState.NotStarted, entry.Process.Snapshot.State);
+
+            Assert.Null(await session.RunRestartAsync(prepared).WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task PreparedRestartRunTwice_ThrowsInvalidOperationAndStartsOnce()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sleeper("a")));
+        try
+        {
+            CommandEntry entry = session.Groups[0].Commands[0];
+            PreparedRestart prepared = session.PrepareRestart(new[] { entry });
+            Assert.Null(await session.RunRestartAsync(prepared).WaitAsync(TimeSpan.FromSeconds(10)));
+            int? pid = entry.Process.Snapshot.Pid;
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => session.RunRestartAsync(prepared)).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);
+            Assert.Equal(pid, entry.Process.Snapshot.Pid);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    /// <summary>
+    /// Prepares a restart of an idle command, applies a revocation, then runs the prepared restart: it must throw
+    /// <see cref="OperationCanceledException"/> and leave the command not started.
+    /// </summary>
+    private static async Task AssertPreparedRestartRevokedAsync(Action<CmdrSession, CommandEntry> revoke)
+    {
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("idle", "echo idle")));
+        try
+        {
+            CommandEntry entry = session.Groups[0].Commands[0];
+            PreparedRestart prepared = session.PrepareRestart(new[] { entry });
+
+            revoke(session, entry);
+
+            await AssertCancelledAsync(session.RunRestartAsync(prepared));
+            Assert.Equal(ProcessState.NotStarted, entry.Process.Snapshot.State);
+            Assert.Empty(session.ActiveEntries);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
     /// <summary>Awaits a task that must end with <see cref="OperationCanceledException"/> within the timeout.</summary>
     private static async Task AssertCancelledAsync(Task task, TimeSpan? timeout = null)
     {

@@ -751,6 +751,7 @@ internal sealed class MainController : IDisposable
         }
 
         IReadOnlyDictionary<string, string>? inputs = null;
+        PreparedRestart prepared;
         try
         {
             IReadOnlyList<InputPlaceholders.InputRequest> requests = target switch
@@ -767,6 +768,12 @@ internal sealed class MainController : IDisposable
                     return;
                 }
             }
+
+            // Registered here, on the UI thread, before the background task exists: a Stop, StopAll or quit that runs before
+            // the task starts revokes it, so it starts nothing.
+            prepared = target is GroupTarget preparedGroup
+                ? _session.PrepareRestart(preparedGroup.Group, inputs)
+                : _session.PrepareRestart(((CommandsTarget)target).Commands, inputs);
         }
         catch (ArgumentException ex)
         {
@@ -780,9 +787,7 @@ internal sealed class MainController : IDisposable
             string? message;
             try
             {
-                message = target is GroupTarget group
-                    ? await _session.RestartAsync(group.Group, inputs)
-                    : await _session.RestartAsync(((CommandsTarget)target).Commands, inputs);
+                message = await _session.RunRestartAsync(prepared);
             }
             catch (OperationCanceledException)
             {
