@@ -8,6 +8,11 @@ Work proceeds in the order of the sections below.
 
 All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows test run listed under validation gaps.
 
+## 2. Open from the review of the fixes (2026-11-15)
+
+- **PowerShell copy of a batch-file program (06-05).** PowerShell passes arguments to `.cmd`/`.bat` in its legacy mode, so `a&ver` reaches cmd unquoted and `&ver` runs. Needs a decision: emit `cmd /c` with cmd escaping, use `--%`, or label the limitation. The `CommandLineFormatter` remark overclaims for batch files.
+- **Windows verification** of 515e30c, c0799b3 (`File.Replace` fallback, `PhysicalPath` on Windows), d0ccf63 (conhost path, duplicated exit-wait handle, UNC) and 9b3ae25.
+
 ## Validation gaps (not tied to one item)
 
 - Native Windows, 03-01: run `dotnet test tests/Cmdr.Core.Tests --filter "FullyQualifiedName~Windows"`. `WindowsJobContainmentTests` exercises the job list, the handle list, the inheritable-handle lock with the Ctrl+C helper, pipe EOF, exit tracking and console stdin; its failures print a diagnostic dump. Also check by hand that Ctrl+C still stops commands and that `stdin: console` (e.g. `dotnet watch`) still works.

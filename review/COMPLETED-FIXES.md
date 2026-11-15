@@ -55,3 +55,27 @@ The 01-09 regressions assert whole-file line numbers for shallow and deeply nest
 | **03-03** | A Windows program that doesn't resolve (cwd, then the command's PATH, with PATHEXT) fails to start with a `FileNotFoundException` naming where it looked; it is never handed to CreateProcess's native search. A name with a non-PATHEXT extension is tried as is, last. Tests: `WindowsCommandResolverTests`, `WindowsLaunchPlanTests`. Unverified on Windows. | 3345949 |
 | **06-05** | On Windows the shown and copied command line is PowerShell syntax (single quotes with `'` and typographic quotes doubled, `& '...'` for a quoted program); the toast says "(PowerShell)". Tests: `CommandLineFormatterTests` (incl. a pwsh round trip on Linux), `DetailsCommandTests`. | 3345949 |
 | **03-01** | Windows launches call `CreateProcessW` with STARTUPINFOEX: `PROC_THREAD_ATTRIBUTE_JOB_LIST` creates the child inside its kill-on-close job (no window for early children to escape; Windows 10 1607+), `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` limits inheritance to its own pipes, and `InheritableHandleLock` keeps the Ctrl+C helper's `Process.Start` from inheriting pipe ends mid-launch. `ManagedProcess` now uses `IProcessPlatform.Launch`/`ILaunchedProcess`. Independently reviewed by a codex worker; its findings (helper inheritance, client handles on failure, cleanup edges, test isolation) were fixed. Tests: `WindowsJobContainmentTests` (Windows only, diagnostic dumps), `WindowsProcessStructsTests`, `WindowsCommandLineTests`, `WindowsEnvironmentBlockTests`, `LaunchContractTests`. **Unverified on Windows.** | 7162cc7 |
+
+## Review of the fixes (2026-11-15)
+
+A second review of every fix on this branch, by six worker reviewers (one per package) with each finding checked against the code. Finding IDs are the reviewers'. Fixed:
+
+| Finding | Change | Commit |
+|---|---|---|
+| **Windows tests** | The job holds the hidden console's `conhost.exe` (job at creation), so the leftover count lists the job's pids and leaves out the system console host (full path). The interrupt test's stand-in helper is cmd, which fits the 5 s helper timeout. | 515e30c, d0ccf63 |
+| **UI decisions** | Wheel-down at the bottom moves the cursor, so following resumes on the last line; log path conflicts resolve symlinks (`PhysicalPath`); saves write in place when replacing is denied or would change the owner; force kill cancels a pending detach. | c0799b3 |
+| **05 symlink save (01-04)** | Saving through a link whose target has `..` after a directory link replaced the wrong file; links are resolved component by component (`PhysicalPath`). Test: `ConfigStoreTests`, `PhysicalPathTests`. | c0799b3 |
+| **R03-01..05 (05-01, 05-03, 05-05)** | Restart checks revocation and the caller's token before each start and after; cleanup stops in the background; a restart of commands moved or removed while it waited is cancelled; a group restart starts only its original commands. Test: `SessionRestartBoundaryTests`. | 9b3ae25 |
+| **Dispose deadlock** | Found while testing: `ManagedProcess.Dispose`/`Start` disposed the process under the lock while .NET's exit callback held the `Process` lock and waited for it. Disposed outside the lock now. | 9b3ae25 |
+| **04-R2 (02-03)** | `Dispose` closes the current run's stdin even after both readers ended. | 9b3ae25 |
+| **F06-01 (04-08)** | Partial-line pins match by `OutputLine.Identity`, so a rewritten or evicted partial is not rebound to a later line with the same text. Tests: `PartialPinsTests`, `OutputViewPartialSelectionTests`. | 0608a8e |
+| **R2 (03-04)** | Forward-slash UNC paths (`//server/share`) resolve on the share. | d0ccf63 |
+| **R3 (06-05)** | A program PowerShell would read as a keyword, number or operator is copied with `& '...'`. | d0ccf63 |
+| **C1 (03-01)** | The exit wait owns a duplicate of the process handle. | d0ccf63 |
+| **R1 (06-03)** | The input dialog is sized from the screen at every layout. | 5a7eb36 |
+| **F06-02 (04-04)** | The forced line break moves the last grapheme whole to the next line. | 5a7eb36 |
+| **F06-03 (04-11)** | Single-scalar grapheme widths are cached per measure: no allocation counting CJK rows (was ~190 MB per 10 counts of 64K chars). | 5a7eb36 |
+| **Log writer threads** | Found while fixing flaky tests: writers ran blocking I/O on the thread pool, so a stalled log held a pool thread. They run on dedicated threads. Racy tests rewritten (version read, log batches, Ctrl+C SIGINT disposition, pool starvation). | 5a7eb36 |
+| **04-R1, 04-R3 (02-05)** | A waiting writer's replay is captured at enable; at most one running and one waiting writer per file. | b08f88f |
+
+Not fixed: the PowerShell copy of a `.cmd`/`.bat` program (see TRACKER), and 01-09's item-local JSON path (known limitation). The Windows-specific changes above are unverified on Windows.
