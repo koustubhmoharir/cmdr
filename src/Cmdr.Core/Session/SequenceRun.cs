@@ -22,18 +22,33 @@ internal sealed class SequenceRun
     private readonly IReadOnlyDictionary<string, string> _inputs;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool> _firstLaunch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SequenceRun _root;
     private bool _cancelled;
     private bool _forced;
     private PlanNode? _current;
     private SequenceRun? _childRun;
 
+    // Root runs only. The launch of the first command of the run tree is decided under _sync, so a cancellation of the
+    // restart's token either arrives before it (and nothing starts) or after it (and the run carries on).
+    private bool _launched;
+    private bool _cancelledByRestartToken;
+    private CancellationTokenRegistration _restartWatch;
+
     /// <param name="inputs">The input values of the action that started the run; every command step and sub-run gets them.</param>
-    internal SequenceRun(Session session, GroupEntry group, IReadOnlyList<PlanNode> steps, IReadOnlyDictionary<string, string> inputs)
+    /// <param name="parent">The run this sub-run belongs to, or null for a run started by an action or a restart.</param>
+    internal SequenceRun(
+        Session session,
+        GroupEntry group,
+        IReadOnlyList<PlanNode> steps,
+        IReadOnlyDictionary<string, string> inputs,
+        SequenceRun? parent = null)
     {
         _session = session;
         Group = group;
         _pending = steps.ToList();
         _inputs = inputs;
+        _root = parent?._root ?? this;
 
         var planned = new List<CommandEntry>();
         foreach (PlanNode step in steps)
@@ -63,6 +78,24 @@ internal sealed class SequenceRun
 
     /// <summary>Every command planned in this run, in order (including inside group steps).</summary>
     internal IReadOnlyList<CommandEntry> PlannedCommands => _planned;
+
+    /// <summary>
+    /// Completes with true when the first command of the run tree begins to launch, and with false when the run ends before that.
+    /// Only meaningful for a run that a restart started: the restart waits for it before it returns.
+    /// </summary>
+    internal Task<bool> FirstLaunch => _firstLaunch.Task;
+
+    /// <summary>True if the restart's token (a caller's cancellation or a revocation) cancelled the run before its first command launched.</summary>
+    internal bool CancelledByRestartToken
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _cancelledByRestartToken;
+            }
+        }
+    }
 
     /// <summary>True once the run has been cancelled.</summary>
     internal bool IsCancelled
@@ -107,16 +140,97 @@ internal sealed class SequenceRun
     }
 
     /// <summary>
+    /// Makes the restart's token cancel this run until its first command launches. Call on a run that a restart has just
+    /// registered, before it is launched. The watch is disposed when the first command launches, or when the run ends.
+    /// </summary>
+    internal void WatchRestartUntilLaunch(CancellationToken token)
+    {
+        CancellationTokenRegistration registration = token.Register(CancelBeforeLaunchByRestartToken);
+        bool keep;
+        lock (_sync)
+        {
+            keep = !_launched;
+            if (keep)
+            {
+                _restartWatch = registration;
+            }
+        }
+
+        if (!keep)
+        {
+            registration.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Called before a command of this run tree is started. Returns false, and the command must not start, once the run tree is
+    /// cancelled. The first true return ends the watch and completes <see cref="FirstLaunch"/>.
+    /// </summary>
+    internal bool TryBeginLaunch()
+    {
+        SequenceRun root = _root;
+        if (IsCancelled)
+        {
+            return false;
+        }
+
+        CancellationTokenRegistration watch = default;
+        bool first = false;
+        lock (root._sync)
+        {
+            if (root._cancelled)
+            {
+                return false;
+            }
+
+            if (!root._launched)
+            {
+                root._launched = true;
+                watch = root._restartWatch;
+                root._restartWatch = default;
+                first = true;
+            }
+        }
+
+        if (first)
+        {
+            // Disposed outside the lock: a callback that is running waits for the lock, so disposing under it would deadlock.
+            watch.Dispose();
+            root._firstLaunch.TrySetResult(true);
+        }
+
+        return true;
+    }
+
+    private void CancelBeforeLaunchByRestartToken() => CancelCore(force: false, beforeLaunch: true, byRestartToken: true);
+
+    /// <summary>
     /// Cancels the run: pending steps are dropped and unqueued, and the wait for the current step ends. A sequential child
     /// run that is the current step is cancelled too. Processes are left alone; the caller decides whether to stop them.
     /// With <paramref name="force"/>, a process the run starts after this call is force-killed instead of stopped.
     /// </summary>
-    internal void Cancel(bool force = false)
+    internal void Cancel(bool force = false) => CancelCore(force, beforeLaunch: false, byRestartToken: false);
+
+    /// <summary>
+    /// The cancellation behind <see cref="Cancel(bool)"/>. With <paramref name="beforeLaunch"/>, does nothing once the first command
+    /// of the run tree has launched; <paramref name="byRestartToken"/> records that the restart's token did it.
+    /// </summary>
+    private void CancelCore(bool force, bool beforeLaunch, bool byRestartToken)
     {
         var unqueued = new List<CommandEntry>();
         SequenceRun? child;
         lock (_sync)
         {
+            if (beforeLaunch)
+            {
+                if (_launched)
+                {
+                    return;
+                }
+
+                _cancelledByRestartToken |= byRestartToken;
+            }
+
             _forced |= force;
             if (_cancelled)
             {
@@ -232,7 +346,7 @@ internal sealed class SequenceRun
         GroupEntry group = step.Group!;
         if (group.Mode == GroupMode.Sequential)
         {
-            var child = new SequenceRun(_session, group, step.Children, _inputs);
+            var child = new SequenceRun(_session, group, step.Children, _inputs, this);
             if (!_session.TryStart(child))
             {
                 _session.Unqueue(step);
@@ -274,7 +388,7 @@ internal sealed class SequenceRun
             return false;
         }
 
-        if (!_session.StartEntry(entry, _inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
+        if (!TryBeginLaunch() || !_session.StartEntry(entry, _inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
         {
             return false;
         }
@@ -319,6 +433,7 @@ internal sealed class SequenceRun
     /// <summary>Called once when the run ends: unqueues what is still pending and removes the run from its group.</summary>
     private void Finish()
     {
+        CancellationTokenRegistration watch;
         lock (_sync)
         {
             var leftover = new List<CommandEntry>();
@@ -335,9 +450,13 @@ internal sealed class SequenceRun
 
             _current = null;
             _childRun = null;
+            watch = _restartWatch;
+            _restartWatch = default;
         }
 
+        watch.Dispose();
         _session.FinishSequence(this);
+        _firstLaunch.TrySetResult(false); // a no-op when the first command has launched
     }
 
     private void RaiseAll(IEnumerable<CommandEntry> entries)

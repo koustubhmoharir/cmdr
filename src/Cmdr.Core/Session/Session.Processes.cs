@@ -13,33 +13,101 @@ public sealed partial class Session
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message when something was not done, otherwise null.</returns>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public string? Activate(IReadOnlyList<CommandEntry> targets, IReadOnlyDictionary<string, string>? inputs = null)
+    public string? Activate(IReadOnlyList<CommandEntry> targets, IReadOnlyDictionary<string, string>? inputs = null) =>
+        Activate(PrepareActivate(targets), inputs);
+
+    /// <summary>
+    /// Decides what Enter on these command rows does, as <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/>
+    /// would, and the inputs it needs. If any target is stopping or has leftover processes, the decision is to kill those; otherwise
+    /// it is to start the targets that can start now. Nothing is stopped, started or killed here.
+    /// </summary>
+    /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
+    public PreparedActivation PrepareActivate(IReadOnlyList<CommandEntry> targets)
     {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
-            return null;
+            return new PreparedActivation(this, null, isGroup: false, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), NoRequests);
         }
 
-        // Killing takes precedence: if any target is stopping or has leftovers, Enter only kills those and starts nothing.
         List<CommandEntry> killable = targets.Where(IsKillable).ToList();
         if (killable.Count > 0)
         {
-            foreach (CommandEntry entry in killable)
-            {
-                entry.Process.ForceKill();
-            }
-
-            return null;
+            return new PreparedActivation(this, group, isGroup: false, targets.ToList(), killable, Array.Empty<CommandEntry>(), NoRequests);
         }
 
         List<CommandEntry> startable = targets.Where(e => e.Process.CanStart).ToList();
         if (startable.Count == 0)
         {
+            return new PreparedActivation(this, group, isGroup: false, targets.ToList(), Array.Empty<CommandEntry>(), startable, NoRequests);
+        }
+
+        bool refused;
+        lock (_sync)
+        {
+            refused = CommandsRefusal(group, startable) is not null;
+        }
+
+        IReadOnlyList<InputPlaceholders.InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
+        return new PreparedActivation(this, group, isGroup: false, targets.ToList(), Array.Empty<CommandEntry>(), startable, requests);
+    }
+
+    /// <summary>
+    /// Carries out what <paramref name="prepared"/> decided, with the input values for it. A kill decision force-kills the commands
+    /// that were killable when it was prepared, if they still are, and starts nothing. A start decision starts only the commands it
+    /// named that can still start: commands that became startable since then are not started, and their inputs are not needed.
+    /// Refusals (a running sequence, a busy command) are checked now, as <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> does.
+    /// </summary>
+    /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <returns>A message when something was not done, otherwise null.</returns>
+    /// <exception cref="ArgumentException">The prepared activation was made by another session, or its targets or group have since been removed.</exception>
+    public string? Activate(PreparedActivation prepared, IReadOnlyDictionary<string, string>? inputs = null)
+    {
+        ArgumentNullException.ThrowIfNull(prepared);
+        if (!ReferenceEquals(prepared.Owner, this))
+        {
+            throw new ArgumentException("The prepared activation was made by another session.", nameof(prepared));
+        }
+
+        // Killing takes precedence: what was killable when Enter was pressed is killed, and nothing starts.
+        if (prepared.Killable.Count > 0)
+        {
+            foreach (CommandEntry entry in prepared.Killable)
+            {
+                if (IsKillable(entry))
+                {
+                    entry.Process.ForceKill();
+                }
+            }
+
             return null;
         }
 
-        return StartCommands(group, startable, Freeze(inputs));
+        if (prepared.IsGroup)
+        {
+            GroupEntry group = prepared.Group!;
+            EnsureOwned(group);
+            if (prepared.Startable.Count == 0)
+            {
+                return null;
+            }
+
+            return StartGroup(group, Freeze(inputs), only: new HashSet<CommandEntry>(prepared.Startable));
+        }
+
+        GroupEntry? targetsGroup = GroupOf(prepared.Targets);
+        if (targetsGroup is null)
+        {
+            return null;
+        }
+
+        List<CommandEntry> startableNow = prepared.Startable.Where(e => e.Process.CanStart).ToList();
+        if (startableNow.Count == 0)
+        {
+            return null;
+        }
+
+        return StartCommands(targetsGroup, startableNow, Freeze(inputs));
     }
 
     /// <summary>
@@ -51,26 +119,45 @@ public sealed partial class Session
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message when the group could not be started because it overlaps a running sequence; otherwise null.</returns>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null)
+    public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null) =>
+        Activate(PrepareActivate(group), inputs);
+
+    /// <summary>
+    /// Decides what Enter on a group does, as <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/> would, and the
+    /// inputs it needs: if anything below the group is stopping or has leftover processes, the decision is to kill those; otherwise
+    /// it is to start the group's startable commands, in the group's plan. Nothing is stopped, started or killed here.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    public PreparedActivation PrepareActivate(GroupEntry group)
     {
+        EnsureOwned(group);
         List<CommandEntry> killable;
+        List<PlanNode> children;
         lock (_sync)
         {
-            EnsureOwned(group);
             killable = group.AllCommands.Where(IsKillable).ToList();
+            children = killable.Count > 0 ? new List<PlanNode>() : PlanChildren(group, e => e.Process.CanStart);
         }
 
         if (killable.Count > 0)
         {
-            foreach (CommandEntry entry in killable)
-            {
-                entry.Process.ForceKill();
-            }
-
-            return null;
+            return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), killable, Array.Empty<CommandEntry>(), NoRequests);
         }
 
-        return StartGroup(group, Freeze(inputs));
+        List<CommandEntry> startable = CollectCommands(children);
+        if (startable.Count == 0)
+        {
+            return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), startable, NoRequests);
+        }
+
+        bool refused;
+        lock (_sync)
+        {
+            refused = GroupRefusal(group, children) is not null;
+        }
+
+        IReadOnlyList<InputPlaceholders.InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
+        return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), startable, requests);
     }
 
     /// <summary>
@@ -344,13 +431,10 @@ public sealed partial class Session
 
         try
         {
-            // Nothing is stopped or started by a restart that was revoked while it waited.
+            // Nothing is stopped or started by a restart that was revoked or made stale while it waited.
             lock (_sync)
             {
-                if (IsRevokedLocked(op))
-                {
-                    throw new OperationCanceledException(op.Token);
-                }
+                ThrowIfRevokedLocked(op);
             }
 
             return prepared.Targets is null
@@ -400,14 +484,17 @@ public sealed partial class Session
         }
 
         var messages = new List<string>();
+        var starts = new RestartStarts();
         if (startable.Count > 0)
         {
-            string? message = StartCommands(op.Group, startable, values, op);
+            string? message = StartCommands(op.Group, startable, values, op, starts);
             if (message is not null)
             {
                 messages.Add(message);
             }
         }
+
+        await AwaitFirstLaunchAsync(op, starts);
 
         if (blocked.Count > 0)
         {
@@ -444,11 +531,14 @@ public sealed partial class Session
         }
 
         var messages = new List<string>();
-        string? message = StartGroup(group, values, op);
+        var starts = new RestartStarts();
+        string? message = StartGroup(group, values, op, starts);
         if (message is not null)
         {
             messages.Add(message);
         }
+
+        await AwaitFirstLaunchAsync(op, starts);
 
         if (blocked.Count > 0)
         {
@@ -463,65 +553,16 @@ public sealed partial class Session
     /// these targets: none when it would only kill, or would start nothing. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(IReadOnlyList<CommandEntry> targets)
-    {
-        GroupEntry? group = GroupOf(targets);
-        if (group is null || targets.Any(IsKillable))
-        {
-            return Array.Empty<InputPlaceholders.InputRequest>();
-        }
-
-        List<CommandEntry> startable = targets.Where(e => e.Process.CanStart).ToList();
-        if (startable.Count == 0)
-        {
-            return Array.Empty<InputPlaceholders.InputRequest>();
-        }
-
-        lock (_sync)
-        {
-            if (CommandsRefusal(group, startable) is not null)
-            {
-                return Array.Empty<InputPlaceholders.InputRequest>();
-            }
-        }
-
-        return RequestsFor(startable);
-    }
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(IReadOnlyList<CommandEntry> targets) =>
+        PrepareActivate(targets).Requests;
 
     /// <summary>
     /// The inputs that <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/> would need for this group: none
     /// when it would only kill, or would be refused. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(GroupEntry group)
-    {
-        EnsureOwned(group);
-        if (group.AllCommands.Any(IsKillable))
-        {
-            return Array.Empty<InputPlaceholders.InputRequest>();
-        }
-
-        List<PlanNode> children;
-        lock (_sync)
-        {
-            children = PlanChildren(group, e => e.Process.CanStart);
-        }
-
-        if (children.Count == 0)
-        {
-            return Array.Empty<InputPlaceholders.InputRequest>();
-        }
-
-        lock (_sync)
-        {
-            if (GroupRefusal(group, children) is not null)
-            {
-                return Array.Empty<InputPlaceholders.InputRequest>();
-            }
-        }
-
-        return RequestsFor(CollectCommands(children));
-    }
+    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(GroupEntry group) =>
+        PrepareActivate(group).Requests;
 
     /// <summary>
     /// The inputs that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
@@ -681,17 +722,19 @@ public sealed partial class Session
     /// <summary>
     /// Starts the given commands of a group: in sequence for a sequential group, otherwise each at once. Refuses, with a
     /// message, when the group already has a sequence or a command is part of a running sequence. With a restart operation,
-    /// throws <see cref="OperationCanceledException"/> if it was revoked, and checks for a revocation after the starts.
+    /// the restart is checked for staleness before each launch: when it fails, what this batch started is stopped again and
+    /// <see cref="OperationCanceledException"/> is thrown. A run started for the restart is recorded in <paramref name="starts"/>.
     /// </summary>
     private string? StartCommands(
         GroupEntry group,
         IReadOnlyList<CommandEntry> startable,
         IReadOnlyDictionary<string, string> inputs,
-        RestartOperation? op = null)
+        RestartOperation? op = null,
+        RestartStarts? starts = null)
     {
         if (group.Mode == GroupMode.Sequential)
         {
-            return StartSequence(group, startable, inputs, op);
+            return StartSequence(group, startable, inputs, op, starts);
         }
 
         lock (_sync)
@@ -705,10 +748,12 @@ public sealed partial class Session
         }
 
         var started = new List<CommandEntry>();
+        bool abandoned = false;
         foreach (CommandEntry entry in startable)
         {
-            if (IsRevoked(op))
+            if (IsStale(op))
             {
+                abandoned = true;
                 break; // FinishRestartStarts stops what was started and throws
             }
 
@@ -720,18 +765,22 @@ public sealed partial class Session
 
         if (op is not null)
         {
-            FinishRestartStarts(op, started, Array.Empty<SequenceRun>());
+            FinishRestartStarts(op, started, Array.Empty<SequenceRun>(), abandoned);
         }
 
         return null;
     }
 
-    /// <summary>Creates a sequence over the commands and starts it in the background. Returns a message if one cannot start.</summary>
+    /// <summary>
+    /// Creates a sequence over the commands and starts it in the background. Returns a message if one cannot start. With a restart
+    /// operation, the restart is taken out of the pending set, and the run is handed over to it (see <see cref="HandOver"/>).
+    /// </summary>
     private string? StartSequence(
         GroupEntry group,
         IReadOnlyList<CommandEntry> entries,
         IReadOnlyDictionary<string, string> inputs,
-        RestartOperation? op)
+        RestartOperation? op,
+        RestartStarts? starts)
     {
         var run = new SequenceRun(this, group, entries.Select(e => new PlanNode(e)).ToList(), inputs);
 
@@ -753,22 +802,46 @@ public sealed partial class Session
             UnregisterRestartLocked(op);
         }
 
-        Launch(run);
+        HandOver(run, op, starts);
         return null;
     }
 
     /// <summary>
-    /// Runs a group (see <see cref="Activate(GroupEntry)"/>) without the kill step. Returns a message when it is refused.
-    /// With a restart operation, throws <see cref="OperationCanceledException"/> if it was revoked.
+    /// Starts a registered run. With a restart operation, the caller's token cancels the run until its first command launches
+    /// (see <see cref="SequenceRun.WatchRestartUntilLaunch"/>), and the restart is given the run to wait for. The run is started
+    /// outside the lock.
     /// </summary>
-    private string? StartGroup(GroupEntry group, IReadOnlyDictionary<string, string> inputs, RestartOperation? op = null)
+    private void HandOver(SequenceRun run, RestartOperation? op, RestartStarts? starts)
+    {
+        if (op is not null)
+        {
+            run.WatchRestartUntilLaunch(op.Token);
+            starts?.Runs.Add(run);
+        }
+
+        Launch(run);
+    }
+
+    /// <summary>
+    /// Runs a group (see <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/>) without the kill step. Returns a message when
+    /// it is refused. With a restart operation, the restart's staleness is checked before the plan starts, and what it started is recorded in
+    /// <paramref name="starts"/>. With <paramref name="only"/>, just those commands may start.
+    /// </summary>
+    private string? StartGroup(
+        GroupEntry group,
+        IReadOnlyDictionary<string, string> inputs,
+        RestartOperation? op = null,
+        RestartStarts? starts = null,
+        IReadOnlySet<CommandEntry>? only = null)
     {
         SequenceRun? run = null;
         List<PlanNode> children;
         lock (_sync)
         {
             ThrowIfRevokedLocked(op);
-            children = PlanChildren(group, e => e.Process.CanStart && (op is null || op.Commands.Contains(e)));
+            children = PlanChildren(
+                group,
+                e => e.Process.CanStart && (op is null || op.Commands.Contains(e)) && (only is null || only.Contains(e)));
             if (children.Count == 0)
             {
                 return null;
@@ -790,11 +863,11 @@ public sealed partial class Session
 
         if (run is not null)
         {
-            Launch(run);
+            HandOver(run, op, starts);
             return null;
         }
 
-        // Untracked: the branches run on their own; nothing waits for them.
+        // Untracked: the branches run on their own. A restart waits only for the first launch of the runs it created.
         var createdRuns = new List<SequenceRun>();
         StartBranches(children, owner: null, inputs, createdRuns, op);
         if (op is not null)
@@ -805,6 +878,8 @@ public sealed partial class Session
                 child.CollectCommands(planned);
             }
 
+            starts?.Commands.AddRange(planned);
+            starts?.Runs.AddRange(createdRuns);
             FinishRestartStarts(op, planned, createdRuns);
         }
 
@@ -912,8 +987,9 @@ public sealed partial class Session
 
     /// <summary>
     /// Registers a sub-run on its group, if the group has no active run, and starts it. Returns false when the group is busy.
+    /// With a restart operation, the caller's token cancels the run until its first command launches (see <see cref="HandOver"/>).
     /// </summary>
-    internal bool TryStart(SequenceRun run)
+    internal bool TryStart(SequenceRun run, RestartOperation? op = null)
     {
         lock (_sync)
         {
@@ -923,6 +999,11 @@ public sealed partial class Session
             }
 
             Register(run);
+        }
+
+        if (op is not null)
+        {
+            run.WatchRestartUntilLaunch(op.Token);
         }
 
         Launch(run);
@@ -986,9 +1067,9 @@ public sealed partial class Session
         var branches = new List<Task<bool>>();
         foreach (PlanNode child in children)
         {
-            if (IsRevoked(op))
+            if (IsStale(op))
             {
-                Unqueue(child); // not started: the restart that planned it was revoked
+                Unqueue(child); // not started: the restart that planned it was revoked or made stale
                 continue;
             }
 
@@ -1000,8 +1081,8 @@ public sealed partial class Session
             {
                 if (group.Mode == GroupMode.Sequential)
                 {
-                    var run = new SequenceRun(this, group, child.Children, inputs);
-                    if (TryStart(run))
+                    var run = new SequenceRun(this, group, child.Children, inputs, owner);
+                    if (TryStart(run, op))
                     {
                         createdRuns?.Add(run);
                         if (owner is { IsCancelled: true })
@@ -1047,6 +1128,11 @@ public sealed partial class Session
                 entry.Process.Output.WriteSystem("sequence cancelled: command cannot start");
             }
 
+            return Task.FromResult(false);
+        }
+
+        if (owner is not null && !owner.TryBeginLaunch())
+        {
             return Task.FromResult(false);
         }
 
@@ -1225,32 +1311,70 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Throws if the restart may not start anything: it was revoked, its caller cancelled it, its group was removed, or (for a
-    /// restart of commands) a target was moved out of the group or removed while it waited. A null operation never throws.
-    /// Caller holds <c>_sync</c>, and registers or starts in the same lock section, so that edits cannot intervene.
+    /// Throws if the restart may not start anything. A restart is stale when it was revoked, its caller cancelled it, or its group
+    /// was removed; a restart of commands also when a target was moved out of the group or removed while it waited; a group restart
+    /// also when one of its commands was moved out of the group's subtree or removed. A null operation never throws. Caller holds
+    /// <c>_sync</c>, and registers or starts in the same lock section, so that edits cannot intervene.
     /// </summary>
     private void ThrowIfRevokedLocked(RestartOperation? op)
     {
+        if (IsStaleLocked(op))
+        {
+            throw new OperationCanceledException(op!.Token);
+        }
+    }
+
+    /// <summary>The stale check of <see cref="ThrowIfRevokedLocked"/>. False for a null operation. Caller holds <c>_sync</c>.</summary>
+    private bool IsStaleLocked(RestartOperation? op)
+    {
         if (op is null)
         {
-            return;
+            return false;
         }
 
-        bool stale = !IsAttached(op.Group)
-            || (op.CommandsMustStayInGroup
-                && op.Commands.Any(entry => entry.IsRemoved || !ReferenceEquals(entry.Group, op.Group) || !op.Group.HasItem(entry)));
-        if (stale || IsRevokedLocked(op))
+        if (IsRevokedLocked(op) || !IsAttached(op.Group))
         {
-            throw new OperationCanceledException(op.Token);
+            return true;
         }
+
+        return op.CommandsMustStayInGroup
+            ? op.Commands.Any(entry => entry.IsRemoved || !ReferenceEquals(entry.Group, op.Group) || !op.Group.HasItem(entry))
+            : op.Commands.Any(entry => !IsInSubtreeLocked(op.Group, entry));
+    }
+
+    /// <summary>True if the command is not removed and is linked from the group down to it. Caller holds <c>_sync</c>.</summary>
+    private static bool IsInSubtreeLocked(GroupEntry root, CommandEntry entry)
+    {
+        if (entry.IsRemoved)
+        {
+            return false;
+        }
+
+        ItemEntry child = entry;
+        while (child.Parent is { } parent)
+        {
+            if (!parent.HasItem(child))
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(parent, root))
+            {
+                return true;
+            }
+
+            child = parent;
+        }
+
+        return false;
     }
 
     /// <summary>True if the restart was revoked or its caller cancelled it. False for a null operation. Caller holds <c>_sync</c>.</summary>
     private static bool IsRevokedLocked(RestartOperation? op) =>
         op is not null && (op.Cancelled || op.Token.IsCancellationRequested);
 
-    /// <summary>As <see cref="IsRevokedLocked"/>, taking the lock.</summary>
-    private bool IsRevoked(RestartOperation? op)
+    /// <summary>As <see cref="IsStaleLocked"/>, taking the lock. False for a null operation.</summary>
+    private bool IsStale(RestartOperation? op)
     {
         if (op is null)
         {
@@ -1259,7 +1383,7 @@ public sealed partial class Session
 
         lock (_sync)
         {
-            return IsRevokedLocked(op);
+            return IsStaleLocked(op);
         }
     }
 
@@ -1278,23 +1402,28 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Runs after a restart has started processes outside the lock. A revocation (or the caller's cancellation) that arrived
-    /// meanwhile may have missed what was started after its own pass, so the processes started here and the runs created here
-    /// are stopped as the revoker would stop them (a graceful stop is sent in the background, since an input stop can block on
-    /// a full stdin pipe), and the restart throws. Otherwise nothing happens. A revocation that arrives after this check finds the
-    /// processes already started and stops them itself.
+    /// Runs after a restart has started processes outside the lock. A revocation, the caller's cancellation or another change that makes
+    /// the restart stale may have missed what was started after its own pass, so the processes started here and the runs created here
+    /// are stopped as the revoker would stop them (a graceful stop is sent in the background, since an input stop can block on a full
+    /// stdin pipe), and the restart throws. Otherwise nothing happens, unless <paramref name="abandoned"/> is set: a batch that gave up
+    /// before its last start is undone and throws in any case. A revocation that arrives after this check finds the processes already
+    /// started and stops them itself.
     /// </summary>
-    private void FinishRestartStarts(RestartOperation op, IReadOnlyList<CommandEntry> started, IReadOnlyList<SequenceRun> createdRuns)
+    private void FinishRestartStarts(
+        RestartOperation op,
+        IReadOnlyList<CommandEntry> started,
+        IReadOnlyList<SequenceRun> createdRuns,
+        bool abandoned = false)
     {
-        bool revoked;
+        bool stale;
         bool forced;
         lock (_sync)
         {
-            revoked = IsRevokedLocked(op);
+            stale = IsStaleLocked(op);
             forced = op.Forced;
         }
 
-        if (!revoked)
+        if (!stale && !abandoned)
         {
             return;
         }
@@ -1318,6 +1447,39 @@ public sealed partial class Session
         }
 
         throw new OperationCanceledException(op.Token);
+    }
+
+    /// <summary>
+    /// Waits until each run that a restart handed over has launched its first command, or has ended without one. A run that the
+    /// restart's token cancelled before that launched nothing; then the restart undoes what it started and throws, as
+    /// <see cref="FinishRestartStarts"/> does. Once a first command has launched, the token no longer reaches the run.
+    /// </summary>
+    private async Task AwaitFirstLaunchAsync(RestartOperation op, RestartStarts starts)
+    {
+        if (starts.Runs.Count == 0)
+        {
+            return;
+        }
+
+        await Task.WhenAll(starts.Runs.Select(run => run.FirstLaunch));
+        if (!starts.Runs.Any(run => run.CancelledByRestartToken))
+        {
+            return;
+        }
+
+        List<CommandEntry> planned = starts.Commands
+            .Concat(starts.Runs.SelectMany(run => run.PlannedCommands))
+            .Distinct()
+            .ToList();
+        FinishRestartStarts(op, planned, starts.Runs, abandoned: true);
+    }
+
+    /// <summary>What one restart started: the commands of its batch, and the runs it handed over.</summary>
+    private sealed class RestartStarts
+    {
+        public List<CommandEntry> Commands { get; } = new();
+
+        public List<SequenceRun> Runs { get; } = new();
     }
 
     /// <summary>
@@ -1520,6 +1682,8 @@ public sealed partial class Session
     private static bool WillStartAfterStop(CommandEntry entry) => entry.Process.CanStart || IsRunningOrStopping(entry);
 
     private static readonly IReadOnlyDictionary<string, string> NoInputs = new Dictionary<string, string>();
+
+    private static readonly IReadOnlyList<InputPlaceholders.InputRequest> NoRequests = Array.Empty<InputPlaceholders.InputRequest>();
 
     /// <summary>A private copy of the input values, so that a running action does not see later changes. Null means no values.</summary>
     private static IReadOnlyDictionary<string, string> Freeze(IReadOnlyDictionary<string, string>? inputs) =>

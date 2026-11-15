@@ -108,8 +108,12 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 `InputPlaceholders` scans args for `${input:NAME}` / `${input:NAME?}` (escape `$${input:`). Malformed
 placeholders are validation errors and copied literally otherwise. `Session.InputsForActivate/
 InputsForRestart` mirror the real start decisions (kill-instead-of-start, refused starts, startable
-commands) and merge requests by name (required wins over `?`). `Activate`/`RestartAsync` take the
-values, freeze a copy and pass it through `StartCommands` / `StartGroup` / `SequenceRun` to every
+commands) and merge requests by name (required wins over `?`). Enter decides first: `Session.PrepareActivate`
+returns a `PreparedActivation` with the decision (kill the stopping or leftover commands, or start the startable ones),
+the commands that were startable then, and the requests for the dialog; `InputsForActivate` is its `Requests`.
+`Activate(prepared, inputs)` carries out that decision and starts only the prepared commands that can still start,
+so a command that became startable while the dialog was open is not started without its inputs.
+`Activate`/`RestartAsync` take the values, freeze a copy and pass it through `StartCommands` / `StartGroup` / `SequenceRun` to every
 `StartEntry`, which substitutes into a copy of the args. A missing or empty-but-required value makes
 the start fail with a system line; values are never written to the output or log.
 
@@ -138,11 +142,16 @@ is set: the status shows `? left`, a `leftover check failed: …, retrying` line
 streak, and the command counts as having leftovers (`HasLeftovers`: no start, quit waits, Enter kills)
 until a count succeeds. With `leftovers: detach`, detaching waits for that first successful count. Restart = graceful stop, wait for exit, start.
 A pending restart is a `RestartOperation` tracked by the session: Stop/ForceKill of an overlapping command,
-StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. Revocation is checked before every
-start, and once more after a batch, when whatever was started is stopped again (a graceful stop is sent in the
-background, never waited for). Where it registers or starts, the restart also checks under the tree lock that its
-group is still in the tree and, for a restart of commands, that every target is still in that group; otherwise it
-is cancelled. A group restart starts only the commands the group had when it was called. F5 registers its restart on
+StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. A restart is stale when it was revoked,
+its caller cancelled it, its group was removed, a target of a restart of commands was moved out of the group or removed,
+or a command of a group restart was moved out of the group's subtree or removed. Staleness is checked under the tree
+lock before every launch, and once more after a batch; when it fails, what the batch started is stopped again (a graceful
+stop is sent in the background, never waited for) and the restart throws. A group restart starts only the commands the
+group had when it was called; commands added meanwhile are ignored. A restart that hands a sequence over to a run keeps
+the caller's token in force until the sequence's first command launches: the run's own launch decision (taken under its
+lock, right before the command starts) ends that watch, and the restart waits for that decision before it returns, so a
+cancellation before the launch throws and starts nothing. After the first launch, stopping the sequence is Stop's or
+ForceKill's job, and the caller's token no longer reaches it. F5 registers its restart on
 the UI thread (`Session.PrepareRestart`) and only then runs it in the background (`RunRestartAsync`), so a Stop or quit
 that comes first revokes it. F5 on commands a pending restart covers (`Session.PendingRestartsOf`) does not start
 another restart: it asks "Keep waiting" (default) or "Force kill now", which kills them without revoking the restart

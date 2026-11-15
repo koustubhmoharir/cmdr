@@ -319,4 +319,182 @@ public class SessionRestartBoundaryTests
             Cleanup(session);
         }
     }
+
+    [Fact]
+    public async Task CallerCancelledBeforeTheFirstLaunch_RestartOfCommandsInASequence_StartsNothingAndThrows()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sleeper("a"), Sleeper("b")));
+        GroupEntry group = session.Groups[0];
+        CommandEntry a = group.Commands[0];
+        CommandEntry b = group.Commands[1];
+        using var cts = new CancellationTokenSource();
+        // The planned commands are announced as queued after the run is registered and before it is launched.
+        session.EntryChanged += e =>
+        {
+            if (e.IsQueued)
+            {
+                cts.Cancel();
+            }
+        };
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => session.RestartAsync(new[] { a, b }, ct: cts.Token))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(ProcessState.NotStarted, a.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.False(a.IsQueued);
+            Assert.False(b.IsQueued);
+            Assert.False(group.IsSequenceRunning);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task CallerCancelledBeforeTheFirstLaunch_RestartOfASequentialGroup_StartsNothingAndThrows()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sleeper("a"), Sleeper("b")));
+        GroupEntry group = session.Groups[0];
+        CommandEntry a = group.Commands[0];
+        CommandEntry b = group.Commands[1];
+        using var cts = new CancellationTokenSource();
+        session.EntryChanged += e =>
+        {
+            if (e.IsQueued)
+            {
+                cts.Cancel();
+            }
+        };
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => session.RestartAsync(group, ct: cts.Token))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(ProcessState.NotStarted, a.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.False(a.IsQueued);
+            Assert.False(b.IsQueued);
+            Assert.False(group.IsSequenceRunning);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task CallerCancelledAfterTheFirstCommandStarted_DoesNotStopTheSequence()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sh("a", "echo a-done"), Sh("b", "echo b-ran; exec sleep 30")));
+        GroupEntry group = session.Groups[0];
+        CommandEntry a = group.Commands[0];
+        CommandEntry b = group.Commands[1];
+        using var cts = new CancellationTokenSource();
+        int fired = 0;
+        session.EntryChanged += e =>
+        {
+            // Runs inside the first launch, after the launch has been decided: the caller's cancellation comes too late.
+            if (e == a && e.Process.Snapshot.State == ProcessState.Running && Interlocked.Exchange(ref fired, 1) == 0)
+            {
+                cts.Cancel();
+            }
+        };
+
+        try
+        {
+            Assert.Null(await session.RestartAsync(new[] { a, b }, ct: cts.Token).WaitAsync(TimeSpan.FromSeconds(10)));
+
+            WaitForText(b.Process, "b-ran");
+            Assert.Equal(ProcessState.Running, b.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task CommandMovedOutOfAParallelBatchBetweenLaunches_IsNotStartedAndTheEarlierLaunchIsStoppedAgain()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sleeper("a"), Sleeper("b")), Group("destination", GroupMode.Parallel));
+        GroupEntry destination = session.Groups[1];
+        CommandEntry a = session.Groups[0].Commands[0];
+        CommandEntry b = session.Groups[0].Commands[1];
+        int fired = 0;
+        session.EntryChanged += e =>
+        {
+            // Start's Running notification is raised on this thread, before the batch launches b.
+            if (e == a && e.Process.Snapshot.State == ProcessState.Running && Interlocked.Exchange(ref fired, 1) == 0)
+            {
+                session.UpdateCommand(b, b.Spec, destination);
+            }
+        };
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() => session.RestartAsync(new[] { a, b }))
+                .WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.Same(destination, b.Group);
+            WaitUntil(() => a.Process.Snapshot.State == ProcessState.Exited, "the command launched by the batch to be stopped again", a.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task CommandOfAGroupMovedOutWhileTheRestartWaits_CancelsTheRestart()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string release = dir.File("release");
+        CommandSpec old = Sh("old", $"trap '' INT; echo ready; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done");
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, old, Sleeper("b")), Group("destination", GroupMode.Parallel));
+        GroupEntry group = session.Groups[0];
+        GroupEntry destination = session.Groups[1];
+        CommandEntry a = group.Commands[0];
+        CommandEntry b = group.Commands[1];
+        try
+        {
+            Assert.Null(session.Activate(new[] { a }));
+            WaitForText(a.Process, "ready");
+
+            Task<string?> restart = session.RestartAsync(group);
+            WaitUntil(() => a.Process.Snapshot.State == ProcessState.Stopping, "the restart to be stopping a", a.Process);
+
+            session.UpdateCommand(b, b.Spec, destination);
+            File.WriteAllText(release, "go");
+
+            await Assert.ThrowsAsync<OperationCanceledException>(() => restart).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            WaitUntil(() => a.Process.Snapshot.State == ProcessState.Exited, "the old run to end", a.Process);
+            Assert.Single(Regex.Matches(Text(a.Process), "ready"));
+        }
+        finally
+        {
+            File.WriteAllText(release, "go");
+            Cleanup(session);
+        }
+    }
 }

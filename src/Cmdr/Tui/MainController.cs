@@ -646,28 +646,29 @@ internal sealed class MainController : IDisposable
 
         try
         {
-            IReadOnlyList<InputPlaceholders.InputRequest> requests = target switch
+            // Decided now, when Enter is pressed: the dialog below is modal and processes keep changing while it is open.
+            PreparedActivation? prepared = target switch
             {
-                GroupTarget group => _session.InputsForActivate(group.Group),
-                CommandsTarget commands => _session.InputsForActivate(commands.Commands),
-                _ => Array.Empty<InputPlaceholders.InputRequest>(),
+                GroupTarget group => _session.PrepareActivate(group.Group),
+                CommandsTarget commands => _session.PrepareActivate(commands.Commands),
+                _ => null,
             };
-            IReadOnlyDictionary<string, string>? inputs = null;
-            if (requests.Count > 0)
+            if (prepared is null)
             {
-                inputs = InputDialog.Ask(_app, TargetTitle(target), requests);
+                return;
+            }
+
+            IReadOnlyDictionary<string, string>? inputs = null;
+            if (prepared.Requests.Count > 0)
+            {
+                inputs = InputDialog.Ask(_app, TargetTitle(target), prepared.Requests);
                 if (inputs is null)
                 {
                     return;
                 }
             }
 
-            string? message = target switch
-            {
-                GroupTarget group => _session.Activate(group.Group, inputs),
-                CommandsTarget commands => _session.Activate(commands.Commands, inputs),
-                _ => null,
-            };
+            string? message = _session.Activate(prepared, inputs);
             if (message is not null)
             {
                 ShowMessage(message);
