@@ -79,5 +79,6 @@ A second review of every fix on this branch, by six worker reviewers (one per pa
 | **04-R1, 04-R3 (02-05)** | A waiting writer's replay is captured at enable; at most one running and one waiting writer per file. | b08f88f |
 
 | **R1 (06-05)** | A batch-file command with an argument PowerShell's legacy passing would mangle is copied as cmdr's own cmd.exe command, held in `$env:CMDR_CMD` and run with `cmd /d /c '%CMDR_CMD%'`; other commands keep the plain form. Tests: `WindowsBatchCommandLineTests`, `CommandLineFormatterTests` (pwsh checks the variable). | 345138f |
+| **Open questions** | Drive-relative programs (`C:tools\run`) are rejected and drive-relative PATH entries skipped; a missing or relative ComSpec runs `cmd.exe` from the system directory; F5 on commands a restart is still waiting for asks "Keep waiting" / "Force kill now" instead of starting another restart. | ce2c06d, f6dcc28, (this commit) |
 
 Not fixed: 01-09's item-local JSON path (known limitation). The Windows-specific changes above are unverified on Windows.

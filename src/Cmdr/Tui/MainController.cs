@@ -731,8 +731,16 @@ internal sealed class MainController : IDisposable
             return;
         }
 
-        int count = CommandsOf(target).Count;
+        IReadOnlyList<CommandEntry> targetCommands = CommandsOf(target);
+        int count = targetCommands.Count;
         if (count == 0)
+        {
+            return;
+        }
+
+        // A second F5 while a restart of these commands is still waiting: most likely impatience or a slip, so ask rather
+        // than start another restart or cancel the pending one.
+        if (AskAboutPendingRestart(targetCommands))
         {
             return;
         }
@@ -791,6 +799,52 @@ internal sealed class MainController : IDisposable
                 Invoke(() => ShowMessage(message));
             }
         });
+    }
+
+    /// <summary>
+    /// When a pending restart already covers some of <paramref name="commands"/>, asks whether to keep waiting for it (the
+    /// default) or to force-kill what it waits for so that it restarts now, and returns true: this F5 is then handled.
+    /// Returns false when no restart is pending for them.
+    /// </summary>
+    private bool AskAboutPendingRestart(IReadOnlyList<CommandEntry> commands)
+    {
+        IReadOnlyList<CommandEntry> pending;
+        try
+        {
+            pending = _session.PendingRestartsOf(commands);
+        }
+        catch (ArgumentException ex)
+        {
+            ShowMessage(ex.Message);
+            return true;
+        }
+
+        if (pending.Count == 0)
+        {
+            return false;
+        }
+
+        string names = pending.Count == 1 ? $"'{pending[0].Spec.Name}' is" : $"{pending.Count} commands are";
+        string them = pending.Count == 1 ? "it" : "them";
+        int? choice = Confirm.Choose(
+            _app,
+            "Restart already pending",
+            $"{names} already restarting: waiting for {them} to stop.",
+            "_Keep waiting",
+            "_Force kill now");
+        if (choice == 1)
+        {
+            try
+            {
+                _session.ForceKillForPendingRestart(pending);
+            }
+            catch (ArgumentException ex)
+            {
+                ShowMessage(ex.Message);
+            }
+        }
+
+        return true;
     }
 
     private void ToggleLog(ListRow? focused)

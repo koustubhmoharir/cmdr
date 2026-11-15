@@ -142,6 +142,46 @@ public sealed partial class Session
     }
 
     /// <summary>
+    /// The commands among <paramref name="commands"/> that a pending restart will start again (one that is still stopping
+    /// them, or waiting for their runs to end), in the given order. Lets a second F5 ask instead of starting another restart.
+    /// </summary>
+    /// <exception cref="ArgumentException">A command does not belong to this session.</exception>
+    public IReadOnlyList<CommandEntry> PendingRestartsOf(IReadOnlyList<CommandEntry> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        foreach (CommandEntry entry in commands)
+        {
+            EnsureOwned(entry);
+        }
+
+        lock (_sync)
+        {
+            return commands.Where(entry => _restarts.Any(op => !op.Cancelled && op.Commands.Contains(entry))).ToList();
+        }
+    }
+
+    /// <summary>
+    /// Force-kills the processes of <paramref name="commands"/> for the pending restarts that wait for them. Unlike
+    /// <see cref="ForceKill(IReadOnlyList{CommandEntry})"/>, the restarts are kept: they start the commands again as soon as
+    /// the killed leaders have exited, and leftovers that would block the start are killed too. Commands with nothing to kill
+    /// are skipped.
+    /// </summary>
+    /// <exception cref="ArgumentException">A command does not belong to this session.</exception>
+    public void ForceKillForPendingRestart(IReadOnlyList<CommandEntry> commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        foreach (CommandEntry entry in commands)
+        {
+            EnsureOwned(entry);
+        }
+
+        foreach (CommandEntry entry in commands)
+        {
+            entry.Process.ForceKill(); // does nothing unless running, stopping, or exited with leftovers
+        }
+    }
+
+    /// <summary>
     /// F5 on command rows: cancels the innermost runs containing the targets (and waits for the runs around them to end),
     /// stops the running or stopping targets and waits for their leaders to exit, then starts the targets that can start.
     /// </summary>

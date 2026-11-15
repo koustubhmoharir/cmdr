@@ -278,7 +278,7 @@ act on everything in the group. Marks are limited to one group.
 | Enter | Start (or force-kill what is stopping or left over) |
 | Esc | Stop gracefully, with confirmation |
 | Ctrl+C | Stop gracefully |
-| F5 | Restart, with confirmation |
+| F5 | Restart, with confirmation. Pressed again while that restart still waits for the command to stop, it asks: keep waiting (Enter), or force kill now so the restart goes ahead |
 | Space, Shift+↑/↓, Ctrl+click | Mark commands |
 | Ctrl+A | Mark / unmark all in the group |
 | ← / → | Collapse / expand a group |

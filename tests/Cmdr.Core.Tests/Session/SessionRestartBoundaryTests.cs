@@ -192,4 +192,38 @@ public class SessionRestartBoundaryTests
             Cleanup(session);
         }
     }
+
+    [Fact]
+    public async Task ForceKillForAPendingRestart_KeepsTheRestart_WhichStartsTheCommandAgain()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        // Ignores Ctrl+C, so the restart waits for it until it is killed.
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("stubborn", "trap '' INT; echo ready; while :; do sleep 0.1; done"), Sleeper("other")));
+        CommandEntry stubborn = session.Groups[0].Commands[0];
+        CommandEntry other = session.Groups[0].Commands[1];
+        try
+        {
+            Assert.Null(session.Activate(new[] { stubborn }));
+            WaitForText(stubborn.Process, "ready");
+            int? firstPid = stubborn.Process.Snapshot.Pid;
+            Assert.Empty(session.PendingRestartsOf(new[] { stubborn, other }));
+
+            Task<string?> restart = session.RestartAsync(new[] { stubborn });
+            WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Stopping, "the restart to be stopping it", stubborn.Process);
+            Assert.Equal(new[] { stubborn }, session.PendingRestartsOf(new[] { stubborn, other }));
+
+            session.ForceKillForPendingRestart(new[] { stubborn });
+
+            Assert.Null(await restart.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(ProcessState.Running, stubborn.Process.Snapshot.State);
+            Assert.NotEqual(firstPid, stubborn.Process.Snapshot.Pid);
+            Assert.Empty(session.PendingRestartsOf(new[] { stubborn }));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
 }
