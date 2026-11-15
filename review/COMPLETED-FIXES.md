@@ -78,6 +78,6 @@ A second review of every fix on this branch, by six worker reviewers (one per pa
 | **Log writer threads** | Found while fixing flaky tests: writers ran blocking I/O on the thread pool, so a stalled log held a pool thread. They run on dedicated threads. Racy tests rewritten (version read, log batches, Ctrl+C SIGINT disposition, pool starvation). | 5a7eb36 |
 | **04-R1, 04-R3 (02-05)** | A waiting writer's replay is captured at enable; at most one running and one waiting writer per file. | b08f88f |
 
-| **R1 (06-05)** | A batch-file command with an argument PowerShell's legacy passing would mangle is copied as cmdr's own cmd.exe command, held in `$env:CMDR_CMD` and run with `cmd /d /c '%CMDR_CMD%'`; other commands keep the plain form. Tests: `WindowsBatchCommandLineTests`, `CommandLineFormatterTests` (pwsh checks the variable). | (this commit) |
+| **R1 (06-05)** | A batch-file command with an argument PowerShell's legacy passing would mangle is copied as cmdr's own cmd.exe command, held in `$env:CMDR_CMD` and run with `cmd /d /c '%CMDR_CMD%'`; other commands keep the plain form. Tests: `WindowsBatchCommandLineTests`, `CommandLineFormatterTests` (pwsh checks the variable). | 345138f |
 
 Not fixed: 01-09's item-local JSON path (known limitation). The Windows-specific changes above are unverified on Windows.
