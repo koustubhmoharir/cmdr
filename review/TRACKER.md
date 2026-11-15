@@ -15,7 +15,7 @@ All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows tes
 
 ## 3. Open from the third review (2026-11-15)
 
-All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). All findings are fixed (S0–S10, see COMPLETED-FIXES.md); S11 is deferred. The Windows parts are in the Windows checklist. The user has answered the report's questions Q1–Q11; the decisions are recorded there.
+All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). All findings are fixed (S0–S10, see COMPLETED-FIXES.md). S11's LaunchSpec part is done; the rest (per-run owner in ManagedProcess, Windows group leases and helper deadline) is deferred, planned in [S11-PLAN.md](S11-PLAN.md). The Windows parts are in the Windows checklist. The user has answered the report's questions Q1–Q11; the decisions are recorded there.
 
 ## Validation gaps (not tied to one item)
 
