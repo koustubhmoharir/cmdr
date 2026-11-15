@@ -22,6 +22,7 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     private readonly SafeJobHandle _job;
     private readonly int _leaderPid;
     private readonly CtrlCHelperCommand _helper;
+    private volatile bool _detached;
 
     /// <summary>The job object handle, for tests that check membership. Valid until the group is disposed.</summary>
     internal SafeJobHandle Job => _job;
@@ -37,10 +38,15 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
-    /// <remarks>Starts the Ctrl+C helper for the leader's console and waits up to 5 seconds for it to finish.</remarks>
+    /// <remarks>Starts the Ctrl+C helper for the leader's console and waits up to 5 seconds for it to finish. Does nothing after <see cref="Detach"/>.</remarks>
     /// <exception cref="Win32Exception">The helper could not be started, timed out, or reported a failure.</exception>
     public void Interrupt()
     {
+        if (_detached)
+        {
+            return;
+        }
+
         var psi = new ProcessStartInfo
         {
             FileName = _helper.FileName,
@@ -87,10 +93,15 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
-    /// <remarks>Terminates every process in the job with exit code 1. Ignored if the job is already closed.</remarks>
+    /// <remarks>Terminates every process in the job with exit code 1. Ignored if the job is already closed or after <see cref="Detach"/>.</remarks>
     /// <exception cref="Win32Exception">TerminateJobObject failed.</exception>
     public void Kill()
     {
+        if (_detached)
+        {
+            return;
+        }
+
         try
         {
             if (UseJob(job => WindowsNative.TerminateJobObject(job, TerminateExitCode)) == 0)
@@ -107,11 +118,12 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     /// <inheritdoc />
     /// <remarks>
     /// Clears KILL_ON_JOB_CLOSE, so a later Dispose closes the job handle without terminating its processes. Ignored if
-    /// the job is already closed.
+    /// the job is already closed. From the start of the call, Interrupt and Kill do nothing.
     /// </remarks>
     /// <exception cref="Win32Exception">SetInformationJobObject failed.</exception>
     public void Detach()
     {
+        _detached = true;
         try
         {
             // A zeroed limit struct sets no limits: the job was created with KILL_ON_JOB_CLOSE as its only limit.

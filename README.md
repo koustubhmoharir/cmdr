@@ -327,6 +327,8 @@ version 1607 or later.
 
 - `.cmd`/`.bat` programs (`pnpm`, `npm`, `yarn`, …) run through `cmd.exe`. After Ctrl+C, cmd asks
   "Terminate batch job (Y/N)?"; cmdr answers it.
+- Ctrl+C reaches only the processes attached to the command's console; a child that opens its own console window
+  doesn't get it. Force kill still ends the whole process tree.
 - `dotnet watch` ignores Ctrl+C when its input is redirected, which it is by default. Set
   `"stdin": "console"` on such commands. Nothing can type into that console, so also stop `dotnet watch`
   from asking questions: add `DOTNET_WATCH_RESTART_ON_RUDE_EDIT=1` to its `env`, or pass

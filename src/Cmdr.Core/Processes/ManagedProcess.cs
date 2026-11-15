@@ -384,7 +384,9 @@ public sealed class ManagedProcess : IDisposable
             notice = launch.Notice;
 
             // The exit callback may run before Launch returns. It waits for the lock, which this method holds until the run
-            // state below is in place, so an immediate exit is still recorded. A failed launch never calls it.
+            // state below is in place, so an immediate exit is still recorded. A launch that fails after the leader started (the
+            // group never formed) may still call it: the leader is killed, and OnExited ignores the call because this run never
+            // becomes current.
             launched = _platform.Launch(launch, exited => OnExited(runId, exited));
         }
         catch (Exception ex)

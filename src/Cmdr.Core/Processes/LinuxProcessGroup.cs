@@ -14,6 +14,7 @@ internal sealed class LinuxProcessGroup : IProcessGroup
     private const int ErrorNoSuchProcess = 3; // ESRCH
 
     private readonly int _pgid;
+    private volatile bool _detached;
 
     /// <summary>Creates a handle for the process group <paramref name="pgid"/>.</summary>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="pgid"/> is not positive.</exception>
@@ -25,22 +26,62 @@ internal sealed class LinuxProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
+    /// <remarks>Does nothing after <see cref="Detach"/>.</remarks>
     /// <exception cref="Win32Exception">The signal could not be delivered for a reason other than the group being gone.</exception>
-    public void Interrupt() => Signal(SigInt);
+    public void Interrupt()
+    {
+        if (!_detached)
+        {
+            Signal(SigInt);
+        }
+    }
 
     /// <inheritdoc />
+    /// <remarks>Does nothing after <see cref="Detach"/>.</remarks>
     /// <exception cref="Win32Exception">The signal could not be delivered for a reason other than the group being gone.</exception>
-    public void Kill() => Signal(SigKill);
+    public void Kill()
+    {
+        if (!_detached)
+        {
+            Signal(SigKill);
+        }
+    }
 
     /// <inheritdoc />
     /// <remarks>
     /// Scans <c>/proc/[pid]/stat</c>. The command name (field 2) may contain spaces and parentheses, so fields
-    /// are parsed after the last ')'. Processes that exit during the scan are skipped.
+    /// are parsed after the last ')'. Processes that exit during the scan are skipped. A process whose stat cannot be
+    /// read for lack of permission is unknown, not gone: the count throws <see cref="IOException"/> naming it.
     /// </remarks>
-    public int CountLiveProcesses()
+    /// <exception cref="IOException">The stat of a listed process is not readable (permission denied).</exception>
+    public int CountLiveProcesses() => CountLiveProcesses(_pgid, "/proc", File.ReadAllText);
+
+    /// <inheritdoc />
+    /// <remarks>Marks the group as detached: after this, Interrupt and Kill do nothing. Dispose does not signal either.</remarks>
+    public void Detach() => _detached = true;
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        // Nothing to release: the group is identified by its id only. Does not signal anything.
+    }
+
+    /// <summary>
+    /// Returns the process group id of <paramref name="pid"/> from <c>/proc/[pid]/stat</c>, or null if the process is gone
+    /// or its stat cannot be read (the launch wait treats both as done).
+    /// </summary>
+    internal static int? ReadProcessGroupId(int pid) =>
+        ReadStat($"/proc/{pid}/stat", File.ReadAllText, out _, out int pgrp) == StatRead.Ok ? pgrp : null;
+
+    /// <summary>
+    /// Counts the live processes in group <paramref name="pgid"/> among the numeric entries of <paramref name="procRoot"/>,
+    /// reading each stat through <paramref name="readText"/>.
+    /// </summary>
+    /// <exception cref="IOException">The stat of a listed process is not readable (permission denied): the count is unknown.</exception>
+    internal static int CountLiveProcesses(int pgid, string procRoot, Func<string, string> readText)
     {
         int count = 0;
-        foreach (string dir in Directory.EnumerateDirectories("/proc"))
+        foreach (string dir in Directory.EnumerateDirectories(procRoot))
         {
             string name = Path.GetFileName(dir);
             if (name.Length == 0 || !IsAllDigits(name))
@@ -48,7 +89,13 @@ internal sealed class LinuxProcessGroup : IProcessGroup
                 continue;
             }
 
-            if (!TryReadStat(Path.Combine(dir, "stat"), out char state, out int pgrp) || pgrp != _pgid)
+            StatRead read = ReadStat(Path.Combine(dir, "stat"), readText, out char state, out int pgrp);
+            if (read == StatRead.Denied)
+            {
+                throw new IOException($"Cannot read the stat of process {name}: permission denied.");
+            }
+
+            if (read != StatRead.Ok || pgrp != pgid)
             {
                 continue;
             }
@@ -63,24 +110,6 @@ internal sealed class LinuxProcessGroup : IProcessGroup
 
         return count;
     }
-
-    /// <inheritdoc />
-    /// <remarks>Nothing to release: Dispose does not signal, so the group is already detached.</remarks>
-    public void Detach()
-    {
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        // Nothing to release: the group is identified by its id only. Does not signal anything.
-    }
-
-    /// <summary>
-    /// Returns the process group id of <paramref name="pid"/> from <c>/proc/[pid]/stat</c>, or null if the process is gone.
-    /// </summary>
-    internal static int? ReadProcessGroupId(int pid) =>
-        TryReadStat($"/proc/{pid}/stat", out _, out int pgrp) ? pgrp : null;
 
     private void Signal(int signal)
     {
@@ -109,11 +138,27 @@ internal sealed class LinuxProcessGroup : IProcessGroup
         throw new Win32Exception(error);
     }
 
+    /// <summary>The outcome of reading one stat file.</summary>
+    internal enum StatRead
+    {
+        /// <summary>The state and pgrp were read.</summary>
+        Ok,
+
+        /// <summary>The process exited during the read (the file or its directory is gone, or the read failed with an I/O error).</summary>
+        Vanished,
+
+        /// <summary>The file exists but is not readable (permission denied).</summary>
+        Denied,
+
+        /// <summary>The file was read but its contents are not a stat line.</summary>
+        Malformed,
+    }
+
     /// <summary>
     /// Parses state (field 3) and pgrp (field 5) from a stat file. The command name (field 2) may contain spaces and
-    /// parentheses, so fields are read after the last ')'. Returns false if the process vanished or the file is malformed.
+    /// parentheses, so fields are read after the last ')'.
     /// </summary>
-    private static bool TryReadStat(string statPath, out char state, out int pgrp)
+    private static StatRead ReadStat(string statPath, Func<string, string> readText, out char state, out int pgrp)
     {
         state = '\0';
         pgrp = 0;
@@ -121,17 +166,21 @@ internal sealed class LinuxProcessGroup : IProcessGroup
         string stat;
         try
         {
-            stat = File.ReadAllText(statPath);
+            stat = readText(statPath);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (UnauthorizedAccessException)
         {
-            return false; // Exited during the read, or not readable.
+            return StatRead.Denied;
+        }
+        catch (IOException)
+        {
+            return StatRead.Vanished;
         }
 
         int close = stat.LastIndexOf(')');
         if (close < 0)
         {
-            return false;
+            return StatRead.Malformed;
         }
 
         string[] fields = stat.Substring(close + 1).Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -140,11 +189,11 @@ internal sealed class LinuxProcessGroup : IProcessGroup
         if (fields.Length < 3 || fields[0].Length == 0
             || !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out pgrp))
         {
-            return false;
+            return StatRead.Malformed;
         }
 
         state = fields[0][0];
-        return true;
+        return StatRead.Ok;
     }
 
     private static bool IsAllDigits(string text)

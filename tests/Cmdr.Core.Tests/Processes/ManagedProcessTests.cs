@@ -661,4 +661,36 @@ public class ManagedProcessTests
             Cleanup(p);
         }
     }
+
+    [Fact]
+    public void LaunchWithoutItsOwnGroupIsAFailedStartAndItsLateExitIsIgnored()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        int leaderPid = 0;
+        var platform = new LinuxProcessPlatform(TimeSpan.FromMilliseconds(200), pid =>
+        {
+            leaderPid = pid;
+            return 0;
+        });
+        var p = new ManagedProcess(BufferLines, platform);
+        try
+        {
+            p.Start(Exec("/bin/sleep", new[] { "30" }, dir.Path));
+            Assert.Equal(ProcessState.FailedToStart, p.Snapshot.State);
+            Assert.Contains("own process group", Text(p), StringComparison.Ordinal);
+            Assert.True(p.CanStart);
+
+            // The killed leader's exit callback may run; it must not record an exit for the failed run.
+            WaitUntil(() => LinuxProcessGroupTests.IsProcessGone(leaderPid), "failed leader to be killed", timeout: TimeSpan.FromSeconds(5));
+            Thread.Sleep(200);
+            Assert.Equal(ProcessState.FailedToStart, p.Snapshot.State);
+            Assert.DoesNotContain("=== exited", Text(p), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
 }

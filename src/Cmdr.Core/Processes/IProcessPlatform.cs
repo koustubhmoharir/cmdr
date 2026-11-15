@@ -20,9 +20,11 @@ internal interface IProcessPlatform
     /// </param>
     /// <returns>The started leader and its group.</returns>
     /// <exception cref="System.ComponentModel.Win32Exception">The process could not be started or attached to its group.</exception>
+    /// <exception cref="IOException">The process started but did not get its own group in time (Linux).</exception>
     /// <remarks>
-    /// On failure nothing is left running or untracked: the platform kills whatever it started and disposes what it created,
-    /// and <paramref name="onExited"/> is not invoked for it.
+    /// On failure nothing is left running or untracked: the platform kills whatever it started and disposes what it created
+    /// (possibly after returning, so as not to dispose under the caller's lock). If the leader had started,
+    /// <paramref name="onExited"/> may still be invoked for it, with an instance the caller never received; callers ignore it.
     /// </remarks>
     LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited);
 }

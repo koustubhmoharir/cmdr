@@ -58,4 +58,26 @@ public class LaunchContractTests
         await Task.Delay(100);
         Assert.Equal(0, Volatile.Read(ref calls));
     }
+
+    [Fact]
+    public void LaunchWhoseLeaderNeverGetsItsOwnGroupThrowsAndKillsTheLeader()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        int leaderPid = 0;
+        // The reader never reports the leader as its own group leader, so the wait times out.
+        var platform = new LinuxProcessPlatform(TimeSpan.FromMilliseconds(200), pid =>
+        {
+            leaderPid = pid;
+            return 0;
+        });
+        PreparedLaunch launch = platform.Prepare(Exec("/bin/sleep", new[] { "30" }, dir.Path));
+
+        IOException ex = Assert.Throws<IOException>(() => platform.Launch(launch, _ => { }));
+        Assert.Contains("own process group", ex.Message, StringComparison.Ordinal);
+        Assert.NotEqual(0, leaderPid);
+
+        WaitUntil(() => LinuxProcessGroupTests.IsProcessGone(leaderPid), "failed launch's leader to be killed", timeout: TimeSpan.FromSeconds(5));
+    }
 }
