@@ -197,7 +197,8 @@ to start; it is never handed to CreateProcess's own search, which would look in 
 drive-relative program (`C:tools\run`, relative to a per-drive current directory the child does not have) fails to
 start with a message saying so; a drive-relative PATH entry is skipped. If it resolves to a
 `.cmd`/`.bat`, it is launched as `%ComSpec% /d /s /c "<escaped command line>"` using cross-spawn's
-escaping rules. Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin, so
+escaping rules. A ComSpec that is missing or not a full path is replaced by `cmd.exe` in the system directory, so the
+interpreter is never found by CreateProcess's search (cmdr's directory and current directory come first). Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin, so
 after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin. Caveat: a child that
 reads stdin could consume the answer first. With `stdin: console` the answer cannot be sent; the launch
 returns a notice that is written to the output.

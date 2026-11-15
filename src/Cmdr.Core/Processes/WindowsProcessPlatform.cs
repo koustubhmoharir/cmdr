@@ -103,6 +103,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             spec.Program,
             resolved,
             FindEnvironmentValue(psi.Environment, "ComSpec"),
+            Environment.SystemDirectory,
             spec.Args);
 
         psi.FileName = plan.FileName;

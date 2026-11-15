@@ -157,6 +157,10 @@ internal static class WindowsCommandResolver
         return null;
     }
 
+    /// <summary>A drive-absolute path (<c>C:\</c> or <c>C:/</c>) or a UNC path: one that names its file without a current directory.</summary>
+    private static bool IsFullyQualified(string path) =>
+        IsUnc(path) || (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && path[2] is '\\' or '/');
+
     /// <summary>A drive letter and colon not followed by a separator: <c>C:</c>, <c>C:tools\run</c>.</summary>
     private static bool IsDriveRelative(string path) =>
         path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path.Length == 2 || path[2] is not ('\\' or '/'));
@@ -242,15 +246,24 @@ internal static class WindowsCommandResolver
 
     /// <summary>
     /// Decides how a program is started once resolved. A resolved <c>.cmd</c> or <c>.bat</c> file is run through the
-    /// command interpreter (<paramref name="comSpec"/>, or <c>cmd.exe</c> when missing) with a raw, escaped command
-    /// line; anything else is started directly with the argument list.
+    /// command interpreter with a raw, escaped command line; anything else is started directly with the argument list.
+    /// The interpreter is <paramref name="comSpec"/> when it is a full path, otherwise <c>cmd.exe</c> in
+    /// <paramref name="systemDirectory"/>: a bare or relative name would be found by CreateProcess's own search, which
+    /// looks in cmdr's directory and current directory before the system directory.
     /// </summary>
     /// <param name="program">The program as configured.</param>
     /// <param name="resolvedPath">The path returned by <see cref="Resolve"/>. A program that did not resolve is not planned.</param>
     /// <param name="comSpec">The ComSpec environment variable, or null.</param>
+    /// <param name="systemDirectory">The Windows system directory (<c>Environment.SystemDirectory</c>).</param>
     /// <param name="args">The configured arguments.</param>
-    public static WindowsLaunchPlan PlanLaunch(string program, string resolvedPath, string? comSpec, IReadOnlyList<string> args)
+    public static WindowsLaunchPlan PlanLaunch(
+        string program,
+        string resolvedPath,
+        string? comSpec,
+        string systemDirectory,
+        IReadOnlyList<string> args)
     {
+        ArgumentNullException.ThrowIfNull(systemDirectory);
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(resolvedPath);
         ArgumentNullException.ThrowIfNull(args);
@@ -258,7 +271,7 @@ internal static class WindowsCommandResolver
         if (IsBatchFile(resolvedPath))
         {
             return new WindowsLaunchPlan(
-                FileName: string.IsNullOrEmpty(comSpec) ? "cmd.exe" : comSpec,
+                FileName: comSpec is not null && IsFullyQualified(comSpec) ? comSpec : JoinPath(systemDirectory, "cmd.exe"),
                 Arguments: WindowsCmdEscaping.BuildCmdArguments(resolvedPath, args),
                 ArgumentList: Array.Empty<string>(),
                 InputAfterInterrupt: BatchTerminateAnswer);
