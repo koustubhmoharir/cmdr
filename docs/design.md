@@ -244,6 +244,28 @@ returns a notice that is written to the output.
   the affected item or anything below it is part of a run. Reparenting into itself or a descendant is
   refused.
 
+## Threading and ownership
+
+Most defects found in review were a decision taken on state that changed before it was used (across a lock release, an
+await, a modal dialog or a background dispatch), or state kept on a shared object instead of the run, operation or file it
+belongs to. The rules below say who owns what and which identity must travel with delayed work.
+
+| State | Owner and guard | Identity carried across delays |
+|---|---|---|
+| Views, dialogs, controller fields | UI thread only; background work reports back with `app.Invoke` | — |
+| Session tree (items, groups, membership, editing) | `Session._sync` | Tree membership is re-checked under the lock at every launch |
+| Pending restarts | `Session._sync` (`_restarts`); registered synchronously (`PrepareRestart`) before any background step | `RestartOperation`; `PendingRestart` also names the waited-for run |
+| Enter decisions | Taken when Enter is pressed (`PrepareActivate`), before the input dialog | `PreparedActivation` (the start or kill set) |
+| Sequence runs | Each run's own lock; registered on its group under `Session._sync` | `SequenceRun`; its `Result` completes only after it left its group |
+| A process run (process, group, pipes, readiness, exit) | `ManagedProcess._sync`; disposal of OS objects outside it | Run id (`RunId`, output run): kills, diagnostics, chunks and exits of another run are ignored |
+| Output buffer | `OutputBuffer` lock; a chunk's completed lines and new partial are one step | `BufferSnapshot` for an operation that validates then reads (copy) |
+| Log files | `CommandOutput._sync`; each file has its own `LogDestination` (progress, running and waiting writer) | The destination; rules are re-applied after the file is opened outside the lock |
+
+Lock order: `Session._sync` → sequence run → `ManagedProcess._sync`; output notify lock → `ManagedProcess._sync`. No lock is
+held across an await, a modal dialog, process I/O, a file open, or an event raised to subscribers (subscriber exceptions are
+contained and reported as `cmdr error:` lines). Work that outlives a lock either re-checks its identity under the lock before
+acting, or captures a snapshot and acts only on that.
+
 ## Output
 
 - Ring buffer of lines (`bufferLines`) with absolute line numbers, each line a sequence of styled
