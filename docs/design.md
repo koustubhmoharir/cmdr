@@ -136,7 +136,13 @@ States: `NotStarted | Running | Stopping(since) | Exited(code) | FailedToStart(m
 failure is contained at the exit/timer callback, the exit is still recorded, and `LeftoverCountUnknown`
 is set: the status shows `? left`, a `leftover check failed: …, retrying` line is written once per failure
 streak, and the command counts as having leftovers (`HasLeftovers`: no start, quit waits, Enter kills)
-until a count succeeds. With `leftovers: detach`, detaching waits for that first successful count. Restart = graceful stop, wait for exit, start. Tracked per
+until a count succeeds. With `leftovers: detach`, detaching waits for that first successful count. Restart = graceful stop, wait for exit, start.
+A pending restart is a `RestartOperation` tracked by the session: Stop/ForceKill of an overlapping command,
+StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. Revocation is checked before every
+start, and once more after a batch, when whatever was started is stopped again (a graceful stop is sent in the
+background, never waited for). Where it registers or starts, the restart also checks under the tree lock that its
+group is still in the tree and, for a restart of commands, that every target is still in that group; otherwise it
+is cancelled. A group restart starts only the commands the group had when it was called. Tracked per
 run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`, readiness.
 
 - **Stopped vs failed.** `ProcessSnapshot.StopRequested` is set when a graceful stop or force kill was

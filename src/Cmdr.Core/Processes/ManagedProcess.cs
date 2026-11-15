@@ -98,6 +98,7 @@ public sealed class ManagedProcess : IDisposable
     public void Start(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
+        ReleasedRun previous;
 
         lock (_sync)
         {
@@ -108,9 +109,10 @@ public sealed class ManagedProcess : IDisposable
                     $"Cannot start: state is {_snapshot.State}, {LeftoverTextLocked()} leftover process(es) running.");
             }
 
-            StartLocked(spec);
+            previous = StartLocked(spec);
         }
 
+        previous.Dispose();
         RaiseChanged();
     }
 
@@ -275,6 +277,9 @@ public sealed class ManagedProcess : IDisposable
     /// </remarks>
     public void Dispose()
     {
+        ILaunchedProcess? process;
+        IProcessGroup? group;
+        var pipes = new List<RunPipes>();
         lock (_sync)
         {
             if (_disposed)
@@ -285,16 +290,30 @@ public sealed class ManagedProcess : IDisposable
             _disposed = true;
             StopLeftoverTimerLocked();
             _runExited?.TrySetResult();
-            _process?.Dispose();
+            process = _process;
             _process = null;
-            _group?.Dispose();
+            group = _group;
             _group = null;
-            _pipes = null;
-            Output.Dispose();
-            foreach (RunPipes pipes in _livePipes)
+
+            // The current run's pipes too: once both of its readers ended it is no longer live, but its stdin is still open.
+            if (_pipes is not null)
             {
-                pipes.Abort();
+                pipes.Add(_pipes);
             }
+
+            _pipes = null;
+            pipes.AddRange(_livePipes.Where(live => !pipes.Contains(live)));
+            Output.Dispose();
+        }
+
+        // Released outside the lock: the platform's exit notification can hold its own lock while it calls OnExited, which takes
+        // this one, so disposing the process under this lock could deadlock with an exit that is being reported (on Linux,
+        // Process.Dispose waits for the lock that Process holds while raising Exited). OnExited sees _disposed and returns.
+        process?.Dispose();
+        group?.Dispose();
+        foreach (RunPipes run in pipes)
+        {
+            run.Abort();
         }
     }
 
@@ -316,11 +335,14 @@ public sealed class ManagedProcess : IDisposable
 
     private bool IsActiveLocked => _snapshot.State is ProcessState.Running or ProcessState.Stopping;
 
-    /// <summary>Launches the process. Caller holds the lock and has verified <see cref="CanStartLocked"/>.</summary>
-    private void StartLocked(LaunchSpec spec)
+    /// <summary>
+    /// Launches the process. Caller holds the lock, has verified <see cref="CanStartLocked"/>, and disposes the returned
+    /// resources of the previous run after releasing the lock.
+    /// </summary>
+    private ReleasedRun StartLocked(LaunchSpec spec)
     {
         int runId = ++_runId;
-        ReleaseRunResourcesLocked();
+        ReleasedRun previous = ReleaseRunResourcesLocked();
         StopLeftoverTimerLocked();
         _leftoverDetachPending = false;
         _readiness = null;
@@ -367,7 +389,7 @@ public sealed class ManagedProcess : IDisposable
         {
             _snapshot = new ProcessSnapshot(ProcessState.FailedToStart, null, null, null, null, null, ex.Message, 0);
             Output.EndRun($"failed to start: {ex.Message}");
-            return;
+            return previous;
         }
 
         ILaunchedProcess process = launched.Process;
@@ -408,6 +430,8 @@ public sealed class ManagedProcess : IDisposable
         {
             Output.WriteSystem(notice);
         }
+
+        return previous;
     }
 
     /// <summary>
@@ -690,17 +714,29 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Releases the previous run's process handle, group and stdin pipe. Its output readers keep draining until the pipes reach
-    /// EOF (see <see cref="PumpAsync"/>); the output drops what they read from now on. Caller holds the lock.
+    /// Detaches the previous run's process handle, group and stdin pipe; the caller disposes them with
+    /// <see cref="ReleasedRun.Dispose"/> after releasing the lock (see <see cref="Dispose"/> for why not under it). Its output
+    /// readers keep draining until the pipes reach EOF (see <see cref="PumpAsync"/>); the output drops what they read from now
+    /// on. Caller holds the lock.
     /// </summary>
-    private void ReleaseRunResourcesLocked()
+    private ReleasedRun ReleaseRunResourcesLocked()
     {
-        _process?.Dispose();
+        var released = new ReleasedRun(_process, _group, _pipes);
         _process = null;
-        _group?.Dispose();
         _group = null;
-        _pipes?.CloseStdin();
         _pipes = null;
+        return released;
+    }
+
+    /// <summary>A previous run's resources, to dispose outside the lock.</summary>
+    private readonly record struct ReleasedRun(ILaunchedProcess? Process, IProcessGroup? Group, RunPipes? Pipes)
+    {
+        public void Dispose()
+        {
+            Process?.Dispose();
+            Group?.Dispose();
+            Pipes?.CloseStdin();
+        }
     }
 
     /// <summary>Delivers a signal to the group. Returns true if it was delivered without error.</summary>

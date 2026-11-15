@@ -172,7 +172,7 @@ public sealed partial class Session
         lock (_sync)
         {
             affected = ActiveRuns().Where(run => targets.Any(target => run.Contains(target))).ToList();
-            op = RegisterRestartLocked(new HashSet<CommandEntry>(targets), ct);
+            op = RegisterRestartLocked(group, new HashSet<CommandEntry>(targets), commandsMustStayInGroup: true, ct);
         }
 
         try
@@ -255,7 +255,7 @@ public sealed partial class Session
         List<SequenceRun> cancelled;
         lock (_sync)
         {
-            op = RegisterRestartLocked(new HashSet<CommandEntry>(group.AllCommands), ct);
+            op = RegisterRestartLocked(group, new HashSet<CommandEntry>(group.AllCommands), commandsMustStayInGroup: false, ct);
         }
 
         try
@@ -266,7 +266,7 @@ public sealed partial class Session
             List<CommandEntry> running;
             lock (_sync)
             {
-                running = group.AllCommands.Where(IsRunningOrStopping).ToList();
+                running = group.AllCommands.Where(entry => op.Commands.Contains(entry) && IsRunningOrStopping(entry)).ToList();
             }
 
             await StopAndAwaitExitAsync(running, op);
@@ -276,7 +276,10 @@ public sealed partial class Session
             lock (_sync)
             {
                 ThrowIfRevokedLocked(op);
-                blocked = group.AllCommands.Where(entry => !entry.Process.CanStart).Select(entry => $"'{entry.Spec.Name}'").ToList();
+                blocked = group.AllCommands
+                    .Where(entry => op.Commands.Contains(entry) && !entry.Process.CanStart)
+                    .Select(entry => $"'{entry.Spec.Name}'")
+                    .ToList();
             }
 
             var messages = new List<string>();
@@ -548,6 +551,11 @@ public sealed partial class Session
         var started = new List<CommandEntry>();
         foreach (CommandEntry entry in startable)
         {
+            if (IsRevoked(op))
+            {
+                break; // FinishRestartStarts stops what was started and throws
+            }
+
             if (StartEntry(entry, inputs))
             {
                 started.Add(entry);
@@ -604,7 +612,7 @@ public sealed partial class Session
         lock (_sync)
         {
             ThrowIfRevokedLocked(op);
-            children = PlanChildren(group, e => e.Process.CanStart);
+            children = PlanChildren(group, e => e.Process.CanStart && (op is null || op.Commands.Contains(e)));
             if (children.Count == 0)
             {
                 return null;
@@ -632,7 +640,7 @@ public sealed partial class Session
 
         // Untracked: the branches run on their own; nothing waits for them.
         var createdRuns = new List<SequenceRun>();
-        StartBranches(children, owner: null, inputs, createdRuns);
+        StartBranches(children, owner: null, inputs, createdRuns, op);
         if (op is not null)
         {
             var planned = new List<CommandEntry>();
@@ -789,17 +797,25 @@ public sealed partial class Session
     /// <summary>
     /// Starts the branches of a parallel group's planned children now: a command is started, a sequential group becomes a
     /// run, and a parallel group recurses. Each branch completes with true on success. With an <paramref name="owner"/>
-    /// run, a branch started after the owner was cancelled is stopped as the owner would stop it.
+    /// run, a branch started after the owner was cancelled is stopped as the owner would stop it. With a restart operation
+    /// <paramref name="op"/>, no further branch is started once it is revoked or its caller cancelled it.
     /// </summary>
     internal List<Task<bool>> StartBranches(
         IReadOnlyList<PlanNode> children,
         SequenceRun? owner,
         IReadOnlyDictionary<string, string> inputs,
-        List<SequenceRun>? createdRuns = null)
+        List<SequenceRun>? createdRuns = null,
+        RestartOperation? op = null)
     {
         var branches = new List<Task<bool>>();
         foreach (PlanNode child in children)
         {
+            if (IsRevoked(op))
+            {
+                Unqueue(child); // not started: the restart that planned it was revoked
+                continue;
+            }
+
             if (child.Command is { } command)
             {
                 branches.Add(StartBranchCommand(command, owner, inputs));
@@ -828,7 +844,7 @@ public sealed partial class Session
                 }
                 else
                 {
-                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner, inputs, createdRuns)));
+                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner, inputs, createdRuns, op)));
                 }
             }
         }
@@ -961,9 +977,9 @@ public sealed partial class Session
     }
 
     /// <summary>Adds a restart to the pending set. Caller holds <c>_sync</c>.</summary>
-    private RestartOperation RegisterRestartLocked(HashSet<CommandEntry> commands, CancellationToken ct)
+    private RestartOperation RegisterRestartLocked(GroupEntry group, HashSet<CommandEntry> commands, bool commandsMustStayInGroup, CancellationToken ct)
     {
-        var op = new RestartOperation(commands, ct);
+        var op = new RestartOperation(group, commands, commandsMustStayInGroup, ct);
         _restarts.Add(op);
         return op;
     }
@@ -1032,12 +1048,42 @@ public sealed partial class Session
         }
     }
 
-    /// <summary>Throws if the restart was revoked or its caller cancelled it. A null operation never throws. Caller holds <c>_sync</c>.</summary>
-    private static void ThrowIfRevokedLocked(RestartOperation? op)
+    /// <summary>
+    /// Throws if the restart may not start anything: it was revoked, its caller cancelled it, its group was removed, or (for a
+    /// restart of commands) a target was moved out of the group or removed while it waited. A null operation never throws.
+    /// Caller holds <c>_sync</c>, and registers or starts in the same lock section, so that edits cannot intervene.
+    /// </summary>
+    private void ThrowIfRevokedLocked(RestartOperation? op)
     {
-        if (op is not null && (op.Cancelled || op.Token.IsCancellationRequested))
+        if (op is null)
+        {
+            return;
+        }
+
+        bool stale = !IsAttached(op.Group)
+            || (op.CommandsMustStayInGroup
+                && op.Commands.Any(entry => entry.IsRemoved || !ReferenceEquals(entry.Group, op.Group) || !op.Group.HasItem(entry)));
+        if (stale || IsRevokedLocked(op))
         {
             throw new OperationCanceledException(op.Token);
+        }
+    }
+
+    /// <summary>True if the restart was revoked or its caller cancelled it. False for a null operation. Caller holds <c>_sync</c>.</summary>
+    private static bool IsRevokedLocked(RestartOperation? op) =>
+        op is not null && (op.Cancelled || op.Token.IsCancellationRequested);
+
+    /// <summary>As <see cref="IsRevokedLocked"/>, taking the lock.</summary>
+    private bool IsRevoked(RestartOperation? op)
+    {
+        if (op is null)
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            return IsRevokedLocked(op);
         }
     }
 
@@ -1048,23 +1094,18 @@ public sealed partial class Session
     private static async Task StopAndAwaitExitAsync(IReadOnlyList<CommandEntry> running, RestartOperation op)
     {
         Task[] dispatches = running.Select(entry => Task.Run(() => entry.Process.RequestStop())).ToArray();
-        Task dispatched = Task.WhenAll(dispatches);
-
         // If the wait below is abandoned, a fault of a stop dispatch must still be observed rather than escape unobserved.
-        _ = dispatched.ContinueWith(
-            t => { _ = t.Exception; },
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted,
-            TaskScheduler.Default);
+        Task dispatched = ObserveFaults(Task.WhenAll(dispatches));
 
         await dispatched.WaitAsync(op.Token);
         await Task.WhenAll(running.Select(entry => entry.Process.WaitForExitAsync(op.Token)));
     }
 
     /// <summary>
-    /// Runs after a restart has started processes outside the lock. A revocation that arrived meanwhile may have missed what was
-    /// started after its own pass, so the processes started here and the runs created here are stopped as the revoker would
-    /// stop them, and the restart throws. Otherwise nothing happens. A revocation that arrives after this check finds the
+    /// Runs after a restart has started processes outside the lock. A revocation (or the caller's cancellation) that arrived
+    /// meanwhile may have missed what was started after its own pass, so the processes started here and the runs created here
+    /// are stopped as the revoker would stop them (a graceful stop is sent in the background, since an input stop can block on
+    /// a full stdin pipe), and the restart throws. Otherwise nothing happens. A revocation that arrives after this check finds the
     /// processes already started and stops them itself.
     /// </summary>
     private void FinishRestartStarts(RestartOperation op, IReadOnlyList<CommandEntry> started, IReadOnlyList<SequenceRun> createdRuns)
@@ -1073,7 +1114,7 @@ public sealed partial class Session
         bool forced;
         lock (_sync)
         {
-            revoked = op.Cancelled;
+            revoked = IsRevokedLocked(op);
             forced = op.Forced;
         }
 
@@ -1103,7 +1144,10 @@ public sealed partial class Session
         throw new OperationCanceledException(op.Token);
     }
 
-    /// <summary>Stops a command started by a revoked restart, as a Stop (or a ForceKill when forced) would. Mirrors SequenceRun.StopIfCancelled.</summary>
+    /// <summary>
+    /// Stops a command started by a revoked restart, as a Stop (or a ForceKill when forced) would. Mirrors SequenceRun.StopIfCancelled,
+    /// except that the graceful stop is sent in the background and not waited for.
+    /// </summary>
     private static void StopAsRevoked(CommandEntry entry, bool forced)
     {
         if (forced)
@@ -1112,8 +1156,19 @@ public sealed partial class Session
         }
         else if (entry.Process.Snapshot.State == ProcessState.Running)
         {
-            entry.Process.RequestStop();
+            ObserveFaults(Task.Run(() => entry.Process.RequestStop()));
         }
+    }
+
+    /// <summary>Makes sure a fault of a task nobody awaits is observed rather than escaping as an unobserved exception.</summary>
+    private static Task ObserveFaults(Task task)
+    {
+        _ = task.ContinueWith(
+            t => { _ = t.Exception; },
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+        return task;
     }
 
     /// <summary>Every active run in the session, nested ones included. Caller holds <c>_sync</c>.</summary>
