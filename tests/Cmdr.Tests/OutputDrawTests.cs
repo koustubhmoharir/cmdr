@@ -37,6 +37,106 @@ public sealed class OutputDrawTests
         Assert.Equal(ColorMap.IndexedColor(208), Fg(6));
     }
 
+    [Fact]
+    public void A_partial_line_that_grows_between_frames_is_drawn_with_its_new_text()
+    {
+        using TempSession temp = TempSession.Sample();
+        CommandEntry entry = temp.Session.AllEntries.First();
+
+        IReadOnlyList<string> frames = DrawFrames(
+            temp,
+            Width,
+            () => entry.Process.Output.WriteStdOut("abc"),
+            () => entry.Process.Output.WriteStdOut("def"),
+            () => entry.Process.Output.WriteStdOut("\x1b[31mg\x1b[0m\n"));
+
+        Assert.Contains("abc", frames[0]);
+        Assert.DoesNotContain("abcd", frames[0]);
+        Assert.Contains("abcdef", frames[1]);
+        Assert.Contains("abcdefg", frames[2]);
+    }
+
+    [Fact]
+    public void A_line_is_wrapped_again_when_the_width_changes()
+    {
+        using TempSession temp = TempSession.Sample();
+        CommandEntry entry = temp.Session.AllEntries.First();
+        OutputView? view = null;
+
+        IReadOnlyList<string> frames = DrawFrames(
+            temp,
+            Width,
+            () => entry.Process.Output.WriteStdOut("0123456789abcdefghij\n"),
+            () => { },
+            onView: v => view = v,
+            between: frame => { if (frame == 1) { view!.Width = 10; } });
+
+        // 20 characters: one row at width 20, two rows of 10 at width 10.
+        Assert.Contains("0123456789abcdefghij", frames[0]);
+        Assert.Contains("0123456789\nabcdefghij", frames[1]);
+    }
+
+    /// <summary>
+    /// Draws one frame per action (each action runs before its frame) and returns each frame's screen as text, rows joined by
+    /// newlines with trailing spaces trimmed.
+    /// </summary>
+    private static IReadOnlyList<string> DrawFrames(
+        TempSession temp,
+        int width,
+        Action first,
+        Action second,
+        Action? third = null,
+        Action<OutputView>? onView = null,
+        Action<int>? between = null)
+    {
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        app.Driver!.SetScreenSize(width, Height);
+
+        var frames = new List<string>();
+        using var controller = new MainController(app, temp.Session);
+        CommandEntry entry = temp.Session.AllEntries.First();
+        var view = new OutputView(controller) { X = 0, Y = 0, Width = width, Height = Height };
+        view.Show(entry);
+        onView?.Invoke(view);
+        var window = new Window { X = 0, Y = 0, Width = width, Height = Height, BorderStyle = LineStyle.None };
+        window.Add(view);
+
+        Action[] actions = third is null ? new[] { first, second } : new[] { first, second, third };
+        int frame = 0;
+        app.AddTimeout(TimeSpan.FromMilliseconds(50), () =>
+        {
+            between?.Invoke(frame);
+            actions[frame]();
+            view.Tick();
+            app.LayoutAndDraw();
+            var driver = app.Driver!;
+            var rows = new List<string>(Height);
+            for (int r = 0; r < Height; r++)
+            {
+                var text = new System.Text.StringBuilder();
+                for (int c = 0; c < width; c++)
+                {
+                    text.Append(driver.Contents![r, c].Grapheme);
+                }
+
+                rows.Add(text.ToString().TrimEnd());
+            }
+
+            frames.Add(string.Join("\n", rows));
+            frame++;
+            if (frame == actions.Length)
+            {
+                app.RequestStop(window);
+                return false;
+            }
+
+            return true;
+        });
+        app.Run(window);
+        return frames;
+    }
+
     private static IReadOnlyList<(string, Attribute?)[]> Draw(TempSession temp, string stdout)
     {
         using IApplication app = Application.Create();

@@ -46,6 +46,8 @@ internal sealed class OutputView : View
     private SelectionState? _selection;
     private bool _dragging;
 
+    private readonly LineCache _lines = new();
+
     // The pins are set for endpoints on partial lines only (see PinAt).
     private readonly record struct SelectionState(
         SelectionPoint Anchor,
@@ -79,9 +81,11 @@ internal sealed class OutputView : View
     private sealed class Geometry
     {
         private readonly Dictionary<long, int> _rows = new();
+        private readonly LineCache _cache;
 
-        public Geometry(OutputBuffer buffer, int width, int height)
+        public Geometry(OutputBuffer buffer, int width, int height, LineCache cache)
         {
+            _cache = cache;
             Buffer = buffer;
             Width = width;
             Height = Math.Max(0, height);
@@ -111,7 +115,7 @@ internal sealed class OutputView : View
             if (!_rows.TryGetValue(line, out int rows))
             {
                 (_, IReadOnlyList<OutputLine> lines) = ReadLines(Buffer, line, 1);
-                rows = lines.Count == 1 ? OutputWrap.RowCount(lines[0], Width) : 1;
+                rows = lines.Count == 1 ? _cache.RowCount(lines[0], Width) : 1;
                 _rows[line] = rows;
             }
 
@@ -159,6 +163,7 @@ internal sealed class OutputView : View
         _selection = null;
         _lastVersion = -1;
         _pinVersion = -1;
+        _lines.Clear();
         SetNeedsDraw();
     }
 
@@ -319,6 +324,7 @@ internal sealed class OutputView : View
         {
             Geometry geometry = Measure(_buffer);
             rows = ScreenRows(geometry, TopPosition(geometry), normal);
+            _lines.NextGeneration();
             if (HasFocus && geometry.Total > 0)
             {
                 cursor = CursorLine(geometry);
@@ -352,7 +358,7 @@ internal sealed class OutputView : View
     private Geometry Measure(OutputBuffer buffer)
     {
         Revalidate();
-        return new(buffer, Viewport.Width, Viewport.Height);
+        return new(buffer, Viewport.Width, Viewport.Height, _lines);
     }
 
     /// <summary>
@@ -871,14 +877,14 @@ internal sealed class OutputView : View
     /// The screen rows from the top position, in order, until the viewport is full or the lines run out. Only the lines the
     /// viewport reaches are read and wrapped; a line is wrapped once and shared by its rows.
     /// </summary>
-    private static List<ScreenRow> ScreenRows(Geometry geometry, ScrollPosition top, Attribute normal)
+    private List<ScreenRow> ScreenRows(Geometry geometry, ScrollPosition top, Attribute normal)
     {
         var rows = new List<ScreenRow>(geometry.Height);
         (long first, IReadOnlyList<OutputLine> lines) = ReadLines(geometry.Buffer, top.Line, geometry.Height);
         for (int i = 0; i < lines.Count && rows.Count < geometry.Height; i++)
         {
             long number = first + i;
-            PreparedLine prepared = Prepare(lines[i], geometry.Width, normal);
+            PreparedLine prepared = _lines.Prepare(lines[i], geometry.Width, normal);
             int firstRow = number == top.Line ? Math.Min(top.Row, prepared.Rows.Count - 1) : 0;
             for (int row = firstRow; row < prepared.Rows.Count && rows.Count < geometry.Height; row++)
             {
@@ -900,6 +906,93 @@ internal sealed class OutputView : View
         }
 
         return new PreparedLine(cells, spanAttributes, OutputWrap.Rows(cells.Select(cell => cell.Width).ToList(), width));
+    }
+
+    /// <summary>
+    /// The prepared lines and row counts of recent frames, so a redraw (10 a second while output streams) wraps only the lines
+    /// it has not seen. Keyed by the line object: completed lines never change, and a partial line publishes a new object
+    /// whenever its text changes. Keeps what the last two frames used (see <see cref="NextGeneration"/>), so it holds about two
+    /// screens of lines. Cleared when the width changes; prepared lines also when the normal attribute changes.
+    /// </summary>
+    private sealed class LineCache
+    {
+        private Dictionary<OutputLine, PreparedLine> _prepared = new(ReferenceEqualityComparer.Instance);
+        private Dictionary<OutputLine, PreparedLine> _preparedBefore = new(ReferenceEqualityComparer.Instance);
+        private Dictionary<OutputLine, int> _rowCounts = new(ReferenceEqualityComparer.Instance);
+        private Dictionary<OutputLine, int> _rowCountsBefore = new(ReferenceEqualityComparer.Instance);
+        private int _width = -1;
+        private Attribute _normal;
+
+        public PreparedLine Prepare(OutputLine line, int width, Attribute normal)
+        {
+            UseWidth(width);
+            if (!normal.Equals(_normal))
+            {
+                _normal = normal;
+                _prepared.Clear();
+                _preparedBefore.Clear();
+            }
+
+            if (!_prepared.TryGetValue(line, out PreparedLine? prepared))
+            {
+                if (!_preparedBefore.Remove(line, out prepared))
+                {
+                    prepared = OutputView.Prepare(line, width, normal);
+                }
+
+                _prepared[line] = prepared;
+            }
+
+            return prepared;
+        }
+
+        public int RowCount(OutputLine line, int width)
+        {
+            UseWidth(width);
+            if (_prepared.TryGetValue(line, out PreparedLine? prepared) || _preparedBefore.TryGetValue(line, out prepared))
+            {
+                return prepared.Rows.Count;
+            }
+
+            if (!_rowCounts.TryGetValue(line, out int rows))
+            {
+                if (!_rowCountsBefore.Remove(line, out rows))
+                {
+                    rows = OutputWrap.RowCount(line, width);
+                }
+
+                _rowCounts[line] = rows;
+            }
+
+            return rows;
+        }
+
+        /// <summary>Called after each frame: what the frame before it used and this one did not is dropped.</summary>
+        public void NextGeneration()
+        {
+            (_preparedBefore, _prepared) = (_prepared, _preparedBefore);
+            _prepared.Clear();
+            (_rowCountsBefore, _rowCounts) = (_rowCounts, _rowCountsBefore);
+            _rowCounts.Clear();
+        }
+
+        /// <summary>Drops everything, for a different buffer.</summary>
+        public void Clear()
+        {
+            _prepared.Clear();
+            _preparedBefore.Clear();
+            _rowCounts.Clear();
+            _rowCountsBefore.Clear();
+        }
+
+        private void UseWidth(int width)
+        {
+            if (width != _width)
+            {
+                _width = width;
+                Clear();
+            }
+        }
     }
 
     private static int CharacterCount(string text) => text.EnumerateRunes().Count();

@@ -16,6 +16,10 @@ internal static class OutputWrap
     /// </summary>
     internal readonly record struct Cell(string Text, int Column, int Width, int Span);
 
+    // One string per ASCII character, shared by every cell that holds it: most cells are ASCII, and a line is cut into cells
+    // whenever it is first drawn.
+    private static readonly string[] s_ascii = Enumerable.Range(0, 128).Select(c => ((char)c).ToString()).ToArray();
+
     /// <summary>
     /// The cells of a line in display order: one per grapheme cluster of <see cref="OutputLine.PlainText"/> that has a width.
     /// Zero-width graphemes (such as a combining mark with no base before it) give no cell. A grapheme that starts with a control
@@ -43,7 +47,9 @@ internal static class OutputWrap
             int width = TextWidth.WidthOf(plain.AsSpan(offset, length));
             if (width > 0)
             {
-                string text = char.IsControl(plain[offset]) ? " " : plain.Substring(offset, length);
+                string text = char.IsControl(plain[offset]) ? " "
+                    : length == 1 && plain[offset] < 128 ? s_ascii[plain[offset]]
+                    : plain.Substring(offset, length);
                 cells.Add(new Cell(text, column, width, span));
                 column += width;
             }
