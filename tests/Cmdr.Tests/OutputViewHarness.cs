@@ -96,22 +96,11 @@ internal sealed class OutputViewHarness : IDisposable
         }
     }
 
-    /// <summary>The text of the selection, extracted from the buffer lines as copy does. Null when there is no selection.</summary>
-    public string? SelectedText()
-    {
-        (SelectionPoint anchor, SelectionPoint active)? selection = Selection;
-        if (selection is null)
-        {
-            return null;
-        }
-
-        object state = Field("_selection")!;
-        bool lineMode = (bool)state.GetType().GetProperty("LineMode", BindingFlags.Instance | BindingFlags.Public)!.GetValue(state)!;
-        OutputBuffer buffer = Entry.Process.Output.Buffer;
-        var texts = buffer.GetLines(0, buffer.Count).Select(l => l.PlainText).ToList();
-        return SelectionText.Extract(texts, buffer.FirstLineNumber,
-            SelectionRange.Between(selection.Value.anchor, selection.Value.active, lineMode));
-    }
+    /// <summary>
+    /// The text the view's copy takes for the selection (one snapshot, revalidated, then extracted), or null when there is no
+    /// selection. The controller's clipboard hand-off is not reached: it writes to the terminal driver.
+    /// </summary>
+    public string? SelectedText() => Selection is null ? null : View.CopyTextFrom(View.CaptureForCopy());
 
     /// <summary>Resizes the view and lays it out again.</summary>
     public void Resize(int width, int height)

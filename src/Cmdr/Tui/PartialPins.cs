@@ -23,17 +23,24 @@ internal static class PartialPins
 {
     /// <summary>
     /// The number of the line the pin now names, or null when no retained line matches. The line at <paramref name="line"/>
-    /// is checked first; otherwise the lines after it, in order, up to <paramref name="lastLine"/>, are searched for the
-    /// match (a line only moves down). Numbers below <paramref name="firstLine"/> are not retained, so the search starts there when the pinned line was
-    /// evicted. <paramref name="lineAt"/> returns the line with an absolute number, or null when it is not retained.
+    /// is checked first. Then the line just before it: a partial moves back by one when the other stream's partial, in front
+    /// of it, completes (the one line it can pass). Then the lines after it, in order, up to <paramref name="lastLine"/>: a
+    /// partial moves forward when a line completes in front of it. Numbers outside
+    /// [<paramref name="firstLine"/>, <paramref name="lastLine"/>] are not retained, so they are not searched.
+    /// <paramref name="lineAt"/> returns the line with an absolute number, or null when it is not retained.
     /// </summary>
     public static long? Find(PartialPin pin, long line, long firstLine, long lastLine, Func<long, OutputLine?> lineAt)
     {
         ArgumentNullException.ThrowIfNull(lineAt);
 
-        if (line >= firstLine && line <= lastLine && pin.Matches(lineAt(line)))
+        if (Matches(pin, line, firstLine, lastLine, lineAt))
         {
             return line;
+        }
+
+        if (Matches(pin, line - 1, firstLine, lastLine, lineAt))
+        {
+            return line - 1;
         }
 
         for (long number = Math.Max(line + 1, firstLine); number <= lastLine; number++)
@@ -46,4 +53,7 @@ internal static class PartialPins
 
         return null;
     }
+
+    private static bool Matches(PartialPin pin, long number, long firstLine, long lastLine, Func<long, OutputLine?> lineAt) =>
+        number >= firstLine && number <= lastLine && pin.Matches(lineAt(number));
 }

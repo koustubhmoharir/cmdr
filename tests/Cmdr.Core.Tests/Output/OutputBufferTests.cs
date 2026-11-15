@@ -242,4 +242,126 @@ public class OutputBufferTests
         buffer.Append(Array.Empty<OutputLine>());
         Assert.Equal(version, buffer.Version);
     }
+
+    [Fact]
+    public void AppendAndSetPartialIsOneUpdateWithOneVersionIncrement()
+    {
+        var buffer = new OutputBuffer(10);
+        long version = buffer.Version;
+
+        buffer.AppendAndSetPartial(new[] { Line("done") }, OutputSource.StdErr, Line("next", OutputSource.StdErr));
+
+        Assert.Equal(version + 1, buffer.Version);
+        Assert.Equal(new[] { "done", "next" }, BufferTexts(buffer));
+        Assert.Equal(1, buffer.NextLineNumber);
+    }
+
+    [Fact]
+    public void AppendAndSetPartialReplacesTheOldPartialWithoutShowingItBesideTheCompletedLine()
+    {
+        var buffer = new OutputBuffer(10);
+        buffer.SetPartial(OutputSource.StdOut, Line("abc"));
+
+        buffer.AppendAndSetPartial(new[] { Line("abc") }, OutputSource.StdOut, null);
+
+        Assert.Equal(new[] { "abc" }, BufferTexts(buffer));
+        Assert.Equal(1, buffer.Count);
+        Assert.Equal(1, buffer.NextLineNumber);
+    }
+
+    [Fact]
+    public void AppendAndSetPartialWithNoLinesOnlySetsThePartial()
+    {
+        var buffer = new OutputBuffer(10);
+        buffer.AppendAndSetPartial(Array.Empty<OutputLine>(), OutputSource.StdOut, Line("p"));
+
+        Assert.Equal(new[] { "p" }, BufferTexts(buffer));
+        Assert.Equal(0, buffer.NextLineNumber);
+    }
+
+    [Fact]
+    public void AppendAndSetPartialRejectsNonStreamSourceWithoutChangingTheBuffer()
+    {
+        var buffer = new OutputBuffer(10);
+        buffer.Append(new[] { Line("a") });
+        long version = buffer.Version;
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => buffer.AppendAndSetPartial(new[] { Line("b") }, OutputSource.System, null));
+
+        Assert.Equal(version, buffer.Version);
+        Assert.Equal(new[] { "a" }, BufferTexts(buffer));
+    }
+
+    [Fact]
+    public void CaptureHoldsTheBoundsAndTheLinesIncludingPartials()
+    {
+        var buffer = new OutputBuffer(3);
+        buffer.Append(new[] { Line("0"), Line("1"), Line("2"), Line("3") });
+        buffer.SetPartial(OutputSource.StdOut, Line("out"));
+        buffer.SetPartial(OutputSource.StdErr, Line("err", OutputSource.StdErr));
+
+        BufferSnapshot snapshot = buffer.Capture(0);
+
+        Assert.Equal(1, snapshot.FirstLineNumber);
+        Assert.Equal(4, snapshot.NextLineNumber);
+        Assert.Equal(buffer.Version, snapshot.Version);
+        Assert.Equal(5, snapshot.LastLineNumber);
+        Assert.Equal("1", snapshot.LineAt(1)!.PlainText);
+        Assert.Equal("3", snapshot.LineAt(3)!.PlainText);
+        Assert.Equal("out", snapshot.LineAt(4)!.PlainText);
+        Assert.Equal("err", snapshot.LineAt(5)!.PlainText);
+        Assert.Null(snapshot.LineAt(0));
+        Assert.Null(snapshot.LineAt(6));
+    }
+
+    [Fact]
+    public void CaptureFromALaterLineStartsThere()
+    {
+        var buffer = new OutputBuffer(10);
+        buffer.Append(new[] { Line("0"), Line("1"), Line("2") });
+        buffer.SetPartial(OutputSource.StdOut, Line("p"));
+
+        BufferSnapshot snapshot = buffer.Capture(2);
+
+        Assert.Null(snapshot.LineAt(1));
+        Assert.Equal("2", snapshot.LineAt(2)!.PlainText);
+        Assert.Equal("p", snapshot.LineAt(3)!.PlainText);
+        (long first, IReadOnlyList<OutputLine> lines) = snapshot.LinesFrom(0, 10);
+        Assert.Equal(2, first);
+        Assert.Equal(new[] { "2", "p" }, Texts(lines));
+    }
+
+    [Fact]
+    public void CaptureOfAnEmptyBufferHasNoLines()
+    {
+        var buffer = new OutputBuffer(3);
+
+        BufferSnapshot snapshot = buffer.Capture(0);
+
+        Assert.Equal(-1, snapshot.LastLineNumber);
+        Assert.Null(snapshot.LineAt(0));
+        Assert.Empty(snapshot.LinesFrom(0, 10).Lines);
+    }
+
+    [Fact]
+    public void CaptureIsUnaffectedByLaterWrites()
+    {
+        var buffer = new OutputBuffer(2);
+        buffer.Append(new[] { Line("a"), Line("b") });
+        buffer.SetPartial(OutputSource.StdErr, Line("e", OutputSource.StdErr));
+        BufferSnapshot snapshot = buffer.Capture(0);
+        long version = snapshot.Version;
+
+        buffer.AppendAndSetPartial(new[] { Line("c") }, OutputSource.StdErr, null);
+        buffer.Append(new[] { Line("d") });
+        buffer.Clear();
+
+        Assert.Equal(version, snapshot.Version);
+        Assert.Equal(0, snapshot.FirstLineNumber);
+        Assert.Equal(2, snapshot.NextLineNumber);
+        Assert.Equal(2, snapshot.LastLineNumber);
+        Assert.Equal("a", snapshot.LineAt(0)!.PlainText);
+        Assert.Equal("b", snapshot.LineAt(1)!.PlainText);
+        Assert.Equal("e", snapshot.LineAt(2)!.PlainText);
+    }
 }

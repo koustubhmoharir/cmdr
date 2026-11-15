@@ -73,6 +73,8 @@ internal sealed class OutputView : View
     /// <summary>
     /// The retained lines and the viewport, measured once per operation. Row counts are wrapped when first needed and
     /// cached for the operation, so only the lines an operation reaches are wrapped.
+    /// Geometry reads the buffer live (drawing and measuring): a frame built while the buffer changes is corrected by the next
+    /// redraw. Only copy works from one snapshot (see <see cref="CopyTextFrom"/>).
     /// </summary>
     private sealed class Geometry
     {
@@ -363,19 +365,28 @@ internal sealed class OutputView : View
     private void Revalidate()
     {
         OutputBuffer? buffer = _buffer;
-        if (buffer is null)
+        if (buffer is null || buffer.Version == _pinVersion)
         {
             return;
         }
 
-        // Read the version before the lines: a change made in between is seen by the next check.
-        long version = buffer.Version;
-        if (version == _pinVersion)
+        // The capture starts one line before the smallest pinned line (a pin moves back by at most one line), so every
+        // pin resolves inside it. Without pins the tail alone is enough.
+        Revalidate(buffer.Capture(RevalidationStart(buffer)));
+    }
+
+    /// <summary>
+    /// Revalidates the pins against one snapshot: the snapshot's version is the one checked, so a snapshot the pins were already
+    /// checked against changes nothing. The snapshot must not be older than the last check.
+    /// </summary>
+    private void Revalidate(BufferSnapshot snapshot)
+    {
+        if (snapshot.Version == _pinVersion)
         {
             return;
         }
 
-        _pinVersion = version;
+        _pinVersion = snapshot.Version;
         if (_following)
         {
             _cursorPin = null;
@@ -386,61 +397,89 @@ internal sealed class OutputView : View
             return;
         }
 
-        long first = buffer.FirstLineNumber;
-        long last = first + buffer.Count - 1;
-        Func<long, OutputLine?> lineAt = number => LineAt(buffer, number);
-
         if (_selection is { } s)
         {
-            SelectionPoint? anchor = Track(s.Anchor, s.AnchorPin, first, last, lineAt);
-            SelectionPoint? active = Track(s.Active, s.ActivePin, first, last, lineAt);
-            _selection = anchor is { } a && active is { } b ? Select(buffer, a, b, s.LineMode) : null;
+            SelectionPoint? anchor = Track(s.Anchor, s.AnchorPin, snapshot);
+            SelectionPoint? active = Track(s.Active, s.ActivePin, snapshot);
+            _selection = anchor is { } a && active is { } b ? Select(snapshot, a, b, s.LineMode) : null;
         }
 
         if (_cursorPin is { } pin)
         {
-            long? line = PartialPins.Find(pin, _cursorLine, first, last, lineAt);
+            long? line = PartialPins.Find(pin, _cursorLine, snapshot.FirstLineNumber, snapshot.LastLineNumber, snapshot.LineAt);
             if (line is { } l)
             {
                 _cursorLine = l;
             }
 
-            _cursorPin = line is { } found ? PinAt(buffer, found) : null;
+            _cursorPin = line is { } found ? PinAt(snapshot, found) : null;
         }
     }
 
+    /// <summary>
+    /// The first line a revalidation reads: the smallest pinned line minus one, since a pin moves back by at most one line.
+    /// Without pins, the line before the partials. The paused cursor is pinned only while not following.
+    /// </summary>
+    private long RevalidationStart(OutputBuffer buffer)
+    {
+        long start = buffer.NextLineNumber;
+        if (_selection is { } s)
+        {
+            if (s.AnchorPin is not null)
+            {
+                start = Math.Min(start, s.Anchor.Line);
+            }
+
+            if (s.ActivePin is not null)
+            {
+                start = Math.Min(start, s.Active.Line);
+            }
+        }
+
+        if (_cursorPin is not null && !_following)
+        {
+            start = Math.Min(start, _cursorLine);
+        }
+
+        return start - 1;
+    }
+
     /// <summary>The point's line as found again by its pin: the same point, moved to the pinned line's new number, or null when it is gone.</summary>
-    private static SelectionPoint? Track(SelectionPoint point, PartialPin? pin, long first, long last, Func<long, OutputLine?> lineAt)
+    private static SelectionPoint? Track(SelectionPoint point, PartialPin? pin, BufferSnapshot snapshot)
     {
         if (pin is not { } p)
         {
             return point;
         }
 
-        long? line = PartialPins.Find(p, point.Line, first, last, lineAt);
+        long? line = PartialPins.Find(p, point.Line, snapshot.FirstLineNumber, snapshot.LastLineNumber, snapshot.LineAt);
         return line is { } l ? point with { Line = l } : null;
     }
 
-    /// <summary>The pin for a line: its identity when it is a partial line (number at or after <see cref="OutputBuffer.NextLineNumber"/>), otherwise null.</summary>
-    private static PartialPin? PinAt(OutputBuffer buffer, long line)
+    /// <summary>The pin for a line in the snapshot: its identity when it is a partial line (number at or after <see cref="BufferSnapshot.NextLineNumber"/>), otherwise null.</summary>
+    private static PartialPin? PinAt(BufferSnapshot snapshot, long line)
     {
-        if (line < buffer.NextLineNumber)
+        if (line < snapshot.NextLineNumber)
         {
             return null;
         }
 
-        OutputLine? found = LineAt(buffer, line);
+        OutputLine? found = snapshot.LineAt(line);
         return found is null ? null : PartialPin.For(found);
     }
 
-    /// <summary>The retained line with an absolute number, or null when it is not retained.</summary>
-    private static OutputLine? LineAt(OutputBuffer buffer, long number)
-    {
-        (long first, IReadOnlyList<OutputLine> lines) = ReadLines(buffer, number, 1);
-        return first == number && lines.Count == 1 ? lines[0] : null;
-    }
+    /// <summary>
+    /// The pin for a line of the live buffer, for the operations that move the cursor or the selection. Only the partial lines
+    /// (at the tail) are read, so this is a small capture.
+    /// </summary>
+    private static PartialPin? PinAt(OutputBuffer buffer, long line) =>
+        line < buffer.NextLineNumber ? null : PinAt(buffer.Capture(line), line);
 
-    /// <summary>A selection between two points, with the pins of the points that are on partial lines.</summary>
+    /// <summary>A selection between two points, with the pins of the points that are on partial lines, from a snapshot.</summary>
+    private static SelectionState Select(BufferSnapshot snapshot, SelectionPoint anchor, SelectionPoint active, bool lineMode) =>
+        new(anchor, active, lineMode, PinAt(snapshot, anchor.Line), PinAt(snapshot, active.Line));
+
+    /// <summary>A selection between two points, with the pins of the points that are on partial lines, from the live buffer.</summary>
     private static SelectionState Select(OutputBuffer buffer, SelectionPoint anchor, SelectionPoint active, bool lineMode) =>
         new(anchor, active, lineMode, PinAt(buffer, anchor.Line), PinAt(buffer, active.Line));
 
@@ -739,27 +778,71 @@ internal sealed class OutputView : View
             return false;
         }
 
-        Revalidate();
+        string? text = CopyTextFrom(CaptureForCopy());
+        if (text is not null)
+        {
+            _controller.CopyToClipboard(text, $"Copied {CharacterCount(text)} characters");
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The snapshot a copy works from: the lines from one line before the selection's first line, or before the cursor line
+    /// when there is no selection, to the end. Null when there is no buffer.
+    /// </summary>
+    internal BufferSnapshot? CaptureForCopy()
+    {
+        OutputBuffer? buffer = _buffer;
+        if (buffer is null)
+        {
+            return null;
+        }
+
+        long from;
+        if (_selection is { } s)
+        {
+            from = Math.Min(s.Anchor.Line, s.Active.Line) - 1;
+        }
+        else
+        {
+            // Following copies the last line, which is at or after the line before the next line number, so the capture covers it.
+            from = (_following ? buffer.NextLineNumber : _cursorLine) - 1;
+        }
+
+        return buffer.Capture(from);
+    }
+
+    /// <summary>
+    /// The text a copy takes, read entirely from <paramref name="snapshot"/>: the selection's text, or the cursor line's text when
+    /// there is no selection. The pins are revalidated against the same snapshot the text is extracted from, so output that
+    /// arrives meanwhile cannot shift the lines between the check and the extraction. Null when there is nothing to copy.
+    /// </summary>
+    internal string? CopyTextFrom(BufferSnapshot? snapshot)
+    {
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        Revalidate(snapshot);
         if (_selection is { } s)
         {
             SelectionRange range = SelectionRange.Between(s.Anchor, s.Active, s.LineMode);
             long count = Math.Min(int.MaxValue, range.End.Line - range.Start.Line + 1);
-            (long first, IReadOnlyList<OutputLine> lines) = ReadLines(_buffer, range.Start.Line, count);
-            string text = SelectionText.Extract(lines.Select(l => l.PlainText).ToList(), first, range);
-            _controller.CopyToClipboard(text, $"Copied {CharacterCount(text)} characters");
-            return true;
+            (long first, IReadOnlyList<OutputLine> lines) = snapshot.LinesFrom(range.Start.Line, count);
+            return SelectionText.Extract(lines.Select(l => l.PlainText).ToList(), first, range);
         }
 
-        Geometry geometry = Measure(_buffer);
-        if (geometry.Total == 0)
+        if (snapshot.LastLineNumber < snapshot.FirstLineNumber)
         {
-            return true;
+            return null;
         }
 
-        (_, IReadOnlyList<OutputLine> cursorLines) = ReadLines(_buffer, CursorLine(geometry), 1);
-        string line = cursorLines.Count > 0 ? cursorLines[0].PlainText : string.Empty;
-        _controller.CopyToClipboard(line, $"Copied {CharacterCount(line)} characters");
-        return true;
+        long cursor = _following
+            ? snapshot.LastLineNumber
+            : Math.Clamp(_cursorLine, snapshot.FirstLineNumber, snapshot.LastLineNumber);
+        return snapshot.LineAt(cursor)?.PlainText ?? string.Empty;
     }
 
     /// <summary>

@@ -153,4 +153,31 @@ public sealed class PartialPinsTests
 
         Assert.Equal(new PartialPin(partial.Identity, "ERR-PARTIAL"), PartialPin.For(partial));
     }
+
+    [Fact]
+    public void Pin_moves_back_one_line_when_the_partial_in_front_of_it_completes()
+    {
+        var err = new OneLine(OutputSource.StdErr);
+        PartialPin pin = PartialPin.For(err.Partial("ERR"));
+
+        long? found = PartialPins.Find(pin, 6, 0, 6, Lines(
+            (5, err.Complete("")),
+            (6, Line(OutputSource.StdOut, "OUT"))));
+
+        Assert.Equal(5, found);
+    }
+
+    [Fact]
+    public void Pin_is_not_searched_two_lines_back()
+    {
+        var err = new OneLine(OutputSource.StdErr);
+        PartialPin pin = PartialPin.For(err.Partial("ERR"));
+
+        long? found = PartialPins.Find(pin, 7, 0, 7, Lines(
+            (5, err.Complete("")),
+            (6, Line(OutputSource.StdOut, "x")),
+            (7, Line(OutputSource.StdOut, "OUT"))));
+
+        Assert.Null(found);
+    }
 }

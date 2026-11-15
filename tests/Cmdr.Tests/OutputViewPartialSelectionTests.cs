@@ -1,3 +1,4 @@
+using Cmdr.Core.Output;
 using Cmdr.Tui;
 using Terminal.Gui.App;
 
@@ -179,5 +180,66 @@ public sealed class OutputViewPartialSelectionTests
         h.Output.WriteStdOut("\rOTHER\nOUT-UNRELATED\n");
 
         Assert.Null(h.Selection);
+    }
+
+    [Fact]
+    public void Completing_stderr_under_a_selected_stderr_partial_moves_the_selection_and_the_cursor_back_with_it()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = Open(app);
+        h.Output.WriteStdOut("OUT-PARTIAL");
+        h.Output.WriteStdErr("ERR-PARTIAL");
+        h.Press(0, 1);
+        h.Drag(2, 1);
+        h.Release(2, 1);
+        Assert.Equal("ERR", h.SelectedText());
+        Assert.Equal(1, h.CursorLine);
+
+        h.Output.WriteStdErr("\n");
+
+        Assert.Equal("ERR", h.SelectedText());
+        Assert.Equal(new SelectionPoint(0, 0), h.Selection!.Value.Anchor);
+        Assert.Equal(new SelectionPoint(0, 2), h.Selection!.Value.Active);
+        Assert.Equal(0, h.CursorLine);
+    }
+
+    [Fact]
+    public void Copy_takes_the_selected_stream_from_the_snapshot_it_was_taken_from()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = Open(app);
+        h.Output.WriteStdOut("OUT-PARTIAL");
+        h.Output.WriteStdErr("ERR-PARTIAL");
+        h.Press(0, 1);
+        h.Drag(2, 1);
+        h.Release(2, 1);
+
+        BufferSnapshot snapshot = h.View.CaptureForCopy()!;
+        h.Output.WriteStdErr("\n");
+        h.Output.WriteStdOut("\n");
+
+        // Live, line 1 is now the completed stdout line. The copy works from the snapshot, where line 1 is still the stderr partial.
+        Assert.Equal("ERR", h.View.CopyTextFrom(snapshot));
+    }
+
+    [Fact]
+    public void Copy_revalidates_its_snapshot_before_extracting_the_selection()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = Open(app);
+        h.Output.WriteStdOut("OUT-PARTIAL");
+        h.Output.WriteStdErr("ERR-PARTIAL");
+        h.Press(0, 1);
+        h.Drag(2, 1);
+        h.Release(2, 1);
+
+        h.Output.WriteStdErr("\n");
+        BufferSnapshot snapshot = h.View.CaptureForCopy()!;
+        h.Output.WriteStdOut("later\n");
+
+        Assert.Equal("ERR", h.View.CopyTextFrom(snapshot));
     }
 }

@@ -86,21 +86,25 @@ public sealed class OutputBuffer
                 return;
             }
 
-            foreach (OutputLine line in lines)
-            {
-                if (_completedCount == _ring.Length)
-                {
-                    _ring[_head] = line;
-                    _head = (_head + 1) % _ring.Length;
-                    _firstLineNumber++;
-                }
-                else
-                {
-                    _ring[PhysicalIndex(_completedCount)] = line;
-                    _completedCount++;
-                }
-            }
+            AppendLocked(lines);
+            _version++;
+        }
+    }
 
+    /// <summary>
+    /// Appends completed lines and sets the partial line for <paramref name="source"/> in one update: a reader sees both or
+    /// neither, and the version increments once. Used when a chunk completes lines and leaves a new partial behind.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="source"/> is not StdOut or StdErr. Nothing is changed.</exception>
+    public void AppendAndSetPartial(IReadOnlyList<OutputLine> lines, OutputSource source, OutputLine? partial)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        lock (_sync)
+        {
+            ref OutputLine? slot = ref PartialSlot(source);
+            AppendLocked(lines);
+            slot = partial;
             _version++;
         }
     }
@@ -111,19 +115,33 @@ public sealed class OutputBuffer
     {
         lock (_sync)
         {
-            switch (source)
+            PartialSlot(source) = line;
+            _version++;
+        }
+    }
+
+    /// <summary>
+    /// Captures the lines from absolute number <paramref name="fromLine"/> (clamped to <see cref="FirstLineNumber"/>) to the last
+    /// line, partials included, with the bounds and the version, all read under one lock. The snapshot holds references only,
+    /// so its cost is proportional to the captured range, and later writes do not change it.
+    /// </summary>
+    public BufferSnapshot Capture(long fromLine)
+    {
+        lock (_sync)
+        {
+            long first = _firstLineNumber;
+            int total = TotalLocked();
+            long last = first + total - 1;
+            long start = Math.Max(fromLine, first);
+            int count = (int)Math.Max(0, last - start + 1);
+            int offset = (int)(start - first);
+            var lines = new OutputLine[count];
+            for (int i = 0; i < count; i++)
             {
-                case OutputSource.StdOut:
-                    _stdOutPartial = line;
-                    break;
-                case OutputSource.StdErr:
-                    _stdErrPartial = line;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(source), source, "Only StdOut and StdErr have partial lines.");
+                lines[i] = LineAtLocked(offset + i);
             }
 
-            _version++;
+            return new BufferSnapshot(first, first + _completedCount, _version, last, start, lines);
         }
     }
 
@@ -200,6 +218,38 @@ public sealed class OutputBuffer
             _stdOutPartial = null;
             _stdErrPartial = null;
             _version++;
+        }
+    }
+
+    private void AppendLocked(IReadOnlyList<OutputLine> lines)
+    {
+        foreach (OutputLine line in lines)
+        {
+            if (_completedCount == _ring.Length)
+            {
+                _ring[_head] = line;
+                _head = (_head + 1) % _ring.Length;
+                _firstLineNumber++;
+            }
+            else
+            {
+                _ring[PhysicalIndex(_completedCount)] = line;
+                _completedCount++;
+            }
+        }
+    }
+
+    /// <summary>The partial slot of a stream. Only StdOut and StdErr have one; any other source throws before anything changes.</summary>
+    private ref OutputLine? PartialSlot(OutputSource source)
+    {
+        switch (source)
+        {
+            case OutputSource.StdOut:
+                return ref _stdOutPartial;
+            case OutputSource.StdErr:
+                return ref _stdErrPartial;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(source), source, "Only StdOut and StdErr have partial lines.");
         }
     }
 

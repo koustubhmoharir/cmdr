@@ -167,17 +167,15 @@ public sealed partial class CommandOutput : IDisposable
 
         lock (_sync)
         {
+            // Each stream's flushed line replaces its partial in one buffer step, so no reader sees both.
             _completed.Clear();
             _stdOutParser.Flush(_completed);
-            AppendLinesLocked(_completed);
+            AppendLinesLocked(_completed, OutputSource.StdOut, partial: null);
 
             _completed.Clear();
             _stdErrParser.Flush(_completed);
-            AppendLinesLocked(_completed);
+            AppendLinesLocked(_completed, OutputSource.StdErr, partial: null);
             _completed.Clear();
-
-            _buffer.SetPartial(OutputSource.StdOut, null);
-            _buffer.SetPartial(OutputSource.StdErr, null);
 
             AppendSystemLocked($"=== {summary} ===");
         }
@@ -522,11 +520,12 @@ public sealed partial class CommandOutput : IDisposable
     {
         _completed.Clear();
         parser.Feed(chunk, _completed);
-        AppendLinesLocked(_completed);
         IReadOnlyList<OutputLine> completed = _completed.Count == 0 ? Array.Empty<OutputLine>() : _completed.ToArray();
         _completed.Clear();
 
-        _buffer.SetPartial(source, parser.Partial);
+        // The completed lines and the stream's new partial enter the buffer in one update, so a reader never sees both the
+        // completed line and the old partial.
+        AppendLinesLocked(completed, source, parser.Partial);
         return completed;
     }
 
@@ -557,17 +556,26 @@ public sealed partial class CommandOutput : IDisposable
         AppendLinesLocked(lines);
     }
 
-    /// <summary>Adds completed lines to the buffer, then to the log if logging.</summary>
-    private void AppendLinesLocked(IReadOnlyList<OutputLine> lines)
+    /// <summary>
+    /// Adds completed lines to the buffer, then to the log if logging. With <paramref name="source"/>, that stream's partial is
+    /// set in the same buffer update (see <see cref="OutputBuffer.AppendAndSetPartial"/>).
+    /// </summary>
+    private void AppendLinesLocked(IReadOnlyList<OutputLine> lines, OutputSource? source = null, OutputLine? partial = null)
     {
-        if (lines.Count == 0)
+        long first = _buffer.NextLineNumber;
+        if (source is { } stream)
         {
-            return;
+            _buffer.AppendAndSetPartial(lines, stream, partial);
+        }
+        else
+        {
+            _buffer.Append(lines);
         }
 
-        long first = _buffer.NextLineNumber;
-        _buffer.Append(lines);
-        AppendToLogLocked(lines, first);
+        if (lines.Count > 0)
+        {
+            AppendToLogLocked(lines, first);
+        }
     }
 
     /// <summary>Gives lines to the log writer, if logging; the first line has absolute number <paramref name="firstNumber"/>.</summary>
