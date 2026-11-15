@@ -197,7 +197,9 @@ the same group name may appear in different files.
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,
 but not edited, and their header shows the file they come from. Ctrl+S saves only the opened file.
-Saving keeps the file's permissions and owner, and a config opened through a symbolic link is saved to the link's target.
+Saving keeps the file's permissions and group, and a config opened through a symbolic link is saved to the link's target.
+On Linux, saving a file owned by another user (that you can write) replaces it with a file owned by you; set
+`CMDR_KEEP_OWNER=1` to write such files in place instead, which keeps their owner but is not crash-safe.
 When the folder doesn't allow replacing the file (for example it is read-only, but the file is writable), the file is
 overwritten in place.
 

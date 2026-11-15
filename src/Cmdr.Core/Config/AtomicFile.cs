@@ -1,3 +1,8 @@
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using Cmdr.Core.Processes;
+using Microsoft.Win32.SafeHandles;
+
 namespace Cmdr.Core.Config;
 
 /// <summary>
@@ -7,48 +12,135 @@ namespace Cmdr.Core.Config;
 /// <item>A symbolic link is followed. The final target (see <see cref="PhysicalPath"/>) is replaced and the link itself is left
 /// intact. A dangling link is an <see cref="IOException"/>, thrown before anything is created.</item>
 /// <item>For a path that is not a link, the parent directory is created if needed.</item>
-/// <item>On Unix, an existing destination keeps its permission bits exactly. The temp file is created with that mode and then set
-/// with File.SetUnixFileMode on the open handle before any content is written, so the umask cannot narrow it. A new file gets the
-/// default mode.</item>
+/// <item>On Unix, an existing destination keeps its owner, group and permission bits exactly, including setuid, setgid and sticky.
+/// The temp file is given the destination's owner and group, then its mode, before any content is written, so the umask cannot
+/// narrow the mode and Linux's clearing of setuid and setgid on a chown is undone.</item>
+/// <item>On Unix, a process that is not root and does not own an existing destination must be able to write it, or the save throws
+/// <see cref="UnauthorizedAccessException"/>. The destination is then replaced, and the saved file is owned by the saving user,
+/// unless the CMDR_KEEP_OWNER environment variable is set to a non-empty value, in which case it is written in place. A root
+/// process always replaces the destination and keeps its owner and group.</item>
+/// <item>On Unix, when the temp file cannot be given the destination's owner or group (for example the user is not a member of the
+/// group), the destination is written in place instead.</item>
+/// <item>On Unix where statx is unavailable, an existing destination is replaced only when this process owns it, and is otherwise
+/// written in place. No owner is changed.</item>
 /// <item>On Windows, an existing destination is replaced with File.Replace so that its ACL is kept. A new file is moved into place.
 /// The Windows path is unverified: it has not been run on Windows.</item>
 /// <item>An existing destination is overwritten in place instead (not atomic, but the file, its owner and its permissions stay as
-/// they are) when replacing it would change its owner or is not permitted: on Unix when this process does not own the file (a
-/// rename would make the saving user its owner), and anywhere when creating the temp file or replacing the destination is denied
-/// (a directory that is not writable, a sticky directory, or a Windows ACL that allows writing the file but not deleting it).</item>
+/// they are) when creating the temp file or replacing the destination is denied (a directory that is not writable, a sticky
+/// directory, or a Windows ACL that allows writing the file but not deleting it).</item>
 /// <item>The temp file is deleted on failure, if it can be. A failed delete does not hide the error that caused it.</item>
 /// </list>
 /// </summary>
 internal static class AtomicFile
 {
+    private const string KeepOwnerVariable = "CMDR_KEEP_OWNER";
+
+    private const int AtFdcwd = -100;
+    private const uint StatxTypeModeUidGid = 0x1 | 0x2 | 0x8 | 0x10; // STATX_TYPE | STATX_MODE | STATX_UID | STATX_GID
+    private const int ENOSYS = 38;
+
     /// <summary>Replaces the file at <paramref name="path"/> with <paramref name="content"/> followed by a single '\n'.</summary>
     /// <exception cref="IOException">The path is a dangling symbolic link or a link loop, or the file cannot be written or replaced.</exception>
     /// <exception cref="UnauthorizedAccessException">The file cannot be written.</exception>
     public static void Write(string path, ReadOnlySpan<byte> content)
     {
-        string destination = ResolveDestination(Path.GetFullPath(path));
-        string directory = Path.GetDirectoryName(destination)!;
-        Directory.CreateDirectory(directory);
+        Write(path, content, keepOtherOwners: !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(KeepOwnerVariable)));
+    }
 
-        bool destinationExists = File.Exists(destination);
-        if (destinationExists && !OwnedByThisProcess(destination))
+    /// <summary>
+    /// <see cref="Write(string, ReadOnlySpan{byte})"/> with the opt-out given explicitly. When <paramref name="keepOtherOwners"/> is
+    /// true, an existing file this process does not own (and which is not root) is written in place, so its owner stays the same.
+    /// </summary>
+    internal static void Write(string path, ReadOnlySpan<byte> content, bool keepOtherOwners)
+    {
+        string destination = ResolveDestination(Path.GetFullPath(path));
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+        if (!File.Exists(destination))
         {
-            WriteInPlace(destination, content);
+            Replace(destination, content, replacing: false, mode: null, owner: null);
             return;
         }
 
-        string tempPath = Path.Combine(directory, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+        if (OperatingSystem.IsWindows())
+        {
+            Replace(destination, content, replacing: true, mode: null, owner: null);
+            return;
+        }
+
+        FileOwnership? existing = TryReadOwnership(destination);
+        if (existing is not { } file)
+        {
+            if (OwnedByThisProcess(destination))
+            {
+                Replace(destination, content, replacing: true, mode: File.GetUnixFileMode(destination), owner: null);
+            }
+            else
+            {
+                WriteInPlace(destination, content);
+            }
+
+            return;
+        }
+
+        uint euid = LinuxNative.GetEffectiveUserId();
+        bool root = euid == 0;
+        if (!root && euid != file.Uid)
+        {
+            if (keepOtherOwners)
+            {
+                WriteInPlace(destination, content);
+                return;
+            }
+
+            VerifyWritable(destination);
+        }
+
+        // A root save gives the file's own owner the file. Otherwise uint.MaxValue keeps the temp file's owner, the saving user.
+        uint uid = root ? file.Uid : uint.MaxValue;
+        Replace(destination, content, replacing: true, mode: file.Mode, owner: (uid, file.Gid));
+    }
+
+    /// <summary>
+    /// Replaces <paramref name="destination"/> through a temp file, or writes it in place when the temp file cannot be given the
+    /// owner or the rename is denied. A null <paramref name="owner"/> leaves the temp file owned by the saving user.
+    /// </summary>
+    private static void Replace(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner)
+    {
+        if (!TryReplaceFile(destination, content, replacing, mode, owner))
+        {
+            WriteInPlace(destination, content);
+        }
+    }
+
+    /// <summary>
+    /// Writes the temp file and renames it over the destination. Returns false, having deleted the temp file, when the owner cannot
+    /// be set, or when <paramref name="replacing"/> is true and the temp file cannot be created or renamed for lack of permission.
+    /// </summary>
+    private static bool TryReplaceFile(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner)
+    {
+        string tempPath = Path.Combine(Path.GetDirectoryName(destination)!, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            UnixFileMode? existingMode = !OperatingSystem.IsWindows() && destinationExists ? File.GetUnixFileMode(destination) : null;
-            using (FileStream stream = CreateTempFile(tempPath, existingMode))
+            using (FileStream stream = CreateTempFile(tempPath, mode))
             {
+                if (owner is { } o && !TryChangeOwner(stream.SafeFileHandle, o.Uid, o.Gid))
+                {
+                    return false;
+                }
+
+                // After the chown, which clears setuid and setgid for a non-root user.
+                if (!OperatingSystem.IsWindows() && mode is UnixFileMode unixMode)
+                {
+                    File.SetUnixFileMode(stream.SafeFileHandle, unixMode);
+                }
+
                 stream.Write(content);
                 stream.WriteByte((byte)'\n');
                 stream.Flush(flushToDisk: true);
             }
 
-            if (OperatingSystem.IsWindows() && destinationExists)
+            if (OperatingSystem.IsWindows() && replacing)
             {
                 File.Replace(tempPath, destination, destinationBackupFileName: null);
             }
@@ -56,11 +148,12 @@ internal static class AtomicFile
             {
                 File.Move(tempPath, destination, overwrite: true);
             }
+
+            return true;
         }
-        catch (UnauthorizedAccessException) when (destinationExists)
+        catch (UnauthorizedAccessException) when (replacing)
         {
-            DeleteQuietly(tempPath);
-            WriteInPlace(destination, content);
+            return false;
         }
         finally
         {
@@ -81,17 +174,19 @@ internal static class AtomicFile
         stream.Flush(flushToDisk: true);
     }
 
+    /// <summary>Opens the file for writing without changing it, so that a file this process cannot write is never replaced.</summary>
+    private static void VerifyWritable(string file)
+    {
+        new FileStream(file, FileMode.Open, FileAccess.Write, FileShare.ReadWrite).Dispose();
+    }
+
     /// <summary>
-    /// On Unix, whether this process owns the file: only the owner (or root) may change its mode, so setting the mode it already
-    /// has succeeds exactly then. Always true on Windows, where File.Replace keeps the file's security descriptor.
+    /// Fallback where statx is unavailable: whether this process owns the file, shown by the fact that only the owner (or root) may
+    /// set the mode it already has. Never called on Windows.
     /// </summary>
+    [UnsupportedOSPlatform("windows")]
     private static bool OwnedByThisProcess(string file)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return true;
-        }
-
         try
         {
             File.SetUnixFileMode(file, File.GetUnixFileMode(file));
@@ -100,6 +195,55 @@ internal static class AtomicFile
         catch (UnauthorizedAccessException)
         {
             return false;
+        }
+    }
+
+    private readonly record struct FileOwnership(uint Uid, uint Gid, UnixFileMode Mode);
+
+    /// <summary>The owner, group and mode of the file, or null where statx is unavailable.</summary>
+    /// <exception cref="IOException">statx failed for another reason.</exception>
+    private static FileOwnership? TryReadOwnership(string file)
+    {
+        LinuxNative.StatxBuffer buffer;
+        int result;
+        try
+        {
+            result = LinuxNative.Statx(AtFdcwd, file, flags: 0, StatxTypeModeUidGid, out buffer);
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return null;
+        }
+
+        if (result != 0)
+        {
+            int errno = Marshal.GetLastPInvokeError();
+            if (errno == ENOSYS)
+            {
+                return null;
+            }
+
+            throw new IOException($"Cannot read the owner of '{file}': statx failed with errno {errno}.");
+        }
+
+        return new FileOwnership(buffer.Uid, buffer.Gid, (UnixFileMode)(buffer.Mode & 0xFFF));
+    }
+
+    /// <summary>fchown on the temp file's open descriptor. False when the owner or group cannot be set, whatever the reason.</summary>
+    private static bool TryChangeOwner(SafeFileHandle handle, uint uid, uint gid)
+    {
+        bool added = false;
+        try
+        {
+            handle.DangerousAddRef(ref added);
+            return LinuxNative.FChown(handle.DangerousGetHandle().ToInt32(), uid, gid) == 0;
+        }
+        finally
+        {
+            if (added)
+            {
+                handle.DangerousRelease();
+            }
         }
     }
 
@@ -133,10 +277,10 @@ internal static class AtomicFile
         return final;
     }
 
-    // On Unix the mode is set on the open handle before any write, so the file is never readable with a broader mode than the original.
-    private static FileStream CreateTempFile(string tempPath, UnixFileMode? existingMode)
+    // On Unix, a non-null mode is applied by the caller on the open handle; here the file is created with it, as far as the umask allows.
+    private static FileStream CreateTempFile(string tempPath, UnixFileMode? mode)
     {
-        if (OperatingSystem.IsWindows() || existingMode is not UnixFileMode mode)
+        if (OperatingSystem.IsWindows() || mode is not UnixFileMode unixMode)
         {
             return new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         }
@@ -146,19 +290,8 @@ internal static class AtomicFile
             Mode = FileMode.CreateNew,
             Access = FileAccess.Write,
             Share = FileShare.None,
-            UnixCreateMode = mode,
+            UnixCreateMode = unixMode,
         };
-        FileStream stream = new(tempPath, options);
-        try
-        {
-            File.SetUnixFileMode(stream.SafeFileHandle, mode);
-        }
-        catch
-        {
-            stream.Dispose();
-            throw;
-        }
-
-        return stream;
+        return new FileStream(tempPath, options);
     }
 }
