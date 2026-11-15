@@ -41,6 +41,9 @@ Save this as `C:\cmdr-test\cmdr.json`, and create `C:\cmdr-test\hello.cmd` conta
         { "name": "drive-rel-path", "program": "ping", "args": ["-n", "1", "127.0.0.1"], "env": { "PATH": "C:bin${pathsep}${PATH}" } },
         { "name": "missing", "program": "no-such-program" },
         { "name": "npm", "program": "npm", "args": ["--version"] },
+        { "name": "batch-bang", "program": "C:\\cmdr-test\\hello.cmd", "args": ["!PATH!"] },
+        { "name": "batch-newline", "program": "C:\\cmdr-test\\hello.cmd", "args": ["a\nb"] },
+        { "name": "pct", "program": "cmd", "args": ["/c", "echo", "--%", "x"] },
         { "name": "log1", "program": "cmd", "args": ["/c", "echo 1"], "log": { "enabled": true, "path": "Out.log" } },
         { "name": "log2", "program": "cmd", "args": ["/c", "echo 2"], "log": { "enabled": true, "path": "out.log" } }
       ]
@@ -63,6 +66,8 @@ Run `dotnet run --project src/Cmdr -- C:\cmdr-test\cmdr.json` and check:
 | `npm` | Prints npm's version (npm is an `npm.cmd` shim). |
 | Loading the file | cmdr reports a log path conflict between `log1` and `log2` (`Out.log` and `out.log` are one file on Windows). Remove `log2` to continue. |
 | F5 on `ping` twice, quickly | The second press shows "Restart already pending". Force kill now restarts it. |
+| `batch-bang` | Prints `hello` and `!PATH!` literally (possibly in quotes), even with delayed expansion enabled in the registry (`HKCU\Software\Microsoft\Command Processor\DelayedExpansion` = 1). |
+| `batch-newline` | Fails to start: "argument 1 contains a line break, which cmd.exe cannot pass to a batch file". |
 
 ## 3. Copying a command line into PowerShell (06-05)
 
@@ -70,6 +75,11 @@ In the list, select `batch` and press `c`, then paste into **pwsh** and into **W
 exactly what cmdr printed. Repeat with the argument changed (edit it in the UI) to each of `x|y`, `%TEMP%`, `"q"`,
 and an empty argument. Do the same for an npm script shim (`node_modules\.bin\something.cmd`). A plain command such as
 `pnpm run dev --port=3000` should be copied in the plain form, without `$env:CMDR_CMD`.
+
+Also:
+- In PowerShell run `$env:CMDR_CMD = 'mine'`, then paste the copied `batch` command. Afterwards `$env:CMDR_CMD` must still be
+  `mine`, and `$LASTEXITCODE` the batch file's exit code. Without the variable set, it must still be unset afterwards.
+- Copy `pct` and paste it: it must print `--% x`.
 
 ## 4. Saving and logs
 
@@ -79,4 +89,8 @@ and an empty argument. Do the same for an npm script shim (`node_modules\.bin\so
   save should succeed by writing in place.
 - Save the config through a symbolic link (`mklink link.json cmdr.json`, needs Developer Mode or an admin prompt) and
   open `link.json`. The save must update `cmdr.json` and leave the link in place.
-- Open the config through a UNC path (`\\localhost\C$\cmdr-test\cmdr.json`) and start a command.
+- Open the config through a UNC path (`\\localhost\C$\cmdr-test\cmdr.json`) and start `ping`: it runs. Start `batch`: it
+  fails to start with "… is a UNC path, which cmd.exe cannot use as the working directory of a batch file …" (the working
+  folder defaults to the config's folder, which is on the share).
+- Hard-linked logs: `fsutil hardlink create C:\cmdr-test\logs\h2.log C:\cmdr-test\logs\h1.log` (create `h1.log` first), then
+  give two commands `"log": { "path": "h1.log" }` and `"h2.log"`. Loading reports a log path conflict between them.
