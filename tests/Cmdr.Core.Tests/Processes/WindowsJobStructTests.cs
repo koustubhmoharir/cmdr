@@ -27,10 +27,4 @@ public class WindowsJobStructTests
     {
         Assert.Equal(48, Unsafe.SizeOf<IO_COUNTERS>());
     }
-
-    [Fact]
-    public void BasicAccountingInformationIs48Bytes()
-    {
-        Assert.Equal(48, Unsafe.SizeOf<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>());
-    }
 }

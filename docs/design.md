@@ -172,6 +172,9 @@ child's own pipe ends. Pipe creation until cmdr's client copies are closed runs 
 which the Ctrl+C helper's `Process.Start` also takes, so the helper cannot inherit another launch's pipe ends
 (third-party launchers in the process are not covered). Console stdin is a null stdin handle. The exit is a
 thread-pool wait on the process handle (`WindowsLaunchedProcess`). Linux keeps `Process` (`ProcessLaunched`).
+Because the child is created in the job, the host of its hidden console (`conhost.exe`) is in the job too. It
+outlives the leader briefly, so `CountLiveProcesses` lists the job's process ids and leaves console hosts out;
+otherwise every command would report a phantom leftover at exit.
 
 ### Windows: batch files (.cmd/.bat)
 

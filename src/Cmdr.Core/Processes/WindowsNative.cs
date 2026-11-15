@@ -14,8 +14,8 @@ internal static partial class WindowsNative
 {
     private const string Kernel32 = "kernel32.dll";
 
-    /// <summary>JOBOBJECT_INFORMATION_CLASS: JobObjectBasicAccountingInformation.</summary>
-    internal const int JobObjectBasicAccountingInformation = 1;
+    /// <summary>JOBOBJECT_INFORMATION_CLASS: JobObjectBasicProcessIdList (JOBOBJECT_BASIC_PROCESS_ID_LIST).</summary>
+    internal const int JobObjectBasicProcessIdList = 3;
 
     /// <summary>JOBOBJECT_INFORMATION_CLASS: JobObjectExtendedLimitInformation.</summary>
     internal const int JobObjectExtendedLimitInformation = 9;
@@ -39,13 +39,26 @@ internal static partial class WindowsNative
     [LibraryImport(Kernel32, EntryPoint = "TerminateJobObject", SetLastError = true)]
     internal static partial int TerminateJobObject(nint job, uint exitCode);
 
+    /// <summary>Queries into a caller-allocated buffer (used for <see cref="JobObjectBasicProcessIdList"/>).</summary>
     [LibraryImport(Kernel32, EntryPoint = "QueryInformationJobObject", SetLastError = true)]
-    internal static partial int QueryInformationJobObject(
-        nint job,
-        int infoClass,
-        ref JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info,
-        uint length,
-        nint returnLength);
+    internal static partial int QueryInformationJobObject(nint job, int infoClass, nint info, uint length, nint returnLength);
+
+    /// <summary>ERROR_MORE_DATA: the process id list buffer is too small.</summary>
+    internal const int ErrorMoreData = 234;
+
+    /// <summary>PROCESS_QUERY_LIMITED_INFORMATION for <see cref="OpenProcess"/>.</summary>
+    internal const uint ProcessQueryLimitedInformation = 0x1000;
+
+    /// <summary>Opens a process by id. Returns 0 on failure; close the handle with <see cref="CloseHandle"/>.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "OpenProcess", SetLastError = true)]
+    internal static partial nint OpenProcess(uint access, int inheritHandle, uint processId);
+
+    /// <summary>
+    /// Writes the Win32 path of the process's image into <paramref name="buffer"/> (UTF-16). <paramref name="size"/> is the
+    /// buffer's capacity in characters on input and the path length (without the NUL) on output. Non-zero is success.
+    /// </summary>
+    [LibraryImport(Kernel32, EntryPoint = "QueryFullProcessImageNameW", SetLastError = true)]
+    internal static partial int QueryFullProcessImageNameW(nint process, uint flags, nint buffer, ref uint size);
 
     [LibraryImport(Kernel32, EntryPoint = "CloseHandle", SetLastError = true)]
     internal static partial int CloseHandle(nint handle);

@@ -127,22 +127,28 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     }
 
     /// <inheritdoc />
-    /// <remarks>Reads ActiveProcesses from the job's basic accounting information. Returns 0 once disposed.</remarks>
+    /// <remarks>
+    /// Lists the job's process ids and counts them, leaving out console hosts (<c>conhost.exe</c>). The child is created inside
+    /// the job, so the hidden console's host process is created in the job too. It is not a process the command started: it
+    /// exits on its own once its last client detaches, which is shortly after the leader exits, so counting it would report a
+    /// phantom leftover for every command. A console host serving real leftovers is not needed in the count either, because
+    /// its clients are counted. Returns 0 once disposed.
+    /// </remarks>
     /// <exception cref="Win32Exception">QueryInformationJobObject failed.</exception>
     public int CountLiveProcesses()
     {
         try
         {
-            var info = new JOBOBJECT_BASIC_ACCOUNTING_INFORMATION();
-            uint size = (uint)Marshal.SizeOf<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>();
-            int ok = UseJob(job => WindowsNative.QueryInformationJobObject(
-                job, WindowsNative.JobObjectBasicAccountingInformation, ref info, size, 0));
-            if (ok == 0)
+            int count = 0;
+            foreach (uint pid in ListProcessIds())
             {
-                throw new Win32Exception(Marshal.GetLastPInvokeError());
+                if (!IsConsoleHost(pid))
+                {
+                    count++;
+                }
             }
 
-            return checked((int)info.ActiveProcesses);
+            return count;
         }
         catch (ObjectDisposedException)
         {
@@ -155,6 +161,90 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     /// so that disposing a supervisor (or cmdr exiting) never leaves a tree running.
     /// </summary>
     public void Dispose() => _job.Dispose();
+
+    /// <summary>The ids of the processes currently in the job (JobObjectBasicProcessIdList), growing the buffer until they fit.</summary>
+    /// <exception cref="Win32Exception">QueryInformationJobObject failed.</exception>
+    /// <exception cref="ObjectDisposedException">The job handle has been closed.</exception>
+    private List<uint> ListProcessIds()
+    {
+        // JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORDs (assigned, in list), then ULONG_PTR ids starting at offset 8.
+        const int header = 8;
+        int capacity = 32;
+        while (true)
+        {
+            int bytes = header + capacity * nint.Size;
+            nint buffer = Marshal.AllocHGlobal(bytes);
+            try
+            {
+                int error = 0;
+                int ok = UseJob(job =>
+                {
+                    int result = WindowsNative.QueryInformationJobObject(
+                        job, WindowsNative.JobObjectBasicProcessIdList, buffer, (uint)bytes, 0);
+                    error = result == 0 ? Marshal.GetLastPInvokeError() : 0;
+                    return result;
+                });
+
+                int assigned = Marshal.ReadInt32(buffer, 0);
+                if (ok == 0 && error != WindowsNative.ErrorMoreData)
+                {
+                    throw new Win32Exception(error);
+                }
+
+                int inList = Marshal.ReadInt32(buffer, 4);
+                if (ok == 0 || inList < assigned)
+                {
+                    // Processes joined since the last attempt, or the buffer was too small: retry with room to spare.
+                    capacity = Math.Max(capacity * 2, assigned + 8);
+                    continue;
+                }
+
+                var ids = new List<uint>(inList);
+                for (int i = 0; i < inList; i++)
+                {
+                    ids.Add((uint)(nuint)Marshal.ReadIntPtr(buffer, header + i * nint.Size));
+                }
+
+                return ids;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+
+    /// <summary>
+    /// True if <paramref name="pid"/> runs <c>conhost.exe</c>. A process that cannot be opened or queried (for example because it
+    /// exited after the list was read) is not a console host, so it is counted: a failure must not hide a real leftover.
+    /// </summary>
+    private static bool IsConsoleHost(uint pid)
+    {
+        nint process = WindowsNative.OpenProcess(WindowsNative.ProcessQueryLimitedInformation, 0, pid);
+        if (process == 0)
+        {
+            return false;
+        }
+
+        const int capacity = 1024;
+        nint buffer = Marshal.AllocHGlobal(capacity * sizeof(char));
+        try
+        {
+            uint size = capacity;
+            if (WindowsNative.QueryFullProcessImageNameW(process, 0, buffer, ref size) == 0)
+            {
+                return false;
+            }
+
+            string path = Marshal.PtrToStringUni(buffer, (int)size);
+            return string.Equals(Path.GetFileName(path), "conhost.exe", StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+            WindowsNative.CloseHandle(process);
+        }
+    }
 
     /// <summary>
     /// Runs <paramref name="call"/> with the raw job handle, holding a reference so a concurrent Dispose cannot close it mid-call.

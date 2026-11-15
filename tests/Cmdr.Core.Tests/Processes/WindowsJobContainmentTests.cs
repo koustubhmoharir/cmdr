@@ -122,11 +122,12 @@ public class WindowsJobContainmentTests
         if (!OperatingSystem.IsWindows()) return;
 
         // Interrupt starts a helper process with Process.Start, which inherits every inheritable handle. The stand-in helper runs
-        // for about 4 s, so a leaked pipe end would hold a launch's EOF past the 3 s limit. The helper's arguments are commented
-        // out by the trailing '#', so the --send-ctrl-c arguments that Interrupt appends are ignored by PowerShell.
+        // for about 4 s (ping -n 5), so a leaked pipe end would hold a launch's EOF past the 3 s limit. It is cmd rather than
+        // PowerShell because Interrupt allows the helper 5 s: PowerShell's start-up (often over 1 s on a busy machine) plus a 4 s
+        // sleep timed out. The --send-ctrl-c arguments that Interrupt appends land after "rem", so cmd ignores them.
         var helper = new CtrlCHelperCommand(
-            "powershell",
-            new[] { "-NoProfile", "-Command", "Start-Sleep -Seconds 4; exit 0 #" });
+            "cmd",
+            new[] { "/d", "/c", "ping -n 5 127.0.0.1 >nul & rem" });
         var platform = new WindowsProcessPlatform(helper);
         using var dirA = new TempDir();
         using var dirB = new TempDir();

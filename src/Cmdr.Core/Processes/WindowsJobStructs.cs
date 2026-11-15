@@ -44,17 +44,3 @@ internal struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     public nuint PeakProcessMemoryUsed;
     public nuint PeakJobMemoryUsed;
 }
-
-/// <summary>JOBOBJECT_BASIC_ACCOUNTING_INFORMATION (48 bytes).</summary>
-[StructLayout(LayoutKind.Sequential)]
-internal struct JOBOBJECT_BASIC_ACCOUNTING_INFORMATION
-{
-    public long TotalUserTime;
-    public long TotalKernelTime;
-    public long ThisPeriodTotalUserTime;
-    public long ThisPeriodTotalKernelTime;
-    public uint TotalPageFaultCount;
-    public uint TotalProcesses;
-    public uint ActiveProcesses;
-    public uint TotalTerminatedProcesses;
-}
