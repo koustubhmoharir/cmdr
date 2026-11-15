@@ -145,10 +145,10 @@ public static class ConfigStore
 
     /// <summary>
     /// Finds log path conflicts among all commands of a chain, whether or not their logs are enabled. Two commands conflict when their
-    /// resolved log paths are equal, or when one log path is a folder of the other (the other path starts with it and a directory
-    /// separator). Paths are compared with <see cref="PathComparer"/> after resolving symbolic links, so paths that reach one file
-    /// through a link conflict too. Each file's logs directory is used for its own commands. Commands whose paths cannot be
-    /// resolved are skipped here.
+    /// resolved log paths are equal, when both name one existing file (hard links, see <see cref="FileIdentity"/>), or when one log
+    /// path is a folder of the other (the other path starts with it and a directory separator). Paths are compared with
+    /// <see cref="PathComparer"/> after resolving symbolic links, so paths that reach one file through a link conflict too. Each file's
+    /// logs directory is used for its own commands. Commands whose paths cannot be resolved are skipped here.
     /// </summary>
     /// <param name="chain">The files of the chain; the opened file is the last entry.</param>
     /// <param name="onlyInvolvingOpened">True to keep only the errors where at least one involved command comes from the opened file.</param>
@@ -189,28 +189,48 @@ public static class ConfigStore
             }
         }
 
-        // Grouped by the path with links resolved, so two paths that reach one file through a link conflict. Messages show the
-        // path as configured (that of the first command of the group).
+        // Targets are grouped twice. Equal paths (with links resolved, so two paths that reach one file through a link are equal) are
+        // the unit of the folder check. Targets that name one existing file (a hard link is another name for it) share a group key,
+        // which is the file's identity when it has one and the path otherwise. Messages show the path as configured (that of the
+        // first command of the group).
         StringComparer comparer = PathComparer;
         var byPath = new Dictionary<string, List<LogTarget>>(comparer);
         var paths = new List<string>();
+        var byFile = new Dictionary<string, List<LogTarget>>(comparer);
+        var fileKeys = new List<string>();
+        var keyOfPath = new Dictionary<string, string>(comparer);
         var resolvedDirs = new Dictionary<string, string>(comparer);
         foreach (LogTarget target in targets)
         {
             string physical = ResolveLogPathLinks(target.FullPath, resolvedDirs);
-            if (!byPath.TryGetValue(physical, out List<LogTarget>? sharing))
+            if (!byPath.TryGetValue(physical, out List<LogTarget>? samePath))
+            {
+                samePath = new List<LogTarget>();
+                byPath[physical] = samePath;
+                paths.Add(physical);
+            }
+
+            samePath.Add(target);
+
+            if (!keyOfPath.TryGetValue(physical, out string? key))
+            {
+                key = FileKey(physical);
+                keyOfPath[physical] = key;
+            }
+
+            if (!byFile.TryGetValue(key, out List<LogTarget>? sharing))
             {
                 sharing = new List<LogTarget>();
-                byPath[physical] = sharing;
-                paths.Add(physical);
+                byFile[key] = sharing;
+                fileKeys.Add(key);
             }
 
             sharing.Add(target);
         }
 
-        foreach (string path in paths)
+        foreach (string key in fileKeys)
         {
-            List<LogTarget> sharing = byPath[path];
+            List<LogTarget> sharing = byFile[key];
             if (sharing.Count < 2 || (onlyInvolvingOpened && !sharing.Any(t => t.FromOpened)))
             {
                 continue;
@@ -244,6 +264,14 @@ public static class ConfigStore
         }
 
         return errors;
+    }
+
+    // The key that groups targets naming one file: the identity of an existing regular file, prefixed with a NUL that no path contains
+    // so it can never equal a path key; otherwise the path itself.
+    private static string FileKey(string physicalPath)
+    {
+        string? identity = FileIdentity.TryGet(physicalPath);
+        return identity is null ? physicalPath : "\0id:" + identity;
     }
 
     /// <summary>

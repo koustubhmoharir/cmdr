@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Cmdr.Core.Config;
 
 namespace Cmdr.Core.Tests.Config;
@@ -212,5 +213,152 @@ public class LogPathConflictTests
         string error = Assert.Single(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
 
         Assert.Contains("is the folder of the log of Group 'g' › command 'b'", error);
+    }
+
+    [Fact]
+    public void HardLinkedLogFiles_AreOneConflictNamingBoth()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return; // the hard links are made with ln(1)
+        }
+
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("logs"));
+        File.WriteAllText(dir.File(Logs("a.log")), "");
+        FileIdentityTests.HardLink(dir.File(Logs("a.log")), dir.File(Logs("b.log")));
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "a.log"), Cmd("b", logPath: "b.log")) },
+        });
+
+        string error = Assert.Single(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+
+        Assert.Equal(
+            $"Log path conflict: Group 'g' › command 'a' and Group 'g' › command 'b' both log to '{Logs("a.log")}'.",
+            error);
+    }
+
+    [Fact]
+    public void DistinctExistingLogFiles_NoError()
+    {
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("logs"));
+        File.WriteAllText(dir.File(Logs("a.log")), "one");
+        File.WriteAllText(dir.File(Logs("b.log")), "two");
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "a.log"), Cmd("b", logPath: "b.log")) },
+        });
+
+        Assert.Empty(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+    }
+
+    [Fact]
+    public void DistinctMissingLogFiles_NoError()
+    {
+        using var dir = new TempDir();
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "a.log"), Cmd("b", logPath: "b.log")) },
+        });
+
+        Assert.Empty(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+    }
+
+    [Fact]
+    public void ExistingLogFileAndMissingLogFileWithDifferentNames_NoError()
+    {
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("logs"));
+        File.WriteAllText(dir.File(Logs("a.log")), "");
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "a.log"), Cmd("b", logPath: "b.log")) },
+        });
+
+        Assert.Empty(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+    }
+
+}
+
+public class FileIdentityTests
+{
+    // Creates a hard link with ln(1). The output is drained and the wait is bounded, so a stuck ln cannot hang the test run.
+    internal static void HardLink(string existing, string link)
+    {
+        var info = new ProcessStartInfo("ln") { RedirectStandardOutput = true, RedirectStandardError = true };
+        info.ArgumentList.Add(existing);
+        info.ArgumentList.Add(link);
+
+        using Process process = Process.Start(info)!;
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(TimeSpan.FromSeconds(30)))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"'ln {existing} {link}' did not finish.");
+        }
+
+        stdout.GetAwaiter().GetResult();
+        string error = stderr.GetAwaiter().GetResult();
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"'ln {existing} {link}' exited with {process.ExitCode}: {error}");
+        }
+    }
+
+    [Fact]
+    public void MissingFile_HasNoIdentity()
+    {
+        using var dir = new TempDir();
+
+        Assert.Null(FileIdentity.TryGet(dir.File("missing.log")));
+    }
+
+    [Fact]
+    public void Directory_HasNoIdentity()
+    {
+        using var dir = new TempDir();
+
+        Assert.Null(FileIdentity.TryGet(dir.Path));
+    }
+
+    [Fact]
+    public void DifferentFiles_HaveDifferentIdentities()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+        {
+            return; // no identity is read on other systems
+        }
+
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("a.log"), "");
+        File.WriteAllText(dir.File("b.log"), "");
+
+        string? a = FileIdentity.TryGet(dir.File("a.log"));
+        string? b = FileIdentity.TryGet(dir.File("b.log"));
+
+        Assert.NotNull(a);
+        Assert.NotNull(b);
+        Assert.NotEqual(a, b);
+    }
+
+    [Fact]
+    public void HardLinks_HaveTheSameIdentity()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return; // the hard link is made with ln(1)
+        }
+
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("a.log"), "");
+        HardLink(dir.File("a.log"), dir.File("b.log"));
+
+        string? a = FileIdentity.TryGet(dir.File("a.log"));
+
+        Assert.NotNull(a);
+        Assert.Equal(a, FileIdentity.TryGet(dir.File("b.log")));
     }
 }

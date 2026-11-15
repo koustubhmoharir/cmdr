@@ -32,6 +32,10 @@ internal static partial class LinuxNative
     [StructLayout(LayoutKind.Explicit, Size = 256)]
     internal struct StatxBuffer
     {
+        /// <summary>The fields the kernel filled in (STATX_* bits).</summary>
+        [FieldOffset(0)]
+        public uint Mask;
+
         [FieldOffset(20)]
         public uint Uid;
 
@@ -40,5 +44,14 @@ internal static partial class LinuxNative
 
         [FieldOffset(28)]
         public ushort Mode;
+
+        [FieldOffset(32)]
+        public ulong Ino;
+
+        [FieldOffset(136)]
+        public uint DevMajor;
+
+        [FieldOffset(140)]
+        public uint DevMinor;
     }
 }

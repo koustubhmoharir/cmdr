@@ -60,6 +60,26 @@ internal static partial class WindowsNative
     [LibraryImport(Kernel32, EntryPoint = "QueryFullProcessImageNameW", SetLastError = true)]
     internal static partial int QueryFullProcessImageNameW(nint process, uint flags, nint buffer, ref uint size);
 
+    /// <summary>Fills <paramref name="info"/> for an open file. Non-zero is success.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "GetFileInformationByHandle", SetLastError = true)]
+    internal static partial int GetFileInformationByHandle(nint file, out BY_HANDLE_FILE_INFORMATION info);
+
+    /// <summary>BY_HANDLE_FILE_INFORMATION: the attributes, the volume serial number and the file index (which with the serial identifies a file).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BY_HANDLE_FILE_INFORMATION
+    {
+        public uint FileAttributes;
+        public long CreationTime;
+        public long LastAccessTime;
+        public long LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
     [LibraryImport(Kernel32, EntryPoint = "CloseHandle", SetLastError = true)]
     internal static partial int CloseHandle(nint handle);
 
