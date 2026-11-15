@@ -11,8 +11,8 @@ public sealed partial class CommandOutput
     /// the owning <see cref="CommandOutput"/>'s lock; members ending in <c>Locked</c> must be called with it held.
     /// </summary>
     /// <remarks>
-    /// Writers of the same file take turns: a writer starts only after every earlier writer of that file has finished
-    /// (see <see cref="HasEarlierWriterLocked"/>), and seeks to the end of the file before each batch, so their lines never
+    /// Writers of the same file take turns: a writer starts only after the file's running writer has finished (see
+    /// <see cref="LogDestination.Running"/>), and seeks to the end of the file before each batch, so their lines never
     /// interleave or overwrite each other.
     /// </remarks>
     private sealed class LogWriter
@@ -23,16 +23,19 @@ public sealed partial class CommandOutput
         private readonly SemaphoreSlim _wake = new(0, 1);
         private readonly TaskCompletionSource _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private List<(long Number, string Text)> _pending = new();
-        private int _limit = LogQueueCapacity;
+
+        // Lines in _pending that came live (not replayed). Only these count against LogQueueCapacity.
+        private int _pendingLive;
         private bool _closing;
         private bool _abandoned;
         private bool _sleeping;
         private bool _busy;
         private TaskCompletionSource? _idle;
 
-        public LogWriter(CommandOutput owner, string path, FileStream stream, long firstLiveLine)
+        public LogWriter(CommandOutput owner, LogDestination destination, string path, FileStream stream, long firstLiveLine)
         {
             _owner = owner;
+            Destination = destination;
             _stream = stream;
             _writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             Path = path;
@@ -42,6 +45,9 @@ public sealed partial class CommandOutput
 
         /// <summary>Full path of the file.</summary>
         public string Path { get; }
+
+        /// <summary>The state of the file this writer writes, which holds its flush progress and its turn.</summary>
+        public LogDestination Destination { get; }
 
         /// <summary>Number of the first line given to this writer as it completed; earlier lines are replayed on start.</summary>
         public long FirstLiveLine { get; }
@@ -75,7 +81,7 @@ public sealed partial class CommandOutput
                 return true;
             }
 
-            if (_pending.Count + lines.Count > _limit)
+            if (_pendingLive + lines.Count > LogQueueCapacity)
             {
                 return false;
             }
@@ -85,6 +91,7 @@ public sealed partial class CommandOutput
                 _pending.Add((firstNumber + i, lines[i].PlainText));
             }
 
+            _pendingLive += lines.Count;
             NextQueuedLine = Math.Max(NextQueuedLine, firstNumber + lines.Count);
             WakeLocked();
             return true;
@@ -105,11 +112,13 @@ public sealed partial class CommandOutput
             return true;
         }
 
-        /// <summary>Queues replayed lines ahead of the live ones. They do not count against the queue capacity.</summary>
+        /// <summary>
+        /// Queues replayed lines ahead of the live ones. They do not count against the queue capacity, and nothing is added to
+        /// that capacity for them: once they are written, the writer is held to the same limit as before.
+        /// </summary>
         public void PrependLocked(IReadOnlyList<OutputLine> lines, long firstNumber)
         {
             _pending.InsertRange(0, lines.Select((line, i) => (firstNumber + i, line.PlainText)));
-            _limit += lines.Count;
         }
 
         public void StartLocked()
@@ -132,6 +141,7 @@ public sealed partial class CommandOutput
             _abandoned = true;
             _closing = true;
             _pending.Clear();
+            _pendingLive = 0;
             WakeLocked();
         }
 
@@ -185,6 +195,7 @@ public sealed partial class CommandOutput
                         {
                             batch = _pending;
                             _pending = new List<(long Number, string Text)>();
+                            _pendingLive = 0;
                             _busy = true;
                         }
                     }
@@ -258,5 +269,27 @@ public sealed partial class CommandOutput
                 _stream.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// The log state of one file path: its flush progress and its writers. One is kept per path used, for the life of the owning
+    /// <see cref="CommandOutput"/> (a small object each), so a file keeps its progress while logging goes to other files.
+    /// Guarded by the owner's lock.
+    /// </summary>
+    private sealed class LogDestination
+    {
+        /// <summary>
+        /// Lines numbered below this have been flushed to this file. Advanced by its writer after each successful flush only.
+        /// </summary>
+        public long NextUnloggedLine { get; set; }
+
+        /// <summary>The writer that has started on this file and not finished, or null.</summary>
+        public LogWriter? Running { get; set; }
+
+        /// <summary>The writer waiting for <see cref="Running"/> to finish, or null. Never more than one.</summary>
+        public LogWriter? Waiting { get; set; }
+
+        /// <summary>Whether a writer was abandoned and may still be blocked in a write, so that the file takes no new log.</summary>
+        public bool IsBlocked => Running?.Abandoned == true || Waiting?.Abandoned == true;
     }
 }

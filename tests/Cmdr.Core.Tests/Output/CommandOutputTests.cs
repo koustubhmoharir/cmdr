@@ -477,6 +477,30 @@ public class CommandOutputTests : IDisposable
         Assert.Equal(Lines(StartMarker(Start), "a", "b"), ReadLog(second));
     }
 
+    /// <summary>
+    /// Each file keeps its own progress: returning to A after logging to B writes A only the lines it missed (line two), once,
+    /// and then the lines that follow.
+    /// </summary>
+    [Fact]
+    public void ReturningToAFileWritesOnlyTheLinesItMissed()
+    {
+        string first = _temp.File("return-first.log");
+        string second = _temp.File("return-second.log");
+        _output.BeginRun(Start);
+        _output.EnableLog(first);
+        _output.WriteStdOut("one\n");
+        Assert.True(_output.WaitForLogWrites(TimeSpan.FromSeconds(10)));  // "one" is flushed to the first file
+
+        _output.EnableLog(second);
+        _output.WriteStdOut("two\n");
+        _output.EnableLog(first);
+        _output.WriteStdOut("three\n");
+        _output.DisableLog();
+
+        Assert.Equal(Lines(StartMarker(Start), "one", "two", "three"), ReadLog(first));
+        Assert.Equal(Lines(StartMarker(Start), "one", "two"), ReadLog(second));
+    }
+
     [Fact]
     public void EnableLogSameFileTwiceIsNoOp()
     {

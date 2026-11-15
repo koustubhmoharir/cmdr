@@ -267,10 +267,11 @@ returns a notice that is written to the output.
 - Log writing happens on a background writer per log session (`CommandOutput.LogWriter`), so nothing
   waits for log I/O: not the pumps, not snapshots, not force kill. The file is opened on the caller's
   thread, outside the output lock, so an open failure is reported at once. Writers of the same file take
-  turns and seek to the end before each batch. More than 10,000 lines waiting (beyond the replayed ones)
-  means the writer is stalled: it is abandoned with `log disabled: log writer stalled`. The "already
-  logged" mark advances only after a successful flush, so re-enabling the same file after a failure
-  replays what never reached it (a failed batch may appear twice). `Session.Dispose` waits up to 2 s in
+  turns and seek to the end before each batch. More than 10,000 live lines waiting (replayed lines are not
+  counted) means the writer is stalled: it is abandoned with `log disabled: log writer stalled`. Each log
+  file keeps its own flush mark, advanced only after a successful flush, so re-enabling a file writes the
+  retained lines it never received, each once: after logging to A, then B, then A again, A gets the lines
+  it missed while B was current (a failed batch may appear twice). `Session.Dispose` waits up to 2 s in
   total for log writes.
 
 ## UI

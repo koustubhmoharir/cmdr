@@ -84,13 +84,14 @@ public sealed class DetailsDrawTests
 
     private static IReadOnlyList<string[]> ReadCells(IApplication app, int width, int height)
     {
+        var driver = app.Driver ?? throw new InvalidOperationException("The application has no driver.");
         var rows = new List<string[]>(height);
         for (int row = 0; row < height; row++)
         {
             var cells = new string[width];
             for (int col = 0; col < width; col++)
             {
-                cells[col] = app.Driver!.Contents[row, col].Grapheme;
+                cells[col] = driver.Contents![row, col].Grapheme;
             }
 
             rows.Add(cells);

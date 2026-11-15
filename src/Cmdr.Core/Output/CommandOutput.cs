@@ -28,12 +28,10 @@ public sealed partial class CommandOutput : IDisposable
     private AnsiLineParser _stdOutParser = new(OutputSource.StdOut);
     private AnsiLineParser _stdErrParser = new(OutputSource.StdErr);
     private long? _runFirstLine;
-    private readonly List<LogWriter> _unfinishedLogs = new();
     private LogWriter? _log;
-    private string? _lastLoggedPath;
 
-    // Lines numbered below this have been flushed to _lastLoggedPath. Advanced by the writer after each successful flush only.
-    private long _nextUnloggedLine;
+    // One per log path used, kept for the life of this object: each file keeps its own flush progress and writers.
+    private readonly Dictionary<string, LogDestination> _destinations = new(PathComparer);
     private long _run;
     private bool _staleOutputNoticeWritten;
     private bool _disposed;
@@ -197,8 +195,9 @@ public sealed partial class CommandOutput : IDisposable
     /// <para>On an open or write failure, logging is disabled and a <c>log disabled: ...</c> system line is added to the buffer
     /// (not to the log). If more than <see cref="LogQueueCapacity"/> lines wait for a writer that is not making progress, it is
     /// abandoned the same way with <c>log disabled: log writer stalled</c>.</para>
-    /// <para>Re-enabling the same file after a failure writes the retained lines that were never flushed to it. Lines of a
-    /// batch whose write or flush failed count as not written, so some of them may appear twice in the file.</para>
+    /// <para>Each file keeps its own progress. Re-enabling a file after a failure, or after logging went to other files, writes
+    /// the retained lines that never reached that file, each once. Lines of a batch whose write or flush failed count as not
+    /// written, so some of them may appear twice in the file.</para>
     /// <para>Writers of one file take turns. A file has at most one running and one waiting writer: re-enabling a file whose
     /// writer is still waiting for its turn reuses that writer (giving it the retained lines written while logging was off),
     /// and re-enabling a file whose earlier writer was abandoned and is still blocked is refused with
@@ -217,23 +216,8 @@ public sealed partial class CommandOutput : IDisposable
 
         lock (_sync)
         {
-            if (_disposed || IsLoggingToLocked(fullPath))
+            if (DecideEnableLocked(fullPath) != EnableStep.NeedsWriter)
             {
-                return;
-            }
-
-            // At most one running and one waiting writer per file, however often logging is toggled: a writer abandoned as
-            // stalled may stay blocked in a write indefinitely, and every writer queued behind it would hold a file and its
-            // lines until then.
-            if (_unfinishedLogs.Any(w => w.Abandoned && PathEquals(w.Path, fullPath)))
-            {
-                AppendNoticeLocked("log not enabled: an earlier write to this file is still blocked");
-                return;
-            }
-
-            if (_unfinishedLogs.LastOrDefault(w => !w.Started && PathEquals(w.Path, fullPath)) is { } waiting && waiting.ReopenLocked())
-            {
-                ReuseWaitingWriterLocked(waiting);
                 return;
             }
         }
@@ -242,6 +226,7 @@ public sealed partial class CommandOutput : IDisposable
         FileStream stream;
         try
         {
+            BeforeLogOpenForTesting?.Invoke();
             string? directory = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(directory))
             {
@@ -268,35 +253,91 @@ public sealed partial class CommandOutput : IDisposable
             return;
         }
 
+        // Opening can take a while, so the state may have changed: the same rules are applied again, and a stream that is no
+        // longer needed is closed outside the lock, since closing a file can flush and block.
+        FileStream? redundant = null;
         lock (_sync)
         {
-            if (_disposed || IsLoggingToLocked(fullPath))
+            if (DecideEnableLocked(fullPath) == EnableStep.NeedsWriter)
             {
-                // Disposed, or a concurrent call started logging to this file meanwhile.
-                stream.Dispose();
-                return;
-            }
-
-            bool samePathAsLast = PathEquals(fullPath, _lastLoggedPath);
-            CloseLogLocked();
-            _lastLoggedPath = fullPath;
-            if (!samePathAsLast)
-            {
-                _nextUnloggedLine = 0;
-            }
-
-            var writer = new LogWriter(this, fullPath, stream, _buffer.NextLineNumber);
-            _log = writer;
-            _unfinishedLogs.Add(writer);
-            if (!HasEarlierWriterLocked(writer))
-            {
-                StartWriterLocked(writer);
+                StartNewWriterLocked(fullPath, stream);
             }
             else
             {
-                // Captured now: by the time the writer starts, a new run or eviction may have dropped these lines.
-                writer.DeferredReplay = ReplayLocked(writer);
+                redundant = stream;
             }
+        }
+
+        redundant?.Dispose();
+    }
+
+    /// <summary>For tests: called by <see cref="EnableLog"/> after its first checks, just before it opens the file outside the lock.</summary>
+    internal Action? BeforeLogOpenForTesting { get; set; }
+
+    /// <summary>What <see cref="EnableLog"/> does for one path, as decided by <see cref="DecideEnableLocked"/>.</summary>
+    private enum EnableStep
+    {
+        /// <summary>Nothing more to do: disposed, already logging to the file, or the file's waiting writer took the new log.</summary>
+        Done,
+
+        /// <summary>Refused: an earlier writer of the file is abandoned and may still be blocked. A notice was added.</summary>
+        Refused,
+
+        /// <summary>A new writer is needed, on a stream opened for the file.</summary>
+        NeedsWriter,
+    }
+
+    /// <summary>
+    /// The rules of <see cref="EnableLog"/> for <paramref name="fullPath"/>, applied under the lock. EnableLog applies them before
+    /// the file is opened and again after, so the two checks cannot diverge. Caller holds the lock.
+    /// </summary>
+    private EnableStep DecideEnableLocked(string fullPath)
+    {
+        if (_disposed || IsLoggingToLocked(fullPath))
+        {
+            return EnableStep.Done;
+        }
+
+        LogDestination destination = DestinationLocked(fullPath);
+
+        // At most one running and one waiting writer per file, however often logging is toggled: a writer abandoned as stalled
+        // may stay blocked in a write indefinitely, and every writer queued behind it would hold a file and its lines until then.
+        if (destination.IsBlocked)
+        {
+            AppendNoticeLocked("log not enabled: an earlier write to this file is still blocked");
+            return EnableStep.Refused;
+        }
+
+        if (destination.Waiting is { } waiting && waiting.ReopenLocked())
+        {
+            ReuseWaitingWriterLocked(waiting);
+            return EnableStep.Done;
+        }
+
+        return EnableStep.NeedsWriter;
+    }
+
+    /// <summary>
+    /// Makes <paramref name="fullPath"/> the current log, with a new writer on <paramref name="stream"/>. The writer starts at once
+    /// if no writer of the file is running; otherwise it waits for its turn. Caller holds the lock and has checked the file with
+    /// <see cref="DecideEnableLocked"/>, which leaves no waiting writer in that case.
+    /// </summary>
+    private void StartNewWriterLocked(string fullPath, FileStream stream)
+    {
+        CloseLogLocked();
+        LogDestination destination = DestinationLocked(fullPath);
+        var writer = new LogWriter(this, destination, fullPath, stream, _buffer.NextLineNumber);
+        _log = writer;
+        if (destination.Running is null)
+        {
+            destination.Running = writer;
+            StartWriterLocked(writer);
+        }
+        else
+        {
+            // Captured now: by the time the writer starts, a new run or eviction may have dropped these lines.
+            destination.Waiting = writer;
+            writer.DeferredReplay = ReplayLocked(writer);
         }
     }
 
@@ -307,7 +348,6 @@ public sealed partial class CommandOutput : IDisposable
     private void ReuseWaitingWriterLocked(LogWriter writer)
     {
         CloseLogLocked();
-        _lastLoggedPath = writer.Path;
         long from = Math.Max(writer.NextQueuedLine, _buffer.FirstLineNumber);
         IReadOnlyList<OutputLine> missed = _buffer.GetCompletedLinesFrom(from);
         _log = writer;
@@ -321,9 +361,41 @@ public sealed partial class CommandOutput : IDisposable
         {
             lock (_sync)
             {
-                return _unfinishedLogs.Count;
+                return UnfinishedWritersLocked().Count;
             }
         }
+    }
+
+    /// <summary>The running and the waiting writer of each file that has one. Caller holds the lock.</summary>
+    private List<LogWriter> UnfinishedWritersLocked()
+    {
+        var writers = new List<LogWriter>();
+        foreach (LogDestination destination in _destinations.Values)
+        {
+            if (destination.Running is { } running)
+            {
+                writers.Add(running);
+            }
+
+            if (destination.Waiting is { } waiting)
+            {
+                writers.Add(waiting);
+            }
+        }
+
+        return writers;
+    }
+
+    /// <summary>The state of <paramref name="fullPath"/>, created on first use. Caller holds the lock.</summary>
+    private LogDestination DestinationLocked(string fullPath)
+    {
+        if (!_destinations.TryGetValue(fullPath, out LogDestination? destination))
+        {
+            destination = new LogDestination();
+            _destinations.Add(fullPath, destination);
+        }
+
+        return destination;
     }
 
     /// <summary>
@@ -347,7 +419,7 @@ public sealed partial class CommandOutput : IDisposable
         Task[] pending;
         lock (_sync)
         {
-            pending = _unfinishedLogs.Select(w => ReferenceEquals(w, _log) ? w.WhenIdleLocked() : w.Completion).ToArray();
+            pending = UnfinishedWritersLocked().Select(w => ReferenceEquals(w, _log) ? w.WhenIdleLocked() : w.Completion).ToArray();
         }
 
         try
@@ -510,10 +582,8 @@ public sealed partial class CommandOutput : IDisposable
     /// <summary>Records that <paramref name="writer"/> flushed every line numbered below <paramref name="next"/>.</summary>
     private void CommitLoggedLocked(LogWriter writer, long next)
     {
-        if (PathEquals(writer.Path, _lastLoggedPath))
-        {
-            _nextUnloggedLine = Math.Max(_nextUnloggedLine, next);
-        }
+        LogDestination destination = writer.Destination;
+        destination.NextUnloggedLine = Math.Max(destination.NextUnloggedLine, next);
     }
 
     /// <summary>
@@ -543,29 +613,10 @@ public sealed partial class CommandOutput : IDisposable
 
     private bool IsLoggingToLocked(string fullPath) => _log is not null && PathEquals(fullPath, _log.Path);
 
-    /// <summary>True when an unfinished writer created before <paramref name="writer"/> writes the same file.</summary>
-    private bool HasEarlierWriterLocked(LogWriter writer)
-    {
-        foreach (LogWriter other in _unfinishedLogs)
-        {
-            if (ReferenceEquals(other, writer))
-            {
-                return false;
-            }
-
-            if (PathEquals(other.Path, writer.Path))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>
-    /// Starts a writer once no earlier writer of its file is unfinished, first giving it the current run's retained lines that
-    /// the file is missing (see <see cref="ReplayLocked"/>). A writer that had to wait uses the lines captured when logging was
-    /// enabled, less those an earlier writer has flushed since.
+    /// Starts a writer that has its turn on its file, first giving it the current run's retained lines that the file is missing
+    /// (see <see cref="ReplayLocked"/>). A writer that had to wait uses the lines captured when logging was enabled, less those
+    /// the file has been flushed since.
     /// </summary>
     private void StartWriterLocked(LogWriter writer)
     {
@@ -573,7 +624,7 @@ public sealed partial class CommandOutput : IDisposable
         writer.DeferredReplay = null;
         if (replay is { } r)
         {
-            long flushed = PathEquals(writer.Path, _lastLoggedPath) ? _nextUnloggedLine : 0;
+            long flushed = writer.Destination.NextUnloggedLine;
             int skip = (int)Math.Clamp(flushed - r.First, 0, r.Lines.Count);
             if (skip < r.Lines.Count)
             {
@@ -595,7 +646,7 @@ public sealed partial class CommandOutput : IDisposable
             return null;
         }
 
-        long flushed = PathEquals(writer.Path, _lastLoggedPath) ? _nextUnloggedLine : 0;
+        long flushed = writer.Destination.NextUnloggedLine;
         long from = Math.Max(Math.Max(runFirst, flushed), _buffer.FirstLineNumber);
         if (from >= writer.FirstLiveLine)
         {
@@ -607,22 +658,25 @@ public sealed partial class CommandOutput : IDisposable
         return count == 0 ? null : (from, retained.Take(count).ToList());
     }
 
-    /// <summary>Removes a finished writer and starts the next waiting writer of the same file, if any.</summary>
+    /// <summary>Frees the file for its next writer when <paramref name="writer"/> finishes, and starts that writer if it is waiting.</summary>
     private void OnLogWriterFinishedLocked(LogWriter writer)
     {
-        _unfinishedLogs.Remove(writer);
-        foreach (LogWriter other in _unfinishedLogs.ToList())
+        LogDestination destination = writer.Destination;
+        destination.Running = null;
+        if (destination.Waiting is { } next)
         {
-            if (!other.Started && PathEquals(other.Path, writer.Path) && !HasEarlierWriterLocked(other))
-            {
-                StartWriterLocked(other);
-            }
+            destination.Waiting = null;
+            destination.Running = next;
+            StartWriterLocked(next);
         }
     }
 
     private static bool IsIoFailure(Exception ex) =>
         ex is IOException or UnauthorizedAccessException or NotSupportedException;
 
-    private static bool PathEquals(string a, string? b) =>
-        b is not null && string.Equals(a, b, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    /// <summary>How log paths are compared: as Windows file names (case-insensitive) or exactly.</summary>
+    private static readonly StringComparer PathComparer =
+        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    private static bool PathEquals(string a, string? b) => b is not null && PathComparer.Equals(a, b);
 }
