@@ -305,7 +305,8 @@ public class WindowsJobContainmentTests
 
     /// <summary>
     /// Starts <c>start /b ping</c> from a leader that exits at once, then kills or disposes the group. Every PING the job holds
-    /// must exit within 5 s of that. Every PING started after the probe began is tracked for cleanup, whether or not it is in the job.
+    /// must exit within 5 s of that. Every PING started after the probe began is listed in the diagnostic; only those in the job are
+    /// killed at cleanup (one outside it may not be this test's, and this test's own PINGs end by themselves within 20 s).
     /// </summary>
     private static async Task EarlyChildRunAsync(string label, bool disposeGroup)
     {
@@ -537,8 +538,9 @@ public class WindowsJobContainmentTests
         }
 
         /// <summary>
-        /// Tracks every PING process started since this probe began (by StartTime), keeping its handle open so it can be watched and
-        /// killed later, and returns those that are in the job. The ones outside the job stay tracked and are listed in the diagnostic.
+        /// Tracks every PING process started since this probe began (by StartTime), keeping its handle open so it can be watched, and
+        /// returns those that are in the job. The ones outside the job are listed in the diagnostic but never killed: the name and start
+        /// time don't make a process this test's (it could be the user's own ping).
         /// </summary>
         internal List<Process> TrackPingsInJob()
         {
@@ -705,7 +707,10 @@ public class WindowsJobContainmentTests
             return sb.ToString();
         }
 
-        /// <summary>Kills what the probe tracks: the job first, then each PING it tracked that is still alive, then the leader's handle.</summary>
+        /// <summary>
+        /// Kills what the probe owns: the job first, then each tracked PING that was in the job and is still alive, then closes the
+        /// leader's handle. A tracked PING outside the job is only closed, never killed (see <see cref="TrackPingsInJob"/>).
+        /// </summary>
         public void Dispose()
         {
             try
@@ -729,7 +734,7 @@ public class WindowsJobContainmentTests
                 Process p = record.Process;
                 try
                 {
-                    if (!p.HasExited)
+                    if (record.InJob == "true" && !p.HasExited)
                     {
                         p.Kill();
                     }
