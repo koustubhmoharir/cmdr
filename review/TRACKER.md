@@ -13,6 +13,10 @@ All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows tes
 - **PowerShell copy of a batch-file program (06-05): verify on Windows.** A batch-file command with an argument PowerShell's legacy passing would mangle is copied as `$env:CMDR_CMD = '<cmdr's cmd command>'; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD`. Check in PowerShell 7 and 5.1 with `npm.cmd`/a `node_modules\.bin` shim and arguments `a&ver`, `x|y`, `%TEMP%`, `"q"`, an empty one, and that plain commands (`pnpm run dev --port=3000`) keep the plain form.
 - **Windows verification** of 515e30c, c0799b3 (`File.Replace` fallback, `PhysicalPath` on Windows), d0ccf63 (conhost path, duplicated exit-wait handle, UNC), 9b3ae25, ce2c06d (drive-relative programs and PATH entries) and f6dcc28 (ComSpec fallback). Step-by-step: [WINDOWS-TESTING.md](WINDOWS-TESTING.md).
 
+## 3. Open from the third review (2026-11-15)
+
+All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). S0 (the Windows containment test kills unrelated `ping.exe` processes) must be fixed before the Windows checklist is run. Steps that depend on the report's open questions Q1–Q11 wait for the user's answers.
+
 ## Validation gaps (not tied to one item)
 
 - Native Windows, 03-01: run `dotnet test tests/Cmdr.Core.Tests --filter "FullyQualifiedName~Windows"`. `WindowsJobContainmentTests` exercises the job list, the handle list, the inheritable-handle lock with the Ctrl+C helper, pipe EOF, exit tracking and console stdin; its failures print a diagnostic dump. Also check by hand that Ctrl+C still stops commands and that `stdin: console` (e.g. `dotnet watch`) still works.

@@ -1,5 +1,7 @@
 # Code review — 2026-11-13
 
+**Third review (2026-11-15): [ROUND3-REPORT.md](ROUND3-REPORT.md)**: 29 open findings, the recurring bug classes behind them, and a refactoring roadmap.
+
 **Current status: [TRACKER.md](TRACKER.md)** lists every remaining item and decision. [COMPLETED-FIXES.md](COMPLETED-FIXES.md) records what has been fixed, and in which commit.
 
 Everything else here is a snapshot of the review of baseline `a06d405`. Its source line references point at that baseline and are not updated as the code changes.

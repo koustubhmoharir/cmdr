@@ -3,6 +3,10 @@
 Everything here has passed on Linux. The Windows code paths have never run on Windows. Record results in
 [TRACKER.md](TRACKER.md) (section 1 and "Validation gaps"), then remove the items that pass.
 
+> **Before running section 1:** `WindowsJobContainmentTests` currently kills any `ping.exe` started from 2 seconds before
+> the test onward, including your own (third review, W03-04, roadmap step S0). Close any `ping` you have running, or wait
+> for S0 to be fixed.
+
 ## Setup
 
 - A Windows 10/11 machine (not WSL), .NET 10 SDK (`dotnet --version`), Windows Terminal, and PowerShell 7 (`pwsh`).
