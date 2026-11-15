@@ -282,7 +282,8 @@ returns a notice that is written to the output.
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
 - The command line shown in the info pane and copied with `c` is POSIX sh syntax, or PowerShell syntax on
-  Windows (`CommandLineFormatter`; a quoted program gets the `&` call operator).
+  Windows (`CommandLineFormatter`; a program that is quoted, or that PowerShell would read as a keyword, a number
+  or an operator, gets the `&` call operator).
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written via `app.Driver.WriteRaw(...)`.
 
 ## Implementation notes (from investigation)

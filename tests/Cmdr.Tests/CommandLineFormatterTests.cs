@@ -122,6 +122,20 @@ public sealed class CommandLineFormatterTests
         Assert.Equal("tool.exe a", CommandLineFormatter.Format("tool.exe", new[] { "a" }, powerShell: true));
     }
 
+    [Theory]
+    [InlineData("foreach", "& 'foreach'")]
+    [InlineData("If", "& 'If'")]
+    [InlineData("123", "& '123'")]
+    [InlineData("-x", "& '-x'")]
+    [InlineData("tool", "tool")]
+    [InlineData(@".\tool.exe", @".\tool.exe")]
+    [InlineData("../bin/tool", "../bin/tool")]
+    [InlineData(@"C:\bin\tool.exe", @"C:\bin\tool.exe")]
+    public void PowerShell_program_that_would_not_parse_as_a_command_is_invoked_with_the_call_operator(string program, string expected)
+    {
+        Assert.Equal(expected, CommandLineFormatter.Format(program, Array.Empty<string>(), powerShell: true));
+    }
+
     [Fact]
     public void PowerShell_format_with_no_arguments_is_the_program_alone()
     {

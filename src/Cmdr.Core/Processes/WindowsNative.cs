@@ -140,6 +140,23 @@ internal static partial class WindowsNative
         ref STARTUPINFOEXW startupInfo,
         out PROCESS_INFORMATION processInformation);
 
+    /// <summary>DUPLICATE_SAME_ACCESS for <see cref="DuplicateHandle"/>.</summary>
+    internal const uint DuplicateSameAccess = 0x00000002;
+
+    /// <summary>The pseudo handle of the current process (what GetCurrentProcess returns); it needs no closing.</summary>
+    internal static readonly nint CurrentProcess = -1;
+
+    /// <summary>Duplicates a handle. Non-zero is success; close <paramref name="targetHandle"/> with <see cref="CloseHandle"/>.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "DuplicateHandle", SetLastError = true)]
+    internal static partial int DuplicateHandle(
+        nint sourceProcess,
+        nint sourceHandle,
+        nint targetProcess,
+        out nint targetHandle,
+        uint desiredAccess,
+        int inheritHandle,
+        uint options);
+
     /// <summary>Reads a process's exit code. Valid once the process has exited; non-zero is success.</summary>
     [LibraryImport(Kernel32, EntryPoint = "GetExitCodeProcess", SetLastError = true)]
     internal static partial int GetExitCodeProcess(nint process, out uint exitCode);

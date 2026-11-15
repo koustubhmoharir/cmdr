@@ -22,6 +22,7 @@ public class SessionOwnershipTests
             CommandEntry foreign = b.Groups[0].Commands[0];
 
             Assert.Throws<ArgumentException>(() => a.Activate(new[] { local, foreign }));
+            Assert.Throws<ArgumentException>(() => a.Activate(new[] { foreign }));
             Assert.Throws<ArgumentException>(() => a.Stop(new[] { foreign }));
             Assert.Throws<ArgumentException>(() => a.ForceKill(new[] { foreign }));
             Assert.Throws<ArgumentException>(() => a.InputsForActivate(new[] { foreign }));

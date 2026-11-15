@@ -16,6 +16,9 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     private const int ErrorTimeout = 1460; // ERROR_TIMEOUT
     private const uint TerminateExitCode = 1;
 
+    /// <summary>The console host's image path, as QueryFullProcessImageNameW reports it (the system directory is System32 even for a 32-bit process).</summary>
+    private static readonly string s_consoleHostPath = Path.Combine(Environment.SystemDirectory, "conhost.exe");
+
     private readonly SafeJobHandle _job;
     private readonly int _leaderPid;
     private readonly CtrlCHelperCommand _helper;
@@ -128,7 +131,7 @@ internal sealed class WindowsProcessGroup : IProcessGroup
 
     /// <inheritdoc />
     /// <remarks>
-    /// Lists the job's process ids and counts them, leaving out console hosts (<c>conhost.exe</c>). The child is created inside
+    /// Lists the job's process ids and counts them, leaving out console hosts (the system's <c>conhost.exe</c>). The child is created inside
     /// the job, so the hidden console's host process is created in the job too. It is not a process the command started: it
     /// exits on its own once its last client detaches, which is shortly after the leader exits, so counting it would report a
     /// phantom leftover for every command. A console host serving real leftovers is not needed in the count either, because
@@ -215,7 +218,8 @@ internal sealed class WindowsProcessGroup : IProcessGroup
     }
 
     /// <summary>
-    /// True if <paramref name="pid"/> runs <c>conhost.exe</c>. A process that cannot be opened or queried (for example because it
+    /// True if <paramref name="pid"/> runs the system's console host (<c>conhost.exe</c> in the system directory; a program of
+    /// the same name elsewhere is an ordinary process). A process that cannot be opened or queried (for example because it
     /// exited after the list was read) is not a console host, so it is counted: a failure must not hide a real leftover.
     /// </summary>
     private static bool IsConsoleHost(uint pid)
@@ -237,7 +241,7 @@ internal sealed class WindowsProcessGroup : IProcessGroup
             }
 
             string path = Marshal.PtrToStringUni(buffer, (int)size);
-            return string.Equals(Path.GetFileName(path), "conhost.exe", StringComparison.OrdinalIgnoreCase);
+            return string.Equals(path, s_consoleHostPath, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

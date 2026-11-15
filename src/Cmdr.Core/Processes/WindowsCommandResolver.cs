@@ -143,9 +143,9 @@ internal static class WindowsCommandResolver
     /// <summary>Contains '\\' or '/'.</summary>
     private static bool IsPathLike(string program) => program.Contains('\\') || program.Contains('/');
 
-    /// <summary>A drive-absolute path (<c>C:\</c> or <c>C:/</c>) or a UNC path (<c>\\</c>).</summary>
+    /// <summary>A drive-absolute path (<c>C:\</c> or <c>C:/</c>), a UNC path, or a path rooted at the current drive (<c>\x</c>).</summary>
     private static bool IsRooted(string program) =>
-        program.StartsWith(@"\\", StringComparison.Ordinal)
+        IsUnc(program)
         || program.StartsWith('\\')
         || program.StartsWith('/')
         || (program.Length >= 3
@@ -156,8 +156,12 @@ internal static class WindowsCommandResolver
     /// <summary>Expands a drive-rooted path such as <c>\tools\run.cmd</c> using the working directory's drive.</summary>
     private static string RootRelativePath(string path, string workingDirectory)
     {
-        if (path.StartsWith(@"\\", StringComparison.Ordinal)
-            || (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/')))
+        if (IsUnc(path))
+        {
+            return path.Replace('/', '\\'); // Windows accepts either separator; the candidates use '\\'
+        }
+
+        if (path.Length >= 3 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path[2] == '\\' || path[2] == '/'))
         {
             return path;
         }
@@ -167,7 +171,7 @@ internal static class WindowsCommandResolver
             return workingDirectory[..2] + path.Replace('/', '\\');
         }
 
-        if (workingDirectory.StartsWith(@"\\", StringComparison.Ordinal))
+        if (IsUnc(workingDirectory))
         {
             string[] parts = workingDirectory[2..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
             if (parts.Length >= 2)
@@ -178,6 +182,12 @@ internal static class WindowsCommandResolver
 
         throw new ArgumentException("A root-relative Windows path requires a drive-qualified working directory.", nameof(workingDirectory));
     }
+
+    /// <summary>
+    /// A UNC path: two leading separators, either of which may be '/' (Windows treats <c>//server/share</c> like
+    /// <c>\\server\share</c>).
+    /// </summary>
+    private static bool IsUnc(string path) => path.Length >= 2 && (path[0] is '\\' or '/') && (path[1] is '\\' or '/');
 
     /// <summary>Joins with '\\'. An empty directory yields the name unchanged; a directory already ending in a separator is not given another.</summary>
     private static string JoinPath(string directory, string name)

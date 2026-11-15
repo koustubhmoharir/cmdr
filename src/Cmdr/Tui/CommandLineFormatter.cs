@@ -81,8 +81,10 @@ internal static class CommandLineFormatter
     }
 
     /// <summary>
-    /// The program as PowerShell must see it: bare when it needs no quoting, otherwise invoked with the call operator
-    /// <c>&amp;</c> because PowerShell does not run a quoted string as a command.
+    /// The program as PowerShell must see it: bare when PowerShell would read it as a command name, otherwise quoted and invoked
+    /// with the call operator <c>&amp;</c>, because PowerShell does not run a quoted string as a command. Bare needs only safe
+    /// characters and a start that is not an expression: a letter or <c>_</c>, a drive or a path (<c>.\</c>, <c>..\</c>,
+    /// <c>\</c>, <c>/</c>), and not a keyword (<c>foreach</c> would start a loop, <c>123</c> is a number, <c>-x</c> an operator).
     /// </summary>
     private static string FormatProgram(string program, bool powerShell)
     {
@@ -92,8 +94,27 @@ internal static class CommandLineFormatter
         }
 
         string quoted = QuotePowerShell(program);
-        return quoted.StartsWith('\'') ? "& " + quoted : quoted;
+        bool bare = !quoted.StartsWith('\'') && StartsLikeACommand(program) && !PowerShellKeywords.Contains(program);
+        return bare ? quoted : "& " + (quoted.StartsWith('\'') ? quoted : "'" + quoted + "'");
     }
+
+    private static bool StartsLikeACommand(string program) =>
+        char.IsLetter(program[0])
+        || program[0] == '_'
+        || program[0] is '\\' or '/'
+        || program.StartsWith(@".\", StringComparison.Ordinal)
+        || program.StartsWith("./", StringComparison.Ordinal)
+        || program.StartsWith(@"..\", StringComparison.Ordinal)
+        || program.StartsWith("../", StringComparison.Ordinal);
+
+    /// <summary>PowerShell's reserved words, which are statements, not commands, at the start of a line.</summary>
+    private static readonly HashSet<string> PowerShellKeywords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "begin", "break", "catch", "class", "clean", "configuration", "continue", "data", "define", "do", "dynamicparam",
+        "else", "elseif", "end", "enum", "exit", "filter", "finally", "for", "foreach", "from", "function", "hidden", "if",
+        "in", "inlinescript", "parallel", "param", "process", "return", "sequence", "static", "switch", "throw", "trap",
+        "try", "until", "using", "var", "while", "workflow",
+    };
 
     private static string Quote(string token, bool powerShell) => powerShell ? QuotePowerShell(token) : QuotePosix(token);
 

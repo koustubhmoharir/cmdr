@@ -210,6 +210,33 @@ public class WindowsCommandResolverTests
     }
 
     [Theory]
+    [InlineData("//server/share/run")]
+    [InlineData(@"\\server/share/run")]
+    [InlineData(@"/\server\share\run")]
+    public void UncPathWithForwardSlashesIsTheNetworkPathNotOneOnTheLocalDrive(string program)
+    {
+        var candidates = new List<string>();
+        Func<string, bool> fs = path =>
+        {
+            candidates.Add(path);
+            return string.Equals(path, @"\\server\share\run.CMD", StringComparison.OrdinalIgnoreCase);
+        };
+
+        Assert.Equal(@"\\server\share\run.CMD", WindowsCommandResolver.Resolve(program, @"C:\child", null, ".CMD", fs));
+        Assert.DoesNotContain(candidates, c => c.StartsWith("C:", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void PathEntryWithForwardSlashUncIsSearchedOnTheShare()
+    {
+        Func<string, bool> fs = Files(@"\\server\share\bin\tool.cmd");
+
+        Assert.Equal(
+            @"\\server\share\bin\tool.CMD",
+            WindowsCommandResolver.Resolve("tool", @"C:\child", "//server/share/bin", ".CMD", fs));
+    }
+
+    [Theory]
     [InlineData(@"\tools\run", @"C:\tools\run.CMD")]
     [InlineData("/tools/run", @"C:\tools\run.CMD")]
     public void DriveRootedPathUsesDriveRootRatherThanChildDirectory(string program, string expected)

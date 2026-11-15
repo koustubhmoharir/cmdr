@@ -39,6 +39,7 @@ internal sealed class WindowsLaunchedProcess : ILaunchedProcess
     private volatile bool _exited;
 
     /// <summary>Wraps a started process. Takes ownership of <paramref name="process"/>; exit tracking does not begin until <see cref="BeginExitTracking"/>.</summary>
+    /// <exception cref="System.ComponentModel.Win32Exception">The process handle could not be duplicated for the exit wait.</exception>
     internal WindowsLaunchedProcess(
         SafeProcessHandle process,
         int id,
@@ -175,14 +176,29 @@ internal sealed class WindowsLaunchedProcess : ILaunchedProcess
     }
 
     /// <summary>
-    /// A wait handle over the process handle that does not own it: the wait is on the process object, and <see cref="_process"/>
-    /// closes the handle.
+    /// A wait handle over its own duplicate of the process handle. The thread pool holds a reference to it while the wait is
+    /// registered, so <see cref="Dispose"/> (which unregisters without waiting) cannot close a handle that a pending wait still
+    /// uses: closing the process handle itself under a pending wait is undefined, and its value could be reused by another
+    /// object. The duplicate is closed when the last reference is released.
     /// </summary>
     private sealed class ExitWaitHandle : WaitHandle
     {
+        /// <exception cref="System.ComponentModel.Win32Exception">The handle could not be duplicated.</exception>
         internal ExitWaitHandle(nint processHandle)
         {
-            SafeWaitHandle = new SafeWaitHandle(processHandle, ownsHandle: false);
+            if (WindowsNative.DuplicateHandle(
+                    WindowsNative.CurrentProcess,
+                    processHandle,
+                    WindowsNative.CurrentProcess,
+                    out nint duplicate,
+                    0,
+                    0,
+                    WindowsNative.DuplicateSameAccess) == 0)
+            {
+                throw new System.ComponentModel.Win32Exception(System.Runtime.InteropServices.Marshal.GetLastPInvokeError());
+            }
+
+            SafeWaitHandle = new SafeWaitHandle(duplicate, ownsHandle: true);
         }
     }
 }
