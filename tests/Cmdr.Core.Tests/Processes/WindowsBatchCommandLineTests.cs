@@ -56,4 +56,13 @@ public class WindowsBatchCommandLineTests
     {
         Assert.Null(ForCopy("missing", "a&b"));
     }
+
+    [Theory]
+    [InlineData("a&b\nc")]
+    [InlineData("a\rb&")]
+    public void BatchProgramWithALineBreakInAnArgument_KeepsThePowerShellForm(string arg)
+    {
+        // cmd.exe cannot receive a line break, so the command does not start; the copy shows the plain form.
+        Assert.Null(ForCopy("pnpm", "run", arg));
+    }
 }

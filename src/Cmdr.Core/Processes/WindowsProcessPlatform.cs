@@ -61,7 +61,10 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     /// would search cmdr's own directory, the system directories and the parent PATH and could run a different file.
     /// </remarks>
     /// <exception cref="FileNotFoundException">The program does not resolve under the child's working directory or PATH.</exception>
-    /// <exception cref="ArgumentException">The program is a drive-relative path (<c>C:tools\run</c>).</exception>
+    /// <exception cref="ArgumentException">
+    /// The program is a drive-relative path (<c>C:tools\run</c>); or it is a batch file and its working directory is a UNC path,
+    /// or one of its arguments contains a line break.
+    /// </exception>
     public PreparedLaunch Prepare(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
@@ -97,6 +100,11 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         {
             throw new FileNotFoundException(
                 WindowsCommandResolver.NotFoundMessage(spec.Program, spec.WorkingDirectory, pathExt));
+        }
+
+        if (WindowsCommandResolver.IsBatchFile(resolved))
+        {
+            WindowsCommandResolver.CheckBatchWorkingDirectory(spec.WorkingDirectory);
         }
 
         WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch(

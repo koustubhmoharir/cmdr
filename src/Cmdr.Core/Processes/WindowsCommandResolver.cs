@@ -270,6 +270,15 @@ internal static class WindowsCommandResolver
 
         if (IsBatchFile(resolvedPath))
         {
+            for (int i = 0; i < args.Count; i++)
+            {
+                if (ContainsLineBreak(args[i]))
+                {
+                    throw new ArgumentException(
+                        $"argument {i + 1} contains a line break, which cmd.exe cannot pass to a batch file");
+                }
+            }
+
             return new WindowsLaunchPlan(
                 FileName: comSpec is not null && IsFullyQualified(comSpec) ? comSpec : JoinPath(systemDirectory, "cmd.exe"),
                 Arguments: WindowsCmdEscaping.BuildCmdArguments(resolvedPath, args),
@@ -283,6 +292,44 @@ internal static class WindowsCommandResolver
             ArgumentList: args,
             InputAfterInterrupt: null);
     }
+
+    /// <summary>
+    /// Refuses a working directory that cmd.exe cannot use for a batch file: cmd.exe refuses a UNC current directory and
+    /// silently runs in C:\Windows instead. A UNC path is one that starts with two separators, except the local device forms
+    /// <c>\\?\C:\</c> and <c>\\.\C:\</c>; <c>\\?\UNC\server\share</c> is UNC.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="workingDirectory"/> is a UNC path.</exception>
+    internal static void CheckBatchWorkingDirectory(string workingDirectory)
+    {
+        ArgumentNullException.ThrowIfNull(workingDirectory);
+
+        if (IsUncForBatchFile(workingDirectory))
+        {
+            throw new ArgumentException(
+                $"{workingDirectory} is a UNC path, which cmd.exe cannot use as the working directory of a batch file; " +
+                "map a drive letter to the share and use that path.");
+        }
+    }
+
+    private static bool IsUncForBatchFile(string path)
+    {
+        string normalized = path.Replace('/', '\\');
+        if (!normalized.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // \\?\C:\ and \\.\C:\ name a local drive; any other path that starts with two separators is a network path.
+        bool localDrive = normalized.Length >= 6
+            && normalized[2] is ('?' or '.')
+            && normalized[3] == '\\'
+            && char.IsAsciiLetter(normalized[4])
+            && normalized[5] == ':';
+        return !localDrive;
+    }
+
+    /// <summary>True when the argument contains a CR or LF, which cmd.exe cannot receive intact.</summary>
+    internal static bool ContainsLineBreak(string arg) => arg.AsSpan().IndexOfAny('\r', '\n') >= 0;
 
     internal static bool IsBatchFile(string path) =>
         path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);

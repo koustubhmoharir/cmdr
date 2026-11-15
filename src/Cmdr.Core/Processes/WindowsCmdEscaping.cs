@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace Cmdr.Core.Processes;
 
 /// <summary>
-/// Escaping for running a batch file through <c>cmd.exe /d /s /c</c>, ported from the cross-spawn npm package (MIT),
+/// Escaping for running a batch file through <c>cmd.exe /d /v:off /s /c</c>, ported from the cross-spawn npm package (MIT),
 /// whose rules are based on https://qntm.org/cmd.
 /// </summary>
 internal static class WindowsCmdEscaping
@@ -50,11 +50,12 @@ internal static class WindowsCmdEscaping
     }
 
     /// <summary>
-    /// Builds the argument string for <c>cmd.exe</c>: <c>/d /s /c "&lt;escaped path&gt; &lt;escaped args&gt;"</c>.
+    /// Builds the argument string for <c>cmd.exe</c>: <c>/d /v:off /s /c "&lt;escaped path&gt; &lt;escaped args&gt;"</c>.
+    /// <c>/v:off</c> keeps delayed expansion off whatever the registry enables, so <c>!var!</c> in an argument is not expanded.
     /// Pass it as <c>ProcessStartInfo.Arguments</c> (raw), not through <c>ArgumentList</c>, which would quote it again.
     /// </summary>
     public static string BuildCmdArguments(string resolvedPath, IReadOnlyList<string> args) =>
-        "/d /s /c \"" + BuildCommand(resolvedPath, args) + "\"";
+        "/d /v:off /s /c \"" + BuildCommand(resolvedPath, args) + "\"";
 
     /// <summary>
     /// The command cmd.exe runs: the escaped path and arguments, as cmd parses them once <c>/s</c> has removed the quotes

@@ -68,6 +68,63 @@ public sealed class CommandLineFormatterTests
     }
 
     [Theory]
+    [InlineData("ls", "ls")]
+    [InlineData("./run.sh", "./run.sh")]
+    [InlineData("If", "If")] // sh's reserved words are case-sensitive
+    [InlineData("if", "'if'")]
+    [InlineData("do", "'do'")]
+    [InlineData("coproc", "'coproc'")]
+    [InlineData("X=1", "'X=1'")]
+    public void Posix_program_in_command_position_is_quoted_only_when_sh_would_read_it_as_syntax(string program, string expected)
+    {
+        Assert.Equal(expected, CommandLineFormatter.Format(program, Array.Empty<string>(), powerShell: false));
+    }
+
+    [Theory]
+    [InlineData("if")]
+    [InlineData("do")]
+    [InlineData("X=1")]
+    public void Posix_program_named_like_sh_syntax_runs_when_the_copied_line_is_run_by_sh(string name)
+    {
+        // Runs the formatted line in /bin/sh with a directory of scripts first on PATH. Skipped on Windows, or when /bin/sh is absent.
+        if (OperatingSystem.IsWindows() || !File.Exists("/bin/sh"))
+        {
+            return;
+        }
+
+        string dir = Path.Combine(Path.GetTempPath(), "cmdr-posix-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string script = Path.Combine(dir, name);
+            File.WriteAllText(script, "#!/bin/sh\necho EXECUTED\n");
+            File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            string line = CommandLineFormatter.Format(name, Array.Empty<string>(), powerShell: false);
+            var info = new ProcessStartInfo("/bin/sh")
+            {
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            info.ArgumentList.Add("-c");
+            info.ArgumentList.Add(line);
+            info.Environment["PATH"] = dir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+
+            (string stdout, string stderr, int exitCode) = RunBounded(info, TimeSpan.FromSeconds(20));
+
+            Assert.True(
+                exitCode == 0 && stdout == "EXECUTED\n",
+                $"line: {line}\nexit: {exitCode}\nstdout: {stdout}\nstderr: {stderr}");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Theory]
     [InlineData("tool.exe")]
     [InlineData("--flag=1")]
     [InlineData("C:\\bin\\x.exe")]
@@ -123,12 +180,60 @@ public sealed class CommandLineFormatterTests
     }
 
     [Fact]
-    public void PowerShell_batch_command_runs_through_cmd_from_an_environment_variable()
+    public void PowerShell_batch_command_runs_through_cmd_from_an_environment_variable_saved_and_restored()
     {
         const string command = @"C:\bin\pnpm.cmd ^""a^&ver^"" 'q'";
         Assert.Equal(
-            @"$env:CMDR_CMD = 'C:\bin\pnpm.cmd ^""a^&ver^"" ''q'''; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD",
+            @"& { $saved = $env:CMDR_CMD; $env:CMDR_CMD = 'C:\bin\pnpm.cmd ^""a^&ver^"" ''q'''; try { cmd /d /v:off /c '%CMDR_CMD%' } finally { $env:CMDR_CMD = $saved } }",
             CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: true, batchCommand: command));
+    }
+
+    [Fact]
+    public void PowerShell_argument_equal_to_the_stop_parsing_token_is_passed_in_an_array_after_the_program()
+    {
+        Assert.Equal(
+            "& /usr/bin/printf @('%s\\n', '--%', 'a b', '%CMDR_PROBE%')",
+            CommandLineFormatter.Format("/usr/bin/printf", new[] { "%s\\n", "--%", "a b", "%CMDR_PROBE%" }, powerShell: true));
+    }
+
+    [Fact]
+    public void PowerShell_literal_stop_parsing_argument_reaches_a_native_program_unchanged()
+    {
+        // The plain form would lose "--%" and everything after it to PowerShell's stop-parsing. Skipped when pwsh (or
+        // /usr/bin/printf) is not installed.
+        string? pwsh = FindOnPath("pwsh");
+        if (pwsh is null || !File.Exists("/usr/bin/printf"))
+        {
+            return;
+        }
+
+        string line = CommandLineFormatter.Format("/usr/bin/printf", new[] { "%s\\n", "--%", "a b", "%CMDR_PROBE%" }, powerShell: true);
+        string actual = RunPwsh(pwsh, line, new Dictionary<string, string?> { ["CMDR_PROBE"] = "EXPANDED" });
+
+        Assert.Equal("--%\na b\n%CMDR_PROBE%\n", actual);
+    }
+
+    [Theory]
+    [InlineData("original", "original")]
+    [InlineData(null, "<absent>")]
+    public void PowerShell_batch_form_runs_the_cmd_command_and_restores_the_variable(string? preset, string expectedAfter)
+    {
+        // A function named cmd stands in for cmd.exe (it is found before any native command): it prints the value the
+        // variable has while the command runs, and the script then prints the variable's value after the block.
+        string? pwsh = FindOnPath("pwsh");
+        if (pwsh is null)
+        {
+            return;
+        }
+
+        const string command = @"C:\Program^ Files\x\pnpm.cmd ^""a^&ver^"" ^""%TEMP%^"" ^""it's^"" ^""it’s^"" ^""x^|y^"" $(boom) `n";
+        string line = CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: true, batchCommand: command);
+        string script = "function cmd { [Console]::Out.Write($env:CMDR_CMD) }; " + line
+            + "; [Console]::Out.Write('|' + $(if (Test-Path Env:CMDR_CMD) { $env:CMDR_CMD } else { '<absent>' }))";
+
+        string actual = RunPwsh(pwsh, script, new Dictionary<string, string?> { ["CMDR_CMD"] = preset });
+
+        Assert.Equal(command + "|" + expectedAfter, actual);
     }
 
     [Fact]
@@ -193,39 +298,60 @@ public sealed class CommandLineFormatterTests
         }
     }
 
-    [Fact]
-    public void PowerShell_batch_form_puts_the_cmd_command_into_the_variable_unchanged()
-    {
-        // cmd.exe cannot run here, but pwsh can check its part: the variable must hold the command byte for byte.
-        string? pwsh = FindOnPath("pwsh");
-        if (pwsh is null)
-        {
-            return;
-        }
-
-        const string command = @"C:\Program^ Files\x\pnpm.cmd ^""a^&ver^"" ^""%TEMP%^"" ^""it's^"" ^""it’s^"" ^""x^|y^"" $(boom) `n";
-        string line = CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: true, batchCommand: command);
-        string assignment = line[..line.IndexOf("; cmd ", StringComparison.Ordinal)];
-
-        Assert.Equal(command, RunPwsh(pwsh, assignment + "; [Console]::Out.Write($env:CMDR_CMD)"));
-    }
-
-    private static string RunPwsh(string pwsh, string command)
+    private static string RunPwsh(string pwsh, string command, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var info = new ProcessStartInfo(pwsh)
         {
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
+            RedirectStandardError = true,
             StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false,
         };
         info.ArgumentList.Add("-NoProfile");
         info.ArgumentList.Add("-Command");
         info.ArgumentList.Add(command);
+        if (environment is not null)
+        {
+            foreach (KeyValuePair<string, string?> entry in environment)
+            {
+                info.Environment[entry.Key] = entry.Value;
+            }
+        }
 
-        using Process process = Process.Start(info) ?? throw new InvalidOperationException("pwsh did not start");
-        string output = process.StandardOutput.ReadToEnd();
-        Assert.True(process.WaitForExit(60_000), "pwsh did not exit in time");
-        return output;
+        (string stdout, string stderr, int exitCode) = RunBounded(info, TimeSpan.FromSeconds(60));
+        Assert.True(exitCode == 0, $"pwsh exited with {exitCode}: {stderr}");
+        return stdout;
+    }
+
+    /// <summary>
+    /// Runs a process with stdout and stderr read concurrently, and waits at most <paramref name="timeout"/>. A process that
+    /// is still running (or whose output stays open) at the deadline is killed with its children, and the test fails.
+    /// </summary>
+    private static (string Stdout, string Stderr, int ExitCode) RunBounded(ProcessStartInfo info, TimeSpan timeout)
+    {
+        using Process process = Process.Start(info) ?? throw new InvalidOperationException($"{info.FileName} did not start");
+        process.StandardInput.Close();
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+
+        bool finished = process.WaitForExit(timeout) && Task.WaitAll([stdout, stderr], timeout);
+        if (!finished)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // already exited
+            }
+
+            Assert.Fail($"{info.FileName} did not finish within {timeout.TotalSeconds} s");
+        }
+
+        return (stdout.Result, stderr.Result, process.ExitCode);
     }
 
     private static string? FindOnPath(string name) =>

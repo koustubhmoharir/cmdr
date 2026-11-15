@@ -16,9 +16,10 @@ public static class WindowsBatchCommandLine
     private const string Specials = "\"&|<>^%!()`";
 
     /// <summary>
-    /// The command cmdr runs after <c>cmd /d /s /c</c> for <paramref name="spec"/>, when its program resolves to a batch file
-    /// and one of its arguments would not reach it intact through PowerShell; otherwise null (also when the program does not
-    /// resolve). The program is resolved as a launch would resolve it: its working directory, then the PATH of its environment,
+    /// The command cmdr runs after <c>cmd /d /v:off /s /c</c> for <paramref name="spec"/>, when its program resolves to a batch
+    /// file and one of its arguments would not reach it intact through PowerShell; otherwise null (also when the program does
+    /// not resolve, and for an argument with a line break, which cmd.exe cannot receive: such a command does not start either).
+    /// The program is resolved as a launch would resolve it: its working directory, then the PATH of its environment,
     /// with PATHEXT. Arguments are checked first, so the file system is only searched for the few commands that need it.
     /// </summary>
     public static string? ForCopy(LaunchSpec spec) => ForCopy(spec, CurrentEnvironment(), File.Exists);
@@ -27,7 +28,7 @@ public static class WindowsBatchCommandLine
     internal static string? ForCopy(LaunchSpec spec, IDictionary<string, string?> baseEnvironment, Func<string, bool> fileExists)
     {
         ArgumentNullException.ThrowIfNull(spec);
-        if (!spec.Args.Any(NeedsCmd))
+        if (spec.Args.Any(WindowsCommandResolver.ContainsLineBreak) || !spec.Args.Any(NeedsCmd))
         {
             return null;
         }

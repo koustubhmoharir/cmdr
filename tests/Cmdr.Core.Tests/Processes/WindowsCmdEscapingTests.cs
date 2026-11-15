@@ -81,13 +81,20 @@ public class WindowsCmdEscapingTests
             @"C:\Program Files\nodejs\npm.cmd",
             new[] { "install", "a b" });
 
-        Assert.Equal(@"/d /s /c ""C:\Program^ Files\nodejs\npm.cmd ^""install^"" ^""a^ b^""""", result);
+        Assert.Equal(@"/d /v:off /s /c ""C:\Program^ Files\nodejs\npm.cmd ^""install^"" ^""a^ b^""""", result);
     }
 
     [Fact]
     public void BuildCmdArgumentsWithNoArgumentsEndsAfterCommand()
     {
-        Assert.Equal(@"/d /s /c ""C:\tools\run.bat""", WindowsCmdEscaping.BuildCmdArguments(@"C:\tools\run.bat", Array.Empty<string>()));
+        Assert.Equal(@"/d /v:off /s /c ""C:\tools\run.bat""", WindowsCmdEscaping.BuildCmdArguments(@"C:\tools\run.bat", Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void BuildCmdArgumentsTurnsDelayedExpansionOff()
+    {
+        // With delayed expansion on, cmd would expand !var! in the arguments; /v:off must come before /s /c.
+        Assert.StartsWith(@"/d /v:off /s /c """, WindowsCmdEscaping.BuildCmdArguments(@"C:\tools\run.bat", new[] { "!PATH!" }));
     }
 
     [Theory]

@@ -308,7 +308,9 @@ escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals suppo
 On Windows the copied command line is for PowerShell. PowerShell passes the arguments of batch files (`.cmd`/`.bat`, such
 as `npm.cmd`) without quoting them for cmd.exe, so when a batch-file command has an argument with `& | < > ^ % ! ( )`, a
 quote, or nothing in it, the copy runs it through cmd.exe instead, exactly as cmdr does:
-`$env:CMDR_CMD = '...'; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD`.
+`& { $saved = $env:CMDR_CMD; $env:CMDR_CMD = '...'; try { cmd /d /v:off /c '%CMDR_CMD%' } finally { $env:CMDR_CMD = $saved } }`
+(an existing `CMDR_CMD` is kept). An argument that is a literal `--%` is copied as an array after the program,
+`& program @('...', '--%')`, because PowerShell would otherwise stop parsing its arguments there.
 
 Quitting with commands still running offers to stop them and wait, to force-kill them, or to cancel.
 
@@ -327,6 +329,10 @@ version 1607 or later.
 
 - `.cmd`/`.bat` programs (`pnpm`, `npm`, `yarn`, …) run through `cmd.exe`. After Ctrl+C, cmd asks
   "Terminate batch job (Y/N)?"; cmdr answers it.
+- A batch-file command with an argument that contains a line break does not start: cmd.exe cannot pass a line break on
+  to the batch file, so cmdr reports the argument's number and refuses.
+- A batch-file command whose working directory is a UNC path (`\\server\share`) does not start: cmd.exe would silently
+  run it in `C:\Windows`. Map a drive letter to the share and set `cwd` to that path.
 - Ctrl+C reaches only the processes attached to the command's console; a child that opens its own console window
   doesn't get it. Force kill still ends the whole process tree.
 - `dotnet watch` ignores Ctrl+C when its input is redirected, which it is by default. Set

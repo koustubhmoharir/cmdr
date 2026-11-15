@@ -86,6 +86,28 @@ public class WindowsLaunchPlanTests
         Assert.Null(plan.InputAfterInterrupt);
     }
 
+    [Theory]
+    [InlineData(new[] { "ok", "a\nb" }, "argument 2")]
+    [InlineData(new[] { "a\rb" }, "argument 1")]
+    [InlineData(new[] { "ok", "x", "y\r\n" }, "argument 3")]
+    public void BatchArgumentWithALineBreakIsRefusedNamingItsNumber(string[] args, string where)
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(
+            () => WindowsCommandResolver.PlanLaunch("run", @"C:\tools\run.cmd", ComSpec, SystemDirectory, args));
+
+        Assert.Equal($"{where} contains a line break, which cmd.exe cannot pass to a batch file", ex.Message);
+    }
+
+    [Fact]
+    public void ExecutableArgumentWithALineBreakIsPassedThroughUnchanged()
+    {
+        string[] args = { "a\nb" };
+
+        WindowsLaunchPlan plan = WindowsCommandResolver.PlanLaunch("x", @"C:\bin\x.exe", ComSpec, SystemDirectory, args);
+
+        Assert.Equal(args, plan.ArgumentList);
+    }
+
     [Fact]
     public void ExplicitNonPathExtFileRunsDirectlyWithArgumentList()
     {

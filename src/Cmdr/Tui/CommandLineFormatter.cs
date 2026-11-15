@@ -25,6 +25,19 @@ internal static class CommandLineFormatter
     /// <summary>The variable that holds the cmd.exe command in the batch-file form.</summary>
     internal const string BatchVariable = "CMDR_CMD";
 
+    /// <summary>The argument that PowerShell's binder reads as its stop-parsing token.</summary>
+    private const string PowerShellStopParsing = "--%";
+
+    /// <summary>
+    /// The reserved words of POSIX sh. In command position, sh reads one of these as syntax (<c>if</c>, <c>do</c>), so a
+    /// program with that name is quoted, which makes sh read it as a command name.
+    /// </summary>
+    private static readonly HashSet<string> PosixReservedWords = new(StringComparer.Ordinal)
+    {
+        "case", "coproc", "do", "done", "elif", "else", "esac", "fi", "for", "function", "if", "in", "select", "then", "time",
+        "until", "while",
+    };
+
     /// <summary>
     /// The command line of a command: the program and its arguments, quoted for the platform. In PowerShell, a batch-file
     /// program whose arguments need it gets the cmd.exe form (see the remarks on this class).
@@ -44,7 +57,9 @@ internal static class CommandLineFormatter
     {
         if (powerShell && batchCommand is not null)
         {
-            return $"$env:{BatchVariable} = {QuotePowerShell(batchCommand)}; cmd /d /c '%{BatchVariable}%'; Remove-Item Env:{BatchVariable}";
+            // The variable is saved and restored, so a value the user had is kept; assigning $null removes it again if it was absent.
+            return $"& {{ $saved = $env:{BatchVariable}; $env:{BatchVariable} = {QuotePowerShell(batchCommand)}; " +
+                $"try {{ cmd /d /v:off /c '%{BatchVariable}%' }} finally {{ $env:{BatchVariable} = $saved }} }}";
         }
 
         return Format(program, args, powerShell);
@@ -69,6 +84,13 @@ internal static class CommandLineFormatter
     {
         ArgumentNullException.ThrowIfNull(program);
         ArgumentNullException.ThrowIfNull(args);
+
+        if (powerShell && args.Contains(PowerShellStopParsing))
+        {
+            // PowerShell's binder takes an argument whose value is --% as the stop-parsing token even when it is quoted, so
+            // the arguments go in one array expression, whose elements the binder does not inspect.
+            return $"& {QuotePowerShell(program)} @({string.Join(", ", args.Select(arg => QuotePowerShell(arg)))})";
+        }
 
         var parts = new List<string>(args.Count + 1) { FormatProgram(program, powerShell) };
         foreach (string arg in args)
@@ -130,7 +152,9 @@ internal static class CommandLineFormatter
     {
         if (!powerShell)
         {
-            return QuotePosix(program);
+            // sh reads an assignment such as X=1 in command position as an assignment, not as a command; quoting it makes it one.
+            bool syntax = PosixReservedWords.Contains(program) || program.Contains('=');
+            return syntax ? "'" + program.Replace("'", "'\\''") + "'" : QuotePosix(program);
         }
 
         string quoted = QuotePowerShell(program);

@@ -316,4 +316,37 @@ public class WindowsCommandResolverTests
     {
         Assert.Null(WindowsCommandResolver.Resolve("missing", WorkDir, @"C:\bin", null, Files()));
     }
+
+    [Theory]
+    [InlineData(@"\\server\share")]
+    [InlineData(@"\\server\share\dir")]
+    [InlineData(@"//server/share/dir")]
+    [InlineData(@"\\server/share")]
+    [InlineData(@"\\?\UNC\server\share")]
+    [InlineData(@"\\?\UNC\server\share\dir")]
+    [InlineData(@"//?/UNC/server/share")]
+    [InlineData(@"\\.\UNC\server\share")]
+    public void BatchWorkingDirectoryOnAUncPathIsRefused(string workingDirectory)
+    {
+        ArgumentException ex = Assert.Throws<ArgumentException>(() => WindowsCommandResolver.CheckBatchWorkingDirectory(workingDirectory));
+
+        Assert.Equal(
+            $"{workingDirectory} is a UNC path, which cmd.exe cannot use as the working directory of a batch file; " +
+            "map a drive letter to the share and use that path.",
+            ex.Message);
+    }
+
+    [Theory]
+    [InlineData(@"C:\work")]
+    [InlineData(@"c:/work")]
+    [InlineData(@"\\?\C:\work")]
+    [InlineData(@"\\.\C:\work")]
+    [InlineData(@"//?/C:/work")]
+    [InlineData(@"\\?\d:")]
+    [InlineData(@"\work")]
+    [InlineData(@"work")]
+    public void BatchWorkingDirectoryOnALocalPathIsAccepted(string workingDirectory)
+    {
+        WindowsCommandResolver.CheckBatchWorkingDirectory(workingDirectory);
+    }
 }

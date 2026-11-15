@@ -202,8 +202,10 @@ the cwd; a name with a non-PATHEXT extension is tried as is, last). A program th
 to start; it is never handed to CreateProcess's own search, which would look in cmdr's directory. A
 drive-relative program (`C:tools\run`, relative to a per-drive current directory the child does not have) fails to
 start with a message saying so; a drive-relative PATH entry is skipped. If it resolves to a
-`.cmd`/`.bat`, it is launched as `%ComSpec% /d /s /c "<escaped command line>"` using cross-spawn's
-escaping rules. A ComSpec that is missing or not a full path is replaced by `cmd.exe` in the system directory, so the
+`.cmd`/`.bat`, it is launched as `%ComSpec% /d /v:off /s /c "<escaped command line>"` using cross-spawn's
+escaping rules (`/v:off` keeps delayed expansion off whatever the registry enables). A batch file with an argument
+containing CR or LF, or whose working directory is a UNC path, is refused with an `ArgumentException` (a "failed to
+start" message), because cmd.exe cannot receive or use them. A ComSpec that is missing or not a full path is replaced by `cmd.exe` in the system directory, so the
 interpreter is never found by CreateProcess's search (cmdr's directory and current directory come first). Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin, so
 after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin. Caveat: a child that
 reads stdin could consume the answer first. With `stdin: console` the answer cannot be sent; the launch
@@ -297,7 +299,8 @@ returns a notice that is written to the output.
   or an operator, gets the `&` call operator). PowerShell passes batch-file arguments in its legacy mode, so a command
   whose program resolves to a `.cmd`/`.bat` and has an argument that mode would mangle (`WindowsBatchCommandLine`:
   empty, a quote, or `& | < > ^ % ! ( )` and backtick) is copied as cmdr's own cmd.exe command held in `$env:CMDR_CMD`
-  and run as `cmd /d /c '%CMDR_CMD%'`: cmd expands the variable before parsing, so `WindowsCmdEscaping` applies as is.
+  and run as `cmd /d /v:off /c '%CMDR_CMD%'` inside a script block that saves `$env:CMDR_CMD` and restores it in a `finally`
+  (an absent variable stays absent): cmd expands the variable before parsing, so `WindowsCmdEscaping` applies as is.
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written via `app.Driver.WriteRaw(...)`.
 
 ## Implementation notes (from investigation)
