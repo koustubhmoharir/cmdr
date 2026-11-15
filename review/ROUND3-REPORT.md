@@ -179,18 +179,18 @@ None of these is justified by the bugs found.
 
 The roadmap avoids guessing these; the steps that depend on them wait for an answer.
 
-- **Q1** After the input dialog, should Enter start exactly the commands that were startable when it was pressed, or
-  work out the set again (and ask for any new inputs)?
+- **Q1 — decided:** Enter starts exactly the commands that were startable when it was pressed. (06-R3-03: freeze the
+  prepared start set, and re-check ownership and state before launch.)
 - **Q2** A group restart is waiting, and an original command moves out of the group meanwhile. Should the restart skip
   it or be cancelled?
 - **Q3** When does a caller's cancellation token stop governing a sequential restart: at the first launch, or once
   scheduling has handed over?
 - **Q4** Logging A, then B, then A again: should A get the whole retained run replayed, or only the lines it missed?
 - **Q5** Editors trim names, program, cwd and log path today. Should whitespace-significant values be kept exactly?
-- **Q6** Windows batch with a UNC cwd: support it with a `pushd` wrapper, or refuse with a clear error?
+- **Q6 — decided:** refuse a UNC working folder for batch files, with a clear error. (W03-03)
 - **Q7** Batch arguments containing CR/LF, and registry-enabled delayed expansion: support or reject? This needs native
   evidence first.
-- **Q8** May the unused public `ManagedProcess.RestartAsync` be deleted? (Recommended.)
+- **Q8 — decided:** delete the unused `ManagedProcess.RestartAsync`. (02/A1)
 - **Q9** If a subscriber to a process's change events throws, should cmdr contain and report it, or treat it as a bug?
 - **Q10** Support limits for restricted `/proc`, Ctrl+C sent after detach, and console broadcast scope on Windows.
 - **Q11** Persistence scope: crash atomicity only, or power-loss durability? Mode, owner and group only, or also ACLs and
