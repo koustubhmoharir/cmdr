@@ -212,9 +212,9 @@ public class SessionRestartBoundaryTests
 
             Task<string?> restart = session.RestartAsync(new[] { stubborn });
             WaitUntil(() => stubborn.Process.Snapshot.State == ProcessState.Stopping, "the restart to be stopping it", stubborn.Process);
-            Assert.Equal(new[] { stubborn }, session.PendingRestartsOf(new[] { stubborn, other }));
+            Assert.Equal(new[] { stubborn }, session.PendingRestartsOf(new[] { stubborn, other }).Select(p => p.Command));
 
-            session.ForceKillForPendingRestart(new[] { stubborn });
+            session.ForceKillForPendingRestart(session.PendingRestartsOf(new[] { stubborn }));
 
             Assert.Null(await restart.WaitAsync(TimeSpan.FromSeconds(10)));
             Assert.Equal(ProcessState.Running, stubborn.Process.Snapshot.State);
@@ -223,6 +223,55 @@ public class SessionRestartBoundaryTests
         }
         finally
         {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task ForceKillForAPendingRestartTakenBeforeItsRunEnded_LeavesTheReplacementRunAlone()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        // Ignores Ctrl+C and keeps running until the temp dir is removed (or the release file appears), so the replacement
+        // run stays alive after the restart has started it.
+        string release = dir.File("release");
+        CommandSpec stubborn = Sh("stubborn", $"trap '' INT; echo ready; while [ ! -f '{release}' ] && [ -d '{dir.Path}' ]; do sleep 0.05; done");
+        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, stubborn));
+        CommandEntry entry = session.Groups[0].Commands[0];
+        try
+        {
+            Assert.Null(session.Activate(new[] { entry }));
+            WaitForText(entry.Process, "ready");
+            int oldRunId = entry.Process.RunId;
+
+            Task<string?> restart = session.RestartAsync(new[] { entry });
+            WaitUntil(() => entry.Process.Snapshot.State == ProcessState.Stopping, "the restart to be stopping it", entry.Process);
+            IReadOnlyList<PendingRestart> handles = Array.Empty<PendingRestart>();
+            WaitUntil(
+                () => (handles = session.PendingRestartsOf(new[] { entry })).Count == 1,
+                "the restart to be pending for the command",
+                entry.Process);
+            Assert.Equal(oldRunId, handles[0].RunId);
+
+            // The old run ends on its own terms, and the restart starts the replacement.
+            entry.Process.ForceKill();
+            Assert.Null(await restart.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);
+            int replacementRunId = entry.Process.RunId;
+            Assert.NotEqual(oldRunId, replacementRunId);
+
+            // The handle is stale: its restart has finished. Acting on it must not touch the replacement.
+            session.ForceKillForPendingRestart(handles);
+            await Task.Delay(500);
+
+            Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);
+            Assert.Equal(replacementRunId, entry.Process.RunId);
+            Assert.False(entry.Process.Snapshot.StopRequested);
+        }
+        finally
+        {
+            File.WriteAllText(release, "go");
             Cleanup(session);
         }
     }

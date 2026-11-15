@@ -650,4 +650,43 @@ public class ManagedProcessTests
             Cleanup(p);
         }
     }
+
+    [Fact]
+    public void ForceKillForAStaleRunIdDoesNothingToANewerRun_AndForCurrentRunIdKillsIt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var p = new ManagedProcess(BufferLines);
+        try
+        {
+            LaunchSpec spec = Sh("echo ready; while :; do sleep 0.1; done", dir.Path);
+            p.Start(spec);
+            WaitUntil(() => Text(p).Contains("ready", StringComparison.Ordinal), "first run ready", p);
+            int staleRunId = p.RunId;
+
+            p.ForceKill();
+            WaitForExited(p);
+
+            p.Start(spec);
+            WaitUntil(() => p.Snapshot.State == ProcessState.Running && Text(p).Contains("ready", StringComparison.Ordinal), "second run ready", p);
+            int currentRunId = p.RunId;
+            Assert.NotEqual(staleRunId, currentRunId);
+
+            // The stale run ended: killing "that run" must not touch the newer one.
+            p.ForceKill(staleRunId);
+            Thread.Sleep(500);
+            Assert.Equal(ProcessState.Running, p.Snapshot.State);
+            Assert.False(p.Snapshot.StopRequested);
+            Assert.Equal(currentRunId, p.RunId);
+
+            p.ForceKill(currentRunId);
+            WaitForExited(p);
+            Assert.True(p.Snapshot.StopRequested);
+        }
+        finally
+        {
+            Cleanup(p);
+        }
+    }
 }

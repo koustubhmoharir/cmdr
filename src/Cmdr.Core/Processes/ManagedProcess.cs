@@ -182,11 +182,42 @@ public sealed class ManagedProcess : IDisposable
     /// </summary>
     public void ForceKill()
     {
+        ForceKillCore(expectedRunId: null);
+    }
+
+    /// <summary>The number of the current run; each start gets a new number. Used to act on one run only.</summary>
+    internal int RunId
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _runId;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Force-kills the process tree like <see cref="ForceKill()"/>, but only if run <paramref name="expectedRunId"/> is still the
+    /// current run when the decision is made. Does nothing when a newer run has started since the caller read <see cref="RunId"/>.
+    /// </summary>
+    internal void ForceKill(int expectedRunId)
+    {
+        ForceKillCore(expectedRunId);
+    }
+
+    private void ForceKillCore(int? expectedRunId)
+    {
         IProcessGroup? group;
 
         lock (_sync)
         {
             if (_disposed)
+            {
+                return;
+            }
+
+            if (expectedRunId is int expected && _runId != expected)
             {
                 return;
             }

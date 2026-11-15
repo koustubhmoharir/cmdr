@@ -143,10 +143,11 @@ public sealed partial class Session
 
     /// <summary>
     /// The commands among <paramref name="commands"/> that a pending restart will start again (one that is still stopping
-    /// them, or waiting for their runs to end), in the given order. Lets a second F5 ask instead of starting another restart.
+    /// them, or waiting for their runs to end), in the given order, with one handle per command. When several pending restarts
+    /// wait for the same command, the first one found is used. Lets a second F5 ask instead of starting another restart.
     /// </summary>
     /// <exception cref="ArgumentException">A command does not belong to this session.</exception>
-    public IReadOnlyList<CommandEntry> PendingRestartsOf(IReadOnlyList<CommandEntry> commands)
+    public IReadOnlyList<PendingRestart> PendingRestartsOf(IReadOnlyList<CommandEntry> commands)
     {
         ArgumentNullException.ThrowIfNull(commands);
         foreach (CommandEntry entry in commands)
@@ -154,30 +155,57 @@ public sealed partial class Session
             EnsureOwned(entry);
         }
 
+        var result = new List<PendingRestart>();
         lock (_sync)
         {
-            return commands.Where(entry => _restarts.Any(op => !op.Cancelled && op.Commands.Contains(entry))).ToList();
+            foreach (CommandEntry entry in commands)
+            {
+                RestartOperation? op = _restarts.FirstOrDefault(o => !o.Cancelled && o.Commands.Contains(entry));
+                if (op is not null)
+                {
+                    result.Add(new PendingRestart(entry, op, entry.Process.RunId));
+                }
+            }
         }
+
+        return result;
     }
 
     /// <summary>
-    /// Force-kills the processes of <paramref name="commands"/> for the pending restarts that wait for them. Unlike
+    /// Force-kills the processes that the pending restarts in <paramref name="pending"/> wait for. Unlike
     /// <see cref="ForceKill(IReadOnlyList{CommandEntry})"/>, the restarts are kept: they start the commands again as soon as
     /// the killed leaders have exited, and leftovers that would block the start are killed too. Commands with nothing to kill
     /// are skipped.
     /// </summary>
+    /// <remarks>
+    /// A handle is stale when its restart has finished or been revoked, or its command has started a newer run since the handle
+    /// was taken. Stale handles are skipped, so a replacement run that a restart has already started is never killed.
+    /// </remarks>
     /// <exception cref="ArgumentException">A command does not belong to this session.</exception>
-    public void ForceKillForPendingRestart(IReadOnlyList<CommandEntry> commands)
+    public void ForceKillForPendingRestart(IReadOnlyList<PendingRestart> pending)
     {
-        ArgumentNullException.ThrowIfNull(commands);
-        foreach (CommandEntry entry in commands)
+        ArgumentNullException.ThrowIfNull(pending);
+        foreach (PendingRestart handle in pending)
         {
-            EnsureOwned(entry);
+            ArgumentNullException.ThrowIfNull(handle);
+            EnsureOwned(handle.Command);
         }
 
-        foreach (CommandEntry entry in commands)
+        var current = new List<PendingRestart>();
+        lock (_sync)
         {
-            entry.Process.ForceKill(); // does nothing unless running, stopping, or exited with leftovers
+            foreach (PendingRestart handle in pending)
+            {
+                if (!handle.Operation.Cancelled && _restarts.Contains(handle.Operation))
+                {
+                    current.Add(handle);
+                }
+            }
+        }
+
+        foreach (PendingRestart handle in current)
+        {
+            handle.Command.Process.ForceKill(handle.RunId); // does nothing unless the run is still current and has something to kill
         }
     }
 

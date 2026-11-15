@@ -808,7 +808,7 @@ internal sealed class MainController : IDisposable
     /// </summary>
     private bool AskAboutPendingRestart(IReadOnlyList<CommandEntry> commands)
     {
-        IReadOnlyList<CommandEntry> pending;
+        IReadOnlyList<PendingRestart> pending;
         try
         {
             pending = _session.PendingRestartsOf(commands);
@@ -824,7 +824,7 @@ internal sealed class MainController : IDisposable
             return false;
         }
 
-        string names = pending.Count == 1 ? $"'{pending[0].Spec.Name}' is" : $"{pending.Count} commands are";
+        string names = pending.Count == 1 ? $"'{pending[0].Command.Spec.Name}' is" : $"{pending.Count} commands are";
         string them = pending.Count == 1 ? "it" : "them";
         int? choice = Confirm.Choose(
             _app,
