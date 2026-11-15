@@ -155,6 +155,132 @@ public class AnsiLineParserTests
     }
 
     [Fact]
+    public void ForcedBreakMovesAZwjSequenceStartedByASupplementaryScalarWhole()
+    {
+        // 👩‍💻 is U+1F469 ZWJ U+1F4BB; the break falls between the high surrogate of 💻 and its low surrogate.
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 5);
+        var lines = new List<OutputLine>();
+        parser.Feed("ab👩\u200D💻X\n", lines);
+
+        // "👩‍💻X" is six units, over the limit, so X starts a line of its own.
+        Assert.Equal(new[] { "ab", "👩\u200D💻", "X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void ForcedBreakMovesAZwjSequenceStartedByASupplementaryScalarWhenFedOneUnitAtATime()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 5);
+        var lines = new List<OutputLine>();
+        foreach (char c in "ab👩\u200D💻X\n")
+        {
+            parser.Feed(c.ToString(), lines);
+        }
+
+        Assert.Equal(new[] { "ab", "👩\u200D💻", "X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void ForcedBreakKeepsARegionalIndicatorPairWholeWhenItStartsAtTheLimit()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        parser.Feed("ab🇮🇳X\n", lines);
+
+        Assert.Equal(new[] { "ab", "🇮🇳", "X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void ForcedBreakKeepsARegionalIndicatorPairWholeWhenFedOneUnitAtATime()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        foreach (char c in "ab🇮🇳X\n")
+        {
+            parser.Feed(c.ToString(), lines);
+        }
+
+        Assert.Equal(new[] { "ab", "🇮🇳", "X" }, Texts(lines));
+    }
+
+    [Fact]
+    public void ForcedBreakAtTheDefaultLimitMovesAZwjSequenceStartedAtTheLimit()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut);
+        var lines = new List<OutputLine>();
+        parser.Feed(new string('a', 65_533) + "👩\u200D💻X\n", lines);
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(new string('a', 65_533), lines[0].PlainText);
+        Assert.Equal("👩\u200D💻X", lines[1].PlainText);
+    }
+
+    [Fact]
+    public void SupplementaryScalarThatStartsANewGraphemeAtTheLimitBreaksBeforeItsHighSurrogate()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        parser.Feed("abcd😀\n", lines);
+
+        Assert.Equal(new[] { "abcd", "😀" }, Texts(lines));
+    }
+
+    [Fact]
+    public void SupplementaryScalarThatStartsANewGraphemeAtTheLimitWhenFedOneUnitAtATime()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        foreach (char c in "abcd😀\n")
+        {
+            parser.Feed(c.ToString(), lines);
+        }
+
+        Assert.Equal(new[] { "abcd", "😀" }, Texts(lines));
+    }
+
+    [Fact]
+    public void LoneHighSurrogateAtTheLimitFollowedByANonLowCharacterDoesNotCrashAndExceedsTheLimitByOne()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        parser.Feed("abcd\uD83DX\n", lines);
+
+        Assert.Equal(new[] { "abcd\uD83D", "X" }, Texts(lines));
+        Assert.Equal(5, lines[0].PlainText.Length);
+    }
+
+    [Fact]
+    public void LoneHighSurrogateAtTheLimitFollowedByAnotherHighSurrogateDoesNotExceedTheLimitByMoreThanOne()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        parser.Feed("abcd\uD83D\uD83D\uDE00\n", lines);
+
+        Assert.Equal(new[] { "abcd\uD83D", "😀" }, Texts(lines));
+        Assert.Equal(5, lines[0].PlainText.Length);
+    }
+
+    [Fact]
+    public void LongGraphemeThatIsTheWholeLineIsSplitBeforeASurrogatePairNotInsideIt()
+    {
+        // 😀 ZWJ 💻 is one grapheme longer than the limit. It is split between scalars, never inside 💻.
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 3);
+        var lines = new List<OutputLine>();
+        parser.Feed("\uD83D\uDE00\u200D\uD83D\uDCBB\n", lines);
+
+        Assert.Equal(new[] { "\uD83D\uDE00\u200D", "\uD83D\uDCBB" }, Texts(lines));
+    }
+
+    [Fact]
+    public void LongGraphemeThatIsTheWholeLineIsSplitBeforeASurrogatePairWhenTheHighSurrogateWasAtTheLimit()
+    {
+        var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 4);
+        var lines = new List<OutputLine>();
+        parser.Feed("\uD83D\uDE00\u200D\uD83D\uDCBBX\n", lines);
+
+        Assert.Equal(new[] { "\uD83D\uDE00\u200D", "\uD83D\uDCBBX" }, Texts(lines));
+    }
+
+    [Fact]
     public void ForcedLineBreakMovesABaseWithItsCombiningMarkToTheNextLine()
     {
         var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 3);

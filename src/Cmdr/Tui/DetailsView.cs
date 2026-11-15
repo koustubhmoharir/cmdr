@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Text;
 using Cmdr.Core.Session;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
@@ -199,7 +200,8 @@ internal sealed class DetailsView : View
 
     /// <summary>
     /// Draws one wrapped row: each span in its own attribute, then the rest of the width in the normal attribute, so the row is
-    /// exactly <paramref name="width"/> columns. The selected characters are drawn in reverse video.
+    /// exactly <paramref name="width"/> columns. The selected characters are drawn in reverse video. A standalone zero-width
+    /// grapheme is not drawn, because the driver advances a cell for it while the layout counts none (see <see cref="Drawn"/>).
     /// </summary>
     private void DrawRow(DetailsRow row, int width, Attribute normal, LogicalRange? selection)
     {
@@ -207,12 +209,14 @@ internal sealed class DetailsView : View
         {
             // Only a single character wider than the width gets here; it is fitted like any other text.
             SetAttribute(normal);
-            AddStr(TextWidth.Fit(row.Line.Text, width));
+            AddStr(Drawn(TextWidth.Fit(row.Line.Text, width)));
             return;
         }
 
+        bool[] hidden = ZeroWidthUnits(row.Line.Text);
         int used = 0;
         int offset = row.Start;
+        int position = 0;
         foreach (DetailsSpan span in row.Line.Spans)
         {
             Attribute attr = AttributeFor(span.Style, normal);
@@ -220,26 +224,73 @@ internal sealed class DetailsView : View
             int i = 0;
             while (i < text.Length)
             {
-                // A piece is a run of characters with the same selection state.
+                // A piece is a run of characters with the same selection state, without the hidden ones.
                 bool selected = IsSelected(selection, row.LogicalLine, offset + i);
-                int j = i + DetailsSelection.RuneAt(text, i).Length;
+                var piece = new StringBuilder();
+                int j = i;
                 while (j < text.Length && IsSelected(selection, row.LogicalLine, offset + j) == selected)
                 {
-                    j += DetailsSelection.RuneAt(text, j).Length;
+                    int length = DetailsSelection.RuneAt(text, j).Length;
+                    if (!hidden[position + j])
+                    {
+                        piece.Append(text, j, length);
+                    }
+
+                    j += length;
                 }
 
-                string piece = text[i..j];
-                SetAttribute(selected ? Invert(attr) : attr);
-                AddStr(piece);
-                used += TextWidth.Columns(piece);
+                if (piece.Length > 0)
+                {
+                    string drawn = piece.ToString();
+                    SetAttribute(selected ? Invert(attr) : attr);
+                    AddStr(drawn);
+                    used += TextWidth.Columns(drawn);
+                }
+
                 i = j;
             }
 
             offset += text.Length;
+            position += text.Length;
         }
 
         SetAttribute(normal);
         AddStr(new string(' ', Math.Max(0, width - used)));
+    }
+
+    /// <summary>
+    /// The UTF-16 units of <paramref name="text"/> that belong to a standalone zero-width grapheme. Such a grapheme is kept in the
+    /// logical text (selection and copy use it) but is not drawn, as the output pane does (see <see cref="OutputWrap"/>). A
+    /// combining mark that is part of a wider grapheme is drawn with it.
+    /// </summary>
+    private static bool[] ZeroWidthUnits(string text)
+    {
+        var hidden = new bool[text.Length];
+        foreach ((int offset, int length, int width) in TextWidth.Graphemes(text))
+        {
+            if (width == 0)
+            {
+                Array.Fill(hidden, true, offset, length);
+            }
+        }
+
+        return hidden;
+    }
+
+    /// <summary>The text with its standalone zero-width graphemes left out, as it is drawn.</summary>
+    private static string Drawn(string text)
+    {
+        bool[] hidden = ZeroWidthUnits(text);
+        var sb = new StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (!hidden[i])
+            {
+                sb.Append(text[i]);
+            }
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>

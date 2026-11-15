@@ -248,8 +248,10 @@ returns a notice that is written to the output.
   Terminal.Gui's measure, so tab expansion, wrapping, truncation, selection and drawing all agree with what
   Terminal.Gui draws. A grapheme is never split by wrapping or selection. The parser's forced break at its
   line-length limit (65,536 UTF-16 units) moves the last grapheme to the next line when the next character
-  continues it; only a grapheme that is the whole line (or longer than 64 units) is split. Zero-width graphemes (a lone combining mark) take no
-  column and are not drawn, but stay in the text and in copies.
+  continues it; only a grapheme that is the whole line (or longer than 64 units) is split, and never inside a
+  surrogate pair. A high surrogate at the limit waits for its low surrogate, so the decision is made on the whole
+  scalar (a ZWJ emoji part or a second flag half continues the grapheme). Zero-width graphemes (a lone combining
+  mark, U+200B) take no column and are not drawn, in the output and the info pane, but stay in the text and in copies.
 - Partial lines: the parser keeps the current line in its own arrays, and a published partial
   (`OutputLine.FromPartial`) shares them without copying; spans and text are built on first read.
   Writes below a published length first move the parser to fresh arrays (copy-on-write), so publishing

@@ -66,7 +66,7 @@ public sealed class AnsiLineParser
 
     /// <summary>Creates a parser for one output stream.</summary>
     /// <param name="source">The source tagged on every line this parser produces.</param>
-    /// <param name="maxLineLength">A line reaching this many UTF-16 code units is completed as if a newline was seen. The last grapheme is kept intact by moving it to the next line; only a grapheme that is the whole line is split, except a supplementary scalar, for which a limit of one may be exceeded by one code unit.</param>
+    /// <param name="maxLineLength">A line reaching this many UTF-16 code units is completed as if a newline was seen. The last grapheme is kept intact by moving it to the next line; only a grapheme that is the whole line is split, except a supplementary scalar, for which a limit of one may be exceeded by one code unit. A high surrogate at the limit is appended before its low surrogate decides, so the line may exceed the limit by one code unit for a moment.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="maxLineLength"/> is not positive.</exception>
     public AnsiLineParser(OutputSource source, int maxLineLength = 65536)
     {
@@ -641,12 +641,22 @@ public sealed class AnsiLineParser
         // pair, a combining mark, a joiner...) takes that whole grapheme to the new line, so a grapheme is not split. When the
         // grapheme is the whole line it cannot move: a surrogate pair then stays together (the line exceeds the limit by one
         // code unit), and anything longer is split.
-        if (_length >= _maxLineLength)
+        //
+        // A high surrogate cannot be classified until its low surrogate arrives, so at the limit it is appended without a
+        // decision and the line exceeds the limit by one code unit for a moment. The low surrogate then decides with the whole
+        // scalar. A lone high surrogate (not followed by a low one) is decided by the next character, so the line can still
+        // exceed the limit by that one unit; a second high surrogate right after one is decided at once, so it cannot exceed it by more.
+        if (_length >= _maxLineLength && !DefersHighSurrogate(c))
         {
             int graphemeStart = StartOfGraphemeContinuedBy(c);
             if (graphemeStart > 0)
             {
                 MoveTailToNewLine(graphemeStart, completed);
+            }
+            else if (graphemeStart == 0 && char.IsLowSurrogate(c) && char.IsHighSurrogate(_chars[_length - 1]) && _length > 1)
+            {
+                // The line is one grapheme that ends with a high surrogate: it is split before that surrogate, so the pair stays whole.
+                MoveTailToNewLine(_length - 1, completed);
             }
             else if (!(graphemeStart == 0 && _length == 1 && char.IsLowSurrogate(c) && char.IsHighSurrogate(_chars[0])))
             {
@@ -667,6 +677,13 @@ public sealed class AnsiLineParser
 
         _chars[_length++] = c;
     }
+
+    /// <summary>
+    /// True when <paramref name="c"/> is a high surrogate arriving at the limit, after a unit that is not a high surrogate: its
+    /// break decision waits for the low surrogate (see <see cref="AppendChar"/>).
+    /// </summary>
+    private bool DefersHighSurrogate(char c) =>
+        char.IsHighSurrogate(c) && _length > 0 && !char.IsHighSurrogate(_chars[_length - 1]);
 
     /// <summary>Longest grapheme tail examined at a forced break; a longer grapheme is split there.</summary>
     private const int MaxCarriedGrapheme = 64;
