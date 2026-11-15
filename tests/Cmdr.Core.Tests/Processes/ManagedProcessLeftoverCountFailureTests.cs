@@ -166,13 +166,58 @@ public class ManagedProcessLeftoverCountFailureTests
         }
     }
 
-    /// <summary>Delegates to the Linux platform; its groups' counts throw while <see cref="Fail"/> is set.</summary>
+    [Fact]
+    public void ForceKillAfterExitCancelsAPendingDetachEvenWhenTheKillFails()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var platform = new FailingCountPlatform { Fail = true, FailKill = true };
+        var p = new ManagedProcess(BufferLines, platform);
+        int? leaderPid = null;
+        try
+        {
+            p.Start(Sh("sleep 30 & echo started", dir.Path) with { Leftovers = LeftoverMode.Detach });
+            WaitForExited(p);
+            leaderPid = p.Snapshot.Pid;
+            Assert.True(p.Snapshot.LeftoverCountUnknown);
+
+            p.ForceKill(); // the injected kill failure leaves the leftover alive
+            WaitForText(p, "force kill failed");
+
+            platform.Fail = false;
+            WaitUntil(() => !p.Snapshot.LeftoverCountUnknown, "a count to succeed", p);
+            Assert.Equal(1, p.Snapshot.LeftoverCount);
+            Assert.DoesNotContain(Lines(p), l => l.PlainText.Contains("detached", StringComparison.Ordinal));
+            Assert.False(p.CanStart);
+        }
+        finally
+        {
+            platform.Fail = false;
+            platform.FailKill = false;
+            if (leaderPid is int pgid)
+            {
+                var group = new LinuxProcessGroup(pgid);
+                group.Kill();
+                WaitUntil(() => group.CountLiveProcesses() == 0, "leftover process to die", timeout: TimeSpan.FromSeconds(5));
+            }
+
+            Cleanup(p);
+        }
+    }
+
+    /// <summary>
+    /// Delegates to the Linux platform; its groups' counts throw while <see cref="Fail"/> is set, and their kills while
+    /// <see cref="FailKill"/> is set.
+    /// </summary>
     private sealed class FailingCountPlatform : IProcessPlatform
     {
         private readonly IProcessPlatform _inner = new LinuxProcessPlatform();
         private int _failedCalls;
 
         public volatile bool Fail;
+
+        public volatile bool FailKill;
 
         public int FailedCalls => Volatile.Read(ref _failedCalls);
 
@@ -188,7 +233,15 @@ public class ManagedProcessLeftoverCountFailureTests
         {
             public void Interrupt() => inner.Interrupt();
 
-            public void Kill() => inner.Kill();
+            public void Kill()
+            {
+                if (owner.FailKill)
+                {
+                    throw new Win32Exception(5, "injected kill failure");
+                }
+
+                inner.Kill();
+            }
 
             public int CountLiveProcesses()
             {

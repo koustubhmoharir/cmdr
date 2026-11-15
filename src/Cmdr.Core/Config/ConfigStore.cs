@@ -146,8 +146,9 @@ public static class ConfigStore
     /// <summary>
     /// Finds log path conflicts among all commands of a chain, whether or not their logs are enabled. Two commands conflict when their
     /// resolved log paths are equal, or when one log path is a folder of the other (the other path starts with it and a directory
-    /// separator). Paths are compared with <see cref="PathComparer"/>. Each file's logs directory is used for its own commands.
-    /// Commands whose paths cannot be resolved are skipped here.
+    /// separator). Paths are compared with <see cref="PathComparer"/> after resolving symbolic links, so paths that reach one file
+    /// through a link conflict too. Each file's logs directory is used for its own commands. Commands whose paths cannot be
+    /// resolved are skipped here.
     /// </summary>
     /// <param name="chain">The files of the chain; the opened file is the last entry.</param>
     /// <param name="onlyInvolvingOpened">True to keep only the errors where at least one involved command comes from the opened file.</param>
@@ -188,16 +189,20 @@ public static class ConfigStore
             }
         }
 
+        // Grouped by the path with links resolved, so two paths that reach one file through a link conflict. Messages show the
+        // path as configured (that of the first command of the group).
         StringComparer comparer = PathComparer;
         var byPath = new Dictionary<string, List<LogTarget>>(comparer);
         var paths = new List<string>();
+        var resolvedDirs = new Dictionary<string, string>(comparer);
         foreach (LogTarget target in targets)
         {
-            if (!byPath.TryGetValue(target.FullPath, out List<LogTarget>? sharing))
+            string physical = ResolveLogPathLinks(target.FullPath, resolvedDirs);
+            if (!byPath.TryGetValue(physical, out List<LogTarget>? sharing))
             {
                 sharing = new List<LogTarget>();
-                byPath[target.FullPath] = sharing;
-                paths.Add(target.FullPath);
+                byPath[physical] = sharing;
+                paths.Add(physical);
             }
 
             sharing.Add(target);
@@ -212,7 +217,7 @@ public static class ConfigStore
             }
 
             string verb = sharing.Count == 2 ? "both log" : "all log";
-            errors.Add($"Log path conflict: {JoinLabels(sharing.Select(t => t.Label))} {verb} to '{DisplayPath(openedDir, path)}'.");
+            errors.Add($"Log path conflict: {JoinLabels(sharing.Select(t => t.Label))} {verb} to '{DisplayPath(openedDir, sharing[0].FullPath)}'.");
         }
 
         foreach (string outer in paths)
@@ -233,12 +238,41 @@ public static class ConfigStore
                 }
 
                 errors.Add(
-                    $"Log path conflict: the log of {outerTargets[0].Label} ('{DisplayPath(openedDir, outer)}') is the folder of the log of " +
-                    $"{innerTargets[0].Label} ('{DisplayPath(openedDir, inner)}').");
+                    $"Log path conflict: the log of {outerTargets[0].Label} ('{DisplayPath(openedDir, outerTargets[0].FullPath)}') is the folder of the log of " +
+                    $"{innerTargets[0].Label} ('{DisplayPath(openedDir, innerTargets[0].FullPath)}').");
             }
         }
 
         return errors;
+    }
+
+    /// <summary>
+    /// The log path with links resolved (see <see cref="PhysicalPath"/>), or the path itself when they cannot be (a loop, or a
+    /// directory that cannot be searched). Resolved directories are cached in <paramref name="resolvedDirs"/>: many logs share
+    /// one. The file name is resolved separately, since a log file may itself be a link.
+    /// </summary>
+    private static string ResolveLogPathLinks(string fullPath, Dictionary<string, string> resolvedDirs)
+    {
+        try
+        {
+            string? dir = Path.GetDirectoryName(fullPath);
+            if (dir is null)
+            {
+                return fullPath;
+            }
+
+            if (!resolvedDirs.TryGetValue(dir, out string? physicalDir))
+            {
+                physicalDir = PhysicalPath.Resolve(dir);
+                resolvedDirs[dir] = physicalDir;
+            }
+
+            return PhysicalPath.Resolve(Path.Join(physicalDir, Path.GetFileName(fullPath)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return fullPath;
+        }
     }
 
     // A command's resolved log path, with its label (already suffixed for base files) and whether it comes from the opened file.

@@ -709,6 +709,119 @@ public class ConfigStoreTests
         Assert.False(File.Exists(dir.File(Path.Combine("b", "missing.json"))));
     }
 
+    [Fact]
+    public void Save_ThroughSymlinkWithDotDotAfterADirectoryLink_UpdatesTheFileTheLinkReads()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // linked.json -> alias/../target.json, alias -> other/child: the file system reads other/target.json, not the
+        // target.json beside the link (which lexical normalization of the link target would name).
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File(Path.Combine("other", "child")));
+        Directory.CreateSymbolicLink(dir.File("alias"), Path.Combine("other", "child"));
+        ConfigStore.Save(new CmdrConfig { BufferLines = 10 }, dir.File(Path.Combine("other", "target.json")));
+        ConfigStore.Save(new CmdrConfig { BufferLines = 20 }, dir.File("target.json"));
+        string link = dir.File("linked.json");
+        File.CreateSymbolicLink(link, Path.Combine("alias", "..", "target.json"));
+        Assert.Equal(10, ConfigStore.Load(link).BufferLines);
+
+        ConfigStore.Save(new CmdrConfig { BufferLines = 30 }, link);
+
+        Assert.Equal(30, ConfigStore.Load(link).BufferLines);
+        Assert.Equal(30, ConfigStore.Load(dir.File(Path.Combine("other", "target.json"))).BufferLines);
+        Assert.Equal(20, ConfigStore.Load(dir.File("target.json")).BufferLines);
+    }
+
+    [Fact]
+    public void Save_InADirectoryThatIsNotWritable_OverwritesTheWritableFileInPlace()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "cmdr.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute); // no file can be created or removed
+        try
+        {
+            ConfigStore.Save(new CmdrConfig { BufferLines = 7 }, path);
+
+            Assert.Equal(7, ConfigStore.Load(path).BufferLines);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, File.GetUnixFileMode(path));
+            Assert.Equal(new[] { "cmdr.json" }, Directory.GetFiles(sub).Select(Path.GetFileName));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
+    [Fact]
+    public void Save_InPlaceOverAShorterConfig_LeavesNoTrailingBytes()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "cmdr.json");
+        ConfigStore.Save(new CmdrConfig { LogsDir = new string('x', 500) }, path);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            ConfigStore.Save(new CmdrConfig { BufferLines = 3 }, path);
+
+            Assert.Equal(3, ConfigStore.Load(path).BufferLines);
+            Assert.DoesNotContain("xxx", File.ReadAllText(path));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
+    [Fact]
+    public void Save_FileThatIsNotWritableInADirectoryThatIsNotWritable_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "cmdr.json");
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, path);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => ConfigStore.Save(new CmdrConfig { BufferLines = 7 }, path));
+
+            Assert.Equal(1, ConfigStore.Load(path).BufferLines);
+            Assert.Equal(new[] { "cmdr.json" }, Directory.GetFiles(sub).Select(Path.GetFileName));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
     /// <summary>
     /// A chain of nested groups g1 › g2 › … › g{levels}. The deepest group holds a command with args, env, ready and stop set,
     /// so the JSON is as deep as a real file gets.

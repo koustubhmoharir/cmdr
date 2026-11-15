@@ -63,10 +63,15 @@ starting. Concurrent instances: last writer wins.
 - Loading does not validate; `CmdrConfig.Validate` returns messages and the UI decides (load errors are
   shown, save is refused while invalid). Names are checked per file, case-insensitively among siblings.
 - Saving (`AtomicFile`, also used for the recent-files store) writes a temp file next to the target and
-  moves it over (atomic replace). A symlink is followed to its final target, which is replaced in its own
-  directory so the link stays; a dangling link is an `IOException`. On Unix the temp file gets the
-  existing file's mode before any content is written; a new file gets the OS default. On Windows an
-  existing file is replaced with `File.Replace` to keep its ACL (unverified on Windows).
+  moves it over (atomic replace). A symlink is followed to its final target (`PhysicalPath`, which resolves
+  links component by component, so `..` after a directory link goes to the link target's parent), which is
+  replaced in its own directory so the link stays; a dangling link or a loop is an `IOException`. On Unix the
+  temp file gets the existing file's mode before any content is written; a new file gets the OS default. On
+  Windows an existing file is replaced with `File.Replace` to keep its ACL (unverified on Windows). The final
+  permissions never change: an existing file is overwritten in place instead (not atomic) when this process
+  does not own it on Unix (a rename would change the owner), or when creating the temp file or replacing the
+  file is denied (a read-only directory, a sticky directory, a Windows ACL allowing writes but not deletes).
+  A temp file that cannot be deleted is left behind rather than hiding the save's outcome.
 - Groups nest at most `CmdrConfig.MaxGroupDepth` (16) levels, a top-level group being level 1. Loading a
   deeper file is a `ConfigException`; `Validate` reports it, and `AddGroup`/`UpdateGroup` refuse to
   exceed it.
@@ -94,7 +99,8 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
   is the parent's value). `${cwd}` is the effective cwd of the item that defines the value.
 - Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log` unless `log.path` is set. Two commands with
   the same log path, or whose log file would be another's folder, are a validation error, whether or not
-  their logs are enabled (logs can be toggled at runtime). `Session.Validate`/`Save` report only conflicts
+  their logs are enabled (logs can be toggled at runtime). Paths are compared after resolving symbolic links
+  (`PhysicalPath`), so two paths reaching one file through a link conflict too. `Session.Validate`/`Save` report only conflicts
   involving an opened-file command, so a conflict inside a base file does not block saving.
 
 ### Input placeholders
@@ -140,7 +146,7 @@ run: PID, `StartedAt`, `ExitedAt`, `StopRequestedAt`, exit code, `StopRequested`
   force kill, or a stopped parallel branch inside a run, writes `sequence cancelled: stopped`.
   `sequence cancelled: …` lines are written only for commands that are part of a run.
 - **Detaching leftovers.** With `leftovers: detach`, at leader exit (unless a force kill was requested
-  during the run) and with live leftovers, `IProcessGroup.Detach` releases them: on Linux the group is
+  during the run, or after it while the detach still waits for a successful count) and with live leftovers, `IProcessGroup.Detach` releases them: on Linux the group is
   simply no longer tracked; on Windows `KILL_ON_JOB_CLOSE` is cleared (`SetInformationJobObject` with
   no limits) before the job handle is closed. The detach line is written before the exit marker.
 - **`stdin: console` (Windows).** `RedirectStandardInput = false` alone is not enough: .NET's
@@ -260,6 +266,9 @@ returns a notice that is written to the output.
 - **Output pane** (`OutputView`): cell wrap like a terminal (`OutputWrap`, one cell per grapheme, so
   display columns equal line columns; `RowCount` counts rows without building cells). The scroll position is (line, row within line) (`OutputScroll`); only the
   lines an operation reaches are wrapped. The cursor is a logical line; following shows the last page.
+  Following resumes only with the viewport at the bottom and the cursor on the last line. The wheel scrolls
+  the viewport; once it is at the bottom, wheel-down moves the cursor down (a cursor above the view first
+  jumps to the top line in view), so the wheel alone reaches the tail.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.

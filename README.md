@@ -197,7 +197,9 @@ the same group name may appear in different files.
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,
 but not edited, and their header shows the file they come from. Ctrl+S saves only the opened file.
-Saving keeps the file's permissions, and a config opened through a symbolic link is saved to the link's target.
+Saving keeps the file's permissions and owner, and a config opened through a symbolic link is saved to the link's target.
+When the folder doesn't allow replacing the file (for example it is read-only, but the file is writable), the file is
+overwritten in place.
 
 ## Running commands
 
@@ -247,7 +249,8 @@ Output that such processes write after the command is started again is not shown
 Some tools leave processes running on purpose, such as `dotnet build` (MSBuild nodes) or Gradle (its
 daemon). For those, set `"leftovers": "detach"`: when the main process exits on its own or after a
 graceful stop, cmdr writes `N leftover process(es) detached` and lets them be. The command can start
-again at once, and quitting cmdr leaves them running. A force kill still kills everything.
+again at once, and quitting cmdr leaves them running. A force kill still kills everything, and also cancels
+a detach that is still waiting.
 
 ### Readiness
 
@@ -291,7 +294,8 @@ act on everything in the group. Marks are limited to one group.
 | Ctrl+Q | Quit |
 
 In the output pane, ↑/↓, PgUp/PgDn and Home move the cursor line, and End goes back to following new
-output; Shift+↑/↓ selects lines and Esc clears the selection. Copying uses the terminal's clipboard
+output. The mouse wheel scrolls; at the bottom it moves the cursor down, and following resumes when the
+cursor reaches the last line; Shift+↑/↓ selects lines and Esc clears the selection. Copying uses the terminal's clipboard
 escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals support it (in tmux, enable
 `set-clipboard`).
 

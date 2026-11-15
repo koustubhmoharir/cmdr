@@ -175,7 +175,8 @@ public sealed class ManagedProcess : IDisposable
 
     /// <summary>
     /// Force-kills the whole process tree. Valid while running, stopping, or exited with leftover processes;
-    /// otherwise does nothing. Never called automatically.
+    /// otherwise does nothing. Never called automatically. It does not wait for a graceful stop in progress, and it cancels a
+    /// pending detach of leftovers (<see cref="LeftoverMode.Detach"/>).
     /// </summary>
     public void ForceKill()
     {
@@ -198,8 +199,12 @@ public sealed class ManagedProcess : IDisposable
             if (IsActiveLocked)
             {
                 _stopOrKillRequested = true;
-                _forceKillRequested = true;
             }
+
+            // A force kill means "kill everything", also after the leader exited: leftovers whose detach is still waiting for a
+            // successful count are killed, not detached when the count recovers.
+            _forceKillRequested = true;
+            _leftoverDetachPending = false;
 
             group = _group;
             Output.WriteSystem("force kill");
@@ -562,8 +567,9 @@ public sealed class ManagedProcess : IDisposable
     /// <summary>
     /// Stops supervising the leftover processes of a run whose leader exited, when the command asks for it
     /// (<see cref="LeftoverMode.Detach"/>). A graceful stop (Ctrl+C or input) still detaches them, so a command such as
-    /// <c>dotnet watch</c> does not leave its build servers tracked after the user stops it. Only a force kill during the
-    /// run prevents detaching, because it means "kill everything". Writes the outcome to the output before the end marker.
+    /// <c>dotnet watch</c> does not leave its build servers tracked after the user stops it. Only a force kill prevents
+    /// detaching, because it means "kill everything": one during the run, or one after the leader exited while the detach
+    /// waits for a successful count. Writes the outcome to the output before the end marker.
     /// Returns true if they were detached; on failure they stay tracked.
     /// Caller holds the lock and has verified that <paramref name="leftovers"/> is positive.
     /// </summary>

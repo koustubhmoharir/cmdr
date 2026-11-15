@@ -15,7 +15,8 @@ namespace Cmdr.Tui;
 /// cursor line (shown while focused, all its rows shaded) and an optional selection (a line selection from Shift+arrows,
 /// or a character selection from the mouse). Scrolling up, moving the cursor off the last line, or a mouse press pauses
 /// following. End resumes it, and so does arriving at the tail: the last page of rows with the cursor on the last line (not
-/// merely the last line with its earlier rows in view), by wheel, cursor keys, or a click without a drag. Following stays
+/// merely the last line with its earlier rows in view), by wheel, cursor keys, or a click without a drag. Wheel scrolling down
+/// with the viewport already at the bottom moves the cursor down, so the wheel alone can reach the tail. Following stays
 /// paused during a drag. The cursor and the top are remembered by absolute line number, so they
 /// stay put as old lines are evicted. A selection or cursor on a partial line follows that line when another stream completes
 /// a line in front of it (see <see cref="PartialPins"/>). UI thread only.
@@ -514,7 +515,12 @@ internal sealed class OutputView : View
         return true;
     }
 
-    /// <summary>Wheel scrolling: moves the viewport by screen rows, not the cursor. Reaching the bottom resumes following.</summary>
+    /// <summary>
+    /// Wheel scrolling: moves the viewport by screen rows, not the cursor. Once the viewport is already at the bottom, scrolling
+    /// down moves the cursor down instead, by as many lines; a cursor above the view first moves to the top line in view.
+    /// Following resumes when the viewport is at the bottom and the cursor is on the last line. A drag's autoscroll only
+    /// scrolls.
+    /// </summary>
     private bool Scroll(int delta)
     {
         if (_buffer is null)
@@ -523,10 +529,26 @@ internal sealed class OutputView : View
         }
 
         Geometry geometry = Measure(_buffer);
-        ScrollPosition target = geometry.ScrollBy(TopPosition(geometry), delta);
+        ScrollPosition from = TopPosition(geometry);
+        ScrollPosition target = geometry.ScrollBy(from, delta);
         Pause(geometry);
         _top = target;
-        _following = !_dragging && delta > 0 && target == geometry.MaxTop;
+        if (!_dragging && delta > 0 && target == geometry.MaxTop)
+        {
+            if (from == geometry.MaxTop && geometry.Total > 0)
+            {
+                long cursor = CursorLine(geometry);
+                long next = cursor < target.Line ? target.Line : cursor + delta;
+                SetCursorLine(geometry.Buffer, Math.Min(next, geometry.Last));
+            }
+
+            _following = CursorLine(geometry) == geometry.Last;
+        }
+        else
+        {
+            _following = false;
+        }
+
         SetNeedsDraw();
         return true;
     }

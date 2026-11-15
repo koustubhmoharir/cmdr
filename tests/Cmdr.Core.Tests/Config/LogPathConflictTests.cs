@@ -169,4 +169,48 @@ public class LogPathConflictTests
 
         Assert.Empty(ConfigStore.ValidateChain(LoadOpened(dir)));
     }
+
+    [Fact]
+    public void ExplicitPathsReachingOneFileThroughADirectoryLink_AreAConflict()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // creating symbolic links needs a privilege on Windows
+        }
+
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("real"));
+        Directory.CreateSymbolicLink(dir.File("alias"), "real");
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "../real/same.log"), Cmd("b", logPath: "../alias/same.log")) },
+        });
+
+        string error = Assert.Single(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+
+        Assert.Equal(
+            $"Log path conflict: Group 'g' › command 'a' and Group 'g' › command 'b' both log to '{Path.Combine("real", "same.log")}'.",
+            error);
+    }
+
+    [Fact]
+    public void LogFolderReachedThroughADirectoryLink_IsAnAncestorConflict()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("real"));
+        Directory.CreateSymbolicLink(dir.File("alias"), "real");
+        Save(dir, "cmdr.json", new CmdrConfig
+        {
+            Groups = { Group("g", Cmd("a", logPath: "../real"), Cmd("b", logPath: "../alias/b.log")) },
+        });
+
+        string error = Assert.Single(ConfigStore.LogPathErrors(LoadOpened(dir), onlyInvolvingOpened: false));
+
+        Assert.Contains("is the folder of the log of Group 'g' › command 'b'", error);
+    }
 }

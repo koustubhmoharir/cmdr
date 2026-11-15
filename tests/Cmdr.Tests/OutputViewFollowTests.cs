@@ -127,6 +127,30 @@ public sealed class OutputViewFollowTests
     }
 
     [Fact]
+    public void Wheel_down_at_the_bottom_moves_an_earlier_cursor_down_and_resumes_following_on_the_last_line()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, "a", "b", "c", "d", "e", "f");
+
+        h.Home();
+        Assert.Equal(0, h.CursorLine);
+
+        h.Wheel(3); // the viewport reaches the bottom; the cursor stays where it was
+        Assert.Equal(new ScrollPosition(3, 0), h.Top);
+        Assert.Equal(0, h.CursorLine);
+        Assert.False(h.Following);
+
+        h.Wheel(3); // the cursor was above the view: it moves to the top line in view
+        Assert.Equal(3, h.CursorLine);
+        Assert.False(h.Following);
+
+        h.Wheel(3); // three lines down, stopping at the last line
+        Assert.Equal(5, h.CursorLine);
+        Assert.True(h.Following);
+    }
+
+    [Fact]
     public void Plain_click_on_the_last_line_at_the_tail_keeps_following()
     {
         using var app = Application.Create();
