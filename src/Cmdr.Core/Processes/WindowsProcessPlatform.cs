@@ -61,6 +61,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     /// would search cmdr's own directory, the system directories and the parent PATH and could run a different file.
     /// </remarks>
     /// <exception cref="FileNotFoundException">The program does not resolve under the child's working directory or PATH.</exception>
+    /// <exception cref="ArgumentException">The program is a drive-relative path (<c>C:tools\run</c>).</exception>
     public PreparedLaunch Prepare(LaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);

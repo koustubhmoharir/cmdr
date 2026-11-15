@@ -226,6 +226,32 @@ public class WindowsCommandResolverTests
         Assert.DoesNotContain(candidates, c => c.StartsWith("C:", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData(@"C:tools\run")]
+    [InlineData("C:run")]
+    [InlineData("d:")]
+    public void DriveRelativeProgramIsRejected(string program)
+    {
+        var ex = Assert.Throws<ArgumentException>(
+            () => WindowsCommandResolver.Resolve(program, @"C:\child", null, ".CMD", _ => true));
+
+        Assert.Contains("current directory of drive", ex.Message);
+    }
+
+    [Fact]
+    public void DriveRelativePathEntryIsSkipped()
+    {
+        var candidates = new List<string>();
+        Func<string, bool> fs = path =>
+        {
+            candidates.Add(path);
+            return string.Equals(path, @"C:\bin\tool.CMD", StringComparison.OrdinalIgnoreCase);
+        };
+
+        Assert.Equal(@"C:\bin\tool.CMD", WindowsCommandResolver.Resolve("tool", @"C:\child", @"C:tools;C:\bin", ".CMD", fs));
+        Assert.DoesNotContain(candidates, c => c.Contains("C:tools", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void PathEntryWithForwardSlashUncIsSearchedOnTheShare()
     {

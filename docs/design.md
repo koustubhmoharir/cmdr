@@ -193,7 +193,9 @@ otherwise every command would report a phantom leftover at exit.
 `pnpm`, `npm`, `yarn` etc. are `.cmd` shims that CreateProcess cannot run directly. On Windows the
 program is resolved against the effective `PATH`/`PATHEXT` (cwd first; a path-like program only against
 the cwd; a name with a non-PATHEXT extension is tried as is, last). A program that does not resolve fails
-to start; it is never handed to CreateProcess's own search, which would look in cmdr's directory. If it resolves to a
+to start; it is never handed to CreateProcess's own search, which would look in cmdr's directory. A
+drive-relative program (`C:tools\run`, relative to a per-drive current directory the child does not have) fails to
+start with a message saying so; a drive-relative PATH entry is skipped. If it resolves to a
 `.cmd`/`.bat`, it is launched as `%ComSpec% /d /s /c "<escaped command line>"` using cross-spawn's
 escaping rules. Ctrl+C on a batch file makes cmd.exe prompt "Terminate batch job (Y/N)?" on stdin, so
 after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin. Caveat: a child that

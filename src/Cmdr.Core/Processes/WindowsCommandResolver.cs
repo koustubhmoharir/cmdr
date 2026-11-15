@@ -37,7 +37,11 @@ internal static class WindowsCommandResolver
     /// extension in order. Last, a base whose final segment has an extension that is not in PATHEXT is tried as is,
     /// so that an explicitly named file such as <c>tool.bin</c> still runs. A base with no extension is never tried bare.
     /// A null result is a start failure for the caller: it must not fall back to a native CreateProcess search.
+    /// A drive-relative path (<c>C:tools\run</c>: a drive without a root) would be resolved against that drive's current
+    /// directory, which the child's environment does not define: as the program it is rejected, and as a PATH entry it is
+    /// skipped.
     /// </remarks>
+    /// <exception cref="ArgumentException"><paramref name="program"/> is a drive-relative path.</exception>
     public static string? Resolve(
         string program,
         string workingDirectory,
@@ -51,6 +55,14 @@ internal static class WindowsCommandResolver
 
         IReadOnlyList<string> extensions = ParsePathExt(pathExtVariable);
 
+        if (IsDriveRelative(program))
+        {
+            throw new ArgumentException(
+                $"'{program}' is relative to the current directory of drive {program[..2]}, which cmdr does not know. " +
+                $"Use a full path such as '{program[..2]}\\{program[2..].TrimStart('\\', '/')}', or a path relative to the working directory.",
+                nameof(program));
+        }
+
         if (IsPathLike(program))
         {
             string basePath = IsRooted(program) ? RootRelativePath(program, workingDirectory) : JoinPath(workingDirectory, program);
@@ -59,6 +71,11 @@ internal static class WindowsCommandResolver
 
         foreach (string directory in SearchDirectories(workingDirectory, pathVariable))
         {
+            if (IsDriveRelative(directory))
+            {
+                continue;
+            }
+
             string absoluteDirectory = IsRooted(directory)
                 ? RootRelativePath(directory, workingDirectory)
                 : JoinPath(workingDirectory, directory);
@@ -139,6 +156,10 @@ internal static class WindowsCommandResolver
 
         return null;
     }
+
+    /// <summary>A drive letter and colon not followed by a separator: <c>C:</c>, <c>C:tools\run</c>.</summary>
+    private static bool IsDriveRelative(string path) =>
+        path.Length >= 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' && (path.Length == 2 || path[2] is not ('\\' or '/'));
 
     /// <summary>Contains '\\' or '/'.</summary>
     private static bool IsPathLike(string program) => program.Contains('\\') || program.Contains('/');
