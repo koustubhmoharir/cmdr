@@ -37,6 +37,7 @@ public sealed partial class CommandOutput
             _writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             Path = path;
             FirstLiveLine = firstLiveLine;
+            NextQueuedLine = firstLiveLine;
         }
 
         /// <summary>Full path of the file.</summary>
@@ -45,8 +46,23 @@ public sealed partial class CommandOutput
         /// <summary>Number of the first line given to this writer as it completed; earlier lines are replayed on start.</summary>
         public long FirstLiveLine { get; }
 
-        /// <summary>Whether the writing task has started.</summary>
+        /// <summary>Whether the writing thread has started.</summary>
         public bool Started { get; private set; }
+
+        /// <summary>Whether the writer was abandoned after a failure or a stall; it may still be blocked in a write.</summary>
+        public bool Abandoned => _abandoned;
+
+        /// <summary>Whether the writer was closed and accepts no more lines.</summary>
+        public bool Closing => _closing;
+
+        /// <summary>One past the number of the last line given to the writer (live or replayed).</summary>
+        public long NextQueuedLine { get; private set; }
+
+        /// <summary>
+        /// For a writer that waits behind an earlier writer of its file: the lines to replay, captured when logging was enabled
+        /// (so a new run or eviction meanwhile cannot lose them), with the number of the first. Null otherwise.
+        /// </summary>
+        public (long First, IReadOnlyList<OutputLine> Lines)? DeferredReplay { get; set; }
 
         /// <summary>Completes when the writer has stopped and closed its file.</summary>
         public Task Completion => _completion.Task;
@@ -69,7 +85,23 @@ public sealed partial class CommandOutput
                 _pending.Add((firstNumber + i, lines[i].PlainText));
             }
 
+            NextQueuedLine = Math.Max(NextQueuedLine, firstNumber + lines.Count);
             WakeLocked();
+            return true;
+        }
+
+        /// <summary>
+        /// Accepts lines again after <see cref="CloseLocked"/>, for a writer that has not started yet: re-enabling its file
+        /// reuses it instead of opening another. Returns false if it cannot be reused.
+        /// </summary>
+        public bool ReopenLocked()
+        {
+            if (Started || _abandoned)
+            {
+                return false;
+            }
+
+            _closing = false;
             return true;
         }
 

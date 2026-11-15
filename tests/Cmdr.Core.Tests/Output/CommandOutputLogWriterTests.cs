@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
@@ -104,6 +105,123 @@ public class CommandOutputLogWriterTests
     }
 
     [Fact]
+    public void WriterWaitingBehindABlockedWriterReplaysTheLinesRetainedWhenLoggingWasEnabled()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        using var fifo = StalledFifo.Create(dir.File("blocked.log"));
+        var output = new CommandOutput(100_000);
+        try
+        {
+            output.BeginRun(Start);
+            fifo.EnableLogOn(output);
+
+            // More than the pipe holds (but less than the queue limit): the first writer blocks until the FIFO is drained.
+            output.WriteStdOut(string.Concat(Enumerable.Repeat(new string('x', 200) + "\n", 2000)));
+
+            output.DisableLog();
+            output.WriteStdOut("REPLAY-ME\n"); // written while logging is off
+            output.EnableLog(dir.File("blocked.log")); // waits for the first writer to finish
+            Assert.True(output.IsLogging);
+
+            output.BeginRun(Start.AddMinutes(1)); // clears the buffer: the waiting writer must not need it any more
+            output.WriteStdOut("second-run\n");
+            output.DisableLog();
+
+            string text = fifo.ReadAll();
+            Assert.Equal(1, CountOf(text, "REPLAY-ME\n"));
+            Assert.Equal(1, CountOf(text, "second-run\n"));
+            Assert.True(text.IndexOf("REPLAY-ME", StringComparison.Ordinal) < text.IndexOf("second-run", StringComparison.Ordinal));
+        }
+        finally
+        {
+            output.Dispose();
+        }
+    }
+
+    [Fact]
+    public void TogglingBehindABlockedWriterKeepsOneWaitingWriterAndLosesNoLine()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        using var fifo = StalledFifo.Create(dir.File("blocked.log"));
+        var output = new CommandOutput(100_000);
+        try
+        {
+            output.BeginRun(Start);
+            fifo.EnableLogOn(output);
+            output.WriteStdOut(string.Concat(Enumerable.Repeat(new string('x', 200) + "\n", 2000)));
+
+            for (int cycle = 0; cycle < 20; cycle++)
+            {
+                output.DisableLog();
+                output.WriteStdOut($"off-{cycle}\n");
+                output.EnableLog(dir.File("blocked.log"));
+                output.WriteStdOut($"on-{cycle}\n");
+                Assert.True(output.UnfinishedLogWriterCount <= 2, $"{output.UnfinishedLogWriterCount} writers after cycle {cycle}");
+            }
+
+            output.DisableLog();
+            string text = fifo.ReadAll();
+            for (int cycle = 0; cycle < 20; cycle++)
+            {
+                Assert.Equal(1, CountOf(text, $"off-{cycle}\n"));
+                Assert.Equal(1, CountOf(text, $"on-{cycle}\n"));
+            }
+        }
+        finally
+        {
+            output.Dispose();
+        }
+    }
+
+    [Fact]
+    public void ReEnablingBehindAWriterAbandonedAsStalledIsRefused()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        using var fifo = StalledFifo.Create(dir.File("stalled.log"));
+        var output = new CommandOutput(CommandOutput.LogQueueCapacity * 2);
+        try
+        {
+            output.BeginRun(Start);
+            fifo.EnableLogOn(output);
+            string chunk = string.Concat(Enumerable.Repeat(new string('x', 200) + "\n", 500)); // 500 lines per write
+            for (int i = 0; i < CommandOutput.LogQueueCapacity * 3 / 500 && output.IsLogging; i++)
+            {
+                output.WriteStdOut(chunk);
+            }
+
+            Assert.False(output.IsLogging); // abandoned as stalled, still blocked in its write
+
+            output.EnableLog(dir.File("stalled.log"));
+
+            Assert.False(output.IsLogging);
+            Assert.Equal(1, output.UnfinishedLogWriterCount);
+            Assert.Contains("log not enabled: an earlier write to this file is still blocked", BufferTexts(output.Buffer));
+        }
+        finally
+        {
+            fifo.Drain();
+            output.Dispose();
+        }
+    }
+
+    private static int CountOf(string text, string value)
+    {
+        int count = 0;
+        for (int index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + 1, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    [Fact]
     public void FailedFlushDoesNotCountLinesAsLoggedSoReEnablingReplaysThem()
     {
         if (!OperatingSystem.IsLinux() || !File.Exists("/dev/full")) return;
@@ -183,6 +301,7 @@ public class CommandOutputLogWriterTests
     private sealed class StalledFifo : IDisposable
     {
         private readonly string _path;
+        private readonly MemoryStream _captured = new();
         private Task<FileStream>? _reader;
         private Task? _drain;
 
@@ -216,9 +335,17 @@ public class CommandOutputLogWriterTests
             FileStream reader = _reader.Result;
             _drain = Task.Run(() =>
             {
-                reader.CopyTo(Stream.Null);
+                reader.CopyTo(_captured);
                 reader.Dispose();
             });
+        }
+
+        /// <summary>Drains, waits until every writer has closed the FIFO, and returns what was written.</summary>
+        public string ReadAll()
+        {
+            Drain();
+            Assert.True(_drain!.Wait(TimeSpan.FromSeconds(10)), "the FIFO writers did not close");
+            return Encoding.UTF8.GetString(_captured.ToArray());
         }
 
         public void Dispose()

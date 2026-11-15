@@ -181,6 +181,11 @@ public sealed partial class CommandOutput : IDisposable
     /// abandoned the same way with <c>log disabled: log writer stalled</c>.</para>
     /// <para>Re-enabling the same file after a failure writes the retained lines that were never flushed to it. Lines of a
     /// batch whose write or flush failed count as not written, so some of them may appear twice in the file.</para>
+    /// <para>Writers of one file take turns. A file has at most one running and one waiting writer: re-enabling a file whose
+    /// writer is still waiting for its turn reuses that writer (giving it the retained lines written while logging was off),
+    /// and re-enabling a file whose earlier writer was abandoned and is still blocked is refused with
+    /// <c>log not enabled: an earlier write to this file is still blocked</c>. A waiting writer's replay is taken when logging
+    /// is enabled, so a new run or eviction before its turn does not lose those lines.</para>
     /// <para>This method does not throw for I/O errors.</para>
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="path"/> is null, empty or invalid.</exception>
@@ -194,6 +199,21 @@ public sealed partial class CommandOutput : IDisposable
         {
             if (_disposed || IsLoggingToLocked(fullPath))
             {
+                return;
+            }
+
+            // At most one running and one waiting writer per file, however often logging is toggled: a writer abandoned as
+            // stalled may stay blocked in a write indefinitely, and every writer queued behind it would hold a file and its
+            // lines until then.
+            if (_unfinishedLogs.Any(w => w.Abandoned && PathEquals(w.Path, fullPath)))
+            {
+                AppendNoticeLocked("log not enabled: an earlier write to this file is still blocked");
+                return;
+            }
+
+            if (_unfinishedLogs.LastOrDefault(w => !w.Started && PathEquals(w.Path, fullPath)) is { } waiting && waiting.ReopenLocked())
+            {
+                ReuseWaitingWriterLocked(waiting);
                 return;
             }
         }
@@ -245,6 +265,37 @@ public sealed partial class CommandOutput : IDisposable
             if (!HasEarlierWriterLocked(writer))
             {
                 StartWriterLocked(writer);
+            }
+            else
+            {
+                // Captured now: by the time the writer starts, a new run or eviction may have dropped these lines.
+                writer.DeferredReplay = ReplayLocked(writer);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Makes a writer that is still waiting for its turn the current log again, giving it the retained lines written while
+    /// logging was off. Its queued lines and captured replay are kept. Caller holds the lock and has reopened it.
+    /// </summary>
+    private void ReuseWaitingWriterLocked(LogWriter writer)
+    {
+        CloseLogLocked();
+        _lastLoggedPath = writer.Path;
+        long from = Math.Max(writer.NextQueuedLine, _buffer.FirstLineNumber);
+        IReadOnlyList<OutputLine> missed = _buffer.GetCompletedLinesFrom(from);
+        _log = writer;
+        AppendToLogLocked(missed, from);
+    }
+
+    /// <summary>Writers that have not finished yet (running, waiting for their turn, or blocked). For tests.</summary>
+    internal int UnfinishedLogWriterCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _unfinishedLogs.Count;
             }
         }
     }
@@ -458,24 +509,47 @@ public sealed partial class CommandOutput : IDisposable
 
     /// <summary>
     /// Starts a writer once no earlier writer of its file is unfinished, first giving it the current run's retained lines that
-    /// the file is missing: those from the run's first line, or from the first line not yet flushed to this file, up to the
-    /// first line it received live.
+    /// the file is missing (see <see cref="ReplayLocked"/>). A writer that had to wait uses the lines captured when logging was
+    /// enabled, less those an earlier writer has flushed since.
     /// </summary>
     private void StartWriterLocked(LogWriter writer)
     {
-        if (_runFirstLine is long runFirst)
+        (long First, IReadOnlyList<OutputLine> Lines)? replay = writer.DeferredReplay ?? ReplayLocked(writer);
+        writer.DeferredReplay = null;
+        if (replay is { } r)
         {
             long flushed = PathEquals(writer.Path, _lastLoggedPath) ? _nextUnloggedLine : 0;
-            long from = Math.Max(Math.Max(runFirst, flushed), _buffer.FirstLineNumber);
-            if (from < writer.FirstLiveLine)
+            int skip = (int)Math.Clamp(flushed - r.First, 0, r.Lines.Count);
+            if (skip < r.Lines.Count)
             {
-                IReadOnlyList<OutputLine> retained = _buffer.GetCompletedLinesFrom(from);
-                int count = (int)Math.Min(retained.Count, writer.FirstLiveLine - from);
-                writer.PrependLocked(retained.Take(count).ToList(), from);
+                writer.PrependLocked(r.Lines.Skip(skip).ToList(), r.First + skip);
             }
         }
 
         writer.StartLocked();
+    }
+
+    /// <summary>
+    /// The current run's retained lines that the writer's file is missing: from the run's first line, or from the first line not
+    /// yet flushed to this file, up to the first line it received live. Null when there are none.
+    /// </summary>
+    private (long First, IReadOnlyList<OutputLine> Lines)? ReplayLocked(LogWriter writer)
+    {
+        if (_runFirstLine is not long runFirst)
+        {
+            return null;
+        }
+
+        long flushed = PathEquals(writer.Path, _lastLoggedPath) ? _nextUnloggedLine : 0;
+        long from = Math.Max(Math.Max(runFirst, flushed), _buffer.FirstLineNumber);
+        if (from >= writer.FirstLiveLine)
+        {
+            return null;
+        }
+
+        IReadOnlyList<OutputLine> retained = _buffer.GetCompletedLinesFrom(from);
+        int count = (int)Math.Min(retained.Count, writer.FirstLiveLine - from);
+        return count == 0 ? null : (from, retained.Take(count).ToList());
     }
 
     /// <summary>Removes a finished writer and starts the next waiting writer of the same file, if any.</summary>
