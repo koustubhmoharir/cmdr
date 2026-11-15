@@ -240,7 +240,10 @@ returns a notice that is written to the output.
 - Partial lines: the parser keeps the current line in its own arrays, and a published partial
   (`OutputLine.FromPartial`) shares them without copying; spans and text are built on first read.
   Writes below a published length first move the parser to fresh arrays (copy-on-write), so publishing
-  after every chunk is O(1) amortized.
+  after every chunk is O(1) amortized. Each line has an `Identity`, shared by a partial's snapshots and its
+  completed form; the output pane pins a selection end or paused cursor on a partial line by identity plus
+  its text as a prefix (`PartialPins`), so a rewritten (`\r`) or evicted partial is dropped rather than matched
+  to a later line with the same text.
 - Starting a run clears the in-memory buffer (`OutputBuffer.Clear`); every appended line has already been
   queued for the log with its text, so the log keeps all runs.
 - Log file: enabled per command or toggled at runtime; when enabled mid-run the current run's buffer is

@@ -46,6 +46,9 @@ public sealed class AnsiLineParser
     // [0.._publishedRuns). Writing below those indices first moves to fresh arrays (see EnsureWritable), so a snapshot
     // never changes. Pure appends past them need no copy.
     private bool _shared;
+
+    // The identity of the current line (see OutputLine.Identity): shared by its partial snapshots and its completed form.
+    private long _identity = OutputLine.NewIdentity();
     private int _publishedLength;
     private int _publishedRuns;
 
@@ -88,7 +91,7 @@ public sealed class AnsiLineParser
             _shared = true;
             _publishedLength = Math.Max(_publishedLength, _length);
             _publishedRuns = Math.Max(_publishedRuns, _runCount);
-            return OutputLine.FromPartial(_source, _chars, _length, _runs, _runCount);
+            return OutputLine.FromPartial(_source, _chars, _length, _runs, _runCount, _identity);
         }
     }
 
@@ -733,6 +736,7 @@ public sealed class AnsiLineParser
 
     private void ClearLine()
     {
+        _identity = OutputLine.NewIdentity();
         _length = 0;
         _runCount = 0;
         if (_shared)
@@ -761,6 +765,6 @@ public sealed class AnsiLineParser
             spans[i] = new StyledSpan(new string(_chars, start, end - start), _runs[i].Style);
         }
 
-        return new OutputLine(_source, spans);
+        return new OutputLine(_source, spans, _identity);
     }
 }

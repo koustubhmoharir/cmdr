@@ -8,23 +8,33 @@ public sealed class OutputLine
     private readonly string? _plainText;
     private readonly DeferredText? _deferred;
 
+    private static long s_lastIdentity;
+
     /// <summary>
     /// Creates a line. Empty spans are dropped and adjacent spans with equal styles are merged.
     /// </summary>
     /// <param name="source">Where the line came from.</param>
     /// <param name="spans">The spans, in display order.</param>
     public OutputLine(OutputSource source, IReadOnlyList<StyledSpan> spans)
+        : this(source, spans, NewIdentity())
+    {
+    }
+
+    /// <summary>A line with a given identity: the completed form of a partial line that had it.</summary>
+    internal OutputLine(OutputSource source, IReadOnlyList<StyledSpan> spans, long identity)
     {
         ArgumentNullException.ThrowIfNull(spans);
 
         Source = source;
+        Identity = identity;
         _spans = MergeSpans(spans);
         _plainText = ConcatText(_spans);
     }
 
-    private OutputLine(OutputSource source, DeferredText deferred)
+    private OutputLine(OutputSource source, DeferredText deferred, long identity)
     {
         Source = source;
+        Identity = identity;
         _deferred = deferred;
     }
 
@@ -41,14 +51,24 @@ public sealed class OutputLine
         char[] chars,
         int length,
         (int Start, SpanStyle Style)[] runs,
-        int runCount) =>
-        new(source, new DeferredText(chars, length, runs, runCount));
+        int runCount,
+        long identity) =>
+        new(source, new DeferredText(chars, length, runs, runCount), identity);
+
+    /// <summary>A new identity, distinct from every other in this process.</summary>
+    internal static long NewIdentity() => Interlocked.Increment(ref s_lastIdentity);
 
     /// <summary>The styled spans, in display order. Contains no empty spans and no adjacent equal styles.</summary>
     public IReadOnlyList<StyledSpan> Spans => _spans ?? _deferred!.Value.Spans;
 
     /// <summary>Where the line came from.</summary>
     public OutputSource Source { get; }
+
+    /// <summary>
+    /// Which logical line this is. The snapshots of a partial line and the line it is completed as share it (even when a
+    /// carriage return rewrote its text); any other two lines differ. Lines are not compared by it.
+    /// </summary>
+    public long Identity { get; }
 
     /// <summary>The line's text with all styling removed.</summary>
     public string PlainText => _plainText ?? _deferred!.Value.PlainText;

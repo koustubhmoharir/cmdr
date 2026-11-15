@@ -165,4 +165,19 @@ public sealed class OutputViewPartialSelectionTests
 
         Assert.Equal(1, h.CursorLine);
     }
+
+    [Fact]
+    public void Rewriting_a_selected_partial_does_not_move_the_selection_to_a_later_line_with_the_same_text()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = Open(app);
+        h.Output.WriteStdOut("OUT");
+        SelectFirstThreeColumns(h);
+        Assert.Equal("OUT", h.SelectedText());
+
+        h.Output.WriteStdOut("\rOTHER\nOUT-UNRELATED\n");
+
+        Assert.Null(h.Selection);
+    }
 }
