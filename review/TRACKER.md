@@ -15,7 +15,7 @@ All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows tes
 
 ## 3. Open from the third review (2026-11-15)
 
-All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). S0 (the Windows containment test kills unrelated `ping.exe` processes) must be fixed before the Windows checklist is run. Steps that depend on the report's open questions Q1–Q11 wait for the user's answers.
+All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). S0 (the Windows containment test kills unrelated `ping.exe` processes) must be fixed before the Windows checklist is run. The user has answered the report's questions Q1–Q11; the decisions are recorded there.
 
 ## Validation gaps (not tied to one item)
 

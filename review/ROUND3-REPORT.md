@@ -175,9 +175,9 @@ None of these is justified by the bugs found.
    - Completion only after unregistering.
    - Queue bounds after a replay drains.
 
-## Open questions for the user
+## Decisions (formerly open questions)
 
-The roadmap avoids guessing these; the steps that depend on them wait for an answer.
+All eleven questions were answered by the user on 2026-11-15.
 
 - **Q1 — decided:** Enter starts exactly the commands that were startable when it was pressed. (06-R3-03: freeze the
   prepared start set, and re-check ownership and state before launch.)
