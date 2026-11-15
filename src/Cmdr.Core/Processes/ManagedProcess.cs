@@ -128,6 +128,7 @@ public sealed class ManagedProcess : IDisposable
         string? input;
         string? inputAfterInterrupt;
         StopMethod method;
+        long outputRun;
         bool stateChanged;
 
         lock (_sync)
@@ -151,6 +152,7 @@ public sealed class ManagedProcess : IDisposable
             input = _stopInput;
             inputAfterInterrupt = _inputAfterInterrupt;
             method = _stopMethod;
+            outputRun = _outputRun;
 
             Output.WriteSystem(method == StopMethod.CtrlC ? "stop requested (Ctrl+C)" : "stop requested (input)");
         }
@@ -158,15 +160,15 @@ public sealed class ManagedProcess : IDisposable
         // Signals and pipe writes happen outside the lock: a write can block if the child is not reading stdin.
         if (method == StopMethod.CtrlC)
         {
-            bool interrupted = SignalGroup(group, g => g.Interrupt(), "stop failed");
+            bool interrupted = SignalGroup(group, g => g.Interrupt(), "stop failed", outputRun);
             if (interrupted && inputAfterInterrupt is not null)
             {
-                WriteStopInput(stdin, stdinWriteLock, inputAfterInterrupt);
+                WriteStopInput(stdin, stdinWriteLock, inputAfterInterrupt, outputRun);
             }
         }
         else
         {
-            WriteStopInput(stdin, stdinWriteLock, input);
+            WriteStopInput(stdin, stdinWriteLock, input, outputRun);
         }
 
         if (stateChanged)
@@ -209,6 +211,7 @@ public sealed class ManagedProcess : IDisposable
     private void ForceKillCore(int? expectedRunId)
     {
         IProcessGroup? group;
+        long outputRun;
 
         lock (_sync)
         {
@@ -240,13 +243,14 @@ public sealed class ManagedProcess : IDisposable
             _leftoverDetachPending = false;
 
             group = _group;
+            outputRun = _outputRun;
             Output.WriteSystem("force kill");
 
             // Re-check leftovers soon so the state reflects the kill without waiting for the next poll.
             _leftoverTimer?.Change(LeftoverRecheckAfterKill, LeftoverPollInterval);
         }
 
-        SignalGroup(group, g => g.Kill(), "force kill failed");
+        SignalGroup(group, g => g.Kill(), "force kill failed", outputRun);
     }
 
     /// <summary>
@@ -737,8 +741,11 @@ public sealed class ManagedProcess : IDisposable
         }
     }
 
-    /// <summary>Delivers a signal to the group. Returns true if it was delivered without error.</summary>
-    private bool SignalGroup(IProcessGroup? group, Action<IProcessGroup> signal, string failurePrefix)
+    /// <summary>
+    /// Delivers a signal to the group. Returns true if it was delivered without error. A failure is written for run
+    /// <paramref name="outputRun"/> only, so it does not show in a newer run's output. Caller holds no lock.
+    /// </summary>
+    private bool SignalGroup(IProcessGroup? group, Action<IProcessGroup> signal, string failurePrefix, long outputRun)
     {
         if (group is null)
         {
@@ -752,12 +759,13 @@ public sealed class ManagedProcess : IDisposable
         }
         catch (Win32Exception ex)
         {
-            Output.WriteSystem($"{failurePrefix}: {ex.Message}");
+            Output.WriteSystem(outputRun, $"{failurePrefix}: {ex.Message}");
             return false;
         }
     }
 
-    private void WriteStopInput(StreamWriter? stdin, object? stdinWriteLock, string? input)
+    /// <summary>Writes stop input to the run's stdin. A failure is written for run <paramref name="outputRun"/> only. Caller holds no lock.</summary>
+    private void WriteStopInput(StreamWriter? stdin, object? stdinWriteLock, string? input, long outputRun)
     {
         try
         {
@@ -775,17 +783,38 @@ public sealed class ManagedProcess : IDisposable
         }
         catch (IOException ex)
         {
-            Output.WriteSystem($"stop input failed: {ex.Message}");
+            Output.WriteSystem(outputRun, $"stop input failed: {ex.Message}");
         }
         catch (ObjectDisposedException ex)
         {
-            Output.WriteSystem($"stop input failed: {ex.Message}");
+            Output.WriteSystem(outputRun, $"stop input failed: {ex.Message}");
         }
     }
 
+    /// <summary>
+    /// Raises <see cref="Changed"/> outside the lock. Each subscriber is invoked separately: an exception from one is reported as
+    /// a <c>cmdr error:</c> system line of the current run, and neither stops the others nor escapes to the thread that raised it
+    /// (a timer or process-exit thread, where an escaped exception ends the host).
+    /// </summary>
     private void RaiseChanged()
     {
-        Changed?.Invoke(this);
+        Action<ManagedProcess>? handlers = Changed;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<ManagedProcess> handler in handlers.GetInvocationList().Cast<Action<ManagedProcess>>())
+        {
+            try
+            {
+                handler(this);
+            }
+            catch (Exception ex)
+            {
+                Output.WriteSystem($"cmdr error: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>The redirected pipes of one run and the tasks reading its output. Owned by the supervisor until both readers end.</summary>

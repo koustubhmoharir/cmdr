@@ -60,6 +60,7 @@ public class CmdrConfig
                 errors.Add($"{label}: name must not be blank.");
             }
 
+            ValidateGroupStrings(group, label, errors);
             ValidateItems(group, label, level: 1, errors);
         }
 
@@ -112,6 +113,8 @@ public class CmdrConfig
                         errors.Add($"{label}: {error}");
                     }
 
+                    ValidateCommandStrings(cmd, label, errors);
+
                     if (cmd.Ready is not null)
                     {
                         ValidateReady(cmd.Ready, label, errors);
@@ -126,6 +129,7 @@ public class CmdrConfig
                     }
                     else
                     {
+                        ValidateGroupStrings(child, label, errors);
                         ValidateItems(child, label, level + 1, errors);
                     }
 
@@ -137,6 +141,55 @@ public class CmdrConfig
         foreach (KeyValuePair<string, List<int>> dup in FindDuplicates(parent.Items.Select(i => i.Name)))
         {
             errors.Add($"{parentLabel}: duplicate name '{dup.Key}' (items {FormatPositions(dup.Value)}).");
+        }
+    }
+
+    /// <summary>
+    /// Checks the strings a command hands to the launch for NUL characters: a NUL would silently truncate the Windows command
+    /// line and cannot be passed on Linux either. Covers the program, each argument, cwd, each env name and value, the stop input
+    /// and the log path. Arguments are numbered from 1.
+    /// </summary>
+    private static void ValidateCommandStrings(CommandSpec cmd, string label, List<string> errors)
+    {
+        ValidateNoNul(cmd.Program, $"{label}: program", errors);
+        for (int a = 0; a < cmd.Args.Count; a++)
+        {
+            ValidateNoNul(cmd.Args[a], $"{label}: argument {a + 1}", errors);
+        }
+
+        ValidateNoNul(cmd.Cwd, $"{label}: cwd", errors);
+        ValidateEnvNoNul(cmd.Env, label, errors);
+        ValidateNoNul(cmd.Stop.Input, $"{label}: stop.input", errors);
+        ValidateNoNul(cmd.Log.Path, $"{label}: log.path", errors);
+    }
+
+    /// <summary>Checks a group's launch strings (cwd and env), which its commands inherit. See <see cref="ValidateCommandStrings"/>.</summary>
+    private static void ValidateGroupStrings(GroupSpec group, string label, List<string> errors)
+    {
+        ValidateNoNul(group.Cwd, $"{label}: cwd", errors);
+        ValidateEnvNoNul(group.Env, label, errors);
+    }
+
+    private static void ValidateEnvNoNul(Dictionary<string, string?>? env, string label, List<string> errors)
+    {
+        if (env is null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<string, string?> entry in env)
+        {
+            ValidateNoNul(entry.Key, $"{label}: env name '{entry.Key.Replace('\0', '?')}'", errors);
+            ValidateNoNul(entry.Value, $"{label}: env '{entry.Key.Replace('\0', '?')}' value", errors);
+        }
+    }
+
+    /// <summary>Adds <c>{subject} contains a NUL character.</c> when <paramref name="value"/> contains one.</summary>
+    private static void ValidateNoNul(string? value, string subject, List<string> errors)
+    {
+        if (value is not null && value.Contains('\0'))
+        {
+            errors.Add($"{subject} contains a NUL character.");
         }
     }
 

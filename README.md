@@ -158,6 +158,9 @@ against the directory of the file.
 | `ready` | | Output patterns that tell when the command is ready (see [Readiness](#readiness)). |
 | `stdin` | `pipe` | Windows only: `console` gives the command its own console as input (see [Windows](#windows)). |
 
+The strings passed to the process (`program`, `args`, `cwd`, `env` names and values, `stop.input`, `log.path`,
+and the `cwd` and `env` of groups) may not contain NUL characters; such a configuration is reported as an error.
+
 ### Environment
 
 `env` values are added to the environment cmdr was started with; `null` removes a variable. Groups'

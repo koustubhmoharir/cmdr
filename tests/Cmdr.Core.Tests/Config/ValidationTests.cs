@@ -462,4 +462,161 @@ public class ValidationTests
 
         Assert.Equal($"{NestedChainLabel(17)}: groups can be nested at most 16 levels deep.", error);
     }
+
+    [Fact]
+    public void Nul_InArgument_ReportsTheArgumentNumber()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "web", Program = "p", Args = { "a", "b\0c" } } } } },
+        };
+
+        Assert.Equal("Group 'g' › command 'web': argument 2 contains a NUL character.", Assert.Single(config.Validate()));
+    }
+
+    [Fact]
+    public void Nul_InProgram_IsReported()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "web", Program = "pn\0pm" } } } },
+        };
+
+        Assert.Equal("Group 'g' › command 'web': program contains a NUL character.", Assert.Single(config.Validate()));
+    }
+
+    [Fact]
+    public void Nul_InEnvValue_IsReported()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "web", Program = "p", Env = { ["FOO"] = "x\0y" } } } } },
+        };
+
+        Assert.Equal("Group 'g' › command 'web': env 'FOO' value contains a NUL character.", Assert.Single(config.Validate()));
+    }
+
+    [Fact]
+    public void Nul_InEnvName_IsReported()
+    {
+        var config = new CmdrConfig
+        {
+            Groups = { new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "web", Program = "p", Env = { ["FO\0O"] = "x" } } } } },
+        };
+
+        Assert.Equal("Group 'g' › command 'web': env name 'FO?O' contains a NUL character.", Assert.Single(config.Validate()));
+    }
+
+    [Fact]
+    public void Nul_InCwdStopInputAndLogPath_AreEachReported()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Items =
+                    {
+                        new CommandSpec
+                        {
+                            Name = "web",
+                            Program = "p",
+                            Cwd = "a\0",
+                            Stop = new StopSpec { Method = StopMethod.Input, Input = "q\0" },
+                            Log = new LogSpec { Enabled = true, Path = "w\0.log" },
+                        },
+                    },
+                },
+            },
+        };
+
+        List<string> errors = config.Validate().ToList();
+
+        Assert.Equal(3, errors.Count);
+        Assert.Equal("Group 'g' › command 'web': cwd contains a NUL character.", errors[0]);
+        Assert.Equal("Group 'g' › command 'web': stop.input contains a NUL character.", errors[1]);
+        Assert.Equal("Group 'g' › command 'web': log.path contains a NUL character.", errors[2]);
+    }
+
+    [Fact]
+    public void Nul_InGroupEnvAndCwd_IsReportedForTheGroup()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["FOO"] = "x\0" }, Cwd = "d\0" },
+            },
+        };
+
+        List<string> errors = config.Validate().ToList();
+
+        Assert.Equal(2, errors.Count);
+        Assert.Equal("Group 'g': cwd contains a NUL character.", errors[0]);
+        Assert.Equal("Group 'g': env 'FOO' value contains a NUL character.", errors[1]);
+    }
+
+    [Fact]
+    public void Nul_InNestedGroupEnv_UsesTheNestedGroupLabel()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "top",
+                    Items =
+                    {
+                        new GroupSpec
+                        {
+                            Name = "nav",
+                            Env = new Dictionary<string, string?> { ["FOO"] = "\0" },
+                            Items = { new CommandSpec { Name = "web", Program = "p", Args = { "\0" } } },
+                        },
+                    },
+                },
+            },
+        };
+
+        List<string> errors = config.Validate().ToList();
+
+        Assert.Equal(2, errors.Count);
+        Assert.Equal("Group 'top' › 'nav': env 'FOO' value contains a NUL character.", errors[0]);
+        Assert.Equal("Group 'top' › 'nav' › command 'web': argument 1 contains a NUL character.", errors[1]);
+    }
+
+    [Fact]
+    public void Strings_WithoutNul_AreValid()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Cwd = "sub",
+                    Env = new Dictionary<string, string?> { ["FOO"] = "x", ["BAR"] = null },
+                    Items =
+                    {
+                        new CommandSpec
+                        {
+                            Name = "web",
+                            Program = "p",
+                            Args = { "a", "--b=${input:c}" },
+                            Cwd = "x",
+                            Env = new Dictionary<string, string?> { ["BAZ"] = "${PATH}" },
+                            Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
+                            Log = new LogSpec { Enabled = true, Path = "w.log" },
+                        },
+                    },
+                },
+            },
+        };
+
+        Assert.Empty(config.Validate());
+    }
 }

@@ -143,6 +143,23 @@ public sealed partial class CommandOutput : IDisposable
     }
 
     /// <summary>
+    /// Appends a system line for <paramref name="run"/> only while it is still the current run; otherwise the line is dropped
+    /// (unlike <see cref="StaleOutputNotice"/>, no notice is added). Used by failures reported after a run may have ended.
+    /// </summary>
+    internal void WriteSystem(long run, string message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        lock (_sync)
+        {
+            if (IsCurrentRunLocked(run))
+            {
+                AppendSystemLocked(message);
+            }
+        }
+    }
+
+    /// <summary>
     /// Ends the run: flushes both parsers (stdout first), clears partial lines, and appends
     /// <c>=== {summary} ===</c>.
     /// </summary>
@@ -380,7 +397,7 @@ public sealed partial class CommandOutput : IDisposable
                     return;
                 }
 
-                if (run is long r && r != _run)
+                if (run is long r && !IsCurrentRunLocked(r))
                 {
                     if (!_staleOutputNoticeWritten && r < _run)
                     {
@@ -397,7 +414,33 @@ public sealed partial class CommandOutput : IDisposable
 
             if (completed.Count > 0)
             {
-                ProcessLinesCompleted?.Invoke(current, completed);
+                RaiseProcessLinesCompleted(current, completed);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Invokes each subscriber of <see cref="ProcessLinesCompleted"/> separately. An exception from one subscriber is reported as
+    /// a <c>cmdr error:</c> system line of the current run and does not stop the others or reach the writing thread. Caller holds
+    /// <c>_notifySync</c> and no <c>_sync</c>.
+    /// </summary>
+    private void RaiseProcessLinesCompleted(long run, IReadOnlyList<OutputLine> lines)
+    {
+        Action<long, IReadOnlyList<OutputLine>>? handlers = ProcessLinesCompleted;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<long, IReadOnlyList<OutputLine>> handler in handlers.GetInvocationList().Cast<Action<long, IReadOnlyList<OutputLine>>>())
+        {
+            try
+            {
+                handler(run, lines);
+            }
+            catch (Exception ex)
+            {
+                WriteSystem($"cmdr error: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -414,6 +457,9 @@ public sealed partial class CommandOutput : IDisposable
         _buffer.SetPartial(source, parser.Partial);
         return completed;
     }
+
+    /// <summary>True when <paramref name="run"/> is the run begun by the latest <see cref="BeginRun"/>.</summary>
+    private bool IsCurrentRunLocked(long run) => run == _run;
 
     private void AppendSystemLocked(string message)
     {

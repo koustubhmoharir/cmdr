@@ -692,4 +692,40 @@ public class CommandOutputTests : IDisposable
 
         Assert.Equal(new[] { StartMarker(Start) }, BufferTexts(_output.Buffer));
     }
+
+    [Fact]
+    public void SystemLineForAnEarlierRunIsDropped()
+    {
+        long first = _output.BeginRun(Start);
+        _output.BeginRun(Start);
+
+        _output.WriteSystem(first, "stop failed: late");
+
+        Assert.Equal(new[] { StartMarker(Start) }, BufferTexts(_output.Buffer));
+    }
+
+    [Fact]
+    public void SystemLineForTheCurrentRunAppears()
+    {
+        _output.BeginRun(Start);
+        long current = _output.BeginRun(Start);
+
+        _output.WriteSystem(current, "stop failed: now");
+
+        Assert.Equal(new[] { StartMarker(Start), "stop failed: now" }, BufferTexts(_output.Buffer));
+    }
+
+    [Fact]
+    public void ThrowingProcessLinesSubscriberIsReportedAndDoesNotStopOthers()
+    {
+        var seen = new List<string>();
+        _output.ProcessLinesCompleted += (_, _) => throw new InvalidOperationException("boom");
+        _output.ProcessLinesCompleted += (_, lines) => seen.Add(string.Join("|", lines.Select(l => l.PlainText)));
+        long run = _output.BeginRun(Start);
+
+        _output.WriteStdOut(run, "a\n");
+
+        Assert.Equal(new[] { "a" }, seen);
+        Assert.Equal(new[] { StartMarker(Start), "a", "cmdr error: InvalidOperationException: boom" }, BufferTexts(_output.Buffer));
+    }
 }
