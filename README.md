@@ -201,7 +201,8 @@ Saving keeps the file's permissions and group, and a config opened through a sym
 On Linux, saving a file owned by another user (that you can write) replaces it with a file owned by you; set
 `CMDR_KEEP_OWNER=1` to write such files in place instead, which keeps their owner but is not crash-safe.
 When the folder doesn't allow replacing the file (for example it is read-only, but the file is writable), the file is
-overwritten in place.
+overwritten in place. When cmdr runs as root, files and folders it creates (logs, a new config) are owned by the
+user who ran sudo, or by the folder's owner without sudo.
 
 ## Running commands
 

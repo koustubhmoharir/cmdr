@@ -1,4 +1,5 @@
 using System.Globalization;
+using Cmdr.Core.Config;
 
 namespace Cmdr.Core.Output;
 
@@ -187,6 +188,8 @@ public sealed partial class CommandOutput : IDisposable
     /// <c>log not enabled: an earlier write to this file is still blocked</c>. A waiting writer's replay is taken when logging
     /// is enabled, so a new run or eviction before its turn does not lose those lines.</para>
     /// <para>This method does not throw for I/O errors.</para>
+    /// <para>On Linux, when cmdr runs as root, a folder or log file that this call creates is given to the user who ran sudo, or to the
+    /// parent folder's owner without sudo. Existing items are not changed.</para>
     /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="path"/> is null, empty or invalid.</exception>
     public void EnableLog(string path)
@@ -225,11 +228,17 @@ public sealed partial class CommandOutput : IDisposable
             string? directory = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(directory))
             {
-                Directory.CreateDirectory(directory);
+                UnixOwnership.CreateDirectory(directory);
             }
+
+            bool existed = File.Exists(fullPath);
 
             // Write sharing allows an earlier writer of the same file to finish while this one waits for its turn.
             stream = new FileStream(fullPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.ReadWrite);
+            if (!existed && !string.IsNullOrEmpty(directory))
+            {
+                UnixOwnership.GiveNewFileAway(stream.SafeFileHandle, directory); // best effort, only when root
+            }
         }
         catch (Exception ex) when (IsIoFailure(ex))
         {

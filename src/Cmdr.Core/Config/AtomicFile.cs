@@ -1,7 +1,5 @@
-using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Cmdr.Core.Processes;
-using Microsoft.Win32.SafeHandles;
 
 namespace Cmdr.Core.Config;
 
@@ -23,6 +21,8 @@ namespace Cmdr.Core.Config;
 /// group), the destination is written in place instead.</item>
 /// <item>On Unix where statx is unavailable, an existing destination is replaced only when this process owns it, and is otherwise
 /// written in place. No owner is changed.</item>
+/// <item>On Linux, when cmdr runs as root, a new file or folder it creates is owned by the user who ran sudo, or by the parent folder's
+/// owner without sudo (see <see cref="UnixOwnership"/>). An existing file keeps its owner.</item>
 /// <item>On Windows, an existing destination is replaced with File.Replace so that its ACL is kept. A new file is moved into place.
 /// The Windows path is unverified: it has not been run on Windows.</item>
 /// <item>An existing destination is overwritten in place instead (not atomic, but the file, its owner and its permissions stay as
@@ -34,10 +34,6 @@ namespace Cmdr.Core.Config;
 internal static class AtomicFile
 {
     private const string KeepOwnerVariable = "CMDR_KEEP_OWNER";
-
-    private const int AtFdcwd = -100;
-    private const uint StatxTypeModeUidGid = 0x1 | 0x2 | 0x8 | 0x10; // STATX_TYPE | STATX_MODE | STATX_UID | STATX_GID
-    private const int ENOSYS = 38;
 
     /// <summary>Replaces the file at <paramref name="path"/> with <paramref name="content"/> followed by a single '\n'.</summary>
     /// <exception cref="IOException">The path is a dangling symbolic link or a link loop, or the file cannot be written or replaced.</exception>
@@ -54,7 +50,7 @@ internal static class AtomicFile
     internal static void Write(string path, ReadOnlySpan<byte> content, bool keepOtherOwners)
     {
         string destination = ResolveDestination(Path.GetFullPath(path));
-        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        UnixOwnership.CreateDirectory(Path.GetDirectoryName(destination)!);
 
         if (!File.Exists(destination))
         {
@@ -68,7 +64,7 @@ internal static class AtomicFile
             return;
         }
 
-        FileOwnership? existing = TryReadOwnership(destination);
+        UnixOwnership.FileOwnership? existing = UnixOwnership.TryReadOwnership(destination);
         if (existing is not { } file)
         {
             if (OwnedByThisProcess(destination))
@@ -124,7 +120,13 @@ internal static class AtomicFile
         {
             using (FileStream stream = CreateTempFile(tempPath, mode))
             {
-                if (owner is { } o && !TryChangeOwner(stream.SafeFileHandle, o.Uid, o.Gid))
+                if (!replacing)
+                {
+                    // A new file: best effort, and its failure is not a reason to stop saving.
+                    UnixOwnership.GiveNewFileAway(stream.SafeFileHandle, Path.GetDirectoryName(destination)!);
+                }
+
+                if (owner is { } o && !OperatingSystem.IsWindows() && !UnixOwnership.TryChangeOwner(stream.SafeFileHandle, o.Uid, o.Gid))
                 {
                     return false;
                 }
@@ -195,55 +197,6 @@ internal static class AtomicFile
         catch (UnauthorizedAccessException)
         {
             return false;
-        }
-    }
-
-    private readonly record struct FileOwnership(uint Uid, uint Gid, UnixFileMode Mode);
-
-    /// <summary>The owner, group and mode of the file, or null where statx is unavailable.</summary>
-    /// <exception cref="IOException">statx failed for another reason.</exception>
-    private static FileOwnership? TryReadOwnership(string file)
-    {
-        LinuxNative.StatxBuffer buffer;
-        int result;
-        try
-        {
-            result = LinuxNative.Statx(AtFdcwd, file, flags: 0, StatxTypeModeUidGid, out buffer);
-        }
-        catch (EntryPointNotFoundException)
-        {
-            return null;
-        }
-
-        if (result != 0)
-        {
-            int errno = Marshal.GetLastPInvokeError();
-            if (errno == ENOSYS)
-            {
-                return null;
-            }
-
-            throw new IOException($"Cannot read the owner of '{file}': statx failed with errno {errno}.");
-        }
-
-        return new FileOwnership(buffer.Uid, buffer.Gid, (UnixFileMode)(buffer.Mode & 0xFFF));
-    }
-
-    /// <summary>fchown on the temp file's open descriptor. False when the owner or group cannot be set, whatever the reason.</summary>
-    private static bool TryChangeOwner(SafeFileHandle handle, uint uid, uint gid)
-    {
-        bool added = false;
-        try
-        {
-            handle.DangerousAddRef(ref added);
-            return LinuxNative.FChown(handle.DangerousGetHandle().ToInt32(), uid, gid) == 0;
-        }
-        finally
-        {
-            if (added)
-            {
-                handle.DangerousRelease();
-            }
         }
     }
 

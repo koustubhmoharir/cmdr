@@ -20,6 +20,11 @@ internal static partial class LinuxNative
     [LibraryImport("libc", EntryPoint = "fchown", SetLastError = true)]
     internal static partial int FChown(int fd, uint uid, uint gid);
 
+    /// <summary>Changes the owner and group of a file by path, following symbolic links. A uid or gid of uint.MaxValue leaves that id unchanged.</summary>
+    /// <returns>0 on success, -1 on failure (the error is available from <see cref="Marshal.GetLastPInvokeError"/>).</returns>
+    [LibraryImport("libc", EntryPoint = "chown", SetLastError = true, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial int Chown(string path, uint uid, uint gid);
+
     [LibraryImport("libc", EntryPoint = "geteuid")]
     internal static partial uint GetEffectiveUserId();
 
