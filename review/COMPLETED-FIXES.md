@@ -83,4 +83,15 @@ A second review of every fix on this branch, by six worker reviewers (one per pa
 | **Save ownership** | On Linux a save keeps the file's group, and a root save keeps its owner: the temp file gets the destination's owner/group (`statx`, `fchown`) before its mode is set. A file owned by another user that the saver can write is replaced and becomes the saver's (group and mode kept); `CMDR_KEEP_OWNER` set to anything non-empty writes such files in place instead. A refused `fchown` (not in the file's group) writes in place. Tests: `AtomicFileOwnershipTests` (non-root and, via `sudo`, root). | 1aebfbe |
 | **Root-created files** | On Linux, files and folders cmdr creates while running as root (log files and their folders, a new config or recent-files store) are given to `SUDO_UID` (group: the folder's when it is setgid, else `SUDO_GID`), or to the parent folder's owner and group without sudo. Best effort; existing items are untouched. Shared Unix ownership code is in `UnixOwnership`. Tests: `RootCreatedOwnershipTests` (unit, and root via `sudo`). | dff75f3 |
 
+## Third review (2026-11-15)
+
+Findings and roadmap: [ROUND3-REPORT.md](ROUND3-REPORT.md).
+
+| Finding | Change | Commit |
+|---|---|---|
+| **W03-04 (S0)** | The Windows containment test kills only the PINGs it found in its own job; one outside the job (maybe the user's) is listed in the diagnostic but never killed. | d718d50 |
+| **05-R3-01 (S1)** | `PendingRestartsOf` returns `PendingRestart` handles naming the restart and the run it waits for; `ForceKillForPendingRestart` skips handles whose restart has finished or been revoked, and `ManagedProcess.ForceKill(runId)` kills only that run, so a dialog left open never kills the replacement. Tests: `SessionRestartBoundaryTests`, `ManagedProcessTests`. | cbba5b9 |
+| **01/R02, R01, R04 (S2)** | Saves resolve a link strictly (`PhysicalPath.ResolveExisting`): a missing or non-directory component before `..` is an error, not a redirect. Windows: after `File.Replace` error 1176 the surviving temp file is moved into place, or kept and named in the error (unverified on Windows). The mode is set again after the content is written, and restored after an in-place write by the owner, so setuid and setgid+group-exec survive. Tests: `PhysicalPathTests`, `ConfigStoreTests`, `AtomicFileOwnershipTests`. | 91f3d5f |
+| **05-R3-04, 06-R3-01 (S3)** | `SequenceRun.Result` is a TaskCompletionSource from construction, completed after the run has left its group. `Session.PrepareRestart` registers a restart synchronously and `RunRestartAsync` runs it; F5 prepares on the UI thread, so a Stop or quit that comes first revokes it. Tests: `SessionRestartBoundaryTests`, `SessionRestartOwnershipTests`. | 39e0390 |
+
 Not fixed: 01-09's item-local JSON path (known limitation). The Windows-specific changes above are unverified on Windows.

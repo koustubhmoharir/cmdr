@@ -15,7 +15,7 @@ higher. Evidence is in [round3/](round3/):
 
 The probe programs the workers mention lived in a scratch directory outside the repository, and are gone.
 
-**Result: 29 open findings: 5 P2 and 24 P3. There is no P1.** Most need precise timing, unusual input or a direct
+**Result: 29 findings: 5 P2 and 24 P3. There is no P1.** Fixed so far (see [COMPLETED-FIXES.md](COMPLETED-FIXES.md)): S0–S3, which covers 01/R01, 01/R02, 01/R04, W03-04, 05-R3-01, 05-R3-04 and 06-R3-01. Most need precise timing, unusual input or a direct
 API call. The five P2s:
 
 | ID | Finding | Status |

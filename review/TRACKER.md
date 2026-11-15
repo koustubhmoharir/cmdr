@@ -11,11 +11,11 @@ All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows tes
 ## 2. Open from the review of the fixes (2026-11-15)
 
 - **PowerShell copy of a batch-file program (06-05): verify on Windows.** A batch-file command with an argument PowerShell's legacy passing would mangle is copied as `$env:CMDR_CMD = '<cmdr's cmd command>'; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD`. Check in PowerShell 7 and 5.1 with `npm.cmd`/a `node_modules\.bin` shim and arguments `a&ver`, `x|y`, `%TEMP%`, `"q"`, an empty one, and that plain commands (`pnpm run dev --port=3000`) keep the plain form.
-- **Windows verification** of 515e30c, c0799b3 (`File.Replace` fallback, `PhysicalPath` on Windows), d0ccf63 (conhost path, duplicated exit-wait handle, UNC), 9b3ae25, ce2c06d (drive-relative programs and PATH entries) and f6dcc28 (ComSpec fallback). Step-by-step: [WINDOWS-TESTING.md](WINDOWS-TESTING.md).
+- **Windows verification** of 515e30c, c0799b3 (`File.Replace` fallback, `PhysicalPath` on Windows), d0ccf63 (conhost path, duplicated exit-wait handle, UNC), 9b3ae25, ce2c06d (drive-relative programs and PATH entries), f6dcc28 (ComSpec fallback), d718d50 (containment test cleanup) and 91f3d5f (File.Replace error 1176 recovery; only reachable by fault, so verify by review). Step-by-step: [WINDOWS-TESTING.md](WINDOWS-TESTING.md).
 
 ## 3. Open from the third review (2026-11-15)
 
-All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). S0 (the Windows containment test kills unrelated `ping.exe` processes) must be fixed before the Windows checklist is run. The user has answered the report's questions Q1–Q11; the decisions are recorded there.
+All 29 findings (5 P2, 24 P3) and the roadmap steps S0–S11 are in [ROUND3-REPORT.md](ROUND3-REPORT.md). S0–S3 are fixed (see COMPLETED-FIXES.md); S4–S11 remain. The user has answered the report's questions Q1–Q11; the decisions are recorded there.
 
 ## Validation gaps (not tied to one item)
 
