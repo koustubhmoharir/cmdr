@@ -821,7 +821,7 @@ internal sealed class MainController : IDisposable
         }
 
         bool windows = OperatingSystem.IsWindows();
-        string line = CommandLineFormatter.ForSpec(command.Entry.Spec, powerShell: windows);
+        string line = CommandLineFormatter.ForEntry(command.Entry, powerShell: windows);
         CopyToClipboard(line, windows ? "Copied command line (PowerShell)" : "Copied command line");
     }
 

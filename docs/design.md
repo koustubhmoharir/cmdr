@@ -285,7 +285,10 @@ returns a notice that is written to the output.
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
 - The command line shown in the info pane and copied with `c` is POSIX sh syntax, or PowerShell syntax on
   Windows (`CommandLineFormatter`; a program that is quoted, or that PowerShell would read as a keyword, a number
-  or an operator, gets the `&` call operator).
+  or an operator, gets the `&` call operator). PowerShell passes batch-file arguments in its legacy mode, so a command
+  whose program resolves to a `.cmd`/`.bat` and has an argument that mode would mangle (`WindowsBatchCommandLine`:
+  empty, a quote, or `& | < > ^ % ! ( )` and backtick) is copied as cmdr's own cmd.exe command held in `$env:CMDR_CMD`
+  and run as `cmd /d /c '%CMDR_CMD%'`: cmd expands the variable before parsing, so `WindowsCmdEscaping` applies as is.
 - Copy uses OSC52 (`ESC ]52;c;<base64> BEL`) written via `app.Driver.WriteRaw(...)`.
 
 ## Implementation notes (from investigation)

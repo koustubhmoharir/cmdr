@@ -10,7 +10,7 @@ All items (03-01, 03-03, 06-05) are implemented; what remains is the Windows tes
 
 ## 2. Open from the review of the fixes (2026-11-15)
 
-- **PowerShell copy of a batch-file program (06-05).** PowerShell passes arguments to `.cmd`/`.bat` in its legacy mode, so `a&ver` reaches cmd unquoted and `&ver` runs. Needs a decision: emit `cmd /c` with cmd escaping, use `--%`, or label the limitation. The `CommandLineFormatter` remark overclaims for batch files.
+- **PowerShell copy of a batch-file program (06-05): verify on Windows.** A batch-file command with an argument PowerShell's legacy passing would mangle is copied as `$env:CMDR_CMD = '<cmdr's cmd command>'; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD`. Check in PowerShell 7 and 5.1 with `npm.cmd`/a `node_modules\.bin` shim and arguments `a&ver`, `x|y`, `%TEMP%`, `"q"`, an empty one, and that plain commands (`pnpm run dev --port=3000`) keep the plain form.
 - **Windows verification** of 515e30c, c0799b3 (`File.Replace` fallback, `PhysicalPath` on Windows), d0ccf63 (conhost path, duplicated exit-wait handle, UNC) and 9b3ae25.
 
 ## Validation gaps (not tied to one item)

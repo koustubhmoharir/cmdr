@@ -53,19 +53,25 @@ internal static class WindowsCmdEscaping
     /// Builds the argument string for <c>cmd.exe</c>: <c>/d /s /c "&lt;escaped path&gt; &lt;escaped args&gt;"</c>.
     /// Pass it as <c>ProcessStartInfo.Arguments</c> (raw), not through <c>ArgumentList</c>, which would quote it again.
     /// </summary>
-    public static string BuildCmdArguments(string resolvedPath, IReadOnlyList<string> args)
+    public static string BuildCmdArguments(string resolvedPath, IReadOnlyList<string> args) =>
+        "/d /s /c \"" + BuildCommand(resolvedPath, args) + "\"";
+
+    /// <summary>
+    /// The command cmd.exe runs: the escaped path and arguments, as cmd parses them once <c>/s</c> has removed the quotes
+    /// around them (or once a variable holding them has been expanded).
+    /// </summary>
+    public static string BuildCommand(string resolvedPath, IReadOnlyList<string> args)
     {
         ArgumentNullException.ThrowIfNull(resolvedPath);
         ArgumentNullException.ThrowIfNull(args);
 
         bool doubleEscape = CmdShim.IsMatch(resolvedPath);
-        var sb = new StringBuilder();
-        sb.Append("/d /s /c \"").Append(EscapeCommand(resolvedPath));
+        var sb = new StringBuilder(EscapeCommand(resolvedPath));
         foreach (string arg in args)
         {
             sb.Append(' ').Append(EscapeArgument(arg, doubleEscape));
         }
 
-        return sb.Append('"').ToString();
+        return sb.ToString();
     }
 }

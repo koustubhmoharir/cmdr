@@ -250,6 +250,6 @@ internal static class WindowsCommandResolver
             InputAfterInterrupt: null);
     }
 
-    private static bool IsBatchFile(string path) =>
+    internal static bool IsBatchFile(string path) =>
         path.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".bat", StringComparison.OrdinalIgnoreCase);
 }

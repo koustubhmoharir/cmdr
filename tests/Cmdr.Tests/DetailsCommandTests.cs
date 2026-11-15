@@ -201,7 +201,7 @@ public sealed class DetailsCommandTests : IDisposable
     [Fact]
     public void The_prompt_is_not_part_of_the_copied_command_line()
     {
-        string copied = CommandLineFormatter.ForSpec(Run.Spec, powerShell: false);
+        string copied = CommandLineFormatter.ForEntry(Run, powerShell: false);
         IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(Run, ConfigDir, windows: false, BaseEnvironment, ':'));
 
         Assert.Equal("tool --flag 'two words'", copied);

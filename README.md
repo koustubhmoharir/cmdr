@@ -284,7 +284,7 @@ act on everything in the group. Marks are limited to one group.
 | ← / → | Collapse / expand a group |
 | Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 | Tab / Shift+Tab | Move focus: list → info → output |
-| c | Copy: the command line (list; PowerShell syntax on Windows); the selection, else the command line (info); the selection, else the current line (output) |
+| c | Copy: the command line (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output) |
 | L | Turn the log file on or off for the focused command |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |
@@ -298,6 +298,11 @@ output. The mouse wheel scrolls; at the bottom it moves the cursor down, and fol
 cursor reaches the last line; Shift+↑/↓ selects lines and Esc clears the selection. Copying uses the terminal's clipboard
 escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals support it (in tmux, enable
 `set-clipboard`).
+
+On Windows the copied command line is for PowerShell. PowerShell passes the arguments of batch files (`.cmd`/`.bat`, such
+as `npm.cmd`) without quoting them for cmd.exe, so when a batch-file command has an argument with `& | < > ^ % ! ( )`, a
+quote, or nothing in it, the copy runs it through cmd.exe instead, exactly as cmdr does:
+`$env:CMDR_CMD = '...'; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD`.
 
 Quitting with commands still running offers to stop them and wait, to force-kill them, or to cancel.
 

@@ -1,5 +1,7 @@
 using System.Text;
 using Cmdr.Core.Config;
+using Cmdr.Core.Processes;
+using Cmdr.Core.Session;
 
 namespace Cmdr.Tui;
 
@@ -10,18 +12,56 @@ namespace Cmdr.Tui;
 /// <remarks>
 /// Known limitation of the PowerShell form: Windows PowerShell 5.1, and PowerShell 7 in its Legacy native-argument
 /// mode, drop empty-string arguments and mis-pass arguments that contain double quotes to native programs. PowerShell
-/// 7.3 and later in the default mode pass both correctly.
+/// 7.3 and later in the default mode pass both correctly, except to batch files (and cmd.exe), which always get the legacy
+/// passing. A command whose program is a batch file and whose arguments would be mangled by it is therefore copied as the
+/// command cmdr runs through cmd.exe (see <see cref="WindowsBatchCommandLine"/>), held in an environment variable so that
+/// PowerShell does not pass it as an argument: cmd.exe expands the variable before it parses the line, so cmdr's cmd
+/// escaping applies unchanged.
 /// </remarks>
 internal static class CommandLineFormatter
 {
     private const string TypographicSingleQuotes = "‘’‚‛";
 
-    /// <summary>The command line of a command definition: the program and its arguments, quoted for the platform.</summary>
-    public static string ForSpec(CommandSpec spec, bool powerShell)
-    {
-        ArgumentNullException.ThrowIfNull(spec);
+    /// <summary>The variable that holds the cmd.exe command in the batch-file form.</summary>
+    internal const string BatchVariable = "CMDR_CMD";
 
-        return Format(spec.Program, spec.Args, powerShell);
+    /// <summary>
+    /// The command line of a command: the program and its arguments, quoted for the platform. In PowerShell, a batch-file
+    /// program whose arguments need it gets the cmd.exe form (see the remarks on this class).
+    /// </summary>
+    public static string ForEntry(CommandEntry entry, bool powerShell)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        return Format(entry.Spec.Program, entry.Spec.Args, powerShell, powerShell ? BatchCommandFor(entry) : null);
+    }
+
+    /// <summary>
+    /// The program and its arguments, each quoted for the given shell and separated by spaces. With a
+    /// <paramref name="batchCommand"/> (PowerShell only), the line runs that command through cmd.exe instead.
+    /// </summary>
+    public static string Format(string program, IReadOnlyList<string> args, bool powerShell, string? batchCommand)
+    {
+        if (powerShell && batchCommand is not null)
+        {
+            return $"$env:{BatchVariable} = {QuotePowerShell(batchCommand)}; cmd /d /c '%{BatchVariable}%'; Remove-Item Env:{BatchVariable}";
+        }
+
+        return Format(program, args, powerShell);
+    }
+
+    /// <summary>The cmd.exe command of a batch-file command that needs it (see <see cref="WindowsBatchCommandLine"/>), or null.</summary>
+    private static string? BatchCommandFor(CommandEntry entry)
+    {
+        try
+        {
+            LaunchSpec spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir);
+            return WindowsBatchCommandLine.ForCopy(spec);
+        }
+        catch (ArgumentException)
+        {
+            return null; // the command would not start either; show the plain form
+        }
     }
 
     /// <summary>The program and its arguments, each quoted for the given shell and separated by spaces.</summary>

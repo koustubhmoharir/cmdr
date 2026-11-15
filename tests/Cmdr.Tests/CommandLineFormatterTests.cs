@@ -122,6 +122,21 @@ public sealed class CommandLineFormatterTests
         Assert.Equal("tool.exe a", CommandLineFormatter.Format("tool.exe", new[] { "a" }, powerShell: true));
     }
 
+    [Fact]
+    public void PowerShell_batch_command_runs_through_cmd_from_an_environment_variable()
+    {
+        const string command = @"C:\bin\pnpm.cmd ^""a^&ver^"" 'q'";
+        Assert.Equal(
+            @"$env:CMDR_CMD = 'C:\bin\pnpm.cmd ^""a^&ver^"" ''q'''; cmd /d /c '%CMDR_CMD%'; Remove-Item Env:CMDR_CMD",
+            CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: true, batchCommand: command));
+    }
+
+    [Fact]
+    public void Batch_command_is_ignored_for_posix()
+    {
+        Assert.Equal("pnpm 'a&ver'", CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: false, batchCommand: "x"));
+    }
+
     [Theory]
     [InlineData("foreach", "& 'foreach'")]
     [InlineData("If", "& 'If'")]
@@ -176,6 +191,23 @@ public sealed class CommandLineFormatterTests
             Assert.Fail(
                 $"PSNativeCommandArgumentPassing={mode}\nline: {line}\nexpected: {Escape(expected)}\nactual:   {Escape(actual)}");
         }
+    }
+
+    [Fact]
+    public void PowerShell_batch_form_puts_the_cmd_command_into_the_variable_unchanged()
+    {
+        // cmd.exe cannot run here, but pwsh can check its part: the variable must hold the command byte for byte.
+        string? pwsh = FindOnPath("pwsh");
+        if (pwsh is null)
+        {
+            return;
+        }
+
+        const string command = @"C:\Program^ Files\x\pnpm.cmd ^""a^&ver^"" ^""%TEMP%^"" ^""it's^"" ^""it’s^"" ^""x^|y^"" $(boom) `n";
+        string line = CommandLineFormatter.Format("pnpm", new[] { "a&ver" }, powerShell: true, batchCommand: command);
+        string assignment = line[..line.IndexOf("; cmd ", StringComparison.Ordinal)];
+
+        Assert.Equal(command, RunPwsh(pwsh, assignment + "; [Console]::Out.Write($env:CMDR_CMD)"));
     }
 
     private static string RunPwsh(string pwsh, string command)
