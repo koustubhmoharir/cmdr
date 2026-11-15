@@ -417,34 +417,6 @@ public class ManagedProcessTests
     }
 
     [Fact]
-    public async Task RestartStopsAndStartsANewRun()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        var p = new ManagedProcess(BufferLines);
-        try
-        {
-            LaunchSpec spec = Sh("while :; do sleep 0.1; done", dir.Path);
-            p.Start(spec);
-            WaitUntil(() => p.Snapshot.State == ProcessState.Running, "running", p);
-            int? firstPid = p.Snapshot.Pid;
-            Thread.Sleep(200); // Let the trap-less loop settle into sleep.
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await p.RestartAsync(spec, cts.Token);
-
-            Assert.Equal(ProcessState.Running, p.Snapshot.State);
-            Assert.NotEqual(firstPid, p.Snapshot.Pid);
-            Assert.Equal(1, Lines(p).Count(l => l.PlainText.StartsWith("=== started ", StringComparison.Ordinal)));
-        }
-        finally
-        {
-            Cleanup(p);
-        }
-    }
-
-    [Fact]
     public void ChangedFiresOnStartAndExit()
     {
         if (!OperatingSystem.IsLinux()) return;

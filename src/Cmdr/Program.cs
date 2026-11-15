@@ -43,7 +43,7 @@ static int Run(string[] args)
         return 0;
     }
 
-    if (args is not [var configPath])
+    if (args is not [var configPath] || configPath.Length == 0)
     {
         return Usage();
     }

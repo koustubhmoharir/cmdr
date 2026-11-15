@@ -62,6 +62,10 @@ internal static class DetailsSelection
     public static string Extract(IReadOnlyList<string> texts, LogicalRange range)
     {
         ArgumentNullException.ThrowIfNull(texts);
+        if (texts.Count == 0)
+        {
+            return string.Empty;
+        }
 
         LogicalRange clamped = Clamp(range.Start, range.End, texts);
         var parts = new List<string>();

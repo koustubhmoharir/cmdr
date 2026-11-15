@@ -265,39 +265,6 @@ public sealed class ManagedProcess : IDisposable
     }
 
     /// <summary>
-    /// Stops the current run if active, waits for its leader to exit, then starts <paramref name="spec"/>.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">Leftover processes from the earlier run are still alive.</exception>
-    /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled while waiting.</exception>
-    public async Task RestartAsync(LaunchSpec spec, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(spec);
-
-        bool active;
-        lock (_sync)
-        {
-            active = IsActiveLocked;
-        }
-
-        if (active)
-        {
-            RequestStop();
-            await WaitForExitAsync(ct).ConfigureAwait(false);
-        }
-
-        lock (_sync)
-        {
-            if (!CanStartLocked)
-            {
-                throw new InvalidOperationException(
-                    $"Cannot restart: {LeftoverTextLocked()} process(es) from the previous run are still running.");
-            }
-        }
-
-        Start(spec);
-    }
-
-    /// <summary>
     /// Stops the leader/leftover tracking, closes the process handle, the redirected pipes of every run (ending their output
     /// readers) and the output log. Output is no longer written afterwards.
     /// </summary>

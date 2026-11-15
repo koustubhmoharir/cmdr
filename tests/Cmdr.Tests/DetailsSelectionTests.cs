@@ -116,6 +116,12 @@ public sealed class DetailsSelectionTests
     }
 
     [Fact]
+    public void Extract_gives_empty_text_when_there_is_no_text()
+    {
+        Assert.Equal("", DetailsSelection.Extract(Array.Empty<string>(), new LogicalRange(P(1, 1), P(2, 5))));
+    }
+
+    [Fact]
     public void Covers_is_half_open_on_the_logical_range()
     {
         var range = new LogicalRange(P(0, 2), P(1, 1));
