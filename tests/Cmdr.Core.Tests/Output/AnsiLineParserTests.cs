@@ -484,12 +484,20 @@ public class AnsiLineParserTests
     }
 
     [Theory]
-    [InlineData("\u001B[mx")]
-    [InlineData("\u001B[0mx")]
-    [InlineData("\u001B[00mx")]
-    public void EmptyOrZeroParameterResets(string input)
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("00")]
+    public void EmptyOrZeroParameterResets(string reset)
     {
-        Assert.Equal(SpanStyle.Default, StyleOf(input));
+        // Bold red first, so a reset that does nothing leaves the text after it styled.
+        List<OutputLine> lines = Parse($"\u001B[1;31mabc\u001B[{reset}mxyz\n");
+
+        Assert.Single(lines);
+        Assert.Equal(new[] { "abc", "xyz" }, lines[0].Spans.Select(s => s.Text));
+        SpanStyle before = lines[0].Spans[0].Style;
+        Assert.Equal(TextAttrs.Bold, before.Attrs);
+        Assert.Equal(AnsiColor.FromIndex(1), before.Foreground);
+        Assert.Equal(SpanStyle.Default, lines[0].Spans[1].Style);
     }
 
     [Fact]
@@ -508,7 +516,7 @@ public class AnsiLineParserTests
     [InlineData("\u001B[38;2;0;0;300mx")]
     [InlineData("\u001B[38;2;1;2mx")]
     [InlineData("\u001B[38;5mx")]
-    [InlineData("\u001B[38;5;abcmx")]
+    [InlineData("\u001B[38;5;1:2mx")]
     [InlineData("\u001B[38;7;1mx")]
     [InlineData("\u001B[38:5:300mx")]
     [InlineData("\u001B[38:2:1:2mx")]
@@ -516,7 +524,11 @@ public class AnsiLineParserTests
     [InlineData("\u001B[38;99999999999;1;2;3mx")]
     public void InvalidColorSpecsAreIgnored(string input)
     {
-        Assert.Equal(AnsiColor.Default, StyleOf(input).Foreground);
+        List<OutputLine> lines = Parse(input);
+
+        Assert.Single(lines);
+        Assert.Equal("x", lines[0].PlainText);
+        Assert.All(lines[0].Spans, span => Assert.Equal(AnsiColor.Default, span.Style.Foreground));
     }
 
     [Fact]
@@ -538,7 +550,13 @@ public class AnsiLineParserTests
     [Fact]
     public void UnknownCodesAreIgnored()
     {
-        Assert.Equal(SpanStyle.Default, StyleOf("\u001B[21;38x;99;108mx"));
+        // Syntactically valid SGR: a letter would end the sequence early.
+        List<OutputLine> lines = Parse("\u001B[21;99;108mx\n");
+
+        Assert.Single(lines);
+        Assert.Equal("x", lines[0].PlainText);
+        Assert.Single(lines[0].Spans);
+        Assert.Equal(SpanStyle.Default, lines[0].Spans[0].Style);
     }
 
     [Fact]

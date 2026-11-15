@@ -1,11 +1,26 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
+using Microsoft.Win32.SafeHandles;
 using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;
 
 namespace Cmdr.Core.Tests.Processes;
+
+/// <summary>libc FIONREAD for pipes, used to observe how many bytes are queued in a pipe.</summary>
+internal static class PipeNative
+{
+    private const ulong FIONREAD = 0x541B;
+
+    // DllImport rather than LibraryImport: the test project does not allow unsafe code.
+    [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static extern int Ioctl(IntPtr fd, ulong request, out int value);
+
+    /// <summary>The number of bytes that can be read from the pipe without blocking, or 0 when the query fails.</summary>
+    internal static int QueuedBytes(IntPtr fd) => Ioctl(fd, FIONREAD, out int value) == 0 ? value : 0;
+}
 
 /// <summary>Tests the <c>InputAfterInterrupt</c> write of <see cref="ManagedProcess"/> against real processes (Linux only).</summary>
 public class ManagedProcessInterruptInputTests
@@ -95,10 +110,14 @@ public class ManagedProcessInterruptInputTests
         {
             p.Start(Sh("echo ready; sleep 30", dir.Path, stopMethod: StopMethod.Input, stopInput: input));
             WaitForText(p, "ready");
+            int pid = p.Snapshot.Pid ?? throw new InvalidOperationException("the started process has no pid");
 
             Task stop = Task.Factory.StartNew(p.RequestStop, CancellationToken.None,
                 TaskCreationOptions.LongRunning, TaskScheduler.Default);
-            WaitUntil(() => p.Snapshot.State == ProcessState.Stopping, "input stop dispatch", p);
+            // The child never reads stdin and the input is far larger than the pipe, so once any of it is queued the stop
+            // write is inside write(2) and stays there. Stopping alone is set before the write starts.
+            WaitUntil(() => StdinQueuedBytes(pid) > 0, "stop input queued in the child's stdin pipe", p);
+            Assert.False(stop.IsCompleted, "the stop input write should still be blocked");
             await Task.Run(p.ForceKill).WaitAsync(TimeSpan.FromSeconds(2));
             await p.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
             await stop.WaitAsync(TimeSpan.FromSeconds(10));
@@ -106,6 +125,23 @@ public class ManagedProcessInterruptInputTests
         finally
         {
             Cleanup(p);
+        }
+    }
+
+    /// <summary>
+    /// Bytes queued in the pipe that is the child's stdin, read with FIONREAD through /proc. Opening the pipe does not read from it.
+    /// Returns 0 when the process or its stdin is gone.
+    /// </summary>
+    private static int StdinQueuedBytes(int pid)
+    {
+        try
+        {
+            using SafeFileHandle stdin = File.OpenHandle($"/proc/{pid}/fd/0", FileMode.Open, FileAccess.Read);
+            return PipeNative.QueuedBytes(stdin.DangerousGetHandle());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
         }
     }
 

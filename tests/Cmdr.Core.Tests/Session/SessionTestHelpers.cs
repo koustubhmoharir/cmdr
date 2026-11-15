@@ -35,10 +35,36 @@ internal static class SessionTestHelpers
     /// <summary>Loads a session from a configuration file that does not exist (an empty session).</summary>
     public static CmdrSession OpenEmpty(TempDir dir) => CmdrSession.Load(dir.File("cmdr.json"));
 
-    /// <summary>Force-kills everything still active, waits briefly for leftovers, and disposes the session. Safe in finally blocks.</summary>
+    /// <summary>
+    /// Force-kills everything still active and disposes the session. Callers use it in finally blocks, so it disposes first
+    /// and then fails the test (xUnit assertion) only if commands are still active after two bounded kill rounds. Such a
+    /// failure replaces an exception already in flight from the test body; the leftover names are the more useful report.
+    /// </summary>
     public static void Cleanup(CmdrSession session)
     {
+        string[] leftovers = Array.Empty<string>();
         try
+        {
+            leftovers = KillUntilIdle(session);
+        }
+        finally
+        {
+            session.Dispose();
+        }
+
+        if (leftovers.Length > 0)
+        {
+            Assert.Fail($"Commands still active after force kill (test cleanup): {string.Join(", ", leftovers)}.");
+        }
+    }
+
+    /// <summary>
+    /// Kills, waits up to 5 s, and repeats once for commands started in between. Returns the names of commands still active,
+    /// or an empty array when none are left.
+    /// </summary>
+    private static string[] KillUntilIdle(CmdrSession session)
+    {
+        for (int round = 0; round < 2; round++)
         {
             session.ForceKillAll();
             DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -46,10 +72,13 @@ internal static class SessionTestHelpers
             {
                 Thread.Sleep(20);
             }
+
+            if (session.ActiveEntries.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
         }
-        finally
-        {
-            session.Dispose();
-        }
+
+        return session.ActiveEntries.Select(e => e.Name).ToArray();
     }
 }

@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Cmdr.Core.Config;
+using Cmdr.Core.Processes;
 
 namespace Cmdr.Core.Tests.Config;
 
@@ -784,9 +786,9 @@ public class ConfigStoreTests
     [Fact]
     public void Save_InADirectoryThatIsNotWritable_OverwritesTheWritableFileInPlace()
     {
-        if (OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsLinux() || IsRoot())
         {
-            return;
+            return; // root can rename into a directory it cannot write, so the in-place branch is not reached
         }
 
         using var dir = new TempDir();
@@ -795,12 +797,14 @@ public class ConfigStoreTests
         string path = Path.Combine(sub, "cmdr.json");
         ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, path);
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        string inode = Inode(path);
         UnixFileMode dirMode = File.GetUnixFileMode(sub);
         File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute); // no file can be created or removed
         try
         {
             ConfigStore.Save(new CmdrConfig { BufferLines = 7 }, path);
 
+            Assert.Equal(inode, Inode(path)); // the same file, written in place: a replacement would have a new inode
             Assert.Equal(7, ConfigStore.Load(path).BufferLines);
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, File.GetUnixFileMode(path));
             Assert.Equal(new[] { "cmdr.json" }, Directory.GetFiles(sub).Select(Path.GetFileName));
@@ -814,9 +818,9 @@ public class ConfigStoreTests
     [Fact]
     public void Save_InPlaceOverAShorterConfig_LeavesNoTrailingBytes()
     {
-        if (OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsLinux() || IsRoot())
         {
-            return;
+            return; // root replaces the file instead of writing it in place
         }
 
         using var dir = new TempDir();
@@ -824,12 +828,14 @@ public class ConfigStoreTests
         Directory.CreateDirectory(sub);
         string path = Path.Combine(sub, "cmdr.json");
         ConfigStore.Save(new CmdrConfig { LogsDir = new string('x', 500) }, path);
+        string inode = Inode(path);
         UnixFileMode dirMode = File.GetUnixFileMode(sub);
         File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
             ConfigStore.Save(new CmdrConfig { BufferLines = 3 }, path);
 
+            Assert.Equal(inode, Inode(path));
             Assert.Equal(3, ConfigStore.Load(path).BufferLines);
             Assert.DoesNotContain("xxx", File.ReadAllText(path));
         }
@@ -842,9 +848,9 @@ public class ConfigStoreTests
     [Fact]
     public void Save_FileThatIsNotWritableInADirectoryThatIsNotWritable_ThrowsAndChangesNothing()
     {
-        if (OperatingSystem.IsWindows())
+        if (OperatingSystem.IsWindows() || IsRoot())
         {
-            return;
+            return; // root writes a read-only file, so there is no denial to expect
         }
 
         using var dir = new TempDir();
@@ -980,4 +986,45 @@ public class ConfigStoreTests
     }
 
     private static IOException UnableToMoveReplacement() => new("unable to move the replacement", unchecked((int)0x80070498));
+
+    private static bool IsRoot() => LinuxNative.GetEffectiveUserId() == 0;
+
+    /// <summary>The inode number of a path, read with stat(1) so that the test does not depend on the code under test.</summary>
+    private static string Inode(string path) => RunBounded("stat", "-c", "%i", path);
+
+    /// <summary>
+    /// Runs a program and returns its trimmed stdout. Both streams are drained asynchronously; the wait is bounded, and a
+    /// process that does not exit in time is killed and reported.
+    /// </summary>
+    private static string RunBounded(string fileName, params string[] args)
+    {
+        var info = new ProcessStartInfo(fileName) { RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (string arg in args)
+        {
+            info.ArgumentList.Add(arg);
+        }
+
+        using Process process = Process.Start(info)!;
+        Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+        Task<string> stderr = process.StandardError.ReadToEndAsync();
+        TimeSpan timeout = TimeSpan.FromSeconds(10);
+        if (!process.WaitForExit(timeout))
+        {
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(timeout);
+            throw new TimeoutException($"'{fileName} {string.Join(' ', args)}' did not exit within {timeout.TotalSeconds}s and was killed.");
+        }
+
+        if (!Task.WaitAll(new Task[] { stdout, stderr }, timeout))
+        {
+            throw new TimeoutException($"Output of '{fileName}' did not end within {timeout.TotalSeconds}s after it exited.");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"'{fileName}' exited with {process.ExitCode}: {stderr.Result.Trim()}");
+        }
+
+        return stdout.Result.Trim();
+    }
 }

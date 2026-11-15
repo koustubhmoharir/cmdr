@@ -58,7 +58,9 @@ public sealed class EnvTextTests
 
         Assert.Single(result.Errors);
         Assert.Contains("Line 2", result.Errors[0]);
-        Assert.DoesNotContain("A", result.Values.Keys.Where(k => k != "A"));
+        // The valid line is kept, and the malformed line adds nothing.
+        Assert.Equal(new[] { "A" }, result.Values.Keys);
+        Assert.Equal("1", result.Values["A"]);
     }
 
     [Fact]

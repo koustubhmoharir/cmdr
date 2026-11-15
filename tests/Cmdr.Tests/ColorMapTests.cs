@@ -189,6 +189,15 @@ public sealed class ColorMapTests
     [Fact]
     public void Background_indexed_color_is_applied()
     {
+        Attribute attr = Map(new SpanStyle(AnsiColor.Default, AnsiColor.FromIndex(4), TextAttrs.None));
+
+        Assert.Equal(Normal.Foreground, attr.Foreground);
+        Assert.Equal((Color)ColorName16.Blue, attr.Background);
+    }
+
+    [Fact]
+    public void Background_rgb_color_is_applied()
+    {
         Attribute attr = Map(new SpanStyle(AnsiColor.Default, AnsiColor.FromRgb(1, 2, 3), TextAttrs.None));
 
         Assert.Equal(Normal.Foreground, attr.Foreground);

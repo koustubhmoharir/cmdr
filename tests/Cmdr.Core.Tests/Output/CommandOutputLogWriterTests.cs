@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
@@ -21,12 +22,38 @@ public class CommandOutputLogWriterTests
     private static string StartMarker(DateTimeOffset startedAt) =>
         "=== started " + startedAt.LocalDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " ===";
 
-    /// <summary>Runs <paramref name="action"/> on a new thread; true if it returned within <paramref name="timeout"/>.</summary>
-    private static bool CompletesWithin(Action action, TimeSpan timeout)
+    /// <summary>
+    /// Runs <paramref name="action"/> on a new thread and fails the test if it does not return within <paramref name="timeout"/>.
+    /// An exception from the action is rethrown on the calling thread. A thread cannot be aborted, so a timed-out action keeps
+    /// blocking its thread. That thread is a background thread, so it cannot keep the test host alive.
+    /// </summary>
+    private static void AssertCompletesWithin(string what, Action action, TimeSpan timeout)
     {
-        var thread = new Thread(() => action()) { IsBackground = true };
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                action();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        })
+        { IsBackground = true };
         thread.Start();
-        return thread.Join(timeout);
+        bool completed = thread.Join(timeout);
+        if (!completed)
+        {
+            Assert.Fail($"{what} did not return within {timeout.TotalSeconds}s. Its thread is still blocked (background thread, left running).");
+        }
+
+        // Join makes the write to failure visible here.
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
     }
 
     private static string Lines(params string[] lines) => string.Concat(lines.Select(l => l + Environment.NewLine));
@@ -87,8 +114,8 @@ public class CommandOutputLogWriterTests
             Assert.False(p.Output.WaitForLogWrites(TimeSpan.FromMilliseconds(200)), "the log should be stalled");
 
             // Dedicated threads, not the thread pool: the test measures whether the calls block, not how soon the pool runs them.
-            Assert.True(CompletesWithin(p.ForceKill, Prompt), "ForceKill waited for the stalled log");
-            Assert.True(CompletesWithin(() => _ = p.Snapshot, Prompt), "Snapshot waited for the stalled log");
+            AssertCompletesWithin("ForceKill (waiting for the stalled log)", p.ForceKill, Prompt);
+            AssertCompletesWithin("Snapshot (waiting for the stalled log)", () => _ = p.Snapshot, Prompt);
             WaitForExited(p);
             Assert.True(p.Snapshot.StopRequested);
 
