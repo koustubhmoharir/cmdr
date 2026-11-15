@@ -736,6 +736,52 @@ public class ConfigStoreTests
     }
 
     [Fact]
+    public void Save_ThroughLinkWithDotDotAfterAMissingDirectory_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // linked.json -> missing/../target.json. The file system cannot open it (ENOENT), but a walk that drops the missing
+        // directory would reach the target.json beside the link, which must not be overwritten.
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, dir.File("target.json"));
+        string link = dir.File("linked.json");
+        File.CreateSymbolicLink(link, Path.Combine("missing", "..", "target.json"));
+        byte[] before = File.ReadAllBytes(dir.File("target.json"));
+
+        Assert.Throws<IOException>(() => ConfigStore.Save(new CmdrConfig { BufferLines = 2 }, link));
+
+        Assert.Equal(before, File.ReadAllBytes(dir.File("target.json")));
+        Assert.Equal(Path.Combine("missing", "..", "target.json"), new FileInfo(link).LinkTarget);
+        Assert.Equal(new[] { "linked.json", "target.json" }, Directory.GetFileSystemEntries(dir.Path).Select(Path.GetFileName).Order());
+    }
+
+    [Fact]
+    public void Save_ThroughLinkWithDotDotAfterARegularFile_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // linked.json -> blocker/../target.json, with blocker a regular file: opening it fails with ENOTDIR.
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig { BufferLines = 1 }, dir.File("target.json"));
+        File.WriteAllText(dir.File("blocker"), "not a directory");
+        string link = dir.File("linked.json");
+        File.CreateSymbolicLink(link, Path.Combine("blocker", "..", "target.json"));
+        byte[] before = File.ReadAllBytes(dir.File("target.json"));
+
+        Assert.Throws<IOException>(() => ConfigStore.Save(new CmdrConfig { BufferLines = 2 }, link));
+
+        Assert.Equal(before, File.ReadAllBytes(dir.File("target.json")));
+        Assert.Equal(Path.Combine("blocker", "..", "target.json"), new FileInfo(link).LinkTarget);
+        Assert.Equal(new[] { "blocker", "linked.json", "target.json" }, Directory.GetFileSystemEntries(dir.Path).Select(Path.GetFileName).Order());
+    }
+
+    [Fact]
     public void Save_InADirectoryThatIsNotWritable_OverwritesTheWritableFileInPlace()
     {
         if (OperatingSystem.IsWindows())
@@ -887,4 +933,51 @@ public class ConfigStoreTests
         string itemPath = "groups[0]" + string.Concat(Enumerable.Repeat(".items[0]", 16));
         Assert.Contains($"{itemPath} is nested deeper than 16 group levels.", ex.Message);
     }
+
+    // File.Replace failed with ERROR_UNABLE_TO_MOVE_REPLACEMENT (1176): the destination is gone and the new content is only in the temp file.
+    // RecoverFromFailedReplace is called directly, so these run on any OS.
+    [Fact]
+    public void RecoverFromFailedReplace_UnableToMove_MovesTheTempFileIntoPlace()
+    {
+        using var dir = new TempDir();
+        string temp = dir.File(".target.json.tmp");
+        File.WriteAllText(temp, "new\n");
+
+        AtomicFile.RecoverFromFailedReplace(UnableToMoveReplacement(), temp, dir.File("target.json"));
+
+        Assert.Equal("new\n", File.ReadAllText(dir.File("target.json")));
+        Assert.False(File.Exists(temp));
+    }
+
+    [Fact]
+    public void RecoverFromFailedReplace_UnableToMoveAndTheMoveFails_ThrowsNamingTheKeptTempFile()
+    {
+        using var dir = new TempDir();
+        string temp = dir.File(".target.json.tmp");
+        File.WriteAllText(temp, "new\n");
+        string destination = dir.File("target.json");
+        Directory.CreateDirectory(destination); // occupies the destination, so the move cannot happen
+
+        IOException ex = Assert.Throws<IOException>(() => AtomicFile.RecoverFromFailedReplace(UnableToMoveReplacement(), temp, destination));
+
+        Assert.Contains(temp, ex.Message);
+        Assert.Equal("new\n", File.ReadAllText(temp));
+    }
+
+    [Fact]
+    public void RecoverFromFailedReplace_OtherError_RethrowsTheOriginalAndLeavesTheTempFile()
+    {
+        using var dir = new TempDir();
+        string temp = dir.File(".target.json.tmp");
+        File.WriteAllText(temp, "new\n");
+        var original = new IOException("access", unchecked((int)0x80070005)); // ERROR_ACCESS_DENIED
+
+        IOException thrown = Assert.Throws<IOException>(() => AtomicFile.RecoverFromFailedReplace(original, temp, dir.File("target.json")));
+
+        Assert.Same(original, thrown);
+        Assert.False(File.Exists(dir.File("target.json")));
+        Assert.True(File.Exists(temp));
+    }
+
+    private static IOException UnableToMoveReplacement() => new("unable to move the replacement", unchecked((int)0x80070498));
 }

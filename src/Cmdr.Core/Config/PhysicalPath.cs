@@ -10,7 +10,9 @@ namespace Cmdr.Core.Config;
 /// directory reached so far, so <c>alias/../x</c> with <c>alias</c> a link to <c>a/b</c> names <c>a/x</c>, not the <c>x</c> next to
 /// <c>alias</c> (which lexical normalization such as <see cref="Path.GetFullPath(string)"/> or
 /// <see cref="FileSystemInfo.ResolveLinkTarget(bool)"/> would give). Components below the first one that does not exist are kept
-/// as written: nothing under a missing directory can be a link.
+/// as written: nothing under a missing directory can be a link. <see cref="Resolve"/> is for a path that may not exist yet, and so
+/// keeps going past a missing component, where a later <c>..</c> would then skip back over it. <see cref="ResolveExisting"/> is for
+/// a path that is about to be opened, and rejects such a path instead.
 /// </remarks>
 internal static class PhysicalPath
 {
@@ -21,12 +23,32 @@ internal static class PhysicalPath
         ? [Path.DirectorySeparatorChar]
         : [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar];
 
-    /// <summary>The path with every link resolved.</summary>
+    /// <summary>
+    /// The path with every link resolved. A component that does not exist does not stop the walk: the rest of the path is kept as
+    /// written, so the result may name a file that cannot be opened (for example <c>missing/../x</c> gives <c>x</c>). Use this for a
+    /// path that may not exist yet.
+    /// </summary>
     /// <param name="path">A fully qualified path. Its <c>..</c> components are resolved physically too.</param>
     /// <exception cref="ArgumentException"><paramref name="path"/> is not fully qualified.</exception>
     /// <exception cref="IOException">More than 40 links had to be followed (a loop), or a link could not be read.</exception>
     /// <exception cref="UnauthorizedAccessException">A directory on the path cannot be searched.</exception>
-    public static string Resolve(string path)
+    public static string Resolve(string path) => Walk(path, strict: false);
+
+    /// <summary>
+    /// <see cref="Resolve(string)"/> for a path that is about to be opened. Every component that is followed by another component must
+    /// be an existing directory after link resolution, so that a <c>..</c> cannot skip past a missing or non-directory component the
+    /// way the file system refuses to. The last component may be missing.
+    /// </summary>
+    /// <param name="path">A fully qualified path.</param>
+    /// <exception cref="ArgumentException"><paramref name="path"/> is not fully qualified.</exception>
+    /// <exception cref="IOException">
+    /// A component followed by more components does not exist or is not a directory, or the links could not be resolved (see
+    /// <see cref="Resolve(string)"/>).
+    /// </exception>
+    /// <exception cref="UnauthorizedAccessException">A directory on the path cannot be searched.</exception>
+    public static string ResolveExisting(string path) => Walk(path, strict: true);
+
+    private static string Walk(string path, bool strict)
     {
         ArgumentNullException.ThrowIfNull(path);
         if (!Path.IsPathFullyQualified(path))
@@ -84,10 +106,31 @@ internal static class PhysicalPath
                 exists = Path.Exists(next);
             }
 
+            if (strict && HasPending(pending) && !Directory.Exists(next))
+            {
+                throw new IOException(Path.Exists(next)
+                    ? $"Cannot resolve '{path}': '{part}' is not a directory."
+                    : $"Cannot resolve '{path}': '{part}' does not exist.");
+            }
+
             current = next;
         }
 
         return current;
+    }
+
+    /// <summary>True when a component that is not empty or <c>.</c> is still to be walked, so the one just reached is not the last.</summary>
+    private static bool HasPending(Stack<string> pending)
+    {
+        foreach (string part in pending)
+        {
+            if (part.Length > 0 && part != ".")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Pushes the components of <paramref name="relative"/> so that the first one is popped first.</summary>

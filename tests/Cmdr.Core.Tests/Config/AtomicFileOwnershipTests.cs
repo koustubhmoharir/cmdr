@@ -124,6 +124,69 @@ public class AtomicFileOwnershipTests
     }
 
     [Fact]
+    public void Owner_PrimaryGroupSetuid_KeepsSetuidInMode()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot()) return;
+
+        AssertOwnedSaveKeepsMode(UnixFileMode.SetUser | UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, "4755");
+    }
+
+    [Fact]
+    public void Owner_PrimaryGroupSetgidWithGroupExec_KeepsSetgidInMode()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot()) return;
+
+        AssertOwnedSaveKeepsMode(UnixFileMode.SetGroup | UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute, "2775");
+    }
+
+    [Fact]
+    public void Owner_NotInFileGroup_InPlaceWriteKeepsSetuidInMode()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot() || !SudoAvailable()) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        Require("sudo", "-n", "chgrp", "0", file);
+        File.SetUnixFileMode(file, UnixFileMode.SetUser | UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute); // the chgrp cleared it
+        Stat before = StatOf(file);
+
+        AtomicFile.Write(file, "new"u8, keepOtherOwners: false);
+
+        Stat after = StatOf(file);
+        Assert.Equal(CurrentUid(), after.Uid);
+        Assert.Equal(0u, after.Gid);
+        Assert.Equal("4755", after.Mode);
+        Assert.Equal(before.Inode, after.Inode);
+        Assert.Equal("new\n", File.ReadAllText(file));
+    }
+
+    /// <summary>A file the test user owns in its primary group, with <paramref name="mode"/>, keeps that exact mode through a save.</summary>
+    [UnsupportedOSPlatform("windows")]
+    private static void AssertOwnedSaveKeepsMode(UnixFileMode mode, string expectedMode)
+    {
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        File.SetUnixFileMode(file, mode);
+        Stat before = StatOf(file);
+        Assert.Equal(uint.Parse(Output("id", "-g")), before.Gid);
+
+        AtomicFile.Write(file, "new"u8, keepOtherOwners: false);
+
+        Stat after = StatOf(file);
+        Assert.Equal(CurrentUid(), after.Uid);
+        Assert.Equal(before.Gid, after.Gid);
+        Assert.Equal(expectedMode, after.Mode);
+        Assert.NotEqual(before.Inode, after.Inode);
+        Assert.Equal("new\n", File.ReadAllText(file));
+        Assert.Equal(["config.json"], FileNames(dir));
+    }
+
+    [Fact]
     public void Root_ReplacesFileAndKeepsOwnerGroupAndMode()
     {
         if (!OperatingSystem.IsLinux() || !IsRoot()) return;

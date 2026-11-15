@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Runtime.Versioning;
 using Cmdr.Core.Processes;
 
@@ -8,11 +9,14 @@ namespace Cmdr.Core.Config;
 /// destination, flushed to disk, and then moved over the destination. Rules:
 /// <list type="bullet">
 /// <item>A symbolic link is followed. The final target (see <see cref="PhysicalPath"/>) is replaced and the link itself is left
-/// intact. A dangling link is an <see cref="IOException"/>, thrown before anything is created.</item>
+/// intact. A dangling link is an <see cref="IOException"/>, thrown before anything is created. So is a link whose target goes
+/// through a missing or non-directory component (such as <c>missing/../file</c>), which the file system would refuse to open.</item>
 /// <item>For a path that is not a link, the parent directory is created if needed.</item>
 /// <item>On Unix, an existing destination keeps its owner, group and permission bits exactly, including setuid, setgid and sticky.
 /// The temp file is given the destination's owner and group, then its mode, before any content is written, so the umask cannot
-/// narrow the mode and Linux's clearing of setuid and setgid on a chown is undone.</item>
+/// narrow the mode and Linux's clearing of setuid and setgid on a chown is undone. A write by a non-root user clears setuid and
+/// setgid too, so the mode is set once more after the content is written. An in-place write restores the mode the same way when
+/// this process owns the file.</item>
 /// <item>On Unix, a process that is not root and does not own an existing destination must be able to write it, or the save throws
 /// <see cref="UnauthorizedAccessException"/>. The destination is then replaced, and the saved file is owned by the saving user,
 /// unless the CMDR_KEEP_OWNER environment variable is set to a non-empty value, in which case it is written in place. A root
@@ -24,7 +28,8 @@ namespace Cmdr.Core.Config;
 /// <item>On Linux, when cmdr runs as root, a new file or folder it creates is owned by the user who ran sudo, or by the parent folder's
 /// owner without sudo (see <see cref="UnixOwnership"/>). An existing file keeps its owner.</item>
 /// <item>On Windows, an existing destination is replaced with File.Replace so that its ACL is kept. A new file is moved into place.
-/// The Windows path is unverified: it has not been run on Windows.</item>
+/// If File.Replace fails with error 1176 the destination has already been removed, so the temp file is moved into place instead,
+/// or kept and named in the error when that fails too. The Windows path is unverified: it has not been run on Windows.</item>
 /// <item>An existing destination is overwritten in place instead (not atomic, but the file, its owner and its permissions stay as
 /// they are) when creating the temp file or replacing the destination is denied (a directory that is not writable, a sticky
 /// directory, or a Windows ACL that allows writing the file but not deleting it).</item>
@@ -116,6 +121,7 @@ internal static class AtomicFile
     private static bool TryReplaceFile(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner)
     {
         string tempPath = Path.Combine(Path.GetDirectoryName(destination)!, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
+        bool keepTemp = false;
         try
         {
             using (FileStream stream = CreateTempFile(tempPath, mode))
@@ -139,12 +145,30 @@ internal static class AtomicFile
 
                 stream.Write(content);
                 stream.WriteByte((byte)'\n');
+
+                // The write above clears setuid and setgid again for a non-root user, so the mode is set once more. The buffered bytes
+                // go to the file first, so that no write can follow this chmod.
+                stream.Flush();
+                if (!OperatingSystem.IsWindows() && mode is UnixFileMode writtenMode)
+                {
+                    File.SetUnixFileMode(stream.SafeFileHandle, writtenMode);
+                }
+
                 stream.Flush(flushToDisk: true);
             }
 
             if (OperatingSystem.IsWindows() && replacing)
             {
-                File.Replace(tempPath, destination, destinationBackupFileName: null);
+                try
+                {
+                    File.Replace(tempPath, destination, destinationBackupFileName: null);
+                }
+                catch (IOException error)
+                {
+                    // Set before recovering: a failed recovery must keep the temp file, and a recovered one is no longer there to delete.
+                    keepTemp = IsUnableToMoveReplacement(error);
+                    RecoverFromFailedReplace(error, tempPath, destination);
+                }
             }
             else
             {
@@ -159,9 +183,50 @@ internal static class AtomicFile
         }
         finally
         {
-            DeleteQuietly(tempPath);
+            if (!keepTemp)
+            {
+                DeleteQuietly(tempPath);
+            }
         }
     }
+
+    /// <summary>ERROR_UNABLE_TO_MOVE_REPLACEMENT: File.Replace removed the destination but could not move the replacement into its place.</summary>
+    private const int ErrorUnableToMoveReplacement = 1176;
+
+    /// <summary>
+    /// Completes a save whose <c>File.Replace</c> failed on Windows. Replace is called without a backup file, so after error 1176 the
+    /// destination is already gone and the new content exists only at <paramref name="tempPath"/>. The temp file is moved into place
+    /// then. When that is not possible, the temp file is kept and an <see cref="IOException"/> names it. Any other error, or 1176 with
+    /// no temp file to save, is rethrown unchanged. Returns normally only when the save is complete.
+    /// </summary>
+    internal static void RecoverFromFailedReplace(IOException error, string tempPath, string destination)
+    {
+        if (!IsUnableToMoveReplacement(error) || !File.Exists(tempPath))
+        {
+            ExceptionDispatchInfo.Throw(error);
+        }
+
+        Exception cause = error;
+        if (!Path.Exists(destination))
+        {
+            try
+            {
+                File.Move(tempPath, destination);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                cause = ex;
+            }
+        }
+
+        throw new IOException(
+            $"The save to '{destination}' failed, and the new content could not be moved into its place. The new content is kept in '{tempPath}'.",
+            cause);
+    }
+
+    /// <summary>True when the error is ERROR_UNABLE_TO_MOVE_REPLACEMENT (1176), the low 16 bits of the Win32 error in its HRESULT.</summary>
+    internal static bool IsUnableToMoveReplacement(IOException error) => (error.HResult & 0xFFFF) == ErrorUnableToMoveReplacement;
 
     /// <summary>
     /// Overwrites the existing file's content through the file itself, so its identity, owner and permissions are kept. Not atomic:
@@ -169,11 +234,39 @@ internal static class AtomicFile
     /// </summary>
     private static void WriteInPlace(string destination, ReadOnlySpan<byte> content)
     {
+        UnixFileMode? ownedMode = OperatingSystem.IsWindows() ? null : ModeIfOwned(destination);
         using var stream = new FileStream(destination, FileMode.Open, FileAccess.Write, FileShare.Read);
         stream.Write(content);
         stream.WriteByte((byte)'\n');
         stream.SetLength(stream.Position);
+
+        // A write or truncate by a non-root user clears setuid and setgid, so the mode is restored on the handle. Best effort: a failure
+        // is ignored, and the content is already written.
+        if (!OperatingSystem.IsWindows() && ownedMode is UnixFileMode mode)
+        {
+            try
+            {
+                File.SetUnixFileMode(stream.SafeFileHandle, mode);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Left as the write left it.
+            }
+        }
+
         stream.Flush(flushToDisk: true);
+    }
+
+    /// <summary>The mode of the file when this process owns it, otherwise null. Unix only.</summary>
+    [UnsupportedOSPlatform("windows")]
+    private static UnixFileMode? ModeIfOwned(string file)
+    {
+        if (UnixOwnership.TryReadOwnership(file) is { } existing)
+        {
+            return existing.Uid == LinuxNative.GetEffectiveUserId() ? existing.Mode : null;
+        }
+
+        return OwnedByThisProcess(file) ? File.GetUnixFileMode(file) : null;
     }
 
     /// <summary>Opens the file for writing without changing it, so that a file this process cannot write is never replaced.</summary>
@@ -212,7 +305,8 @@ internal static class AtomicFile
         }
     }
 
-    // A path that is not a link is returned unchanged. A link is resolved to its final target, which is what gets replaced.
+    // A path that is not a link is returned unchanged. A link is resolved to its final target, which is what gets replaced. The walk is
+    // strict, so a link through a missing or non-directory component is an error here, as opening it would be.
     private static string ResolveDestination(string fullPath)
     {
         var link = new FileInfo(fullPath);
@@ -221,7 +315,7 @@ internal static class AtomicFile
             return fullPath;
         }
 
-        string final = PhysicalPath.Resolve(fullPath);
+        string final = PhysicalPath.ResolveExisting(fullPath);
         if (!File.Exists(final))
         {
             throw new IOException($"Cannot save '{fullPath}': it is a symbolic link to '{final}', which does not exist.");
