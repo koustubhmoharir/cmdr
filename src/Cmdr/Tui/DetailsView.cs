@@ -44,12 +44,15 @@ internal sealed class DetailsView : View
     }
 
     /// <summary>The scroll position, clamped to the current content and height.</summary>
+    // The layout of the last draw and the width it was made for; cleared when a different row is shown.
+    private (int Width, DetailsLayout Layout)? _drawn;
+
     public DetailsScroll Scroll
     {
         get
         {
             int height = Math.Max(0, Viewport.Height);
-            int total = Arrange(Viewport.Width).Rows.Count;
+            int total = DrawnOrArranged(Viewport.Width).Rows.Count;
             return new DetailsScroll(DetailsText.ClampOffset(_offset, total, height), height, total);
         }
     }
@@ -69,6 +72,7 @@ internal sealed class DetailsView : View
 
         _row = row;
         _configDir = configDir;
+        _drawn = null;
         SetNeedsDraw();
     }
 
@@ -177,6 +181,7 @@ internal sealed class DetailsView : View
 
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
         DetailsLayout layout = Arrange(width);
+        _drawn = (width, layout);
         _offset = DetailsText.ClampOffset(_offset, layout.Rows.Count, height);
         LogicalRange? selection = SelectedRange(layout.Texts);
 
@@ -459,6 +464,14 @@ internal sealed class DetailsView : View
     private static int CharacterCount(string text) => text.EnumerateRunes().Count();
 
     /// <summary>The rows of the content wrapped to <paramref name="width"/>, with the logical text. Empty for a non-positive width.</summary>
+    /// <summary>
+    /// The layout last drawn at <paramref name="width"/>, else a fresh one. For the frame title, read every 100 ms: it describes
+    /// what is on screen, and every change to the content (a different row, an edit, a state change) redraws the view.
+    /// Building a layout copies the process environment and wraps every line, which is too much to repeat on every tick.
+    /// </summary>
+    private DetailsLayout DrawnOrArranged(int width) =>
+        _drawn is { } drawn && drawn.Width == width ? drawn.Layout : Arrange(width);
+
     private DetailsLayout Arrange(int width)
     {
         if (width <= 0)

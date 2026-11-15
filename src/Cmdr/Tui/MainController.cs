@@ -467,8 +467,29 @@ internal sealed class MainController : IDisposable
             return false;
         }
 
-        RedrawLists();
+        // Only a running, starting or stopping command shows a duration that grows with the clock. Every other change arrives as
+        // an event (OnEntryChanged), so with nothing like that in view the tick draws nothing: a redraw of one view redraws the
+        // whole window in Terminal.Gui, and that once a second was most of cmdr's own idle CPU.
+        if (ShowsElapsedTime(_rows))
+        {
+            _list.SetNeedsDraw();
+        }
+
         return true;
+    }
+
+    /// <summary>True if one of the visible rows is a command whose status shows an elapsed time.</summary>
+    internal static bool ShowsElapsedTime(IReadOnlyList<ListRow> rows)
+    {
+        foreach (ListRow row in rows)
+        {
+            if (row is CommandRow { Entry.Process.Snapshot.State: ProcessState.Running or ProcessState.Stopping })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void RedrawLists()

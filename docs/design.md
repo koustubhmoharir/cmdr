@@ -324,14 +324,21 @@ acting, or captures a snapshot and acts only on that.
   the background is the terminal default, `Color.None`).
 - **Info pane** (`DetailsView`): text from `DetailsText`, word-wrapped by `TextWidth`, with a row map
   back to logical lines (`DetailsText.WrapRows`) so a mouse selection is kept in logical coordinates
-  (survives the once-a-second refresh) and copies wrapped lines as one line, restoring the spaces
-  dropped at breaks.
+  (survives redraws) and copies wrapped lines as one line, restoring the spaces dropped at breaks. The frame
+  title (read every 100 ms) uses the layout of the last draw instead of building one.
 - **Output pane** (`OutputView`): cell wrap like a terminal (`OutputWrap`, one cell per grapheme, so
   display columns equal line columns; `RowCount` counts rows without building cells). The scroll position is (line, row within line) (`OutputScroll`); only the
   lines an operation reaches are wrapped. The cursor is a logical line; following shows the last page.
   Following resumes only with the viewport at the bottom and the cursor on the last line. The wheel scrolls
   the viewport; once it is at the bottom, wheel-down moves the cursor down (a cursor above the view first
   jumps to the top line in view), so the wheel alone reaches the tail.
+- **Idle cost.** In Terminal.Gui 2.5 redrawing one view redraws the whole window, which allocates about 7 MB and
+  costs 10–50 ms of CPU. So cmdr redraws only for a change: the 100 ms tick redraws the output pane when its buffer
+  changed, and the 1-second tick redraws the list only while a visible command shows a growing duration (running,
+  starting or stopping); everything else arrives as an event. The output pane keeps the prepared lines of the last two
+  frames (`LineCache`), keyed by line object. Measured on Linux (WSL2, 2026-11-16): idle cmdr uses what a bare
+  Terminal.Gui window does, about 5% of a core, nearly all from Terminal.Gui's polling loops (`Task.Delay(...).Wait()`
+  every 20–40 ms through the thread pool, which spin-waits). With those two waits patched to sleep, idle is about 1%.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
