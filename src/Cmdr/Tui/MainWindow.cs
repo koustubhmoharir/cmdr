@@ -18,8 +18,8 @@ internal sealed class MainWindow : Window
     }
 
     /// <remarks>
-    /// Esc keeps Terminal.Gui's default Quit binding so that dialogs can be cancelled with it. In the main window Esc means
-    /// "stop", so an Esc that no pane handled is swallowed here; otherwise it would quit without the quit flow's prompts.
+    /// Esc keeps Terminal.Gui's default Quit binding so that dialogs can be cancelled with it. In the main window Esc does
+    /// nothing, so an Esc that no pane handled is swallowed here; otherwise it would quit without the quit flow's prompts.
     /// </remarks>
     protected override bool OnKeyDown(Key key) => _controller.OnGlobalKey(key) || key == Key.Esc || base.OnKeyDown(key);
 }

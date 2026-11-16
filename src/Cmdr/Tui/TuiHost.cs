@@ -62,8 +62,8 @@ internal static class TuiHost
     }
 
     // The main window for a session, on an initialized application. Esc keeps its default Quit binding so dialogs can still
-    // be cancelled with it. In the main window the list and output views consume Esc ("stop") before it reaches that
-    // binding; Ctrl+Q quits (MainController).
+    // be cancelled with it. In the main window the list, info and output views consume Esc (it does nothing there) before
+    // it reaches that binding; Ctrl+Q quits (MainController).
     private static void RunMain(IApplication app, Session session)
     {
         using var controller = new MainController(app, session);

@@ -236,7 +236,7 @@ returns a notice that is written to the output.
 - Enter on a group: kill-first over the whole subtree (stopping / leftovers); otherwise run it, skipping
   commands that are already running and dropping groups left with nothing to start. Refused with a
   message when the plan overlaps an active run.
-- Esc/Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
+- Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
   On a command, it cancels the innermost run containing it (which then fails upward) and stops the
   command if it is running; on a queued command, whatever that run is currently running keeps going.
   F5 on a group stops everything below, waits for leaders, then runs the group.
@@ -363,7 +363,7 @@ acting, or captures a snapshot and acts only on that.
 
 - Terminal.Gui **2.x**, built from the fork in the `Terminal.Gui` submodule (`develop` plus the `cmdr-perf` fixes). Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
   Default quit key is Esc; adding Ctrl+Q does not remove it — the Esc binding must be removed
-  (or Esc intercepted in `OnKeyDown`) since Esc means "stop" here. The main window swallows unhandled Esc.
+  (or Esc intercepted in `OnKeyDown`) since Esc must not quit here. The main window swallows unhandled Esc.
 - Ctrl+C arrives as a normal key (ISIG disabled), so it can be bound.
 - Never write to `Console.Out` while the TUI runs.
 - Custom view: `OnDrawingContent`, `Move/AddStr/SetAttribute`; `Attribute`/`Color` support 24-bit RGB

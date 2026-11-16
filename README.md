@@ -21,7 +21,7 @@ Runs on Linux and Windows.
 │> web@1.0.0 start                                                           │
 │Frontend server listening on :8090                                          │
 ╰────────────────────────────────────────────────────────────────────────────╯
-Enter Start  Esc/^C Stop  F5 Restart  …  + Max  ^Q Quit
+Enter Start  ^C Stop  F5 Restart  …  + Max  ^Q Quit
 ```
 
 - [Install](#install)
@@ -245,7 +245,7 @@ waiting commands; the running one keeps going.
 
 ### Stopping
 
-Esc stops gracefully (after a confirmation), Ctrl+C stops gracefully without asking. A graceful stop
+Ctrl+C stops gracefully, without asking. Esc does not stop anything. A graceful stop
 uses the command's `stop` method; the command shows `◌` until it exits. If it doesn't, Enter on it
 force-kills it (and anything it left over). cmdr never force-kills on its own.
 
@@ -287,12 +287,13 @@ pane and the output pane can be scrolled, and text in them can be selected with 
 key brings the layout back.
 
 Commands act on the marked commands, or the focused command if none is marked. On a group header they
-act on everything in the group. Marks are limited to one group.
+act on everything in the group. Marks are limited to one group. In the info and output panes, Enter, Ctrl+C,
+F5, L, F2 and Del act on the command the panes show (the focused command) alone, ignoring marks; on a group
+header they do nothing there.
 
 | Key | Action |
 |---|---|
 | Enter | Start (or force-kill what is stopping or left over) |
-| Esc | Stop gracefully, with confirmation |
 | Ctrl+C | Stop gracefully |
 | F5 | Restart, with confirmation. Pressed again while that restart still waits for the command to stop, it asks: keep waiting (Enter), or force kill now so the restart goes ahead |
 | Space, Shift+↑/↓, Ctrl+click | Mark commands |

@@ -24,7 +24,7 @@ internal sealed class MainController : IDisposable
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
-    private const string HintsRest = "Esc/^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save  + Max";
+    private const string HintsRest = "^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save  + Max";
     private const string HintsRight = "  ^Q Quit";
     private const int TopRowMinHeight = 5;
     private const int TopRowMaxPercent = 60;
@@ -187,7 +187,13 @@ internal sealed class MainController : IDisposable
         _window.SetNeedsLayout();
     }
 
-    /// <summary>Keys of the command list. Returns true when handled. Esc is always handled, so it never quits.</summary>
+    /// <summary>
+    /// Keys of the command list. Returns true when handled. Esc is always handled, so it never quits, and it does nothing else.
+    /// </summary>
+    /// <remarks>
+    /// Enter, Ctrl+C, F5, L, F2 and Del act on the marks or the focused row here. The info and output panes take the same keys
+    /// for the shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and collapsing are list-only.
+    /// </remarks>
     public bool OnListKey(Key key)
     {
         if (OnGlobalKey(key))
@@ -279,29 +285,29 @@ internal sealed class MainController : IDisposable
 
         if (key == Key.Enter)
         {
-            Activate(focused);
+            Activate(TargetOf(focused));
             return true;
         }
 
+        // Esc is consumed so that it never quits the application. Stopping is Ctrl+C only.
         if (key == Key.Esc)
         {
-            StopTargets(focused, confirm: true);
             return true;
         }
 
         if (key == Key.C.WithCtrl)
         {
-            StopTargets(focused, confirm: false);
+            StopTargets(TargetOf(focused));
             return true;
         }
 
         if (key == Key.F5)
         {
-            RestartTargets(focused);
+            RestartTargets(TargetOf(focused));
             return true;
         }
 
-        if (key.NoShift == Key.L && !key.IsCtrl && !key.IsAlt)
+        if (IsLogKey(key))
         {
             ToggleLog(focused);
             return true;
@@ -321,6 +327,62 @@ internal sealed class MainController : IDisposable
 
         return false;
     }
+
+    /// <summary>
+    /// The command keys of the info and output panes: Enter starts, Ctrl+C stops, F5 restarts, L toggles the log, F2 edits and
+    /// Del deletes. They act on the command the panes show (the focused row, when it is a command) and on that command alone:
+    /// marks are ignored. A group header shows no command, so these keys do nothing there. Returns true for these keys, even
+    /// when nothing is done; the panes handle their own keys first and call this for the rest.
+    /// </summary>
+    public bool OnShownCommandKey(Key key)
+    {
+        if (key == Key.Enter)
+        {
+            Activate(ShownTarget());
+            return true;
+        }
+
+        if (key == Key.C.WithCtrl)
+        {
+            StopTargets(ShownTarget());
+            return true;
+        }
+
+        if (key == Key.F5)
+        {
+            RestartTargets(ShownTarget());
+            return true;
+        }
+
+        if (IsLogKey(key))
+        {
+            ToggleLog(ShownRow);
+            return true;
+        }
+
+        if (key == Key.F2)
+        {
+            EditFocused(ShownRow);
+            return true;
+        }
+
+        if (key == Key.Delete)
+        {
+            DeleteFocused(ShownRow);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>The focused row when it is a command, which is the command the info and output panes show; otherwise null.</summary>
+    private ListRow? ShownRow => FocusedRow as CommandRow;
+
+    /// <summary>The target of a key in the info or output pane: the shown command alone, or null when a group header is focused.</summary>
+    private ActionTarget? ShownTarget() => ShownRow is CommandRow command ? new CommandsTarget(new[] { command.Entry }) : null;
+
+    /// <summary>L, without Shift, Ctrl or Alt. Both the list and the panes turn the log on or off with it.</summary>
+    private static bool IsLogKey(Key key) => key.NoShift == Key.L && !key.IsCtrl && !key.IsAlt;
 
     /// <summary>
     /// Tab moves the focus through the list, the details strip and the output, and Shift+Tab backward. Handled here rather
@@ -715,9 +777,9 @@ internal sealed class MainController : IDisposable
         }
     }
 
-    private void Activate(ListRow? focused)
+    /// <summary>Enter: starts the target, or force-kills what is stopping or left over. A null target does nothing.</summary>
+    private void Activate(ActionTarget? target)
     {
-        ActionTarget? target = TargetOf(focused);
         if (target is null || CommandsOf(target).Count == 0)
         {
             return;
@@ -767,9 +829,9 @@ internal sealed class MainController : IDisposable
         _ => CommandsOf(target).Count + " commands",
     };
 
-    private void StopTargets(ListRow? focused, bool confirm)
+    /// <summary>Ctrl+C: gracefully stops the running commands of the target, without asking. A null target does nothing.</summary>
+    private void StopTargets(ActionTarget? target)
     {
-        ActionTarget? target = TargetOf(focused);
         if (target is null)
         {
             return;
@@ -777,11 +839,6 @@ internal sealed class MainController : IDisposable
 
         int stoppable = CommandsOf(target).Count(IsStoppable);
         if (stoppable == 0)
-        {
-            return;
-        }
-
-        if (confirm && !Confirm.Ask(_app, "Stop", $"Stop {stoppable} command(s)?"))
         {
             return;
         }
@@ -803,9 +860,9 @@ internal sealed class MainController : IDisposable
         }
     }
 
-    private void RestartTargets(ListRow? focused)
+    /// <summary>F5: restarts the target after a confirmation. A null target does nothing.</summary>
+    private void RestartTargets(ActionTarget? target)
     {
-        ActionTarget? target = TargetOf(focused);
         if (target is null)
         {
             return;
@@ -1309,10 +1366,16 @@ internal sealed class MainController : IDisposable
         _status.Show(left, message: false, right: HintsRight);
     }
 
+    /// <summary>
+    /// The target the Enter hint describes: the list's target (the marks, or the focused row) when the list has the focus, and
+    /// the shown command when the info or output pane has it, as <see cref="OnShownCommandKey"/> acts on.
+    /// </summary>
+    private ActionTarget? HintTarget() => _details.HasFocus || _output.HasFocus ? ShownTarget() : TargetOf(FocusedRow);
+
     /// <summary>The hint text left of "^Q Quit": "Enter Start" / "Enter Kill" for the current targets, when Enter does something.</summary>
     private string HintLeft()
     {
-        ActionTarget? target = TargetOf(FocusedRow);
+        ActionTarget? target = HintTarget();
         IReadOnlyList<CommandEntry> targets = target is null ? Array.Empty<CommandEntry>() : CommandsOf(target);
         var enterTargets = targets
             .Select(e => new EnterTarget(e.Process.Snapshot.State, e.Process.Snapshot.HasLeftovers, e.Process.CanStart))

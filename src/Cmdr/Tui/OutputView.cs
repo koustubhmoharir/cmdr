@@ -198,7 +198,7 @@ internal sealed class OutputView : View
             return true;
         }
 
-        // Esc means "stop" in cmdr; in this view it clears the selection and never reaches the application.
+        // Esc clears the selection in this view and does nothing else; it never reaches the application.
         if (key == Key.Esc)
         {
             return ClearSelection();
@@ -261,6 +261,12 @@ internal sealed class OutputView : View
 
         // Lines wrap, so there is nothing to scroll sideways. The keys are consumed so that focus stays here.
         if (key == Key.CursorLeft || key == Key.CursorRight)
+        {
+            return true;
+        }
+
+        // The command keys of the list act on the shown command here too.
+        if (_controller.OnShownCommandKey(key))
         {
             return true;
         }

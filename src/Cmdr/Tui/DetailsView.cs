@@ -89,7 +89,7 @@ internal sealed class DetailsView : View
             return true;
         }
 
-        // Esc means "stop" in cmdr; in this view it clears the selection and never reaches the application.
+        // Esc clears the selection in this view and does nothing else; it never reaches the application.
         if (key == Key.Esc)
         {
             return ClearSelection();
@@ -130,6 +130,12 @@ internal sealed class DetailsView : View
         if (key == Key.End)
         {
             return ScrollTo(scroll.Total);
+        }
+
+        // The command keys of the list act on the shown command here too.
+        if (_controller.OnShownCommandKey(key))
+        {
+            return true;
         }
 
         return base.OnKeyDown(key);

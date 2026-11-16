@@ -161,7 +161,7 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Esc / Ctrl+C on command rows: cancels the innermost active run containing each target (that run fails, and so do the
+    /// Ctrl+C on command rows: cancels the innermost active run containing each target (that run fails, and so do the
     /// runs around it). Gracefully stops the targets that are running or stopping. Stop signals are sent in the background.
     /// A pending restart of any of the targets is revoked first: it completes with <see cref="OperationCanceledException"/>
     /// and starts nothing.
@@ -188,7 +188,7 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Esc / Ctrl+C on a group: cancels every active run at or below the group, and the enclosing runs that have the group as
+    /// Ctrl+C on a group: cancels every active run at or below the group, and the enclosing runs that have the group as
     /// a current or pending step (so they fail upward). Gracefully stops everything running below the group. A pending restart
     /// of any command below the group is revoked first: it completes with <see cref="OperationCanceledException"/> and starts nothing.
     /// </summary>
