@@ -7,4 +7,16 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
+  <!--
+    How cmdr builds the Terminal.Gui fork (the Terminal.Gui submodule), used by every ProjectReference to it so they map
+    to one build. GitVersion is off (a submodule checkout is a detached HEAD), so the version is given here instead:
+    without it the assembly would be 1.0.0.0, lower than what packages built against Terminal.Gui 2.x reference.
+    No package is generated (the fork's Release pack also pushes into ~/.nuget/packages), and symbols are embedded
+    and XML docs off so that publishing still yields a single file.
+  -->
+  <PropertyGroup>
+    <TerminalGuiForkVersion>2.6.0</TerminalGuiForkVersion>
+    <TerminalGuiBuildProperties>DisableGitVersionTask=true;Version=$(TerminalGuiForkVersion);GeneratePackageOnBuild=false;DebugType=embedded;GenerateDocumentationFile=false</TerminalGuiBuildProperties>
+  </PropertyGroup>
+
 </Project>

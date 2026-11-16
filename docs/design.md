@@ -371,7 +371,12 @@ acting, or captures a snapshot and acts only on that.
 
 ## Implementation notes (from investigation)
 
-- Terminal.Gui **2.x**, built from the fork in the `Terminal.Gui` submodule (`develop` plus the `cmdr-perf` fixes). Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
+- Terminal.Gui **2.x**, built from the fork in the `Terminal.Gui` submodule (`develop` plus the `cmdr-perf` fixes). cmdr builds it with
+  `TerminalGuiBuildProperties` (root `Directory.Build.props`): GitVersion off with an explicit version, no package. To run
+  the fork's own tests, pass the same: `dotnet test --project Tests/UnitTestsParallelizable -c Release
+  -p:DisableGitVersionTask=true -p:Version=2.6.0 -p:GeneratePackageOnBuild=false`. Without the version the assembly is
+  1.0.0.0 and UICatalog's `Terminal.Gui.Editor` package (built against 2.4.8) fails to load; without the last flag a
+  Release build packs and pushes into `~/.nuget/packages`. Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
   Default quit key is Esc; adding Ctrl+Q does not remove it — the Esc binding must be removed
   (or Esc intercepted in `OnKeyDown`) since Esc must not quit here. The main window swallows unhandled Esc.
 - Ctrl+C arrives as a normal key (ISIG disabled), so it can be bound.

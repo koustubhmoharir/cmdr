@@ -25,7 +25,7 @@
       transitive reference without them, which runs GitVersion and packs and pushes a package into ~/.nuget/packages.
     -->
     <ProjectReference Include="..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj"
-                      AdditionalProperties="DisableGitVersionTask=true;GeneratePackageOnBuild=false;DebugType=embedded;GenerateDocumentationFile=false" />
+                      AdditionalProperties="$(TerminalGuiBuildProperties)" />
   </ItemGroup>
 
 </Project>
