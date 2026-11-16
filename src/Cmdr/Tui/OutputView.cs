@@ -308,6 +308,9 @@ internal sealed class OutputView : View
         return base.OnMouseEvent(mouse);
     }
 
+    // Skips the framework's viewport clear: OnDrawingContent paints every cell of the viewport, so the clear is redundant work.
+    protected override bool OnClearingViewport() => true;
+
     protected override bool OnDrawingContent(DrawContext? context)
     {
         int width = Viewport.Width;

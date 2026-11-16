@@ -76,6 +76,28 @@ public sealed class OutputDrawTests
         Assert.Contains("0123456789\nabcdefghij", frames[1]);
     }
 
+    [Fact]
+    public void Content_that_shrinks_between_frames_leaves_no_stale_cells()
+    {
+        using TempSession temp = TempSession.Sample();
+        CommandEntry longer = temp.Session.AllEntries.First();
+        CommandEntry shorter = temp.Session.AllEntries.Last();
+        OutputView? view = null;
+
+        IReadOnlyList<string> frames = DrawFrames(
+            temp,
+            50,
+            () => longer.Process.Output.WriteStdOut(new string('x', 40) + "\nyyyyyyyy\n"),
+            () => shorter.Process.Output.WriteStdOut("ab\n"),
+            onView: v => view = v,
+            between: frame => { if (frame == 1) { view!.Show(shorter); } });
+
+        Assert.Contains(new string('x', 40), frames[0]);
+        Assert.Contains("yyyyyyyy", frames[0]);
+        // Row 0 is "ab" with nothing after it, and rows 1 to 5 (past the content) are blank.
+        Assert.Equal("ab\n\n\n\n\n", frames[1]);
+    }
+
     /// <summary>
     /// Draws one frame per action (each action runs before its frame) and returns each frame's screen as text, rows joined by
     /// newlines with trailing spaces trimmed.
