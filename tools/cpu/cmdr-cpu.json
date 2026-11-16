@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "name": "cpu",
+      "description": "Streaming output for the CPU measurement kit (tools/cpu/README.md).",
+      "cwd": ".",
+      "items": [
+        { "name": "stream 100/s", "program": "python3", "args": ["stream.py", "100"] },
+        { "name": "stream 10/s", "program": "python3", "args": ["stream.py", "10"] },
+        { "name": "progress", "program": "python3", "args": ["stream.py", "--progress"] }
+      ]
+    }
+  ]
+}

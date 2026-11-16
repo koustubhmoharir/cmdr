@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "name": "cpu",
+      "description": "Streaming output for the CPU measurement kit (tools/cpu/README.md).",
+      "cwd": ".",
+      "items": [
+        { "name": "stream 100/s", "program": "powershell.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "stream.ps1", "100"] },
+        { "name": "stream 10/s", "program": "powershell.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "stream.ps1", "10"] },
+        { "name": "progress", "program": "powershell.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "stream.ps1", "-Progress"] }
+      ]
+    }
+  ]
+}
