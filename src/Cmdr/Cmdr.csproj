@@ -20,6 +20,15 @@
     <Error Text="The Terminal.Gui submodule is missing. Run: git submodule update --init" />
   </Target>
 
+  <!--
+    Thread-pool workers go to sleep as soon as they run out of work instead of spinning first. Every chunk a command
+    writes wakes a worker (the pipe reads are async), and the spin after each wake-up cost several percent of a core
+    while a command streams output, against about a third of that without it.
+  -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.Threading.ThreadPool.UnfairSemaphoreSpinLimit" Value="0" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Cmdr.Tests" />
   </ItemGroup>
