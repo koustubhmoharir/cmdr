@@ -355,8 +355,8 @@ acting, or captures a snapshot and acts only on that.
     terminal (DECSTBM + SU), shifts its copy, and sends only the cells that differ, when its estimate says that is cheaper than
     plain comparison (near-identical consecutive lines are cheaper without). The hint never affects correctness: every cell of
     the band is compared. It is ignored on the legacy Windows console and in inline mode.
-  - Measured (Linux, 160×50, varied text): 100 lines/s ~5.1 KB/frame before the copy, ~2.1 KB with both; 10 lines/s ~4.7 KB
-    → ~0.26 KB. Windows Terminal is expected to behave the same (VT scroll regions) but is not yet verified.
+  - Measured (Linux, 160×50, varied text, ~9 frames/s): 100 lines/s ~8.4 KB/frame before, ~5.1 KB with the copy, ~2.1 KB
+    with scrolling too; 10 lines/s ~4.7 KB with the copy alone, ~0.26 KB with scrolling. Windows Terminal is expected to behave the same (VT scroll regions) but is not yet verified.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
