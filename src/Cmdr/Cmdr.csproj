@@ -4,9 +4,20 @@
     <ProjectReference Include="..\Cmdr.Core\Cmdr.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    Terminal.Gui is built from the fork in the Terminal.Gui submodule, not from the NuGet package: the fork carries
+    performance fixes that are not upstream yet. Its GitVersion step and pack-on-build are turned off here.
+  -->
   <ItemGroup>
-    <PackageReference Include="Terminal.Gui" Version="2.5.0" />
+    <ProjectReference Include="..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj"
+                      AdditionalProperties="DisableGitVersionTask=true;GeneratePackageOnBuild=false" />
   </ItemGroup>
+
+  <!-- A clone without the submodule would otherwise fail with hundreds of missing-type errors. -->
+  <Target Name="CheckTerminalGuiSubmodule" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
+          Condition="!Exists('$(MSBuildThisFileDirectory)..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj')">
+    <Error Text="The Terminal.Gui submodule is missing. Run: git submodule update --init" />
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="Cmdr.Tests" />

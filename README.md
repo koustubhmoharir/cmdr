@@ -35,6 +35,10 @@ Runs on Linux and Windows.
 cmdr is built from source. It needs the [.NET 10 SDK](https://dotnet.microsoft.com/download) to build,
 and the .NET 10 runtime to run.
 
+Terminal.Gui is built from source from a fork in the `Terminal.Gui` submodule, so clone with
+`git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone (and again after a pull
+that moves the submodule). `./publish.ps1` does this itself.
+
 Build and run from the repository:
 
 ```sh
