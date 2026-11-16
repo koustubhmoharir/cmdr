@@ -102,7 +102,7 @@ public sealed class OutputDrawTests
     /// Draws one frame per action (each action runs before its frame) and returns each frame's screen as text, rows joined by
     /// newlines with trailing spaces trimmed.
     /// </summary>
-    private static IReadOnlyList<string> DrawFrames(
+    internal static IReadOnlyList<string> DrawFrames(
         TempSession temp,
         int width,
         Action first,

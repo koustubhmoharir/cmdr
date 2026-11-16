@@ -2,6 +2,7 @@ using System.Text;
 using Cmdr.Core.Output;
 using Cmdr.Core.Session;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Text;
@@ -47,6 +48,14 @@ internal sealed class OutputView : View
     private bool _dragging;
 
     private readonly LineCache _lines = new();
+
+    // The screen rows of the last draw (the line number and row of each, top to bottom), and the screen rectangle of the viewport
+    // they were drawn in. Two arrays swap roles each frame, so a draw allocates nothing once they have grown to the height.
+    // Nothing is remembered after Show, so the first draw of a shown entry never asks for a scroll.
+    private (long Number, int Row)[] _drawn = [];
+    private (long Number, int Row)[] _current = [];
+    private int _drawnCount;
+    private System.Drawing.Rectangle _drawnScreen;
 
     // The pins are set for endpoints on partial lines only (see PinAt).
     private readonly record struct SelectionState(
@@ -163,6 +172,7 @@ internal sealed class OutputView : View
         _selection = null;
         _lastVersion = -1;
         _pinVersion = -1;
+        _drawnCount = 0;
         _lines.Clear();
         SetNeedsDraw();
     }
@@ -340,6 +350,8 @@ internal sealed class OutputView : View
             }
         }
 
+        HintScrollUp(rows, height);
+
         SelectionRange? selection = _selection is { } s ? SelectionRange.Between(s.Anchor, s.Active, s.LineMode) : null;
         Color shade = CursorShade(normal);
 
@@ -358,6 +370,75 @@ internal sealed class OutputView : View
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Tells the driver that the viewport's rows moved up since the last draw, so the terminal can scroll them instead of the
+    /// view resending them, then remembers this draw's rows. The hint is given before the rows are painted; the painting still
+    /// writes every cell, and the output compares each cell with the terminal, so a wrong or missing hint costs bytes only. A
+    /// hint is never asked for across a different screen rectangle (a resize or a move), and the arguments are checked against
+    /// the driver's rows before the call, so the call cannot throw.
+    /// </summary>
+    private void HintScrollUp(IReadOnlyList<ScreenRow> rows, int height)
+    {
+        System.Drawing.Rectangle screen = ViewportToScreen();
+        int previousCount = screen == _drawnScreen ? _drawnCount : 0;
+        if (_current.Length < height)
+        {
+            _current = new (long Number, int Row)[height];
+            _drawn = new (long Number, int Row)[height];
+        }
+
+        for (int i = 0; i < rows.Count; i++)
+        {
+            _current[i] = (rows[i].Number, rows[i].Row);
+        }
+
+        int lines = ScrollRowsFor(_drawn.AsSpan(0, previousCount), _current.AsSpan(0, rows.Count), height);
+        IDriver? driver = App?.Driver;
+        if (lines > 0 && driver is { } && screen.Y >= 0 && height >= 2 && screen.Y + height <= driver.Rows)
+        {
+            driver.ScrollRowsUp(screen.Y, height, lines);
+        }
+
+        (_drawn, _current) = (_current, _drawn);
+        _drawnCount = rows.Count;
+        _drawnScreen = screen;
+    }
+
+    /// <summary>
+    /// The number of rows the viewport scrolled up between two draws, or 0 when it did not scroll up by a count that keeps the
+    /// overlap. The first row of <paramref name="current"/> must be in <paramref name="previous"/> at a row below the top and
+    /// inside the band (fewer than <paramref name="height"/> rows down), and every row of the overlap must match, so the scroll
+    /// is exactly the one that moved the old rows up. A row that moved down, or that is not in the previous draw, gives 0.
+    /// </summary>
+    /// <remarks>
+    /// Every row of the overlap is compared, which is one pass over at most <paramref name="height"/> rows. Pairs of
+    /// (line number, row) are unique, so the first row of <paramref name="current"/> has at most one place in
+    /// <paramref name="previous"/>.
+    /// </remarks>
+    internal static int ScrollRowsFor(ReadOnlySpan<(long Number, int Row)> previous, ReadOnlySpan<(long Number, int Row)> current, int height)
+    {
+        if (previous.IsEmpty || current.IsEmpty)
+        {
+            return 0;
+        }
+
+        int lines = previous.IndexOf(current[0]);
+        if (lines <= 0 || lines >= height)
+        {
+            return 0;
+        }
+
+        for (int i = 0; i < current.Length && i + lines < previous.Length; i++)
+        {
+            if (current[i] != previous[i + lines])
+            {
+                return 0;
+            }
+        }
+
+        return lines;
     }
 
     /// <summary>
