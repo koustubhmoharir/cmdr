@@ -24,8 +24,10 @@ internal sealed class MainController : IDisposable
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
-    private const string HintsRest = "Esc/^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save";
+    private const string HintsRest = "Esc/^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save  + Max";
     private const string HintsRight = "  ^Q Quit";
+    private const int TopRowMinHeight = 5;
+    private const int TopRowMaxPercent = 60;
 
     private readonly IApplication _app;
     private readonly Session _session;
@@ -36,6 +38,7 @@ internal sealed class MainController : IDisposable
     private volatile bool _closed;
     private bool _loadErrorsShown;
     private string? _shownHints;
+    private bool _maximized;
 
     // Groups collapsed in the list. UI state only: not saved, and not part of the session. Compared by identity.
     private readonly HashSet<GroupEntry> _collapsed = new(ReferenceEqualityComparer.Instance);
@@ -82,14 +85,17 @@ internal sealed class MainController : IDisposable
         _details = new DetailsView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _output = new OutputView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
-        _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0, Height = Dim.Fill(1) };
+        // The top row (list and info pane) is as tall as the list needs, see TopRowHeight. Both frames take it from the function.
+        _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0 };
         _listFrame.Width = Dim.Func(view => Math.Max(32, (view?.SuperView?.Viewport.Width ?? 0) * 40 / 100), _listFrame);
+        _listFrame.Height = Dim.Func(TopRowHeight, _listFrame);
         _listFrame.Add(_list);
 
-        _detailsFrame = new FrameView { Title = string.Empty, X = Pos.Right(_listFrame), Y = 0, Width = Dim.Fill(), Height = 6 };
+        _detailsFrame = new FrameView { Title = string.Empty, X = Pos.Right(_listFrame), Y = 0, Width = Dim.Fill() };
+        _detailsFrame.Height = Dim.Func(TopRowHeight, _detailsFrame);
         _detailsFrame.Add(_details);
 
-        _outputFrame = new FrameView { Title = "Output", X = Pos.Right(_listFrame), Y = Pos.Bottom(_detailsFrame), Width = Dim.Fill(), Height = Dim.Fill(1) };
+        _outputFrame = new FrameView { Title = "Output", X = 0, Y = Pos.Bottom(_detailsFrame), Width = Dim.Fill(), Height = Dim.Fill(1) };
         _outputFrame.Add(_output);
 
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
@@ -140,7 +146,45 @@ internal sealed class MainController : IDisposable
             return true;
         }
 
+        if (IsMaximizeKey(key))
+        {
+            ToggleMaximized();
+            return true;
+        }
+
         return false;
+    }
+
+    /// <summary>
+    /// '+' and '=' are one key on most keyboards. Both are accepted, with or without Shift: the driver reports the rune
+    /// either way, and <see cref="Key.AsRune"/> resolves the shifted form.
+    /// </summary>
+    private static bool IsMaximizeKey(Key key) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value is '+' or '=';
+
+    /// <summary>
+    /// Shows the output pane over the whole area above the status line and hides the list and the info pane, or restores
+    /// the normal layout. Focus on a hidden pane moves to the output first; otherwise it stays where it is.
+    /// </summary>
+    private void ToggleMaximized()
+    {
+        if (!_maximized && (_list.HasFocus || _details.HasFocus))
+        {
+            _output.SetFocus();
+        }
+
+        _maximized = !_maximized;
+        _listFrame.Visible = !_maximized;
+        _detailsFrame.Visible = !_maximized;
+        if (_maximized)
+        {
+            _outputFrame.Y = 0;
+        }
+        else
+        {
+            _outputFrame.Y = Pos.Bottom(_detailsFrame);
+        }
+
+        _window.SetNeedsLayout();
     }
 
     /// <summary>Keys of the command list. Returns true when handled. Esc is always handled, so it never quits.</summary>
@@ -284,7 +328,8 @@ internal sealed class MainController : IDisposable
     /// </summary>
     public void CycleFocusPane(bool backward)
     {
-        View[] panes = { _list, _details, _output };
+        // While the output is maximized, the other panes are hidden and must not get the focus.
+        View[] panes = _maximized ? new View[] { _output } : new View[] { _list, _details, _output };
         panes[FocusCycle.Next(Array.FindIndex(panes, pane => pane.HasFocus), panes.Length, backward)].SetFocus();
     }
 
@@ -514,6 +559,8 @@ internal sealed class MainController : IDisposable
         _rows = VisibleRows(_session.BuildRows());
         _source.Rows = _rows;
         _selection.Prune();
+        // The top row's height is a function of the list's line count; the function is evaluated at layout.
+        _window.SetNeedsLayout();
 
         int index = focusKey is null ? -1 : IndexOfKey(focusKey);
         if (index < 0 && _rows.Count > 0)
@@ -524,6 +571,17 @@ internal sealed class MainController : IDisposable
         FocusRowIndex(index);
         _listFrame.Title = BuildTitle();
         UpdateFocusedViews();
+    }
+
+    /// <summary>
+    /// The height of the top row (list and info pane): the list's display lines and its border, at most 60% of the window's
+    /// height, and at least <see cref="TopRowMinHeight"/>. The minimum wins when the window is shorter than that.
+    /// </summary>
+    private int TopRowHeight(View? view)
+    {
+        int window = view?.SuperView?.Viewport.Height ?? 0;
+        int wanted = _source.Count + 2;
+        return Math.Max(TopRowMinHeight, Math.Min(window * TopRowMaxPercent / 100, wanted));
     }
 
     /// <summary>The rows shown: everything below a collapsed group is left out, at any depth.</summary>

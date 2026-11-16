@@ -8,18 +8,20 @@ stopping a command stops everything it started.
 Runs on Linux and Windows.
 
 ```
-╭┤cmdr.json├─────────────────────────╮╭┤servers / web├──────────────────────────╮
-│▾ build  [sequential]               ││$ pnpm start                            │
-│  ✓ restore                         ││cwd: /home/me/project/web               │
-│    10:40:02  exit 0 · 0:04         ││FORCE_COLOR=1                           │
-│  ✗ build                           │╰────────────────────────────────────────╯
-│    10:40:06  exit 1 · 0:11         │╭┤Output — following —├──────────────────╮
-│▾ servers  [parallel]               ││> web@1.0.0 start                       │
-│  ● web                             ││Frontend server listening on :8090      │
-│    10:42:03  ready · 12:51         ││                                        │
-│  ⧗ api                             ││                                        │
-│    10:42:03  starting 0:08         ││                                        │
-╰────────────────────────────────────╯╰────────────────────────────────────────╯
+╭┤cmdr.json├───────────────────╮╭┤servers / web├─────────────────────────────╮
+│▾ build  [sequential]         ││$ pnpm start                                │
+│  ✓ restore                   ││cwd: /home/me/project/web                   │
+│    10:40:02  exit 0 · 0:04   ││FORCE_COLOR=1                               │
+│  ✗ build                     ││                                            │
+│    10:40:06  exit 1 · 0:11   ││                                            │
+│▾ servers  [parallel]         ││                                            │
+│  ● web                       ││                                            │
+╰──────────────────────────────╯╰────────────────────────────────────────────╯
+╭┤Output — following —├──────────────────────────────────────────────────────╮
+│> web@1.0.0 start                                                           │
+│Frontend server listening on :8090                                          │
+╰────────────────────────────────────────────────────────────────────────────╯
+Enter Start  Esc/^C Stop  F5 Restart  …  + Max  ^Q Quit
 ```
 
 - [Install](#install)
@@ -276,9 +278,13 @@ matches `busy`, e.g. on a rebuild. `busy` is optional.
 
 ## Screen and keys
 
-The left pane lists groups and commands; the right pane shows the focused item's info (command line,
-working directory, environment, description) above its output. The info pane and the output pane can be
-scrolled, and text in them can be selected with the mouse.
+The top row has the groups and commands on the left and the focused item's info (command line, working
+directory, environment, description) on the right. Its height follows the list, up to 60% of the window,
+and is at least five rows. Below it, across the full width, is the output of the focused command. The info
+pane and the output pane can be scrolled, and text in them can be selected with the mouse.
+
+`+` or `=` maximizes the output pane over the whole screen and hides the list and the info pane. The same
+key brings the layout back.
 
 Commands act on the marked commands, or the focused command if none is marked. On a group header they
 act on everything in the group. Marks are limited to one group.
@@ -294,6 +300,7 @@ act on everything in the group. Marks are limited to one group.
 | ← / → | Collapse / expand a group |
 | Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 | Tab / Shift+Tab | Move focus: list → info → output |
+| + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
 | c | Copy: the command line (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output) |
 | L | Turn the log file on or off for the focused command |
 | Ctrl+N | Add a command |
