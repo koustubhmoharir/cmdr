@@ -338,7 +338,15 @@ acting, or captures a snapshot and acts only on that.
   starting or stopping); everything else arrives as an event. The output pane keeps the prepared lines of the last two
   frames (`LineCache`), keyed by line object. Measured on Linux (WSL2, 2026-11-16): idle cmdr uses what a bare
   Terminal.Gui window does, about 5% of a core, nearly all from Terminal.Gui's polling loops (`Task.Delay(...).Wait()`
-  every 20–40 ms through the thread pool, which spin-waits). With those two waits patched to sleep, idle is about 1%.
+  every 20–40 ms through the thread pool, which spin-waits). The fork in the `Terminal.Gui` submodule (branch `cmdr-perf`)
+  makes those two waits block instead; idle is then about 1%.
+- **Streaming cost.** While a visible command writes 100 lines/s (160×50 terminal) cmdr draws ~9 frames/s and uses about
+  10% of a core (was ~15%; main thread ~4 ms per frame, was ~10). The gains: `OutputView` skips Terminal.Gui's viewport
+  clear (it paints every cell itself); the fork's `OutputBufferImpl.AddStr`/`FillRect` lock and snapshot the clip once per
+  call instead of per cell, and `Cell.Grapheme`/`GetColumns` cache their per-char normalization and width answers; and
+  thread-pool spin is off (`UnfairSemaphoreSpinLimit=0` in `Cmdr.csproj`), since every chunk a command writes wakes a pool
+  worker for the async pipe read. What remains is mostly drawing the pane's cells and writing the frame (~10 KB) to the
+  terminal: every drawn cell is marked dirty and resent, changed or not.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
@@ -353,7 +361,7 @@ acting, or captures a snapshot and acts only on that.
 
 ## Implementation notes (from investigation)
 
-- Terminal.Gui **2.5.0** (stable). Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
+- Terminal.Gui **2.x**, built from the fork in the `Terminal.Gui` submodule (`develop` plus the `cmdr-perf` fixes). Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
   Default quit key is Esc; adding Ctrl+Q does not remove it — the Esc binding must be removed
   (or Esc intercepted in `OnKeyDown`) since Esc means "stop" here. The main window swallows unhandled Esc.
 - Ctrl+C arrives as a normal key (ISIG disabled), so it can be bound.
