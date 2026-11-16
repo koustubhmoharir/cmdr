@@ -6,11 +6,12 @@
 
   <!--
     Terminal.Gui is built from the fork in the Terminal.Gui submodule, not from the NuGet package: the fork carries
-    performance fixes that are not upstream yet. Its GitVersion step and pack-on-build are turned off here.
+    performance fixes that are not upstream yet. Its GitVersion step, pack-on-build and side files
+    (pdb, xml docs) are turned off here, so publishing still yields one file.
   -->
   <ItemGroup>
     <ProjectReference Include="..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj"
-                      AdditionalProperties="DisableGitVersionTask=true;GeneratePackageOnBuild=false" />
+                      AdditionalProperties="DisableGitVersionTask=true;GeneratePackageOnBuild=false;DebugType=embedded;GenerateDocumentationFile=false" />
   </ItemGroup>
 
   <!-- A clone without the submodule would otherwise fail with hundreds of missing-type errors. -->
