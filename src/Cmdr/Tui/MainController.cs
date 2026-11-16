@@ -54,7 +54,7 @@ internal sealed class MainController : IDisposable
     private Window _window = null!;
     private FrameView _listFrame = null!;
     private FrameView _detailsFrame = null!;
-    private FrameView _outputFrame = null!;
+    private OutputHeader _outputHeader = null!;
     private CommandListView _list = null!;
     private DetailsView _details = null!;
     private OutputView _output = null!;
@@ -83,7 +83,6 @@ internal sealed class MainController : IDisposable
         };
 
         _details = new DetailsView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
-        _output = new OutputView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
         // The top row (list and info pane) is as tall as the list needs, see TopRowHeight. Both frames take it from the function.
         _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0 };
@@ -95,14 +94,15 @@ internal sealed class MainController : IDisposable
         _detailsFrame.Height = Dim.Func(TopRowHeight, _detailsFrame);
         _detailsFrame.Add(_details);
 
-        _outputFrame = new FrameView { Title = "Output", X = 0, Y = Pos.Bottom(_detailsFrame), Width = Dim.Fill(), Height = Dim.Fill(1) };
-        _outputFrame.Add(_output);
+        // The output has no box: a one-row header line stands above it, and the output takes the rows below.
+        _outputHeader = new OutputHeader(() => _output.SetFocus()) { HeaderTitle = "Output", X = 0, Y = Pos.Bottom(_detailsFrame), Width = Dim.Fill(), Height = 1 };
+        _output = new OutputView(this) { X = 0, Y = Pos.Bottom(_outputHeader), Width = Dim.Fill(), Height = Dim.Fill(1) };
 
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
         ShowHints();
 
         _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
-        _window.Add(_listFrame, _detailsFrame, _outputFrame, _status);
+        _window.Add(_listFrame, _detailsFrame, _outputHeader, _output, _status);
 
         // Groups marked expanded: false start collapsed. Only here, at load; the list's state is not written back.
         foreach (GroupEntry group in TreeRows.InitiallyCollapsed(_session.AllGroups))
@@ -175,14 +175,8 @@ internal sealed class MainController : IDisposable
         _maximized = !_maximized;
         _listFrame.Visible = !_maximized;
         _detailsFrame.Visible = !_maximized;
-        if (_maximized)
-        {
-            _outputFrame.Y = 0;
-        }
-        else
-        {
-            _outputFrame.Y = Pos.Bottom(_detailsFrame);
-        }
+        // The header moves; the output sits one row below it in both layouts.
+        _outputHeader.Y = _maximized ? 0 : Pos.Bottom(_detailsFrame);
 
         _window.SetNeedsLayout();
     }
@@ -688,8 +682,19 @@ internal sealed class MainController : IDisposable
         if (title != _outputTitle)
         {
             _outputTitle = title;
-            _outputFrame.Title = title;
+            _outputHeader.HeaderTitle = title;
         }
+    }
+
+    /// <summary>Called by the output view when its focus changes. The header shows the focus state in its title.</summary>
+    public void OnOutputFocusChanged(bool hasFocus)
+    {
+        if (_outputHeader is null)
+        {
+            return;
+        }
+
+        _outputHeader.PaneFocused = hasFocus;
     }
 
     private string BuildTitle() =>

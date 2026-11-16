@@ -193,6 +193,7 @@ internal sealed class OutputView : View
     {
         base.OnHasFocusChanged(newHasFocus, previousFocusedView, focusedView);
         SetNeedsDraw();
+        _controller.OnOutputFocusChanged(newHasFocus);
     }
 
     protected override bool OnKeyDown(Key key)

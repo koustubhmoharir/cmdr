@@ -17,10 +17,9 @@ Runs on Linux and Windows.
 │▾ servers  [parallel]         ││                                            │
 │  ● web                       ││                                            │
 ╰──────────────────────────────╯╰────────────────────────────────────────────╯
-╭┤Output — following —├──────────────────────────────────────────────────────╮
-│> web@1.0.0 start                                                           │
-│Frontend server listening on :8090                                          │
-╰────────────────────────────────────────────────────────────────────────────╯
+── Output — following ────────────────────────────────────────────────────────
+> web@1.0.0 start
+Frontend server listening on :8090
 Enter Start  ^C Stop  F5 Restart  …  + Max  ^Q Quit
 ```
 

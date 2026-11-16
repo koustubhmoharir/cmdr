@@ -26,7 +26,8 @@ public sealed class MainLayoutTests
         {
             FrameView list = Field<FrameView>(controller, "_listFrame");
             FrameView details = Field<FrameView>(controller, "_detailsFrame");
-            FrameView output = Field<FrameView>(controller, "_outputFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
             StatusLine status = Field<StatusLine>(controller, "_status");
             CommandListSource source = Field<CommandListSource>(controller, "_source");
 
@@ -38,9 +39,15 @@ public sealed class MainLayoutTests
             Assert.Equal(list.Frame.Right, details.Frame.X);
             Assert.Equal(Width, details.Frame.Right);
 
+            // The header line sits under the top row, and the output directly under the header, with no box around it.
+            Assert.Equal(0, header.Frame.X);
+            Assert.Equal(Width, header.Frame.Width);
+            Assert.Equal(1, header.Frame.Height);
+            Assert.Equal(details.Frame.Bottom, header.Frame.Y);
+
             Assert.Equal(0, output.Frame.X);
             Assert.Equal(Width, output.Frame.Width);
-            Assert.Equal(details.Frame.Bottom, output.Frame.Y);
+            Assert.Equal(header.Frame.Bottom, output.Frame.Y);
             Assert.Equal(Height - 1, status.Frame.Y);
             Assert.Equal(1, status.Frame.Height);
             Assert.Equal(output.Frame.Bottom, status.Frame.Y);
@@ -75,11 +82,13 @@ public sealed class MainLayoutTests
         RunLaidOut(temp, Width, Height, (app, controller) =>
         {
             FrameView details = Field<FrameView>(controller, "_detailsFrame");
-            FrameView output = Field<FrameView>(controller, "_outputFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
 
             Assert.Equal(0, Field<CommandListSource>(controller, "_source").Count);
             Assert.Equal(5, details.Frame.Height);
-            Assert.Equal(5, output.Frame.Y);
+            Assert.Equal(5, header.Frame.Y);
+            Assert.Equal(6, output.Frame.Y);
         });
     }
 
@@ -124,19 +133,22 @@ public sealed class MainLayoutTests
         {
             FrameView list = Field<FrameView>(controller, "_listFrame");
             FrameView details = Field<FrameView>(controller, "_detailsFrame");
-            FrameView output = Field<FrameView>(controller, "_outputFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
             CommandListView listView = Field<CommandListView>(controller, "_list");
             OutputView outputView = Field<OutputView>(controller, "_output");
             listView.SetFocus();
             app.LayoutAndDraw();
             Assert.True(listView.HasFocus);
+            Rectangle normalHeader = header.Frame;
             Rectangle normalOutput = output.Frame;
 
             Key key = shift ? ((Key)ch).WithShift : (Key)ch;
             Assert.True(controller.OnGlobalKey(key));
             app.LayoutAndDraw();
 
-            Assert.Equal(new Rectangle(0, 0, Width, Height - 1), output.Frame);
+            Assert.Equal(new Rectangle(0, 0, Width, 1), header.Frame);
+            Assert.Equal(new Rectangle(0, 1, Width, Height - 2), output.Frame);
             Assert.False(list.Visible);
             Assert.False(details.Visible);
             Assert.True(outputView.HasFocus, "Focus must leave the hidden list.");
@@ -147,6 +159,7 @@ public sealed class MainLayoutTests
 
             Assert.True(list.Visible);
             Assert.True(details.Visible);
+            Assert.Equal(normalHeader, header.Frame);
             Assert.Equal(normalOutput, output.Frame);
             Assert.True(outputView.HasFocus, "Restoring keeps the focus where it is.");
         });
@@ -159,7 +172,7 @@ public sealed class MainLayoutTests
 
         RunLaidOut(temp, Width, Height, (app, controller) =>
         {
-            FrameView output = Field<FrameView>(controller, "_outputFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
             OutputView outputView = Field<OutputView>(controller, "_output");
             DetailsView detailsView = Field<DetailsView>(controller, "_details");
             detailsView.SetFocus();
@@ -169,9 +182,34 @@ public sealed class MainLayoutTests
             controller.OnGlobalKey((Key)'=');
             app.LayoutAndDraw();
 
-            Assert.Equal(new Rectangle(0, 0, Width, Height - 1), output.Frame);
+            Assert.Equal(new Rectangle(0, 0, Width, 1), header.Frame);
+            Assert.Equal(new Rectangle(0, 1, Width, Height - 2), outputView.Frame);
             Assert.True(outputView.HasFocus);
             Assert.False(detailsView.HasFocus);
+        });
+    }
+
+    [Fact]
+    public void The_header_shows_the_output_focus_state()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView outputView = Field<OutputView>(controller, "_output");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            app.LayoutAndDraw();
+            Assert.False(header.PaneFocused);
+
+            outputView.SetFocus();
+            app.LayoutAndDraw();
+            Assert.True(header.PaneFocused);
+
+            listView.SetFocus();
+            app.LayoutAndDraw();
+            Assert.False(header.PaneFocused);
         });
     }
 
