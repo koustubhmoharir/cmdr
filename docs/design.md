@@ -345,8 +345,18 @@ acting, or captures a snapshot and acts only on that.
   clear (it paints every cell itself); the fork's `OutputBufferImpl.AddStr`/`FillRect` lock and snapshot the clip once per
   call instead of per cell, and `Cell.Grapheme`/`GetColumns` cache their per-char normalization and width answers; and
   thread-pool spin is off (`UnfairSemaphoreSpinLimit=0` in `Cmdr.csproj`), since every chunk a command writes wakes a pool
-  worker for the async pipe read. What remains is mostly drawing the pane's cells and writing the frame (~10 KB) to the
-  terminal: every drawn cell is marked dirty and resent, changed or not.
+  worker for the async pipe read.
+- **Terminal output while streaming.** The terminal's CPU counts too, so cmdr sends as little as it can:
+  - The fork's `OutputBase` keeps a copy of what the terminal shows and skips dirty cells that equal it (short unchanged gaps
+    are written rather than jumped over: a cursor move costs more). This makes `\r` progress lines, output arriving while
+    scrolled up, borders and padding nearly free.
+  - The output pane spans the full width (list and info on top, output below) so that its rows are whole terminal rows.
+    `OutputView` then hints `IDriver.ScrollRowsUp` when its rows moved up since the last draw; the fork scrolls the band on the
+    terminal (DECSTBM + SU), shifts its copy, and sends only the cells that differ, when its estimate says that is cheaper than
+    plain comparison (near-identical consecutive lines are cheaper without). The hint never affects correctness: every cell of
+    the band is compared. It is ignored on the legacy Windows console and in inline mode.
+  - Measured (Linux, 160×50, varied text): 100 lines/s ~5.1 KB/frame before the copy, ~2.1 KB with both; 10 lines/s ~4.7 KB
+    → ~0.26 KB. Windows Terminal is expected to behave the same (VT scroll regions) but is not yet verified.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.
