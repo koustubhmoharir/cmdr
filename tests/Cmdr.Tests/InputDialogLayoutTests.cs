@@ -59,6 +59,8 @@ public sealed class InputDialogLayoutTests
 
         System.Drawing.Rectangle frame = default;
         System.Drawing.Rectangle field = default;
+        int formHeight = -1;
+        int dialogViewportHeight = -1;
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
         {
             fields[^1].SetFocus();
@@ -66,6 +68,8 @@ public sealed class InputDialogLayoutTests
             app.LayoutAndDraw();
             frame = dialog.Frame;
             field = fields[^1].FrameToScreen();
+            formHeight = FormOf(dialog).Frame.Height;
+            dialogViewportHeight = dialog.Viewport.Height;
             app.RequestStop(dialog);
             return false;
         });
@@ -74,6 +78,114 @@ public sealed class InputDialogLayoutTests
         Assert.True(frame.X >= 0 && frame.Y >= 0, $"dialog at {frame}");
         Assert.True(frame.Right <= 40 && frame.Bottom <= 12, $"dialog at {frame}");
         Assert.True(field.X >= 0 && field.Right <= 40 && field.Y >= 0 && field.Bottom <= 12, $"focused field at {field}");
+        Assert.Equal(dialogViewportHeight, formHeight);
+    }
+
+    [Fact]
+    public void One_input_gets_a_visible_field_on_a_normal_screen()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        app.Driver!.SetScreenSize(120, 30);
+        using InputDialog dialog = CreateDialog(app, new[] { "db-name" });
+        var fields = FieldsOf(dialog);
+        var form = FormOf(dialog);
+
+        System.Drawing.Rectangle frame = default;
+        System.Drawing.Rectangle field = default;
+        int formFrameHeight = -1;
+        int formViewportHeight = -1;
+        string screen = string.Empty;
+        app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+        {
+            app.LayoutAndDraw();
+            frame = dialog.Frame;
+            field = fields[0].FrameToScreen();
+            formFrameHeight = form.Frame.Height;
+            formViewportHeight = form.Viewport.Height;
+            screen = ScreenText(app);
+            app.RequestStop(dialog);
+            return false;
+        });
+        app.Run(dialog);
+
+        Assert.Equal(1, formFrameHeight);
+        Assert.Equal(1, formViewportHeight);
+        Assert.True(frame.Contains(field), $"field {field} outside dialog {frame}");
+        Assert.True(field.Width > 0, $"field has no width: {field}");
+        Assert.Contains("db-name", screen);
+    }
+
+    [Fact]
+    public void Three_inputs_get_distinct_visible_rows_on_a_normal_screen()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        app.Driver!.SetScreenSize(120, 30);
+        using InputDialog dialog = CreateDialog(app, new[] { "alpha", "beta", "gamma" });
+        var fields = FieldsOf(dialog);
+
+        System.Drawing.Rectangle frame = default;
+        var fieldRects = new System.Drawing.Rectangle[fields.Length];
+        string screen = string.Empty;
+        app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+        {
+            app.LayoutAndDraw();
+            frame = dialog.Frame;
+            for (int i = 0; i < fields.Length; i++)
+            {
+                fieldRects[i] = fields[i].FrameToScreen();
+            }
+
+            screen = ScreenText(app);
+            app.RequestStop(dialog);
+            return false;
+        });
+        app.Run(dialog);
+
+        foreach (System.Drawing.Rectangle rect in fieldRects)
+        {
+            Assert.True(frame.Contains(rect), $"field {rect} outside dialog {frame}");
+        }
+
+        Assert.Equal(fieldRects.Length, fieldRects.Select(rect => rect.Y).Distinct().Count());
+        Assert.Contains("alpha", screen);
+        Assert.Contains("beta", screen);
+        Assert.Contains("gamma", screen);
+    }
+
+    private static InputDialog CreateDialog(IApplication app, string[] names)
+    {
+        var requests = names.Select(name => new InputPlaceholders.InputRequest(name, false)).ToArray();
+        ConstructorInfo constructor = typeof(InputDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+        return (InputDialog)constructor.Invoke(new object[] { app, "test", requests });
+    }
+
+    private static Terminal.Gui.Views.TextField[] FieldsOf(InputDialog dialog) =>
+        (Terminal.Gui.Views.TextField[])typeof(InputDialog).GetField("_fields", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(dialog)!;
+
+    private static View FormOf(InputDialog dialog) =>
+        (View)typeof(InputDialog).GetField("_form", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+
+    /// <summary>The rendered screen, one string per row, read from the driver's cells.</summary>
+    private static string ScreenText(IApplication app)
+    {
+        var driver = app.Driver!;
+        var rows = new string[driver.Rows];
+        for (int r = 0; r < driver.Rows; r++)
+        {
+            var chars = new char[driver.Cols];
+            for (int c = 0; c < driver.Cols; c++)
+            {
+                string grapheme = driver.Contents![r, c].Grapheme;
+                chars[c] = string.IsNullOrEmpty(grapheme) ? ' ' : grapheme[0];
+            }
+
+            rows[r] = new string(chars);
+        }
+
+        return string.Join("\n", rows);
     }
 }
 

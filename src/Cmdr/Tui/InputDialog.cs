@@ -57,7 +57,8 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
             X = 0,
             Y = 0,
             Width = Dim.Fill(),
-            Height = Dim.Fill(3),
+            // As tall as the dialog's visible area (its Viewport), so every visible row is a field row.
+            Height = Dim.Func(_ => Viewport.Height),
             ContentSizeTracksViewport = false,
             CanFocus = true,
             TabStop = TabBehavior.TabGroup,

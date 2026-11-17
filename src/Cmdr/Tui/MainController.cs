@@ -24,7 +24,9 @@ internal sealed class MainController : IDisposable
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
-    private const string HintsRest = "^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy  ^S Save  + Max";
+    // The c hint sits between the two parts and is left out when c copies nothing (see CopyHint).
+    private const string HintsBeforeCopy = "^C Stop  F5 Restart  Space Mark  ^A All  L Log  ";
+    private const string HintsAfterCopy = "^S Save  + Max";
     private const string HintsRight = "  ^Q Quit";
     private const int TopRowMinHeight = 5;
     private const int TopRowMaxPercent = 60;
@@ -1022,7 +1024,7 @@ internal sealed class MainController : IDisposable
         }
 
         bool windows = OperatingSystem.IsWindows();
-        string line = CommandLineFormatter.ForEntry(command.Entry, powerShell: windows);
+        string line = CommandLineFormatter.ForCopy(command.Entry, windows, EffectiveEnv.Process(), Path.PathSeparator);
         CopyToClipboard(line, windows ? "Copied command line (PowerShell)" : "Copied command line");
     }
 
@@ -1394,6 +1396,20 @@ internal sealed class MainController : IDisposable
         bool sequenceRunning = hintGroup is { Mode: GroupMode.Sequential, IsSequenceRunning: true };
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
-        return (enter is null ? string.Empty : "Enter " + enter + "  ") + HintsRest;
+        string? copy = CopyHint.Describe(FocusedCopyPane(), hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
+        return (enter is null ? string.Empty : "Enter " + enter + "  ")
+            + HintsBeforeCopy
+            + (copy is null ? string.Empty : copy + "  ")
+            + HintsAfterCopy;
     }
+
+    /// <summary>The pane that c acts on: the focused one, or None when neither the list nor the info or output pane has the focus.</summary>
+    private CopyPane FocusedCopyPane() =>
+        _list.HasFocus ? CopyPane.List
+        : _details.HasFocus ? CopyPane.Details
+        : _output.HasFocus ? CopyPane.Output
+        : CopyPane.None;
+
+    /// <summary>True when the info or output pane has a selection, which c copies first. Other panes have none.</summary>
+    private bool SelectionToCopy() => _details.HasFocus ? _details.HasSelection : _output.HasFocus && _output.HasSelection;
 }

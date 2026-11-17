@@ -6,8 +6,9 @@ using Cmdr.Core.Session;
 namespace Cmdr.Tui;
 
 /// <summary>
-/// Builds a command line that can be pasted into a shell: quoted for POSIX sh, or for PowerShell on Windows (so the
-/// info pane and the copy show the same text, and that text means the same thing when pasted into PowerShell). Pure.
+/// Builds a command line that can be pasted into a shell: quoted for POSIX sh, or for PowerShell on Windows. The info pane
+/// shows the program and its arguments (<see cref="ForEntry"/>); the copy also sets the working directory and the environment
+/// that cmdr sets for the command, for that command only (<see cref="ForCopy"/>). Pure.
 /// </summary>
 /// <remarks>
 /// Known limitation of the PowerShell form: Windows PowerShell 5.1, and PowerShell 7 in its Legacy native-argument
@@ -47,6 +48,137 @@ internal static class CommandLineFormatter
         ArgumentNullException.ThrowIfNull(entry);
 
         return Format(entry.Spec.Program, entry.Spec.Args, powerShell, powerShell ? BatchCommandFor(entry) : null);
+    }
+
+    /// <summary>
+    /// The command line that the copy puts on the clipboard: the command with the working directory and the environment that
+    /// cmdr sets for it, wrapped so that they apply to the command only (see <see cref="Wrap"/>). Falls back to
+    /// <see cref="ForEntry"/> when the working directory cannot be resolved, as the info pane does.
+    /// </summary>
+    /// <param name="entry">The command to copy.</param>
+    /// <param name="powerShell">The platform: POSIX sh, or PowerShell on Windows.</param>
+    /// <param name="environment">The process environment the values are applied to.</param>
+    /// <param name="pathSeparator">The value of <c>${pathsep}</c>.</param>
+    public static string ForCopy(CommandEntry entry, bool powerShell, IReadOnlyDictionary<string, string?> environment, char pathSeparator)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        ArgumentNullException.ThrowIfNull(environment);
+
+        LaunchSpec spec;
+        try
+        {
+            spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir);
+        }
+        catch (Exception ex) when (DetailsText.IsPathError(ex))
+        {
+            return ForEntry(entry, powerShell);
+        }
+
+        IReadOnlyList<KeyValuePair<string, string?>> env =
+            EffectiveEnv.Of(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
+
+        if (!powerShell)
+        {
+            return Wrap(spec.WorkingDirectory, env, Format(spec.Program, spec.Args, powerShell: false), powerShell: false);
+        }
+
+        // The batch-file form: the cmd.exe command goes in a variable, so that PowerShell does not pass it as an argument, and
+        // cmd.exe expands the variable before it parses the line.
+        string? batchCommand = WindowsBatchCommandLine.ForCopy(spec);
+        if (batchCommand is null)
+        {
+            return Wrap(spec.WorkingDirectory, env, Format(spec.Program, spec.Args, powerShell: true), powerShell: true);
+        }
+
+        env = WithVariable(env, BatchVariable, batchCommand);
+        return Wrap(spec.WorkingDirectory, env, $"cmd /d /v:off /c '%{BatchVariable}%'", powerShell: true);
+    }
+
+    /// <summary>
+    /// Wraps a command so that it runs in <paramref name="workingDirectory"/> with the environment <paramref name="env"/>, and
+    /// nothing else changes: the parent shell keeps its directory and variables. An entry with a null value removes the variable.
+    /// POSIX runs the command in a subshell, with <c>env</c> for the variables; PowerShell saves the variables, sets them, runs
+    /// the command and restores them in a <c>finally</c> block. Pure.
+    /// </summary>
+    /// <param name="workingDirectory">The directory the command runs in.</param>
+    /// <param name="env">The variables to set (or remove, with a null value), in order.</param>
+    /// <param name="command">An already formatted command line.</param>
+    /// <param name="powerShell">The shell: PowerShell, or POSIX sh.</param>
+    internal static string Wrap(string workingDirectory, IReadOnlyList<KeyValuePair<string, string?>> env, string command, bool powerShell)
+    {
+        ArgumentNullException.ThrowIfNull(workingDirectory);
+        ArgumentNullException.ThrowIfNull(env);
+        ArgumentNullException.ThrowIfNull(command);
+
+        return powerShell
+            ? WrapPowerShell(workingDirectory, env, command)
+            : WrapPosix(workingDirectory, env, command);
+    }
+
+    private static string WrapPosix(string workingDirectory, IReadOnlyList<KeyValuePair<string, string?>> env, string command)
+    {
+        string cd = "cd " + QuotePosix(workingDirectory) + " && ";
+        if (env.Count == 0)
+        {
+            return "(" + cd + command + ")";
+        }
+
+        // Removals come first, then assignments, each in the order of the environment.
+        var parts = new List<string> { "env" };
+        foreach (KeyValuePair<string, string?> entry in env.Where(entry => entry.Value is null))
+        {
+            parts.Add("-u");
+            parts.Add(QuotePosix(entry.Key));
+        }
+
+        foreach (KeyValuePair<string, string?> entry in env.Where(entry => entry.Value is not null))
+        {
+            parts.Add(QuotePosix(entry.Key + "=" + entry.Value));
+        }
+
+        parts.Add(command);
+        return "(" + cd + string.Join(' ', parts) + ")";
+    }
+
+    private static string WrapPowerShell(string workingDirectory, IReadOnlyList<KeyValuePair<string, string?>> env, string command)
+    {
+        string location = "Push-Location -LiteralPath " + QuotePowerShell(workingDirectory);
+        if (env.Count == 0)
+        {
+            return $"& {{ {location}; try {{ {command} }} finally {{ Pop-Location }} }}";
+        }
+
+        // Every name is a .NET string argument, so each one is always quoted, unlike the bare form of QuotePowerShell.
+        string names = string.Join(", ", env.Select(entry => SingleQuoted(entry.Key)));
+        string sets = string.Concat(env.Select(entry =>
+            $"[Environment]::SetEnvironmentVariable({SingleQuoted(entry.Key)}, {PowerShellValue(entry.Value)}); "));
+        return $"& {{ $saved = @{{}}; foreach ($name in @({names})) {{ $saved[$name] = [Environment]::GetEnvironmentVariable($name) }}; " +
+            $"{location}; try {{ {sets}{command} }} finally {{ foreach ($name in $saved.Keys) {{ " +
+            "[Environment]::SetEnvironmentVariable($name, $saved[$name]) }; Pop-Location } }";
+    }
+
+    /// <summary>A PowerShell value for a .NET call: a single-quoted string, or <c>$null</c> to remove the variable.</summary>
+    private static string PowerShellValue(string? value) => value is null ? "$null" : SingleQuoted(value);
+
+    /// <summary>The copy of <paramref name="env"/> with <paramref name="name"/> set to <paramref name="value"/>: the existing entry is replaced in place, otherwise it is added last.</summary>
+    private static List<KeyValuePair<string, string?>> WithVariable(
+        IReadOnlyList<KeyValuePair<string, string?>> env,
+        string name,
+        string value)
+    {
+        var result = env.ToList();
+        int index = result.FindIndex(entry => string.Equals(entry.Key, name, StringComparison.OrdinalIgnoreCase));
+        var variable = new KeyValuePair<string, string?>(name, value);
+        if (index < 0)
+        {
+            result.Add(variable);
+        }
+        else
+        {
+            result[index] = variable;
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -128,6 +260,12 @@ internal static class CommandLineFormatter
             return token;
         }
 
+        return SingleQuoted(token);
+    }
+
+    /// <summary>The token in single quotes, with every single quote and typographic single quote doubled.</summary>
+    private static string SingleQuoted(string token)
+    {
         var sb = new StringBuilder(token.Length + 2).Append('\'');
         foreach (char c in token)
         {

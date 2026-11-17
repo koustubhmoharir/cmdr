@@ -301,7 +301,7 @@ header they do nothing there.
 | Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 | Tab / Shift+Tab | Move focus: list → info → output |
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
-| c | Copy: the command line (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output) |
+| c | Copy: the command line, with its directory and environment (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output). The status line names what c copies |
 | L | Turn the log file on or off for the focused command |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |
@@ -316,12 +316,19 @@ cursor reaches the last line; Shift+↑/↓ selects lines and Esc clears the sel
 escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals support it (in tmux, enable
 `set-clipboard`).
 
-On Windows the copied command line is for PowerShell. PowerShell passes the arguments of batch files (`.cmd`/`.bat`, such
-as `npm.cmd`) without quoting them for cmd.exe, so when a batch-file command has an argument with `& | < > ^ % ! ( )`, a
-quote, or nothing in it, the copy runs it through cmd.exe instead, exactly as cmdr does:
-`& { $saved = $env:CMDR_CMD; $env:CMDR_CMD = '...'; try { cmd /d /v:off /c '%CMDR_CMD%' } finally { $env:CMDR_CMD = $saved } }`
-(an existing `CMDR_CMD` is kept). An argument that is a literal `--%` is copied as an array after the program,
-`& program @('...', '--%')`, because PowerShell would otherwise stop parsing its arguments there.
+The copied command line also sets the command's working directory and the environment variables cmdr sets for it (the
+values the info pane shows), for that command only: pasting it leaves the shell's directory and variables as they were. On
+Linux it runs in a subshell, `(cd '/dir' && env -u REMOVED 'NAME=value' program args)`; without environment entries the
+`env` part is left out.
+
+On Windows the copied command line is for PowerShell. It saves the variables it changes, moves to the directory, sets the
+variables and runs the command, then restores the variables and the directory in a `finally` block:
+`& { $saved = @{}; foreach ($name in @('NAME')) { ... }; Push-Location -LiteralPath 'C:\dir'; try { [Environment]::SetEnvironmentVariable('NAME', 'value'); program args } finally { ... } }`.
+PowerShell passes the arguments of batch files (`.cmd`/`.bat`, such as `npm.cmd`) without quoting them for cmd.exe, so
+when a batch-file command has an argument with `& | < > ^ % ! ( )`, a quote, or nothing in it, the copy runs it through
+cmd.exe instead, exactly as cmdr does: the cmd.exe command goes in the variable `CMDR_CMD` (restored afterwards like the
+others) and the command is `cmd /d /v:off /c '%CMDR_CMD%'`. An argument that is a literal `--%` is copied as an array
+after the program, `& program @('...', '--%')`, because PowerShell would otherwise stop parsing its arguments there.
 
 Quitting with commands still running offers to stop them and wait, to force-kill them, or to cancel.
 

@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Text;
 using Cmdr.Core.Session;
 using Terminal.Gui.Drawing;
@@ -423,6 +422,9 @@ internal sealed class DetailsView : View
         }
     }
 
+    /// <summary>True when the view has a non-empty selection, which c copies. Read every tick: it returns at once without a selection.</summary>
+    internal bool HasSelection => _selection is not null && SelectedRange(DrawnOrArranged(Viewport.Width).Texts) is not null;
+
     private bool ClearSelection()
     {
         if (_selection is not null)
@@ -495,22 +497,11 @@ internal sealed class DetailsView : View
             command.Entry,
             _configDir,
             OperatingSystem.IsWindows(),
-            ProcessEnvironment(),
+            EffectiveEnv.Process(),
             Path.PathSeparator),
         GroupRow group => DetailsText.GroupLines(group.Group, _configDir),
         _ => Array.Empty<DetailsLine>(),
     };
-
-    private static IReadOnlyDictionary<string, string?> ProcessEnvironment()
-    {
-        var environment = new Dictionary<string, string?>();
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            environment[(string)entry.Key] = (string?)entry.Value;
-        }
-
-        return environment;
-    }
 
     /// <summary>The item a row shows. Rows are rebuilt on every structure change, so the item is compared, not the row.</summary>
     private static object? KeyOf(ListRow? row) => row switch

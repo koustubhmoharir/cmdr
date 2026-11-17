@@ -298,6 +298,62 @@ public sealed class CommandLineFormatterTests
         }
     }
 
+    [Fact]
+    public void Wrap_posix_without_environment_runs_the_command_in_a_subshell_in_the_directory()
+    {
+        Assert.Equal(
+            "(cd /work && prog arg)",
+            CommandLineFormatter.Wrap("/work", Array.Empty<KeyValuePair<string, string?>>(), "prog arg", powerShell: false));
+    }
+
+    [Fact]
+    public void Wrap_posix_quotes_a_directory_with_a_space()
+    {
+        Assert.Equal(
+            "(cd '/my work' && prog)",
+            CommandLineFormatter.Wrap("/my work", Array.Empty<KeyValuePair<string, string?>>(), "prog", powerShell: false));
+    }
+
+    [Fact]
+    public void Wrap_posix_puts_removals_first_then_assignments_each_in_environment_order()
+    {
+        var env = new KeyValuePair<string, string?>[]
+        {
+            new("A", "x y"),
+            new("GONE", null),
+            new("B", "it's"),
+        };
+
+        Assert.Equal(
+            "(cd /work && env -u GONE 'A=x y' 'B=it'\\''s' prog arg)",
+            CommandLineFormatter.Wrap("/work", env, "prog arg", powerShell: false));
+    }
+
+    [Fact]
+    public void Wrap_powershell_without_environment_pushes_the_location_and_pops_it_in_finally()
+    {
+        Assert.Equal(
+            @"& { Push-Location -LiteralPath C:\work; try { tool.exe a } finally { Pop-Location } }",
+            CommandLineFormatter.Wrap(@"C:\work", Array.Empty<KeyValuePair<string, string?>>(), "tool.exe a", powerShell: true));
+    }
+
+    [Fact]
+    public void Wrap_powershell_with_environment_sets_removes_and_restores_each_name_always_quoted()
+    {
+        var env = new KeyValuePair<string, string?>[]
+        {
+            new("GONE", null),
+            new("A", "it's"),
+        };
+
+        Assert.Equal(
+            @"& { $saved = @{}; foreach ($name in @('GONE', 'A')) { $saved[$name] = [Environment]::GetEnvironmentVariable($name) }; " +
+            @"Push-Location -LiteralPath C:\work; try { [Environment]::SetEnvironmentVariable('GONE', $null); " +
+            @"[Environment]::SetEnvironmentVariable('A', 'it''s'); tool.exe a } finally { foreach ($name in $saved.Keys) { " +
+            @"[Environment]::SetEnvironmentVariable($name, $saved[$name]) }; Pop-Location } }",
+            CommandLineFormatter.Wrap(@"C:\work", env, "tool.exe a", powerShell: true));
+    }
+
     private static string RunPwsh(string pwsh, string command, IReadOnlyDictionary<string, string?>? environment = null)
     {
         var info = new ProcessStartInfo(pwsh)

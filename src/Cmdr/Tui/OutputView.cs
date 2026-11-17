@@ -153,6 +153,12 @@ internal sealed class OutputView : View
     /// <summary>True while the view shows the last lines and follows new output.</summary>
     public bool Following => _following;
 
+    /// <summary>True when there is a selection, which c copies. A selection is never empty: it covers at least one cell or a line.</summary>
+    internal bool HasSelection => _selection is not null;
+
+    /// <summary>True when the buffer has a line (completed or partial), so c copies the cursor line. Reads the count only.</summary>
+    internal bool HasLines => _buffer is { Count: > 0 };
+
     /// <summary>Shows the output of a command, or nothing for null. Resets scrolling, cursor and selection. Showing the same buffer again keeps them.</summary>
     public void Show(CommandEntry? entry)
     {

@@ -176,45 +176,8 @@ internal static class DetailsText
         bool windows,
         char pathSeparator)
     {
-        ArgumentNullException.ThrowIfNull(levels);
-        ArgumentException.ThrowIfNullOrEmpty(configDir);
-        ArgumentNullException.ThrowIfNull(environment);
-
-        StringComparer keys = windows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-
-        var mentioned = new List<string>();
-        var seen = new HashSet<string>(keys);
-        foreach (EnvLevel level in levels)
-        {
-            foreach (string key in level.Env.Keys)
-            {
-                if (seen.Add(key))
-                {
-                    mentioned.Add(key);
-                }
-            }
-        }
-
-        if (mentioned.Count == 0)
-        {
-            return Array.Empty<DetailsLine>();
-        }
-
-        var target = new Dictionary<string, string?>(keys);
-        foreach (KeyValuePair<string, string?> entry in environment)
-        {
-            target[entry.Key] = entry.Value;
-        }
-
-        EnvExpansion.ApplyLevels(target, levels, configDir, pathSeparator);
-
-        var lines = new List<DetailsLine>(mentioned.Count);
-        foreach (string key in mentioned)
-        {
-            lines.Add(EnvLine(key, target.TryGetValue(key, out string? value) ? value : null));
-        }
-
-        return lines;
+        IReadOnlyList<KeyValuePair<string, string?>> effective = EffectiveEnv.Of(levels, configDir, environment, windows, pathSeparator);
+        return effective.Select(entry => EnvLine(entry.Key, entry.Value)).ToList();
     }
 
     /// <summary>
@@ -294,7 +257,8 @@ internal static class DetailsText
         new DetailsSpan(source.DisplayPath, DetailsStyle.Path),
         new DetailsSpan(" (read-only)", DetailsStyle.Faint));
 
-    private static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException;
+    /// <summary>The exceptions that resolving a configured working directory throws for a path it cannot use. The copy falls back on the same ones.</summary>
+    internal static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException;
 
     private static DetailsLine InvalidCwdLine(Exception ex) =>
         Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan("invalid (" + ex.Message + ")", DetailsStyle.Unset));
