@@ -207,3 +207,23 @@ repeated notifications and re-reads cannot duplicate rows.
   anchor (null anchor = newest), served from the ring when it covers the range, else framed from disk via the catalog.
 - `Task<EventDetail> ReadDetailAsync(RowKey, CancellationToken)`: full text and parsed event, or an expired/unavailable result.
 Superseded requests are cancelled by the caller; results carry the request id so stale ones are dropped.
+
+### Read cursors and the tail (M5)
+
+`ReadCursor` is the boundary between history (served by `HistoryReader` from snapshots) and the tail (owned by the worker).
+It is always an event boundary.
+- **Discovery.** A closed member's cursor is its length. A live member's cursor is the start of its last event when that event
+  is provisional (text schemes), otherwise its live data end. The provisional event is read by the first tail pass.
+- **Tail pass** (any readable member whose length is greater than its cursor, in catalog order): frame forward from the cursor
+  — live framing for the live member, closed framing otherwise. Every complete event becomes a new row (appended to the ring and
+  published as an arrival); a provisional event becomes/updates the provisional row (published as an update, not an arrival).
+  The cursor moves to the provisional event's start, or to the data end when there is none.
+- **Drain.** A member that stops being live gets one closed tail pass: its provisional row is finalized (same key, now complete)
+  and an unterminated last line is accepted.
+- A member that has a provisional row and is later found shorter than its cursor + the provisional extent is truncated (see
+  reconciliation step 3).
+
+`Reconciler` is the synchronous core: `ChangeBatch Run(Catalog, RowRing, bool rescanDirectory)` performs reconciliation (when
+asked) and a tail pass and returns what changed — appended rows, the updated provisional row, finalized rows, expired
+generations, gap markers, catalog/status changes and read errors. `LogStore` wraps it with the worker, the watcher, timers and
+the async read API, and is the only code with threads.
