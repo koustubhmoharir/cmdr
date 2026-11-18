@@ -227,3 +227,37 @@ It is always an event boundary.
 asked) and a tail pass and returns what changed — appended rows, the updated provisional row, finalized rows, expired
 generations, gap markers, catalog/status changes and read errors. `LogStore` wraps it with the worker, the watcher, timers and
 the async read API, and is the only code with threads.
+
+## Timeline model (M6)
+
+`TimelineModel` (Logvu.Core, no Terminal.Gui) holds the reader's position; the timeline view only renders it and forwards keys.
+
+State: a **window** of loaded rows (oldest first) with `AtStart` / `AtEnd` (the window reaches the start / newest end of
+history under the active filter), viewport height `H ≥ 1`, `Top` (window index of the first visible row), `Selected` (window
+index), `Mode` (Follow | Paused), `NewCount` (matching arrivals while paused), and the active filter. Rows are identified by
+`RowKey`; indices are an implementation detail re-derived after window changes.
+
+Invariants: `Top ≤ Selected ≤ Top + H − 1` (when the window has rows); the viewport is full whenever the window has ≥ H rows
+(no blank rows above when older rows exist); in Follow the newest row is selected on the bottom visible row.
+
+Operations (every manual one pauses Follow first):
+- **Up / Down**: move the selection one row. From the top (bottom) visible row the viewport also shifts one row. At the start
+  (end) of history nothing moves.
+- **Shift+Up / Shift+Down**: shift the viewport one row toward older (newer) rows; the selection keeps its row while visible,
+  else it becomes the nearest visible row (bottom row for Shift+Up, top row for Shift+Down). At the history edge nothing moves.
+- **PgUp / PgDn**: if the viewport can move, move it by up to H rows and keep the selection's screen row; if it cannot (already
+  at the edge), select the first (last) row. At a history edge the move is clamped.
+- **End**, and **Space** while paused: Follow — load the newest page, select the newest row at the bottom, `NewCount = 0`.
+  **Space** while following: Pause (nothing else changes).
+- **Resize** to height H': keep the selected row and its screen row where possible, clamp, refill.
+- **Arrivals** (store batch `Added`/`Updated`, already filtered by the caller's predicate): Follow → append, keep the newest
+  selected at the bottom. Paused → `NewCount += added matching rows`; if `AtEnd`, append them to the window without moving the
+  viewport; updated rows replace their keys in place wherever they are.
+- **Reset** (store `RingReset`, filter change, catalog change that invalidates order): reload a window around the selected key
+  (or the newest rows in Follow).
+- **Loading**: the model keeps a margin of at least 2·H loaded rows beyond each viewport edge unless `AtStart`/`AtEnd`, requesting
+  more from an `ITimelineSource` (`ReadOlder/ReadNewer/ReadNewest` returning `Task<RowPage>`). A move that needs rows not yet
+  loaded waits: navigation commands are queued in order and applied when the load completes. Rows far outside the viewport
+  (beyond 8·H on either side) are trimmed, clearing the corresponding `AtStart`/`AtEnd`. Results of superseded loads
+  (after a reset) are discarded by a generation counter.
+- Rows in the window are independent of the ring: a paused selection survives ring eviction and rotation.
