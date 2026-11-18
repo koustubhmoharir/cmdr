@@ -8,11 +8,11 @@ verified by the user on Windows.
 
 cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, generalized only as far as logvu needs.
 
-- [ ] `src/Shared.Core` (no Terminal.Gui): DisplayWidth, RecentFiles (store folder per app), SearchPattern, SearchHistory,
+- [x] `src/Shared.Core` (no Terminal.Gui): DisplayWidth, RecentFiles (store folder per app), SearchPattern, SearchHistory,
       FileIdentity. Tests in `tests/Shared.Core.Tests`. (`core:`)
-- [ ] `src/Shared.Tui`: SearchBar (+SearchColors, SearchTarget), StatusLine, Confirm, NumberTyping, DisplayWidthSetup,
-      TextWidth, a recent-file picker generic over "open this path". (`core:`)
-- [ ] Create `src/Logvu.Core`, `src/Logvu`, `tests/Logvu.Core.Tests`, `tests/Logvu.Tests`; add to `Cmdr.slnx`; Terminal.Gui
+- [x] `src/Shared.Tui`: SearchBar (+SearchColors, SearchTarget), StatusLine, Confirm, NumberTyping, DisplayWidthSetup,
+      TextWidth, a recent-file picker generic over "open this path" (moved to M7). SearchBar has no shared tests yet (cmdr's need its session); covered by logvu's in M9. (`core:`)
+- [x] Create `src/Logvu.Core`, `src/Logvu`, `tests/Logvu.Core.Tests`, `tests/Logvu.Tests`; add to `Cmdr.slnx`; Terminal.Gui
       reference with `TerminalGuiBuildProperties`; `logvu --version`. (`logvu:`)
 
 ## M1. Decoding and framing (Logvu.Core)
