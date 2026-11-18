@@ -18,13 +18,13 @@ public sealed class HistoryReaderTests
     /// <summary>A filter that keeps the events of one level.</summary>
     private sealed class LevelFilter(LogLevel level) : IRowFilter
     {
-        public bool Matches(EventRow row, LogEvent ev) => ev.Level == level;
+        public bool Matches(EventRow row, LogEvent ev, string text) => ev.Level == level;
     }
 
     /// <summary>A filter that rejects one row by its preview.</summary>
     private sealed class ExceptPreview(string preview) : IRowFilter
     {
-        public bool Matches(EventRow row, LogEvent ev) => row.Preview != preview;
+        public bool Matches(EventRow row, LogEvent ev, string text) => row.Preview != preview;
     }
 
     /// <summary>Records every report synchronously. <see cref="Progress{T}"/> would post its reports to the thread pool.</summary>

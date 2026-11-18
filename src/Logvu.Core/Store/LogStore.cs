@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Logvu.Core.Config;
+using Shared.Core;
 
 namespace Logvu.Core.Store;
 
@@ -222,6 +223,32 @@ public sealed class LogStore : IAsyncDisposable
     }
 
     /// <summary>
+    /// Finds the first event strictly older, or strictly newer, than <paramref name="from"/> that matches the pattern and passes the filter,
+    /// and reports the first match or the boundary of history. The scan runs off the calling thread and reports the event bytes it scans.
+    /// Events in the live file that are not yet in history are matched by re-reading them from their files.
+    /// </summary>
+    /// <param name="from">The row the search starts from. It is not a candidate.</param>
+    /// <param name="direction">Whether the search goes toward older or newer events.</param>
+    /// <param name="pattern">The pattern an event must match, against its text or, for a JSON event, its message.</param>
+    /// <param name="filter">The predicate an event must also pass, or <c>null</c>.</param>
+    /// <param name="progress">Receives the event bytes scanned in history. May be <c>null</c>.</param>
+    /// <param name="ct">Cancels the search. A superseded search is cancelled by its caller.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="pattern"/> is <c>null</c>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="direction"/> is not a defined direction, or the offset of <paramref name="from"/> is negative.</exception>
+    /// <exception cref="ArgumentException">The generation of <paramref name="from"/> is not in the timeline.</exception>
+    public Task<SearchResult> FindAsync(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(pattern);
+        ArgumentOutOfRangeException.ThrowIfNegative(from.Offset, nameof(from));
+        if (!Enum.IsDefined(direction))
+        {
+            throw new ArgumentOutOfRangeException(nameof(direction), direction, "Not a search direction.");
+        }
+
+        return Task.Run(() => ReadLatest(state => _reader.Find(state, from, direction, pattern, filter, progress, ct), result => result.Errors), ct);
+    }
+
+    /// <summary>
     /// Reads the full text and the parsed event of one row. An event whose file has expired is <see cref="EventDetail.Unavailable"/> with
     /// <c>Source file expired</c>. The file is opened with its identity verified, so content is never taken from another file.
     /// </summary>
@@ -256,17 +283,23 @@ public sealed class LogStore : IAsyncDisposable
     /// Runs a page read against the latest state. A read that reports errors is repeated once against the state of a newer version: a rename
     /// that raced it is then in the state it reads.
     /// </summary>
-    private RowPage ReadPage(Func<StoreState, RowPage> read)
+    private RowPage ReadPage(Func<StoreState, RowPage> read) => ReadLatest(read, page => page.Errors);
+
+    /// <summary>
+    /// Runs a read against the latest state, and repeats it once against a newer state when it reports errors. The same rule as
+    /// <see cref="ReadPage"/>, for any read result that carries its errors.
+    /// </summary>
+    private T ReadLatest<T>(Func<StoreState, T> read, Func<T, IReadOnlyList<MemberReadError>> errorsOf)
     {
         StoreState first = Current;
-        RowPage page = read(first);
-        if (page.Errors.Count == 0)
+        T result = read(first);
+        if (errorsOf(result).Count == 0)
         {
-            return page;
+            return result;
         }
 
         StoreState latest = Current;
-        return latest.Catalog.Version == first.Catalog.Version ? page : read(latest);
+        return latest.Catalog.Version == first.Catalog.Version ? result : read(latest);
     }
 
     /// <summary>The worker's loop. It ends when the store is disposed.</summary>

@@ -1,8 +1,12 @@
 using Logvu.Core.Store;
+using Shared.Core;
 
 namespace Logvu.Core.Timeline;
 
-/// <summary>Adapts a <see cref="LogStore"/> to an <see cref="ITimelineSource"/>. The reads report no progress.</summary>
+/// <summary>
+/// Adapts a <see cref="LogStore"/> to an <see cref="ITimelineSource"/>. The page reads report no progress; a search reports the bytes it
+/// scans to the progress it is given.
+/// </summary>
 public sealed class LogStoreTimelineSource : ITimelineSource
 {
     private readonly LogStore _store;
@@ -27,4 +31,8 @@ public sealed class LogStoreTimelineSource : ITimelineSource
     /// <inheritdoc/>
     public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct, bool inclusive = false) =>
         _store.ReadNewerAsync(anchor, count, filter, progress: null, ct, inclusive);
+
+    /// <inheritdoc/>
+    public Task<SearchResult> FindAsync(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
+        _store.FindAsync(from, direction, pattern, filter, progress, ct);
 }

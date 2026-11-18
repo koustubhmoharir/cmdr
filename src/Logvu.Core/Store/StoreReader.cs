@@ -1,6 +1,7 @@
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
+using Shared.Core;
 
 namespace Logvu.Core.Store;
 
@@ -185,6 +186,54 @@ internal sealed class StoreReader
     }
 
     /// <summary>
+    /// Finds the first event strictly older, or strictly newer, than <paramref name="from"/> that passes the filter and matches the
+    /// pattern. History is scanned with the combined predicate for one match. The tail rows of the ring, which history does not hold,
+    /// are re-read from their files; the nearer of the two candidates is the match.
+    /// </summary>
+    /// <param name="state">The state to search.</param>
+    /// <param name="from">The row the search starts from. It is not a candidate. Its generation must be in the state's timeline.</param>
+    /// <param name="direction">The direction of the search.</param>
+    /// <param name="pattern">The pattern an event must match.</param>
+    /// <param name="filter">The predicate an event must also pass, or <c>null</c>.</param>
+    /// <param name="progress">Receives the event bytes scanned in history. May be <c>null</c>.</param>
+    /// <param name="ct">Checked at least once per batch and per event.</param>
+    /// <exception cref="ArgumentException">The generation of <paramref name="from"/> is not in the timeline.</exception>
+    public SearchResult Find(StoreState state, RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    {
+        RequireKnown(state, from);
+        ct.ThrowIfCancellationRequested();
+        CatalogSnapshot catalog = state.Catalog;
+        bool older = direction == SearchDirection.Older;
+        var predicate = new EventSearchFilter(filter, pattern);
+
+        var errors = new List<MemberReadError>();
+        List<EventRow> tail;
+        RowPage history;
+        try
+        {
+            tail = MatchedTail(state, predicate, from, after: !older, includeAnchor: false, errors, ct);
+            history = older
+                ? _history.ReadOlder(catalog, from, 1, predicate, progress, ct)
+                : _history.ReadNewer(catalog, from, 1, predicate, progress, ct);
+        }
+        catch (PatternTimedOutException)
+        {
+            return SearchResult.TimedOut.WithErrors(errors);
+        }
+
+        IReadOnlyList<MemberReadError> allErrors = history.Errors.Concat(errors).ToList();
+        List<EventRow> candidates = Merge(history.Rows, tail, catalog);
+        if (candidates.Count == 0)
+        {
+            return SearchResult.Boundary.WithErrors(allErrors);
+        }
+
+        // Candidates are in timeline order: the nearest older match is the last one, the nearest newer match the first.
+        EventRow nearest = older ? candidates[^1] : candidates[0];
+        return SearchResult.Found(nearest).WithErrors(allErrors);
+    }
+
+    /// <summary>
     /// Reads the detail of one event: opens its member's file with the identity verified, frames the one event at the key's offset,
     /// and reads and parses it. An identity or open failure is retried once with a fresh state, which may have recorded a rename.
     /// </summary>
@@ -305,8 +354,8 @@ internal sealed class StoreReader
 
         try
         {
-            (EventRow built, LogEvent ev) = RowBuilder.Build(file, member.Scheme, member.Generation, row.Extent, _context);
-            return filter.Matches(built, ev) ? built : null;
+            (EventRow built, LogEvent ev, string text) = RowBuilder.Build(file, member.Scheme, member.Generation, row.Extent, _context);
+            return filter.Matches(built, ev, text) ? built : null;
         }
         catch (IOException ex)
         {

@@ -491,6 +491,99 @@ public sealed class TimelineModelTests
         Assert.Equal(TimelineMode.Follow, model.Mode);
     }
 
+    [Fact]
+    public void JumpToSelectsTheRowWithItsScreenRowCentred()
+    {
+        var model = Model(Store());
+        model.Start(5);
+
+        model.JumpTo(Key(50));
+
+        Assert.Equal("r48 r49 [r50] r51 r52", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+        Assert.Equal(2, model.SelectedScreenRow);
+    }
+
+    [Fact]
+    public void JumpToNearTheStartKeepsTheRowAtTheStartOfTheViewport()
+    {
+        var model = Model(Store());
+        model.Start(5);
+
+        model.JumpTo(Key(1));
+
+        Assert.Equal("r0 [r1] r2 r3 r4", Render(model));
+        Assert.True(model.AtStart);
+    }
+
+    [Fact]
+    public void JumpToNearTheEndKeepsTheRowAtTheEndOfTheViewport()
+    {
+        var model = Model(Store());
+        model.Start(5);
+
+        model.JumpTo(Key(99));
+        Assert.Equal("r95 r96 r97 r98 [r99]", Render(model));
+        Assert.True(model.AtEnd);
+
+        model.JumpTo(Key(98));
+        Assert.Equal("r95 r96 r97 [r98] r99", Render(model));
+    }
+
+    [Fact]
+    public void JumpToFromFollowPauses()
+    {
+        var model = Model(Store());
+        model.Start(3);
+        Assert.Equal(TimelineMode.Follow, model.Mode);
+
+        model.JumpTo(Key(50));
+
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+        Assert.Equal("r49 [r50] r51", Render(model));
+        Assert.Equal(0, model.NewCount);
+    }
+
+    [Fact]
+    public void AStaleJumpIsSupersededByALaterOne()
+    {
+        var source = Store();
+        var model = Model(source);
+        model.Start(3);
+        source.Held.Add(ReadKind.Newer);
+        model.JumpTo(Key(50));
+        model.JumpTo(Key(20));
+        Assert.Equal(2, source.Waiting(ReadKind.Newer));
+
+        // The first jump's read completes first, and its result is dropped.
+        source.CompleteOldest(ReadKind.Newer);
+        Assert.Equal(string.Empty, Render(model));
+        Assert.Equal(1, source.Waiting(ReadKind.Newer));
+
+        source.CompleteOldest(ReadKind.Newer);
+        Assert.Equal("r19 [r20] r21", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+    }
+
+    [Fact]
+    public void NavigationAfterAJumpMovesNormally()
+    {
+        var model = Model(Store());
+        model.Start(5);
+        model.JumpTo(Key(50));
+
+        model.Execute(TimelineCommand.Up);
+        Assert.Equal("r48 [r49] r50 r51 r52", Render(model));
+
+        model.Execute(TimelineCommand.Down);
+        model.Execute(TimelineCommand.Down);
+        Assert.Equal("r48 r49 r50 [r51] r52", Render(model));
+
+        model.Execute(TimelineCommand.ShiftDown);
+        Assert.Equal("r49 r50 [r51] r52 r53", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+    }
+
     private static EventRow Row(int index, string? preview = null) => new(
         new RowKey(1, index * 100L),
         new EventExtent(0, 0, 0, false, false),
@@ -503,6 +596,8 @@ public sealed class TimelineModelTests
         false,
         false,
         false);
+
+    private static RowKey Key(int index) => Row(index).Key;
 
     private static FakeTimelineSource Store(int count = 100) => new(Enumerable.Range(0, count).Select(index => Row(index)));
 

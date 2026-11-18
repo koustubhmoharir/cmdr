@@ -323,7 +323,9 @@ events, `N` / Shift+F3 search toward newer events. There is no wrap-around: at t
   rendered message (Serilog templates). Only events passing the active filter are searched.
 - **Engine**: `IRowFilter.Matches(EventRow row, LogEvent ev, string text)` receives the event text; `LogStore.FindAsync(RowKey
   from, SearchDirection, SearchPattern, IRowFilter? filter, IProgress<long>, CancellationToken)` scans (ring rows are re-read
-  from disk like history) and returns the first matching row or a boundary result. Scans run off the UI thread, report scanned
+  from disk like history) and returns the first matching row, a boundary result, or `TimedOut` when the regex timed out on an
+  event (the shared `SearchPattern` then abandons the pattern; the status line says so instead of claiming there are no more
+  matches). The UI compiles a fresh pattern for every search, including `n`/`N` repeats. Scans run off the UI thread, report scanned
   bytes, and are cancelled by Esc or a new search.
 - **Timeline**: `TimelineModel.JumpTo(RowKey)` pauses, reloads around the key and selects it, keeping surrounding (filtered)
   rows visible. Matches in visible previews are highlighted with the shared search colors.

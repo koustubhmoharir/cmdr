@@ -2,6 +2,7 @@ using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
+using Shared.Core;
 
 namespace Logvu.Core.Tests.Timeline;
 
@@ -60,7 +61,7 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>Computes the page a read returns, as the store does: the matching rows nearest the anchor, oldest first.</summary>
     private RowPage Page(ReadKind kind, RowKey anchor, int count, IRowFilter? filter, bool inclusive)
     {
-        List<EventRow> matching = Rows.Where(row => filter is null || filter.Matches(row, Event(row))).ToList();
+        List<EventRow> matching = Rows.Where(row => filter is null || filter.Matches(row, Event(row), row.Preview)).ToList();
         if (kind == ReadKind.Newest)
         {
             return Backward(matching, count);
@@ -73,6 +74,17 @@ internal sealed class FakeTimelineSource : ITimelineSource
 
         List<EventRow> newer = matching.Where(row => CompareKeys(row.Key, anchor) > 0 || (inclusive && CompareKeys(row.Key, anchor) == 0)).ToList();
         return new RowPage(newer.Take(count).ToList(), newer.Count < count, []);
+    }
+
+    /// <summary>Finds the nearest row in the direction whose preview matches the pattern and that passes the filter.</summary>
+    public Task<SearchResult> FindAsync(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    {
+        IEnumerable<EventRow> candidates = direction == SearchDirection.Older
+            ? Rows.Where(row => CompareKeys(row.Key, from) < 0).Reverse()
+            : Rows.Where(row => CompareKeys(row.Key, from) > 0);
+        EventRow? found = candidates.FirstOrDefault(row =>
+            pattern.Count(row.Preview) > 0 && (filter is null || filter.Matches(row, Event(row), row.Preview)));
+        return Task.FromResult(found is null ? SearchResult.Boundary : SearchResult.Found(found));
     }
 
     private static RowPage Backward(List<EventRow> candidates, int count) =>
@@ -95,11 +107,11 @@ internal enum ReadKind
 /// <summary>A filter that keeps the rows at even indices.</summary>
 internal sealed class EvenRowFilter : IRowFilter
 {
-    public bool Matches(EventRow row, LogEvent ev) => (row.Key.Offset / 100) % 2 == 0;
+    public bool Matches(EventRow row, LogEvent ev, string text) => (row.Key.Offset / 100) % 2 == 0;
 }
 
 /// <summary>A filter that keeps the rows at odd indices, so that it rejects the even rows.</summary>
 internal sealed class OddRowFilter : IRowFilter
 {
-    public bool Matches(EventRow row, LogEvent ev) => (row.Key.Offset / 100) % 2 == 1;
+    public bool Matches(EventRow row, LogEvent ev, string text) => (row.Key.Offset / 100) % 2 == 1;
 }

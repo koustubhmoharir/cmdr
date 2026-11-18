@@ -395,8 +395,8 @@ public sealed class HistoryReader
         /// <summary>Builds the row of an event, keeps it if it matches, and tells whether the page is now full.</summary>
         private bool Accept(MemberInfo member, Stream window, EventExtent extent)
         {
-            (EventRow row, LogEvent ev) = RowBuilder.Build(window, member.Scheme, member.Generation, extent, _reader._context);
-            if (_filter is null || _filter.Matches(row, ev))
+            (EventRow row, LogEvent ev, string text) = RowBuilder.Build(window, member.Scheme, member.Generation, extent, _reader._context);
+            if (_filter is null || _filter.Matches(row, ev, text))
             {
                 _rows.Add(row);
             }

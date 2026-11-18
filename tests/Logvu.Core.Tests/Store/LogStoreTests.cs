@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 using Logvu.Core.Store;
 using Logvu.Core.Tests.Config;
+using Shared.Core;
 using static Logvu.Core.Tests.Store.StoreFixtures;
 
 namespace Logvu.Core.Tests.Store;
@@ -18,6 +20,8 @@ namespace Logvu.Core.Tests.Store;
 public sealed class LogStoreTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 11, 18, 10, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset T1 = T0.AddHours(1);
+    private static readonly DateTimeOffset T2 = T0.AddHours(2);
 
     private static readonly CancellationToken NoCancel = CancellationToken.None;
 
@@ -327,6 +331,240 @@ public sealed class LogStoreTests
     }
 
     [Fact]
+    public async Task Find_older_from_the_newest_row_finds_the_nearest_older_match_across_a_file_boundary()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey newest = all.Rows[^1].Key;
+
+        // The newest row is the live file's provisional event. The nearest older "one event" is the last event of SheetKraft1.log.
+        SearchResult found = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("one event"), null, null, NoCancel);
+
+        Assert.True(found.IsFound);
+        Assert.Equal(KeyOf(all, "one event 3"), found.Row!.Key);
+        Assert.Equal("one event 3", found.Row.Preview);
+        Assert.NotEqual(newest.Generation, found.Row.Key.Generation);
+        Assert.Empty(found.Errors);
+
+        // Within the live file, the nearest older match is in the same file.
+        SearchResult sameFile = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("live event 1"), null, null, NoCancel);
+        Assert.Equal("live event 1", sameFile.Row!.Preview);
+        Assert.Equal(newest.Generation, sameFile.Row.Key.Generation);
+    }
+
+    [Fact]
+    public async Task Find_newer_from_an_old_row_finds_the_next_newer_match_across_a_file_boundary()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        SearchResult next = await h.Store.FindAsync(KeyOf(all, "two event 1"), SearchDirection.Newer, Compile("event"), null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "two event 2"), next.Row!.Key);
+
+        SearchResult across = await h.Store.FindAsync(KeyOf(all, "two event 2"), SearchDirection.Newer, Compile("one event"), null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "one event 0"), across.Row!.Key);
+
+        SearchResult again = await h.Store.FindAsync(KeyOf(all, "one event 0"), SearchDirection.Newer, Compile("event"), null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "one event 1"), again.Row!.Key);
+    }
+
+    [Fact]
+    public async Task Find_matches_text_that_is_only_in_a_stack_trace_continuation_line()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        // "one failed 3" is only in the continuation line of the ERROR event "one event 3", not in its header.
+        SearchResult found = await h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Older, Compile("one failed 3"), null, null, NoCancel);
+
+        Assert.Equal(KeyOf(all, "one event 3"), found.Row!.Key);
+        Assert.Equal(LogLevel.Error, found.Row.Level);
+        Assert.DoesNotContain("failed", found.Row.Preview, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Find_matches_a_json_event_by_its_rendered_message_when_the_template_is_not_in_the_text()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft1.log", SerilogLine(41) + SerilogLine(42) + SerilogLine(43));
+        dir.Write("SheetKraft.log", SerilogLine(44) + SerilogLine(45));
+        await using Harness h = Harness.Create(dir, format: "serilog-json");
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        // The raw text holds "Order {OrderId}" and "OrderId":42, never "Order 42".
+        SearchResult found = await h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Older, Compile("Order 42"), null, null, NoCancel);
+
+        Assert.Equal(KeyOf(all, "Order 42"), found.Row!.Key);
+        Assert.Equal("Order 42", found.Row.Preview);
+    }
+
+    [Fact]
+    public async Task Find_is_case_insensitive_by_default_and_case_sensitive_on_request()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey newest = all.Rows[^1].Key;
+
+        SearchResult insensitive = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("ONE EVENT 2"), null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "one event 2"), insensitive.Row!.Key);
+
+        SearchResult sensitive = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("ONE EVENT 2", caseSensitive: true), null, null, NoCancel);
+        Assert.False(sensitive.IsFound);
+    }
+
+    [Fact]
+    public async Task Find_with_a_regex_matches_the_pattern_against_the_text()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        // The header of an ERROR event does not end its text, so only events whose text ends with "event N" match.
+        SearchPattern regex = Compile("event [13]$", regex: true);
+        SearchResult first = await h.Store.FindAsync(KeyOf(all, "two event 0"), SearchDirection.Newer, regex, null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "two event 1"), first.Row!.Key);
+
+        SearchResult second = await h.Store.FindAsync(first.Row.Key, SearchDirection.Newer, regex, null, null, NoCancel);
+        Assert.Equal(KeyOf(all, "one event 1"), second.Row!.Key);
+    }
+
+    [Fact]
+    public async Task Find_with_whole_word_skips_matches_inside_a_word()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey newest = all.Rows[^1].Key;
+
+        SearchResult inside = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("vent", wholeWord: true), null, null, NoCancel);
+        Assert.False(inside.IsFound);
+
+        SearchResult literal = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("vent"), null, null, NoCancel);
+        Assert.True(literal.IsFound);
+
+        SearchResult word = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("event", wholeWord: true), null, null, NoCancel);
+        Assert.True(word.IsFound);
+    }
+
+    [Fact]
+    public async Task Find_reports_the_boundary_when_no_further_match_exists_in_either_direction()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        SearchResult older = await h.Store.FindAsync(KeyOf(all, "two event 0"), SearchDirection.Older, Compile("event"), null, null, NoCancel);
+        Assert.False(older.IsFound);
+        Assert.Null(older.Row);
+
+        SearchResult newer = await h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Newer, Compile("event"), null, null, NoCancel);
+        Assert.False(newer.IsFound);
+        Assert.Null(newer.Row);
+    }
+
+    [Fact]
+    public async Task Find_finds_the_live_provisional_row_when_it_is_the_next_match_or_the_only_one()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey provisional = all.Rows[^1].Key;
+        Assert.True(all.Rows[^1].Provisional);
+
+        // The row before the provisional one: its next newer match is the provisional row itself.
+        SearchResult next = await h.Store.FindAsync(KeyOf(all, "live event 4"), SearchDirection.Newer, Compile("live event 5"), null, null, NoCancel);
+        Assert.Equal(provisional, next.Row!.Key);
+        Assert.True(next.Row.Provisional);
+
+        // "live event 5" exists only in the provisional row, so it is the only match from the oldest row.
+        SearchResult only = await h.Store.FindAsync(all.Rows[0].Key, SearchDirection.Newer, Compile("live event 5"), null, null, NoCancel);
+        Assert.Equal(provisional, only.Row!.Key);
+
+        SearchResult beforeIt = await h.Store.FindAsync(provisional, SearchDirection.Older, Compile("live event 5"), null, null, NoCancel);
+        Assert.False(beforeIt.IsFound);
+    }
+
+    [Fact]
+    public async Task Find_applies_the_filter_as_well_as_the_pattern()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey newest = all.Rows[^1].Key;
+        var errorsOnly = new LevelFilter(LogLevel.Error);
+
+        SearchResult info = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("live event 4"), null, null, NoCancel);
+        Assert.Equal("live event 4", info.Row!.Preview);
+
+        SearchResult excluded = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("live event 4"), errorsOnly, null, NoCancel);
+        Assert.False(excluded.IsFound);
+
+        SearchResult error = await h.Store.FindAsync(newest, SearchDirection.Older, Compile("event"), errorsOnly, null, NoCancel);
+        Assert.Equal("live event 3", error.Row!.Preview);
+        Assert.Equal(LogLevel.Error, error.Row.Level);
+    }
+
+    [Fact]
+    public async Task Find_throws_when_cancelled_before_it_starts()
+    {
+        using var dir = new ConfigTestDirectory();
+        await using Harness h = await StartSearchSet(dir);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Older, Compile("event"), null, null, cancelled.Token));
+    }
+
+    [Fact]
+    public async Task Find_reports_the_bytes_it_scans_in_history()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft1.log", Events(T0, "bulk", 2000));
+        dir.Write("SheetKraft.log", Events(T1, "live", 2));
+        await using Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        var progress = new Recorder();
+
+        SearchResult found = await h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Older, Compile("no such text"), null, progress, NoCancel);
+
+        Assert.False(found.IsFound);
+        Assert.True(progress.Reports.Count > 1, $"{progress.Reports.Count} reports");
+        Assert.True(progress.Reports.Zip(progress.Reports.Skip(1)).All(pair => pair.Second > pair.First));
+        Assert.True(progress.Reports[^1] > 100_000);
+    }
+
+    [Fact]
+    public async Task Find_reports_a_pattern_that_times_out_as_timed_out_not_as_the_boundary()
+    {
+        using var dir = new ConfigTestDirectory();
+        string catastrophic = new string('x', 40) + "y";
+        dir.Write("SheetKraft1.log", Line(T0, "INFO", catastrophic) + Line(T0.AddSeconds(1), "INFO", catastrophic) + Line(T0.AddSeconds(2), "INFO", catastrophic));
+        dir.Write("SheetKraft.log", Line(T1, "INFO", "live"));
+        await using Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+
+        // A backreference forces the backtracking engine, and "(x+x+)+y" then backtracks exponentially on the text.
+        SearchPattern pattern = Compile(@"(x+x+)+y\1", regex: true);
+        SearchResult found = await h.Store.FindAsync(all.Rows[^1].Key, SearchDirection.Older, pattern, null, null, NoCancel);
+
+        Assert.False(found.IsFound);
+        Assert.True(found.IsTimedOut);
+        Assert.True(pattern.TimedOut);
+    }
+
+    [Fact]
     public async Task Dispose_stops_the_worker_and_its_watcher_so_no_update_follows()
     {
         using var dir = new ConfigTestDirectory();
@@ -619,15 +857,51 @@ public sealed class LogStoreTests
     private static void AppendText(ConfigTestDirectory dir, string name, string text) =>
         File.AppendAllText(dir.Full(name), text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
+    /// <summary>Compiles a search pattern for a test. The text is never empty.</summary>
+    private static SearchPattern Compile(string text, bool caseSensitive = false, bool wholeWord = false, bool regex = false) =>
+        SearchPattern.Create(new SearchQuery(text, caseSensitive, wholeWord, regex), out _)!;
+
+    /// <summary>The key of the row with a preview, in a page of rows.</summary>
+    private static RowKey KeyOf(RowPage page, string preview) => page.Rows.Single(row => row.Preview == preview).Key;
+
+    /// <summary>
+    /// Three files, oldest first: <c>SheetKraft2.log</c> with "two" events 0 to 2, <c>SheetKraft1.log</c> with "one" events 0 to 3 (event 3 an
+    /// ERROR with a stack trace), and the live <c>SheetKraft.log</c> with "live" events 0 to 5 (event 5 provisional). Started, with the initial
+    /// update awaited.
+    /// </summary>
+    private static async Task<Harness> StartSearchSet(ConfigTestDirectory dir)
+    {
+        dir.Write("SheetKraft2.log", Events(T0, "two", 3));
+        dir.Write("SheetKraft1.log", Events(T1, "one", 4));
+        dir.Write("SheetKraft.log", Events(T2, "live", 6));
+        Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        return h;
+    }
+
+    /// <summary>One Serilog JSON line whose template is "Order {OrderId}", with the order's number as its property.</summary>
+    private static string SerilogLine(int orderId) =>
+        "{\"Timestamp\":\"" + T0.AddSeconds(orderId).ToString("O", CultureInfo.InvariantCulture)
+        + "\",\"Level\":\"Information\",\"MessageTemplate\":\"Order {OrderId}\",\"Properties\":{\"OrderId\":" + orderId + "}}\n";
+
     /// <summary>A filter that rejects one row by its preview.</summary>
     private sealed class ExceptPreview(string preview) : IRowFilter
     {
-        public bool Matches(EventRow row, LogEvent ev) => row.Preview != preview;
+        public bool Matches(EventRow row, LogEvent ev, string text) => row.Preview != preview;
+    }
+
+    /// <summary>Records every report synchronously.</summary>
+    private sealed class Recorder : IProgress<long>
+    {
+        public List<long> Reports { get; } = [];
+
+        public void Report(long value) => Reports.Add(value);
     }
 
     private sealed class LevelFilter(LogLevel level) : IRowFilter
     {
-        public bool Matches(EventRow row, LogEvent ev) => ev.Level == level;
+        public bool Matches(EventRow row, LogEvent ev, string text) => ev.Level == level;
     }
 
     /// <summary>A store over a directory, with every update recorded in order and a way to wait for one that matches.</summary>
@@ -645,9 +919,9 @@ public sealed class LogStoreTests
         public LogStore Store { get; }
 
         /// <summary>Creates a store with short intervals. <paramref name="first"/> is subscribed before the recorder.</summary>
-        public static Harness Create(ConfigTestDirectory dir, string logsDirectory = ".", Action<StoreUpdate>? first = null, TimeSpan? rescanInterval = null)
+        public static Harness Create(ConfigTestDirectory dir, string logsDirectory = ".", Action<StoreUpdate>? first = null, TimeSpan? rescanInterval = null, string? format = null)
         {
-            LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log", logsDirectory: logsDirectory);
+            LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log", logsDirectory: logsDirectory, format: format);
             var store = new LogStore(config)
             {
                 TailInterval = TimeSpan.FromMilliseconds(20),

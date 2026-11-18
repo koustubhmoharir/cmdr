@@ -24,7 +24,8 @@ public sealed class RowBuilderTests
     {
         EventExtent extent = Extents(member)[index];
         using FileStream stream = Open(member.Path);
-        return RowBuilder.Build(stream, member.Scheme, member.Generation, extent, new ParseContext(TimeZoneInfo.Utc));
+        (EventRow row, LogEvent ev, _) = RowBuilder.Build(stream, member.Scheme, member.Generation, extent, new ParseContext(TimeZoneInfo.Utc));
+        return (row, ev);
     }
 
     private static string Header(string message) => Line(T0, "ERROR", message);

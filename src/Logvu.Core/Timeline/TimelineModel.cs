@@ -198,6 +198,22 @@ public sealed partial class TimelineModel
     }
 
     /// <summary>
+    /// Pauses Follow, reloads the window around a row and selects it. The row is placed on the middle screen row of the viewport where the
+    /// loaded rows allow it: the rows before it load as the viewport needs them, and at either end of history the row moves toward the
+    /// edge. A later jump, a reset or a resume supersedes an outstanding jump.
+    /// </summary>
+    /// <param name="key">The row to show. Its generation must be in the timeline.</param>
+    public void JumpTo(RowKey key)
+    {
+        SetPaused();
+        BeginReload();
+        _pivot = key;
+        _pivotScreenRow = _height / 2;
+        Request(LoadKind.Newer, key, inclusive: true);
+        Finish();
+    }
+
+    /// <summary>
     /// Takes in the rows the store published. Follow appends the added rows and keeps the newest selected. Paused counts them, and
     /// appends them to the window when the window reaches the newest end. Updated rows replace the loaded rows with their keys.
     /// </summary>

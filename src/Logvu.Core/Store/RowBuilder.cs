@@ -22,18 +22,19 @@ public static class RowBuilder
     /// <param name="generation">The generation of the event's member, which the row's key carries.</param>
     /// <param name="extent">The event's bytes within <paramref name="stream"/>.</param>
     /// <param name="context">The parse settings.</param>
-    /// <returns>The row, and the parsed event it was built from.</returns>
+    /// <returns>The row, the parsed event it was built from, and the text the event was parsed from.</returns>
     /// <exception cref="ArgumentNullException">A required argument is <c>null</c>.</exception>
     /// <exception cref="InvalidOperationException"><paramref name="scheme"/> is <c>null</c>: the member has no scheme.</exception>
     /// <exception cref="IOException">The bytes of the event cannot be read.</exception>
-    public static (EventRow Row, LogEvent Event) Build(Stream stream, ILogScheme? scheme, int generation, EventExtent extent, ParseContext context)
+    public static (EventRow Row, LogEvent Event, string Text) Build(Stream stream, ILogScheme? scheme, int generation, EventExtent extent, ParseContext context)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
         RequireScheme(scheme, generation);
 
         (string text, _) = EventText.Read(stream, extent, TextCap);
-        return BuildFromText(text, scheme, generation, extent, context);
+        (EventRow row, LogEvent ev) = BuildFromText(text, scheme, generation, extent, context);
+        return (row, ev, text);
     }
 
     /// <summary>

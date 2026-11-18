@@ -91,6 +91,8 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M9. Search
 
+- [x] Engine: IRowFilter gets the event text; LogStore.FindAsync (older/newer, filter AND pattern, live row, progress, cancel, TimedOut); TimelineModel.JumpTo.
+
 - [ ] Search editor (shared SearchBar): literal case-insensitive and regex; `/`, Ctrl+F; n/F3, N/Shift+F3.
 - [ ] Traverse full events in the active filter across pages and files; boundary indication; cancel; progress.
 - [ ] Opening a hit scrolls/expands detail to it, including inside folded frames.

@@ -614,7 +614,7 @@ public sealed class Reconciler
                 break;
             }
 
-            (EventRow row, _) = RowBuilder.Build(opened, member.Scheme, member.Generation, extent, _context);
+            (EventRow row, _, _) = RowBuilder.Build(opened, member.Scheme, member.Generation, extent, _context);
             Publish(row, isUpdate: tracking.Provisional == row.Key, run);
             budget += size;
 
