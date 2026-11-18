@@ -277,7 +277,8 @@ indented by 2 under the value column).
 **Header.** `Path`, `Offset`, `Length`, then `Time` (normalized in the config zone and, if different, the original spelling),
 `Level` (label + original text), `Source`. Then a blank line.
 
-**Text events.** Named fields (`name: value`) in scheme order (except message), then `Message:` and the full multi-line message
+**Text events.** Named fields (`name: value`) in scheme order (except message, and except time/level/logger, which the
+header shows with their original spelling), then `Message:` and the full multi-line message
 as one value (continuation lines at the value indent).
 
 **JSON events.** First the surfaced summary: the message (`msg` / rendered Serilog message) and an **error summary** when
@@ -300,7 +301,7 @@ stack-trace treatment.
   Navigating to a search hit inside a folded run expands it.
 
 **Highlight rules.** Applied after structural styling to the scoped field's text (`message`, `raw`, a field name, or a JSON
-dotted path); ordered, first rule wins on overlapping spans; search hits and the selection line override everything.
+dotted path; a rule on an array path also covers its elements, e.g. `err.stack` covers `err.stack[0]`); ordered, first rule wins on overlapping spans; search hits and the selection line override everything.
 
 **Raw view.** `r` toggles between the structured document and the raw event text (exact lines, no styling except highlight
 rules scoped to `raw`).

@@ -82,12 +82,12 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M8. Detail view
 
-- [ ] Text detail: named fields, multiline message value, raw view, path and byte offset.
-- [ ] JSON detail: expandable tree, message and error summary surfaced, raw view, path and offset.
-- [ ] Highlight rules: ordered, field-scoped, named styles, first rule wins; selection/search priority.
-- [ ] Stack traces: .NET exception/inner boundaries, Go cause/stack; emphasize messages, methods, file:line; dim
+- [x] Text detail: named fields, multiline message value, raw view, path and byte offset (DetailDocument).
+- [x] JSON detail: expandable tree, message and error summary surfaced, raw view, path and offset.
+- [x] Highlight rules: ordered, field-scoped, named styles, first rule wins; selection/search priority.
+- [x] Stack traces (DetailDocument/StackTraceAnalyzer; the view comes next): .NET exception/inner boundaries, Go cause/stack; emphasize messages, methods, file:line; dim
       directories and framework namespaces; fold framework-frame runs with a count.
-- [ ] Esc returns to the same selection and viewport; opening detail pauses.
+- [ ] DetailView: render/wrap/navigate the document, toggles (Enter/Space on nodes and folds, z, r), Esc returns to the same selection and viewport; opening detail pauses.
 
 ## M9. Search
 
