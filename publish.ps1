@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
-# Publishes cmdr as a single framework-dependent executable for Windows and Linux:
-#   publish/win-x64/Cmdr.exe and publish/linux-x64/Cmdr
-# Works from a fresh clone: it first fetches the Terminal.Gui submodule (a fork that cmdr builds from source)
+# Publishes cmdr and logvu as single framework-dependent executables for Windows and Linux:
+#   publish/win-x64/Cmdr.exe, publish/win-x64/logvu.exe, publish/linux-x64/Cmdr and publish/linux-x64/logvu
+# Works from a fresh clone: it first fetches the Terminal.Gui submodule (a fork that both build from source)
 # at the commit this repository records. Needs git and the .NET 10 SDK.
 $ErrorActionPreference = 'Stop'
 
@@ -12,6 +12,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 foreach ($rid in 'win-x64', 'linux-x64') {
-    dotnet publish "$PSScriptRoot/src/Cmdr" -c Release -r $rid -o "$PSScriptRoot/publish/$rid"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    foreach ($project in 'Cmdr', 'Logvu') {
+        dotnet publish "$PSScriptRoot/src/$project" -c Release -r $rid -o "$PSScriptRoot/publish/$rid"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
 }

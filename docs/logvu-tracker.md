@@ -35,7 +35,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
       timezone, ring capacity, highlight rules, custom schemes; errors name the offending field; regex timeouts.
 - [x] File set enumeration: regular files directly in the directory, both selectors, compressed files skipped.
 - [x] FileSet: exclude FIFOs/devices (Linux only) (use FileIdentity.TryGet(path), which only accepts regular files).
-- [ ] logvu recent-file history (own store).
+- [x] logvu recent-file history (own store).
 
 ## M3. Catalog
 
@@ -106,10 +106,11 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 ## M11. Acceptance and docs
 
 - [ ] Perf: row-level filter predicates run after RowBuilder has read and parsed the event; consider building rows lazily (header line first) so level/source/time rejections skip the full read.
-- [ ] Startup: rows appear ~2 s after launch on a 220 KB demo set in a Debug build (cmdr: ~1–1.5 s). Measure a Release build; profile the initial run + ring warm-up (2000 rows) and compiled-regex construction if still slow.
+- [x] Startup: Release build shows rows in 0.8–1.0 s (cmdr 0.6–0.8 s); 253 MB set: rows within 1.5 s, RSS 67–83 MB while paging and searching.
+- [ ] Scan throughput: full-history search ran at ~12 MB/s on the 253 MB set; target ≥ 100 MB/s (perf task running).
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
-- [ ] README section / logvu README, publish script entry.
+- [x] User guide (docs/logvu.md), README pointer, publish script entry.
 - [ ] Windows checklist for the user *(Windows)*, including Shared.Core's AtomicFile File.Replace / error-1176 recovery (copied verbatim from cmdr, unverified there too).
 
 ## Notes for M12

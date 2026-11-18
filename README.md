@@ -7,6 +7,8 @@ stopping a command stops everything it started.
 
 Runs on Linux and Windows.
 
+This repository also contains **logvu**, a terminal viewer for rotated application logs; see [docs/logvu.md](docs/logvu.md).
+
 ```
 ╭┤cmdr.json├───────────────────╮╭┤servers / web├─────────────────────────────╮
 │▾ build  [sequential]         ││$ pnpm start                                │
