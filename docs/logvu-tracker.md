@@ -48,9 +48,9 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [ ] Store decides when to re-probe a live member that probed UnknownTime/raw (format may become detectable as it grows).
 
 - [x] Row keys (generation + offset); first-page fill reading backward across members (HistoryReader.ReadNewest).
-- [ ] Recent-history ring (bounded; offsets, extents, normalized fields, capped previews), independent of filters.
+- [x] Recent-history ring (bounded; offsets, extents, normalized fields, capped previews), independent of filters.
 - [x] Page older/newer history from an anchor row across member boundaries (HistoryReader).
-- [ ] Immutable CatalogSnapshot so history scans run off the store worker; HistoryReader over snapshots.
+- [x] Immutable CatalogSnapshot so history scans run off the store worker; HistoryReader over snapshots.
 - [ ] Visible rows survive ring eviction (page holds its own rows).
 - [ ] On-demand full event fetch with bounded buffers; oversized values streamed/paged.
 - [ ] Background worker: off-UI reads, cancellation of superseded work, batched publication.

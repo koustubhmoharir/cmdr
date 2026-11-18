@@ -5,8 +5,9 @@ using Logvu.Core.Reading;
 namespace Logvu.Core.Store;
 
 /// <summary>
-/// Reads pages of rows from history: the events of the timeline's members, each bounded by its read cursor. Owned by the store's
-/// single worker; it is not thread-safe.
+/// Reads pages of rows from history: the events of the timeline's members, each bounded by its read cursor. It reads only
+/// <see cref="MemberInfo"/> copies from a <see cref="CatalogSnapshot"/>, never the mutable catalog, so it may run on any thread. A reader
+/// holds no state between calls and may be shared; the scan state lives in each call.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,15 +16,16 @@ namespace Logvu.Core.Store;
 /// closed file through a <see cref="ReadWindow"/>.
 /// </para>
 /// <para>
-/// <b>Walk.</b> A backward read starts at the anchor's member and follows <see cref="Catalog.Previous"/>; a forward read follows
-/// <see cref="Catalog.Next"/>. Members that are not readable (expired) are passed over silently. Rows are produced in physical order
+/// <b>Walk.</b> A backward read starts at the anchor's member and follows <see cref="CatalogSnapshot.Previous"/>; a forward read follows
+/// <see cref="CatalogSnapshot.Next"/>. Members that are not readable (expired) are passed over silently. Rows are produced in physical order
 /// within a member and in timeline order across members, so consecutive pages join without skips or repeats.
 /// </para>
 /// <para>
 /// <b>Handles.</b> A member is opened for one batch of at most <see cref="BatchEvents"/> events or <see cref="BatchBytes"/> bytes of event
-/// extents, then closed; the next batch reopens it and verifies its identity. No handle outlives a call. A member that cannot be opened,
-/// whose identity has changed, or that fails with an I/O error is recorded in <see cref="RowPage.Errors"/>, and the walk moves on to the
-/// next member.
+/// extents, then closed; the next batch reopens it and verifies its identity against the snapshot's. No handle outlives a call. A member
+/// that cannot be opened, whose identity has changed, or that fails with an I/O error is recorded in <see cref="RowPage.Errors"/>, and the
+/// walk moves on to the next member. A snapshot's path may be stale: a file renamed since the snapshot is not found at that path, and
+/// the read reports it so, rather than reading whatever now lives there.
 /// </para>
 /// </remarks>
 public sealed class HistoryReader
@@ -31,20 +33,16 @@ public sealed class HistoryReader
     private const int DefaultBatchEvents = 256;
     private const long DefaultBatchBytes = 4L * 1024 * 1024;
 
-    private readonly Catalog _catalog;
     private readonly ParseContext _context;
     private int _batchEvents = DefaultBatchEvents;
     private long _batchBytes = DefaultBatchBytes;
 
-    /// <summary>Creates a reader over a catalog.</summary>
-    /// <param name="catalog">The catalog whose members are read.</param>
+    /// <summary>Creates a reader.</summary>
     /// <param name="config">The configuration. Its time zone interprets timestamps without an offset.</param>
-    /// <exception cref="ArgumentNullException">A required argument is <c>null</c>.</exception>
-    public HistoryReader(Catalog catalog, LogvuConfig config)
+    /// <exception cref="ArgumentNullException"><paramref name="config"/> is <c>null</c>.</exception>
+    public HistoryReader(LogvuConfig config)
     {
-        ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(config);
-        _catalog = catalog;
         _context = new ParseContext(config.TimeZone);
     }
 
@@ -77,22 +75,24 @@ public sealed class HistoryReader
     /// The walk starts at the anchor's offset within its member and continues into earlier members. An anchor whose member has expired
     /// is read from the member before it.
     /// </remarks>
+    /// <param name="snapshot">The timeline the read walks. It is taken by the caller and not changed by the read.</param>
     /// <param name="anchor">The row the page is older than: a key of an event start.</param>
     /// <param name="count">The most rows to return. It is at least 1.</param>
     /// <param name="filter">The predicate a row must match, or <c>null</c> to match every row.</param>
     /// <param name="scannedBytes">Receives the running total of event bytes scanned, at least once per batch. May be <c>null</c>.</param>
     /// <param name="ct">Checked at least once per batch and per event.</param>
     /// <returns>The matching rows, oldest first.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <c>null</c>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is below 1, or the anchor's offset is negative.</exception>
-    /// <exception cref="ArgumentException">The anchor's generation is not in the catalog, or its member has no place in the timeline.</exception>
+    /// <exception cref="ArgumentException">The anchor's generation is not in the snapshot's timeline.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
-    public RowPage ReadOlder(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
+    public RowPage ReadOlder(CatalogSnapshot snapshot, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         ct.ThrowIfCancellationRequested();
-        Member member = AnchorMember(anchor);
+        MemberInfo member = AnchorMember(snapshot, anchor);
 
-        var scan = new Scan(this, count, filter, scannedBytes, ct);
+        var scan = new Scan(this, snapshot, count, filter, scannedBytes, ct);
         bool reachedBoundary = scan.Backward(member, anchor.Offset);
         return scan.Finish(reachedBoundary, backward: true);
     }
@@ -104,22 +104,24 @@ public sealed class HistoryReader
     /// The walk starts just after the anchor within its member and continues into later members from their first event. An anchor
     /// whose member has expired is read from the member after it.
     /// </remarks>
+    /// <param name="snapshot">The timeline the read walks. It is taken by the caller and not changed by the read.</param>
     /// <param name="anchor">The row the page is newer than: a key of an event start.</param>
     /// <param name="count">The most rows to return. It is at least 1.</param>
     /// <param name="filter">The predicate a row must match, or <c>null</c> to match every row.</param>
     /// <param name="scannedBytes">Receives the running total of event bytes scanned, at least once per batch. May be <c>null</c>.</param>
     /// <param name="ct">Checked at least once per batch and per event.</param>
     /// <returns>The matching rows, oldest first.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <c>null</c>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is below 1, or the anchor's offset is negative.</exception>
-    /// <exception cref="ArgumentException">The anchor's generation is not in the catalog, or its member has no place in the timeline.</exception>
+    /// <exception cref="ArgumentException">The anchor's generation is not in the snapshot's timeline.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
-    public RowPage ReadNewer(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
+    public RowPage ReadNewer(CatalogSnapshot snapshot, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         ct.ThrowIfCancellationRequested();
-        Member member = AnchorMember(anchor);
+        MemberInfo member = AnchorMember(snapshot, anchor);
 
-        var scan = new Scan(this, count, filter, scannedBytes, ct);
+        var scan = new Scan(this, snapshot, count, filter, scannedBytes, ct);
         bool reachedBoundary = scan.Forward(member, anchor.Offset, skipUpTo: anchor.Offset);
         return scan.Finish(reachedBoundary, backward: false);
     }
@@ -127,42 +129,41 @@ public sealed class HistoryReader
     /// <summary>
     /// Reads the newest <paramref name="count"/> matching rows of history: the walk starts at the last readable member, at its read cursor.
     /// </summary>
+    /// <param name="snapshot">The timeline the read walks. It is taken by the caller and not changed by the read.</param>
     /// <param name="count">The most rows to return. It is at least 1.</param>
     /// <param name="filter">The predicate a row must match, or <c>null</c> to match every row.</param>
     /// <param name="scannedBytes">Receives the running total of event bytes scanned, at least once per batch. May be <c>null</c>.</param>
     /// <param name="ct">Checked at least once per batch and per event.</param>
     /// <returns>The matching rows, oldest first.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <c>null</c>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is below 1.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
-    public RowPage ReadNewest(int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
+    public RowPage ReadNewest(CatalogSnapshot snapshot, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         ct.ThrowIfCancellationRequested();
-        Member? newest = _catalog.Ordered.LastOrDefault(member => member.IsReadable);
+        MemberInfo? newest = snapshot.Ordered.LastOrDefault(member => member.IsReadable);
 
-        var scan = new Scan(this, count, filter, scannedBytes, ct);
+        var scan = new Scan(this, snapshot, count, filter, scannedBytes, ct);
         bool reachedBoundary = scan.Backward(newest, long.MaxValue);
         return scan.Finish(reachedBoundary, backward: true);
     }
 
-    /// <summary>The member of an anchor, which must have a place in the timeline (even when it has expired).</summary>
-    private Member AnchorMember(RowKey anchor)
+    /// <summary>The member of an anchor, which must be in the snapshot's timeline (even when it has expired).</summary>
+    private static MemberInfo AnchorMember(CatalogSnapshot snapshot, RowKey anchor)
     {
+        ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentOutOfRangeException.ThrowIfNegative(anchor.Offset, nameof(anchor));
-        Member member = _catalog.FindByGeneration(anchor.Generation)
-            ?? throw new ArgumentException($"Generation {anchor.Generation} is not in the catalog.", nameof(anchor));
-        if (member.TimelineState == MemberState.Pending)
-        {
-            throw new ArgumentException($"Generation {anchor.Generation} has no place in the timeline.", nameof(anchor));
-        }
-
-        return member;
+        return snapshot.Find(anchor.Generation)
+            ?? throw new ArgumentException($"Generation {anchor.Generation} has no place in the timeline.", nameof(anchor));
     }
 
     /// <summary>The state of one page read: the rows collected so far, and the batch limits in force.</summary>
     private sealed class Scan
     {
         private readonly HistoryReader _reader;
+        private readonly CatalogSnapshot _snapshot;
         private readonly int _count;
         private readonly IRowFilter? _filter;
         private readonly IProgress<long>? _progress;
@@ -171,9 +172,10 @@ public sealed class HistoryReader
         private readonly List<MemberReadError> _errors = [];
         private long _scanned;
 
-        public Scan(HistoryReader reader, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+        public Scan(HistoryReader reader, CatalogSnapshot snapshot, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
         {
             _reader = reader;
+            _snapshot = snapshot;
             _count = count;
             _filter = filter;
             _progress = progress;
@@ -185,10 +187,10 @@ public sealed class HistoryReader
         /// from their read cursors.
         /// </summary>
         /// <returns><c>true</c> when the start of history was reached before the page was filled.</returns>
-        public bool Backward(Member? start, long before)
+        public bool Backward(MemberInfo? start, long before)
         {
             long from = before;
-            for (Member? member = start; member is not null; member = _reader._catalog.Previous(member))
+            for (MemberInfo? member = start; member is not null; member = _snapshot.Previous(member))
             {
                 if (member.IsReadable && ScanBackward(member, from) == Step.Filled)
                 {
@@ -206,9 +208,9 @@ public sealed class HistoryReader
         /// <paramref name="skipUpTo"/> when it is set; then through later members from their first event.
         /// </summary>
         /// <returns><c>true</c> when the end of history was reached before the page was filled.</returns>
-        public bool Forward(Member? start, long from, long? skipUpTo)
+        public bool Forward(MemberInfo? start, long from, long? skipUpTo)
         {
-            for (Member? member = start; member is not null; member = _reader._catalog.Next(member))
+            for (MemberInfo? member = start; member is not null; member = _snapshot.Next(member))
             {
                 if (member.IsReadable && ScanForward(member, from, skipUpTo) == Step.Filled)
                 {
@@ -234,7 +236,7 @@ public sealed class HistoryReader
         }
 
         /// <summary>Reads one member backward from <paramref name="before"/>, batch by batch, until it is exhausted or the page is filled.</summary>
-        private Step ScanBackward(Member member, long before)
+        private Step ScanBackward(MemberInfo member, long before)
         {
             long cursor = member.ReadCursor;
             before = Math.Min(before, cursor);
@@ -260,7 +262,7 @@ public sealed class HistoryReader
                         return Step.Exhausted;
                     }
 
-                    var framer = new EventFramer(window, SchemeOf(member), live: false);
+                    var framer = new EventFramer(window, member.Scheme, live: false);
                     Step step = Step.Exhausted;
                     int events = 0;
                     long bytes = 0;
@@ -303,7 +305,7 @@ public sealed class HistoryReader
         /// <summary>
         /// Reads one member forward from <paramref name="from"/>, batch by batch, until it is exhausted or the page is filled.
         /// </summary>
-        private Step ScanForward(Member member, long from, long? skipUpTo)
+        private Step ScanForward(MemberInfo member, long from, long? skipUpTo)
         {
             long cursor = member.ReadCursor;
             while (true)
@@ -323,7 +325,7 @@ public sealed class HistoryReader
                 try
                 {
                     var window = new ReadWindow(file, cursor);
-                    var framer = new EventFramer(window, SchemeOf(member), live: false);
+                    var framer = new EventFramer(window, member.Scheme, live: false);
                     Step step = Step.Exhausted;
                     int events = 0;
                     long bytes = 0;
@@ -369,7 +371,7 @@ public sealed class HistoryReader
         /// cursor (so that it is not the file the cursor was taken from), is recorded as an error.
         /// </summary>
         /// <returns>The open stream, which the caller disposes, or <c>null</c> after an error was recorded.</returns>
-        private FileStream? Open(Member member)
+        private FileStream? Open(MemberInfo member)
         {
             if (!MemberFile.TryOpen(member.Path, member.Identity, out FileStream? stream, out _, out string? error))
             {
@@ -388,9 +390,9 @@ public sealed class HistoryReader
         }
 
         /// <summary>Builds the row of an event, keeps it if it matches, and tells whether the page is now full.</summary>
-        private bool Accept(Member member, Stream window, EventExtent extent)
+        private bool Accept(MemberInfo member, Stream window, EventExtent extent)
         {
-            (EventRow row, LogEvent ev) = RowBuilder.Build(window, member, extent, _reader._context);
+            (EventRow row, LogEvent ev) = RowBuilder.Build(window, member.Scheme, member.Generation, extent, _reader._context);
             if (_filter is null || _filter.Matches(row, ev))
             {
                 _rows.Add(row);
@@ -398,9 +400,6 @@ public sealed class HistoryReader
 
             return _rows.Count >= _count;
         }
-
-        private static ILogScheme SchemeOf(Member member) =>
-            member.Scheme ?? throw new InvalidOperationException($"Generation {member.Generation} has no scheme.");
 
         /// <summary>How a batch or a member ended.</summary>
         private enum Step

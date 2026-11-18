@@ -12,7 +12,8 @@ namespace Logvu.Core.Store;
 /// </para>
 /// <para>
 /// Every change that can move the member in the timeline (its state, its first time, its basename) notifies its catalog, which
-/// then rebuilds the order the next time it is read. No caller has to remember to invalidate anything. An expired member is
+/// then rebuilds the order the next time it is read. Every other change to the member (its path, scheme, cursor and live flag) notifies
+/// the catalog too, so a snapshot taken after it sees the change. No caller has to remember to invalidate anything. An expired member is
 /// final: changing it throws.
 /// </para>
 /// </remarks>
@@ -22,6 +23,9 @@ public sealed class Member
 
     /// <summary>The state the member had when it expired. Its timeline group and first time are kept after expiry.</summary>
     private MemberState _stateBeforeExpiry = MemberState.Pending;
+
+    private long _readCursor;
+    private bool _isLive;
 
     internal Member(Catalog owner, int generation, string path, string identity)
     {
@@ -59,11 +63,39 @@ public sealed class Member
     /// <summary>Why the member has no time, or <c>null</c>.</summary>
     public string? Diagnostic { get; private set; }
 
-    /// <summary>The byte offset up to which the file has been read. Maintained by the store; it does not affect the order.</summary>
-    public long ReadCursor { get; set; }
+    /// <summary>
+    /// The byte offset up to which the file has been read. Maintained by the store; it does not move the member in the timeline, but a
+    /// change is a change of the catalog, so it bumps the catalog's version and the next <see cref="Catalog.Snapshot"/> carries it.
+    /// </summary>
+    public long ReadCursor
+    {
+        get => _readCursor;
+        set
+        {
+            if (_readCursor != value)
+            {
+                _readCursor = value;
+                _owner.MarkChanged();
+            }
+        }
+    }
 
-    /// <summary>Whether the member is the live one: the file named by the configured active file, or else the newest member.</summary>
-    public bool IsLive { get; set; }
+    /// <summary>
+    /// Whether the member is the live one: the file named by the configured active file, or else the newest member. Maintained by the
+    /// store; like <see cref="ReadCursor"/>, a change bumps the catalog's version.
+    /// </summary>
+    public bool IsLive
+    {
+        get => _isLive;
+        set
+        {
+            if (_isLive != value)
+            {
+                _isLive = value;
+                _owner.MarkChanged();
+            }
+        }
+    }
 
     /// <summary>
     /// Whether the member's events can be read from its file: it is in the timeline as dated or unknown-time, and it has not expired.
@@ -92,6 +124,11 @@ public sealed class Member
         if (result.State == MemberState.Dated && result.FirstTime is null)
         {
             throw new ArgumentException("A dated member needs a first time.", nameof(result));
+        }
+
+        if (result.State is MemberState.Dated or MemberState.UnknownTime && result.Scheme is null)
+        {
+            throw new ArgumentException("A member in the timeline needs a scheme.", nameof(result));
         }
 
         Scheme = result.Scheme;

@@ -24,7 +24,7 @@ public sealed class RowBuilderTests
     {
         EventExtent extent = Extents(member)[index];
         using FileStream stream = Open(member.Path);
-        return RowBuilder.Build(stream, member, extent, new ParseContext(TimeZoneInfo.Utc));
+        return RowBuilder.Build(stream, member.Scheme, member.Generation, extent, new ParseContext(TimeZoneInfo.Utc));
     }
 
     private static string Header(string message) => Line(T0, "ERROR", message);
@@ -171,6 +171,6 @@ public sealed class RowBuilderTests
         using FileStream stream = Open(member.Path);
 
         Assert.Throws<InvalidOperationException>(() =>
-            RowBuilder.Build(stream, member, new EventExtent(0, stream.Length, stream.Length, false, false), new ParseContext(TimeZoneInfo.Utc)));
+            RowBuilder.Build(stream, member.Scheme, member.Generation, new EventExtent(0, stream.Length, stream.Length, false, false), new ParseContext(TimeZoneInfo.Utc)));
     }
 }

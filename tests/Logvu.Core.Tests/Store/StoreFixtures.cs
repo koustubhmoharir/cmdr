@@ -82,7 +82,7 @@ internal static class StoreFixtures
                     break;
                 }
 
-                rows.Add(RowBuilder.Build(stream, member, extent, context).Row);
+                rows.Add(RowBuilder.Build(stream, member.Scheme, member.Generation, extent, context).Row);
             }
         }
 

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Numerics;
 using Logvu.Core.Config;
+using Logvu.Core.Parsing;
 using Shared.Core;
 
 namespace Logvu.Core.Store;
@@ -38,6 +39,7 @@ public sealed class Catalog
     private long _orderVersion = -1;
     private ReadOnlyCollection<Member> _ordered = new(Array.Empty<Member>());
     private Dictionary<int, int> _positions = [];
+    private CatalogSnapshot? _snapshot;
 
     /// <summary>Creates an empty catalog for a configured set.</summary>
     /// <param name="config">The configuration. Its active file decides how equal times are ordered.</param>
@@ -63,6 +65,22 @@ public sealed class Catalog
             EnsureOrder();
             return _ordered;
         }
+    }
+
+    /// <summary>
+    /// The timeline as an immutable snapshot, for readers on other threads. The snapshot is cached: while the catalog's version is
+    /// unchanged, the same instance is returned. Any change to a member bumps the version, so the next call returns a new snapshot.
+    /// </summary>
+    /// <returns>The snapshot of the current version.</returns>
+    /// <exception cref="InvalidOperationException">A member in the timeline has no scheme. Members in the timeline always have one.</exception>
+    public CatalogSnapshot Snapshot()
+    {
+        if (_snapshot is null || _snapshot.Version != _version)
+        {
+            _snapshot = new CatalogSnapshot(_version, BuildInfos());
+        }
+
+        return _snapshot;
     }
 
     /// <summary>
@@ -163,6 +181,31 @@ public sealed class Catalog
 
     /// <summary>Called by a member whenever a change could move it in the timeline.</summary>
     internal void MarkChanged() => _version++;
+
+    private List<MemberInfo> BuildInfos()
+    {
+        IReadOnlyList<Member> order = Ordered;
+        var infos = new List<MemberInfo>(order.Count);
+        foreach (Member member in order)
+        {
+            ILogScheme scheme = member.Scheme
+                ?? throw new InvalidOperationException($"Generation {member.Generation} is in the timeline without a scheme.");
+            infos.Add(new MemberInfo(
+                member.Generation,
+                member.Path,
+                member.Name,
+                member.Identity,
+                scheme,
+                member.TimelineState,
+                member.IsReadable,
+                member.ReadCursor,
+                member.FirstTime,
+                member.IsLive,
+                member.Diagnostic));
+        }
+
+        return infos;
+    }
 
     private int PositionOf(int generation, string parameter)
     {

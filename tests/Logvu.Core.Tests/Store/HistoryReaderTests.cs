@@ -60,14 +60,14 @@ public sealed class HistoryReaderTests
         return (config, catalog, catalog.Ordered[0], catalog.Ordered[1], catalog.Ordered[2]);
     }
 
-    private static HistoryReader NewReader(Catalog catalog, LogvuConfig config, int batchEvents = 256, long batchBytes = 4L * 1024 * 1024) =>
-        new(catalog, config) { BatchEvents = batchEvents, BatchBytes = batchBytes };
+    private static HistoryReader NewReader(LogvuConfig config, int batchEvents = 256, long batchBytes = 4L * 1024 * 1024) =>
+        new(config) { BatchEvents = batchEvents, BatchBytes = batchBytes };
 
     /// <summary>Pages backward from the newest row until the start of history, and joins the pages oldest first.</summary>
-    private static List<EventRow> PageBackward(HistoryReader reader, int pageSize, IRowFilter? filter = null)
+    private static List<EventRow> PageBackward(HistoryReader reader, Catalog catalog, int pageSize, IRowFilter? filter = null)
     {
         var pages = new List<IReadOnlyList<EventRow>>();
-        RowPage page = reader.ReadNewest(pageSize, filter, null, CancellationToken.None);
+        RowPage page = reader.ReadNewest(catalog.Snapshot(), pageSize, filter, null, CancellationToken.None);
         while (true)
         {
             Assert.Empty(page.Errors);
@@ -78,7 +78,7 @@ public sealed class HistoryReaderTests
             }
 
             Assert.NotEmpty(page.Rows);
-            page = reader.ReadOlder(page.Rows[0].Key, pageSize, filter, null, CancellationToken.None);
+            page = reader.ReadOlder(catalog.Snapshot(), page.Rows[0].Key, pageSize, filter, null, CancellationToken.None);
         }
 
         pages.Reverse();
@@ -86,13 +86,13 @@ public sealed class HistoryReaderTests
     }
 
     /// <summary>Pages forward from the oldest row until the end of history, starting with that row.</summary>
-    private static List<EventRow> PageForward(HistoryReader reader, EventRow oldest, int pageSize)
+    private static List<EventRow> PageForward(HistoryReader reader, Catalog catalog, EventRow oldest, int pageSize)
     {
         var rows = new List<EventRow> { oldest };
         RowKey anchor = oldest.Key;
         while (true)
         {
-            RowPage page = reader.ReadNewer(anchor, pageSize, null, null, CancellationToken.None);
+            RowPage page = reader.ReadNewer(catalog.Snapshot(), anchor, pageSize, null, null, CancellationToken.None);
             Assert.Empty(page.Errors);
             rows.AddRange(page.Rows);
             if (page.ReachedBoundary)
@@ -118,7 +118,7 @@ public sealed class HistoryReaderTests
         List<EventRow> expected = Expected(catalog, config);
         Assert.Equal(18, expected.Count);
 
-        Assert.Equal(expected, PageBackward(NewReader(catalog, config, batchEvents, batchBytes), pageSize));
+        Assert.Equal(expected, PageBackward(NewReader(config, batchEvents, batchBytes), catalog, pageSize));
     }
 
     [Theory]
@@ -131,7 +131,7 @@ public sealed class HistoryReaderTests
         (LogvuConfig config, Catalog catalog) = RealisticSet(dir);
         List<EventRow> expected = Expected(catalog, config);
 
-        Assert.Equal(expected, PageForward(NewReader(catalog, config, batchEvents, batchBytes), expected[0], pageSize));
+        Assert.Equal(expected, PageForward(NewReader(config, batchEvents, batchBytes), catalog, expected[0], pageSize));
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public sealed class HistoryReaderTests
         List<EventRow> readable = Expected(catalog, config);
         b.Expire();
 
-        RowPage all = NewReader(catalog, config).ReadNewest(100, null, null, CancellationToken.None);
+        RowPage all = NewReader(config).ReadNewest(catalog.Snapshot(), 100, null, null, CancellationToken.None);
 
         Assert.Empty(all.Errors);
         Assert.True(all.ReachedBoundary);
@@ -189,8 +189,8 @@ public sealed class HistoryReaderTests
         b.Expire();
         var anchor = new RowKey(b.Generation, 0);
 
-        RowPage older = NewReader(catalog, config).ReadOlder(anchor, 100, null, null, CancellationToken.None);
-        RowPage newer = NewReader(catalog, config).ReadNewer(anchor, 100, null, null, CancellationToken.None);
+        RowPage older = NewReader(config).ReadOlder(catalog.Snapshot(), anchor, 100, null, null, CancellationToken.None);
+        RowPage newer = NewReader(config).ReadNewer(catalog.Snapshot(), anchor, 100, null, null, CancellationToken.None);
 
         Assert.Empty(older.Errors);
         Assert.True(older.ReachedBoundary);
@@ -209,7 +209,7 @@ public sealed class HistoryReaderTests
         c.Expire();
 
         // The newest row of c's file is paused on; reading older from it must not return c's rows.
-        RowPage page = NewReader(catalog, config).ReadOlder(new RowKey(c.Generation, 0), 4, null, null, CancellationToken.None);
+        RowPage page = NewReader(config).ReadOlder(catalog.Snapshot(), new RowKey(c.Generation, 0), 4, null, null, CancellationToken.None);
 
         Assert.False(page.ReachedBoundary);
         // The walk starts at b, the member before c, and continues into a for the rest of the page.
@@ -230,7 +230,7 @@ public sealed class HistoryReaderTests
         dir.Write("SheetKraft1.log", Events(T1, "replacement", 3));
         Assert.NotEqual(b.Identity, FileIdentity.TryGet(b.Path));
 
-        RowPage page = NewReader(catalog, config).ReadNewest(100, null, null, CancellationToken.None);
+        RowPage page = NewReader(config).ReadNewest(catalog.Snapshot(), 100, null, null, CancellationToken.None);
 
         MemberReadError error = Assert.Single(page.Errors);
         Assert.Equal(b.Generation, error.Generation);
@@ -241,7 +241,7 @@ public sealed class HistoryReaderTests
         Assert.True(page.ReachedBoundary);
 
         // The same holds for a read that starts in the member after the replaced one.
-        RowPage older = NewReader(catalog, config).ReadOlder(new RowKey(c.Generation, 0), 100, null, null, CancellationToken.None);
+        RowPage older = NewReader(config).ReadOlder(catalog.Snapshot(), new RowKey(c.Generation, 0), 100, null, null, CancellationToken.None);
         Assert.Equal(new MemberReadError(b.Generation, b.Path, MemberFile.IdentityChanged), Assert.Single(older.Errors));
         Assert.Equal(expected.Where(row => row.Key.Generation == a.Generation), older.Rows);
     }
@@ -254,10 +254,43 @@ public sealed class HistoryReaderTests
         List<EventRow> expected = Expected(catalog, config);
         File.Delete(b.Path);
 
-        RowPage page = NewReader(catalog, config).ReadNewest(100, null, null, CancellationToken.None);
+        RowPage page = NewReader(config).ReadNewest(catalog.Snapshot(), 100, null, null, CancellationToken.None);
 
         Assert.Equal(new MemberReadError(b.Generation, b.Path, MemberFile.NotFound), Assert.Single(page.Errors));
         Assert.Equal(expected.Where(row => row.Key.Generation != b.Generation), page.Rows);
+    }
+
+    [Fact]
+    public void Old_snapshot_reports_a_renamed_member_as_not_found_and_a_fresh_snapshot_reads_it()
+    {
+        using var dir = new ConfigTestDirectory();
+        (LogvuConfig config, Catalog catalog, Member a, Member b, Member c) = ThreeMembers(dir);
+        List<EventRow> expected = Expected(catalog, config);
+        CatalogSnapshot old = catalog.Snapshot();
+        string oldPath = b.Path;
+
+        string renamed = dir.Full("SheetKraft9.log");
+        File.Move(oldPath, renamed);
+        b.Relocate(renamed);
+        HistoryReader reader = NewReader(config);
+
+        // The old snapshot still names the old path, where nothing is now: the member is reported, and no row of it is returned.
+        RowPage stale = reader.ReadNewest(old, 100, null, null, CancellationToken.None);
+        Assert.Equal(new MemberReadError(b.Generation, oldPath, MemberFile.NotFound), Assert.Single(stale.Errors));
+        Assert.Equal(expected.Where(row => row.Key.Generation != b.Generation), stale.Rows);
+        Assert.True(stale.ReachedBoundary);
+
+        RowPage staleOlder = reader.ReadOlder(old, new RowKey(c.Generation, 0), 100, null, null, CancellationToken.None);
+        Assert.Equal(new MemberReadError(b.Generation, oldPath, MemberFile.NotFound), Assert.Single(staleOlder.Errors));
+        Assert.Equal(expected.Where(row => row.Key.Generation == a.Generation), staleOlder.Rows);
+
+        // A fresh snapshot carries the new path, and the member reads as before.
+        CatalogSnapshot fresh = catalog.Snapshot();
+        Assert.NotSame(old, fresh);
+        Assert.Equal(renamed, fresh.Find(b.Generation)!.Path);
+        RowPage current = reader.ReadNewest(fresh, 100, null, null, CancellationToken.None);
+        Assert.Empty(current.Errors);
+        Assert.Equal(expected, current.Rows);
     }
 
     [Fact]
@@ -269,14 +302,14 @@ public sealed class HistoryReaderTests
         List<EventRow> expected = Expected(catalog, config).Where(row => row.Level == LogLevel.Error).ToList();
         Assert.True(expected.Select(row => row.Key.Generation).Distinct().Count() > 1);
 
-        RowPage all = NewReader(catalog, config).ReadNewest(1000, filter, null, CancellationToken.None);
+        RowPage all = NewReader(config).ReadNewest(catalog.Snapshot(), 1000, filter, null, CancellationToken.None);
 
         Assert.Equal(expected, all.Rows);
         Assert.True(all.ReachedBoundary);
         Assert.Empty(all.Errors);
         foreach (int size in new[] { 1, 2, 5 })
         {
-            Assert.Equal(expected, PageBackward(NewReader(catalog, config, batchEvents: 3), size, filter));
+            Assert.Equal(expected, PageBackward(NewReader(config, batchEvents: 3), catalog, size, filter));
         }
     }
 
@@ -292,17 +325,17 @@ public sealed class HistoryReaderTests
         List<EventRow> expected = Expected(catalog, config);
         Assert.Equal(3, expected.Count(row => row.Key.Generation == member.Generation));
 
-        HistoryReader reader = NewReader(catalog, config);
-        Assert.Equal(expected, reader.ReadNewest(1000, null, null, CancellationToken.None).Rows);
-        Assert.Equal(expected, PageBackward(reader, 1));
+        HistoryReader reader = NewReader(config);
+        Assert.Equal(expected, reader.ReadNewest(catalog.Snapshot(), 1000, null, null, CancellationToken.None).Rows);
+        Assert.Equal(expected, PageBackward(reader, catalog, 1));
 
         // Anchors past the cursor, in the live tail: the read starts at the cursor instead.
-        RowPage fromTail = reader.ReadOlder(new RowKey(member.Generation, extents[3].Start), 1000, null, null, CancellationToken.None);
+        RowPage fromTail = reader.ReadOlder(catalog.Snapshot(), new RowKey(member.Generation, extents[3].Start), 1000, null, null, CancellationToken.None);
         Assert.Equal(expected.Where(row => row.Key.Generation != member.Generation || row.Key.Offset < cut), fromTail.Rows);
 
         foreach (EventRow row in expected)
         {
-            RowPage newer = reader.ReadNewer(row.Key, 1000, null, null, CancellationToken.None);
+            RowPage newer = reader.ReadNewer(catalog.Snapshot(), row.Key, 1000, null, null, CancellationToken.None);
             Assert.DoesNotContain(newer.Rows, r => r.Key.Generation == member.Generation && r.Key.Offset >= cut);
             Assert.Equal(expected.SkipWhile(e => e.Key != row.Key).Skip(1), newer.Rows);
         }
@@ -317,32 +350,32 @@ public sealed class HistoryReaderTests
         Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
         List<EventRow> rows = Expected(catalog, config);
         Assert.Equal(3, rows.Count);
-        HistoryReader reader = NewReader(catalog, config);
+        HistoryReader reader = NewReader(config);
         CancellationToken none = CancellationToken.None;
 
         // The page is filled: the walk did not reach either end, even though the last row is the oldest or newest.
-        Assert.False(reader.ReadNewest(3, null, null, none).ReachedBoundary);
-        Assert.False(reader.ReadOlder(rows[2].Key, 2, null, null, none).ReachedBoundary);
-        Assert.False(reader.ReadNewer(rows[0].Key, 2, null, null, none).ReachedBoundary);
+        Assert.False(reader.ReadNewest(catalog.Snapshot(), 3, null, null, none).ReachedBoundary);
+        Assert.False(reader.ReadOlder(catalog.Snapshot(), rows[2].Key, 2, null, null, none).ReachedBoundary);
+        Assert.False(reader.ReadNewer(catalog.Snapshot(), rows[0].Key, 2, null, null, none).ReachedBoundary);
 
         // The walk ran into the start or the end of history.
-        RowPage newest = reader.ReadNewest(4, null, null, none);
+        RowPage newest = reader.ReadNewest(catalog.Snapshot(), 4, null, null, none);
         Assert.True(newest.ReachedBoundary);
         Assert.Equal(rows, newest.Rows);
 
-        RowPage beyondOldest = reader.ReadOlder(rows[0].Key, 2, null, null, none);
+        RowPage beyondOldest = reader.ReadOlder(catalog.Snapshot(), rows[0].Key, 2, null, null, none);
         Assert.True(beyondOldest.ReachedBoundary);
         Assert.Empty(beyondOldest.Rows);
 
-        RowPage beforeLast = reader.ReadOlder(rows[1].Key, 5, null, null, none);
+        RowPage beforeLast = reader.ReadOlder(catalog.Snapshot(), rows[1].Key, 5, null, null, none);
         Assert.True(beforeLast.ReachedBoundary);
         Assert.Equal(rows.Take(1), beforeLast.Rows);
 
-        RowPage afterNewest = reader.ReadNewer(rows[2].Key, 1, null, null, none);
+        RowPage afterNewest = reader.ReadNewer(catalog.Snapshot(), rows[2].Key, 1, null, null, none);
         Assert.True(afterNewest.ReachedBoundary);
         Assert.Empty(afterNewest.Rows);
 
-        RowPage afterOldest = reader.ReadNewer(rows[0].Key, 5, null, null, none);
+        RowPage afterOldest = reader.ReadNewer(catalog.Snapshot(), rows[0].Key, 5, null, null, none);
         Assert.True(afterOldest.ReachedBoundary);
         Assert.Equal(rows.Skip(1), afterOldest.Rows);
     }
@@ -355,7 +388,7 @@ public sealed class HistoryReaderTests
         LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log");
         Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
 
-        RowPage page = NewReader(catalog, config).ReadNewest(5, null, null, CancellationToken.None);
+        RowPage page = NewReader(config).ReadNewest(catalog.Snapshot(), 5, null, null, CancellationToken.None);
 
         Assert.Empty(page.Rows);
         Assert.True(page.ReachedBoundary);
@@ -370,11 +403,11 @@ public sealed class HistoryReaderTests
         LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log");
         Catalog catalog = new(config);
         Member pending = catalog.Add(dir.Full("SheetKraft1.log"), "pending-identity");
-        HistoryReader reader = NewReader(catalog, config);
+        HistoryReader reader = NewReader(config);
 
-        Assert.Throws<ArgumentException>(() => reader.ReadOlder(new RowKey(99, 0), 1, null, null, CancellationToken.None));
-        Assert.Throws<ArgumentException>(() => reader.ReadNewer(new RowKey(pending.Generation, 0), 1, null, null, CancellationToken.None));
-        Assert.Throws<ArgumentOutOfRangeException>(() => reader.ReadNewest(0, null, null, CancellationToken.None));
+        Assert.Throws<ArgumentException>(() => reader.ReadOlder(catalog.Snapshot(), new RowKey(99, 0), 1, null, null, CancellationToken.None));
+        Assert.Throws<ArgumentException>(() => reader.ReadNewer(catalog.Snapshot(), new RowKey(pending.Generation, 0), 1, null, null, CancellationToken.None));
+        Assert.Throws<ArgumentOutOfRangeException>(() => reader.ReadNewest(catalog.Snapshot(), 0, null, null, CancellationToken.None));
     }
 
     [Fact]
@@ -384,12 +417,12 @@ public sealed class HistoryReaderTests
         (LogvuConfig config, Catalog catalog) = RealisticSet(dir);
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
-        HistoryReader reader = NewReader(catalog, config);
+        HistoryReader reader = NewReader(config);
         RowKey anchor = Expected(catalog, config)[3].Key;
 
-        Assert.Throws<OperationCanceledException>(() => reader.ReadNewest(3, null, null, cancelled.Token));
-        Assert.Throws<OperationCanceledException>(() => reader.ReadOlder(anchor, 3, null, null, cancelled.Token));
-        Assert.Throws<OperationCanceledException>(() => reader.ReadNewer(anchor, 3, null, null, cancelled.Token));
+        Assert.Throws<OperationCanceledException>(() => reader.ReadNewest(catalog.Snapshot(), 3, null, null, cancelled.Token));
+        Assert.Throws<OperationCanceledException>(() => reader.ReadOlder(catalog.Snapshot(), anchor, 3, null, null, cancelled.Token));
+        Assert.Throws<OperationCanceledException>(() => reader.ReadNewer(catalog.Snapshot(), anchor, 3, null, null, cancelled.Token));
     }
 
     [Fact]
@@ -399,7 +432,7 @@ public sealed class HistoryReaderTests
         (LogvuConfig config, Catalog catalog) = RealisticSet(dir);
         var progress = new Recorder();
 
-        RowPage page = NewReader(catalog, config, batchEvents: 2).ReadNewest(3, null, progress, CancellationToken.None);
+        RowPage page = NewReader(config, batchEvents: 2).ReadNewest(catalog.Snapshot(), 3, null, progress, CancellationToken.None);
 
         // Without a filter every scanned event is a returned row, so the scanned bytes are the bytes of the three rows.
         long expectedBytes = page.Rows.Sum(row => row.Extent.End - row.Extent.Start);
@@ -416,7 +449,7 @@ public sealed class HistoryReaderTests
         using var cts = new CancellationTokenSource();
         var progress = new CancelOnFirstReport(cts);
 
-        Assert.Throws<OperationCanceledException>(() => NewReader(catalog, config, batchEvents: 1).ReadNewest(10, null, progress, cts.Token));
+        Assert.Throws<OperationCanceledException>(() => NewReader(config, batchEvents: 1).ReadNewest(catalog.Snapshot(), 10, null, progress, cts.Token));
         Assert.Single(progress.Reports);
     }
 
@@ -450,11 +483,11 @@ public sealed class HistoryReaderTests
         EventRow hugeRow = expected.Single(row => row.Preview == "huge trace");
         Assert.True(hugeRow.Extent.End - hugeRow.Extent.Start > 4L * 1024 * 1024);
 
-        Assert.Equal(expected, PageBackward(NewReader(catalog, config), 1));
-        Assert.Equal(expected, PageBackward(NewReader(catalog, config), 3));
-        Assert.Equal(expected, PageBackward(NewReader(catalog, config, batchEvents: 1, batchBytes: 1000), 2));
-        Assert.Equal(expected, PageForward(NewReader(catalog, config, batchEvents: 1, batchBytes: 1000), expected[0], 1));
-        Assert.Equal(expected, PageForward(NewReader(catalog, config), expected[0], 3));
+        Assert.Equal(expected, PageBackward(NewReader(config), catalog, 1));
+        Assert.Equal(expected, PageBackward(NewReader(config), catalog, 3));
+        Assert.Equal(expected, PageBackward(NewReader(config, batchEvents: 1, batchBytes: 1000), catalog, 2));
+        Assert.Equal(expected, PageForward(NewReader(config, batchEvents: 1, batchBytes: 1000), catalog, expected[0], 1));
+        Assert.Equal(expected, PageForward(NewReader(config), catalog, expected[0], 3));
     }
 
     [Fact]
@@ -470,8 +503,8 @@ public sealed class HistoryReaderTests
 
         foreach (int size in new[] { 1, 2, 5 })
         {
-            Assert.Equal(expected, PageBackward(NewReader(catalog, config, batchEvents: 2), size));
-            Assert.Equal(expected, PageForward(NewReader(catalog, config), expected[0], size));
+            Assert.Equal(expected, PageBackward(NewReader(config, batchEvents: 2), catalog, size));
+            Assert.Equal(expected, PageForward(NewReader(config), catalog, expected[0], size));
         }
     }
 

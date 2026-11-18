@@ -18,24 +18,27 @@ public static class RowBuilder
     /// with a parse error, as any malformed record is.
     /// </summary>
     /// <param name="stream">A seekable stream holding the event. It is read, never disposed.</param>
-    /// <param name="member">The member the event is in. Its scheme parses the text.</param>
+    /// <param name="scheme">The scheme of the event's member, which parses the text. Readable members always have one.</param>
+    /// <param name="generation">The generation of the event's member, which the row's key carries.</param>
     /// <param name="extent">The event's bytes within <paramref name="stream"/>.</param>
     /// <param name="context">The parse settings.</param>
     /// <returns>The row, and the parsed event it was built from.</returns>
     /// <exception cref="ArgumentNullException">A required argument is <c>null</c>.</exception>
-    /// <exception cref="InvalidOperationException"><paramref name="member"/> has no scheme. Readable members always have one.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="scheme"/> is <c>null</c>: the member has no scheme.</exception>
     /// <exception cref="IOException">The bytes of the event cannot be read.</exception>
-    public static (EventRow Row, LogEvent Event) Build(Stream stream, Member member, EventExtent extent, ParseContext context)
+    public static (EventRow Row, LogEvent Event) Build(Stream stream, ILogScheme? scheme, int generation, EventExtent extent, ParseContext context)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(member);
         ArgumentNullException.ThrowIfNull(context);
-        ILogScheme scheme = member.Scheme ?? throw new InvalidOperationException($"Generation {member.Generation} has no scheme.");
+        if (scheme is null)
+        {
+            throw new InvalidOperationException($"Generation {generation} has no scheme.");
+        }
 
         (string text, _) = EventText.Read(stream, extent, TextCap);
         LogEvent ev = scheme.Parse(text, context);
         var row = new EventRow(
-            new RowKey(member.Generation, extent.Start),
+            new RowKey(generation, extent.Start),
             extent,
             ev.Time,
             ev.TimeText,

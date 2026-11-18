@@ -17,7 +17,7 @@ public sealed class CatalogTests
         catalog.Add(dir.Full(name), "id-" + name);
 
     private static void SetDated(Member member, DateTimeOffset time) =>
-        member.Apply(new ProbeResult(null, MemberState.Dated, 0, time, null, 0));
+        member.Apply(new ProbeResult(RawLinesScheme.Instance, MemberState.Dated, 0, time, null, 0));
 
     private static void SetUnknown(Member member) =>
         member.Apply(new ProbeResult(RawLinesScheme.Instance, MemberState.UnknownTime, 0, null, "no time", 0));
@@ -393,7 +393,7 @@ public sealed class CatalogTests
     }
 
     [Fact]
-    public void Dated_probe_result_needs_a_time()
+    public void Probe_results_need_a_time_when_dated_and_a_scheme_when_in_the_timeline()
     {
         using var dir = new ConfigTestDirectory();
         Catalog catalog = NewCatalog(dir);
@@ -401,6 +401,8 @@ public sealed class CatalogTests
 
         Assert.Throws<ArgumentException>(() => member.Apply(new ProbeResult(null, MemberState.Dated, 0, null, null, 0)));
         Assert.Throws<ArgumentException>(() => member.Apply(new ProbeResult(null, MemberState.Expired, 0, null, null, 0)));
+        Assert.Throws<ArgumentException>(() => member.Apply(new ProbeResult(null, MemberState.Dated, 0, DateTimeOffset.UnixEpoch, null, 0)));
+        Assert.Throws<ArgumentException>(() => member.Apply(new ProbeResult(null, MemberState.UnknownTime, 0, null, "no time", 0)));
     }
 
     [Fact]
@@ -411,5 +413,84 @@ public sealed class CatalogTests
 
         Assert.Throws<ArgumentException>(() => catalog.Add(string.Empty, "id"));
         Assert.Throws<ArgumentException>(() => catalog.Add(dir.Full("SheetKraft.log"), string.Empty));
+    }
+
+    [Fact]
+    public void Snapshot_is_the_same_instance_until_a_member_changes()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir, activeFile: "SheetKraft.log");
+        Member older = Add(catalog, dir, "SheetKraft1.log");
+        Member active = Add(catalog, dir, "SheetKraft.log");
+        SetDated(older, T);
+        SetDated(active, T.AddHours(1));
+
+        CatalogSnapshot first = catalog.Snapshot();
+        Assert.Same(first, catalog.Snapshot());
+        Assert.Equal(new[] { "SheetKraft1.log", "SheetKraft.log" }, first.Ordered.Select(m => m.Name));
+
+        // A cursor or live flag that does not change keeps the snapshot; one that changes makes a new one that carries it.
+        older.ReadCursor = 0;
+        Assert.Same(first, catalog.Snapshot());
+        older.ReadCursor = 42;
+        CatalogSnapshot moved = catalog.Snapshot();
+        Assert.NotSame(first, moved);
+        Assert.Equal(0, first.Find(older.Generation)!.ReadCursor);
+        Assert.Equal(42, moved.Find(older.Generation)!.ReadCursor);
+
+        active.IsLive = true;
+        Assert.True(catalog.Snapshot().Find(active.Generation)!.IsLive);
+        Assert.False(moved.Find(active.Generation)!.IsLive);
+
+        string renamed = dir.Full("SheetKraft9.log");
+        older.Relocate(renamed);
+        Assert.Equal(renamed, catalog.Snapshot().Find(older.Generation)!.Path);
+
+        older.Expire();
+        MemberInfo expired = catalog.Snapshot().Find(older.Generation)!;
+        Assert.False(expired.IsReadable);
+        Assert.Equal(MemberState.Dated, expired.TimelineState);
+        Assert.Equal(T, expired.FirstTime);
+    }
+
+    [Fact]
+    public void Snapshot_order_and_comparisons_agree_with_the_catalog()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir, activeFile: "SheetKraft.log");
+        Member unknown = Add(catalog, dir, "SheetKraft3.log");
+        unknown.Apply(new ProbeResult(RawLinesScheme.Instance, MemberState.UnknownTime, 0, null, "no time", 0));
+        Member newer = Add(catalog, dir, "SheetKraft.log");
+        SetDated(newer, T.AddHours(1));
+        Member older = Add(catalog, dir, "SheetKraft2.log");
+        SetDated(older, T);
+        Member equal = Add(catalog, dir, "SheetKraft1.log");
+        SetDated(equal, T);
+        Add(catalog, dir, "SheetKraft4.log");
+        older.Expire();
+
+        CatalogSnapshot snapshot = catalog.Snapshot();
+
+        Assert.Equal(catalog.Ordered.Select(m => m.Generation), snapshot.Ordered.Select(m => m.Generation));
+        foreach (MemberInfo info in snapshot.Ordered)
+        {
+            Member member = catalog.FindByGeneration(info.Generation)!;
+            MemberInfo? previous = snapshot.Previous(info);
+            Member? expectedPrevious = catalog.Previous(member);
+            Assert.Equal(expectedPrevious?.Generation, previous?.Generation);
+            Assert.Equal(catalog.Next(member)?.Generation, snapshot.Next(info)?.Generation);
+        }
+
+        Assert.Null(snapshot.Find(catalog.All.Single(m => m.Name == "SheetKraft4.log").Generation));
+        var keys = new[] { new RowKey(unknown.Generation, 5), new RowKey(older.Generation, 0), new RowKey(equal.Generation, 9), new RowKey(newer.Generation, 1) };
+        foreach (RowKey a in keys)
+        {
+            foreach (RowKey b in keys)
+            {
+                Assert.Equal(Math.Sign(catalog.Compare(a, b)), Math.Sign(snapshot.Compare(a, b)));
+            }
+        }
+
+        Assert.Throws<ArgumentException>(() => snapshot.Compare(new RowKey(999, 0), keys[0]));
     }
 }
