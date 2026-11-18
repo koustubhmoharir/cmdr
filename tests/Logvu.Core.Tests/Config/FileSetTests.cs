@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using Logvu.Core.Config;
 using Shared.Core;
@@ -203,5 +205,55 @@ public sealed class FileSetTests
         LogvuConfig config = Load(dir, "SheetKraft", DesignPattern);
 
         Assert.Equal([Path.Combine(config.LogsDirectory, "SheetKraft.log")], FileSet.Enumerate(config));
+    }
+
+    /// <summary>Creates a named pipe with mkfifo(1). Returns false when mkfifo is not available, so the caller can skip.</summary>
+    private static bool TryCreateFifo(string path)
+    {
+        var info = new ProcessStartInfo("mkfifo") { RedirectStandardOutput = true, RedirectStandardError = true };
+        info.ArgumentList.Add(path);
+
+        try
+        {
+            using Process process = Process.Start(info)!;
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(TimeSpan.FromSeconds(30)))
+            {
+                process.Kill(entireProcessTree: true);
+                throw new TimeoutException($"'mkfifo {path}' did not finish.");
+            }
+
+            stdout.GetAwaiter().GetResult();
+            stderr.GetAwaiter().GetResult();
+            return process.ExitCode == 0;
+        }
+        catch (Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    [Fact]
+    public void Fifos_and_symbolic_links_to_them_are_not_members()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return; // named pipes are created with mkfifo(1), which only Linux is tested with
+        }
+
+        using var dir = new ConfigTestDirectory();
+        string logs = dir.Full("Logs");
+        Directory.CreateDirectory(logs);
+        dir.Write("Logs/SheetKraft.log", "a");
+        if (!TryCreateFifo(Path.Combine(logs, "SheetKraft1.log")))
+        {
+            return; // mkfifo is not available here
+        }
+
+        File.CreateSymbolicLink(Path.Combine(logs, "SheetKraft2.log"), "SheetKraft1.log");
+        LogvuConfig config = Load(dir, "SheetKraft", DesignPattern);
+
+        Assert.Equal(["SheetKraft.log"], Names(config));
     }
 }

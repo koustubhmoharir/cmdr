@@ -68,7 +68,14 @@ public static class FileSet
         return LogvuConfig.TryMatch(config.FileNamePattern, name);
     }
 
-    private static bool IsRegularFile(FileSystemInfo entry)
+    // FIFOs, sockets and devices are regular-looking to .NET but are not files, and they appear only in directories on Unix. On Linux
+    // the identity read (statx) rejects them. It is not used on Windows: TryGet(path) opens the file there, and a transient open failure
+    // (for example another process holding it open exclusively) must not make a member vanish from the set, since the catalog would
+    // treat that as a deleted file.
+    private static bool IsRegularFile(FileSystemInfo entry) =>
+        IsRegularEntry(entry) && (!OperatingSystem.IsLinux() || FileIdentity.TryGet(entry.FullName) is not null);
+
+    private static bool IsRegularEntry(FileSystemInfo entry)
     {
         if (entry.LinkTarget is null)
         {

@@ -34,7 +34,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Config model and loader: logsDirectory (relative to config), filePrefix, fileNamePattern, activeFile, format,
       timezone, ring capacity, highlight rules, custom schemes; errors name the offending field; regex timeouts.
 - [x] File set enumeration: regular files directly in the directory, both selectors, compressed files skipped.
-- [ ] FileSet: exclude FIFOs/devices (use FileIdentity.TryGet(path), which only accepts regular files).
+- [x] FileSet: exclude FIFOs/devices (Linux only) (use FileIdentity.TryGet(path), which only accepts regular files).
 - [ ] logvu recent-file history (own store).
 
 ## M3. Catalog
