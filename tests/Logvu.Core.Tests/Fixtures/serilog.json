@@ -1,0 +1,9 @@
+{"Timestamp":"2026-11-18T10:20:30.1234567+05:30","Level":"Information","MessageTemplate":"Started run {RunId}","Properties":{"RunId":42,"SourceContext":"SampleDotNetApp.Runner"}}
+{"Timestamp":"2026-11-18T10:20:30.2000000+05:30","Level":"Debug","MessageTemplate":"Loaded {Rows} rows from {Path:l}","Properties":{"Rows":1204,"Path":"C:\\data\\q3.csv","SourceContext":"SampleDotNetApp.Loader"}}
+{"Timestamp":"2026-11-18T10:20:31.0070000+05:30","Level":"Error","MessageTemplate":"Failed to process {OrderId} for {@Customer} {{literal}}","Exception":"System.InvalidOperationException: boom\r\n   at A.B.C() in C:\\src\\x.cs:line 10","Properties":{"OrderId":42,"Customer":{"Name":"Asha"},"SourceContext":"SampleDotNetApp.Orders","Scope":["Request 7"],"ExceptionDetail":{"Type":"System.InvalidOperationException","Message":"boom","HResult":-2146233079}}}
+{"Timestamp":"2026-11-18T10:20:31.5000000+05:30","Level":"Warning","MessageTemplate":"Retry {Attempt} of {Max}","RenderedMessage":"Retry 2 of 5","Properties":{"Attempt":2,"Max":5,"SourceContext":"SampleDotNetApp.Retry"}}
+{"Timestamp":"2026-11-18T10:20:32.0000000+05:30","Level":"Error","MessageTemplate":"Truncated {Thing
+{"Timestamp":"2026-11-18T10:20:33.0000000+05:30","Level":"Fatal","MessageTemplate":"Host stopped: {Reason,-10}","Properties":{"Reason":"shutdown","SourceContext":"SampleDotNetApp.Host"}}
+["2026-11-18T10:20:34+05:30","Information","not an object"]
+{"Timestamp":"2026-11-18T10:20:35.0000000+05:30","Level":"Information","MessageTemplate":"Request {Method:l} took {Elapsed:0.0} ms","Properties":{"Method":"GET","Elapsed":14.2,"SourceContext":"SampleDotNetApp.Http"}}
+{"Timestamp":"2026-11-18T10:20:36.0000000+05:30","Level":"Verbose","MessageTemplate":"Cache holds {Count} entries, {Missing} missing","Properties":{"Count":3,"SourceContext":"SampleDotNetApp.Cache"}}

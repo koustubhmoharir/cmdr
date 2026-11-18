@@ -1,0 +1,8 @@
+{"time":"2026-11-18T10:20:30.123456789+05:30","level":"INFO","msg":"service started","logger":"api","addr":":8080"}
+{"time":"2026-11-18T10:20:30.500000000+05:30","level":"DEBUG-4","msg":"cache warm","logger":"cache","entries":1204}
+{"time":"2026-11-18T10:20:31.007000000+05:30","level":"ERROR","msg":"request failed","logger":"api","err":{"message":"db down","attrs":{"table":"orders"},"cause":["dial tcp 10.0.0.9:1433: connect: connection refused"],"stack":["main.handler (/src/app/main.go:42)","net/http.HandlerFunc.ServeHTTP (net/http/server.go:2220)"]}}
+{"time":"2026-11-18T10:20:31.5+05:30","level":"WARN+2","msg":"retrying","cause":[{"message":"inner","attrs":{"attempt":2}},"io: EOF"],"stack":["pkg.F (pkg/f.go:10)"]}
+{"time":"2026-11-18T10:20:33.000000000+05:30","level":"INFO","msg":"truncated
+["2026-11-18T10:20:34Z","INFO","array"]
+{"time":"2026-11-18T10:20:35.250000000+05:30","level":"INFO","msg":"request done","logger":"api","status":200,"duration_ms":14.2}
+{"time":"2026-11-18T10:20:36.000000000+05:30","level":"FATAL","msg":"shutting down","logger":"main","signal":null}

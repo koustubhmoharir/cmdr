@@ -84,8 +84,8 @@ log4net renders a missing property as `(null)`; `%-5level` pads the level with s
 
 Serilog message: `RenderedMessage` if present; otherwise render `MessageTemplate` with `Properties`: `{Name}`, `{Name:fmt}`,
 `{Name,align}`, `{@Name}`, `{$Name}`, positional `{0}`; `{{`/`}}` are literal braces. Strings render unquoted, other scalars
-as their JSON text, objects/arrays as compact JSON. A token whose property is missing stays as written. `Exception` (a .NET
-`ToString()` with stack trace), `Properties.ExceptionDetail` and `Properties.Scope` are kept as fields.
+as their JSON text, objects/arrays as compact JSON. A token whose property is missing stays as written. Fields are the top-level members; `Exception` (a .NET `ToString()` with stack trace) is one of them, and
+`Properties.ExceptionDetail` / `Properties.Scope` are reached through `LogEvent.Json`.
 
 slog: errors appear either as top-level `cause` (array of strings or `{message, attrs}` objects) and `stack` (array of
 `function (file:line)` strings), or as an attribute whose value is an object `{message, attrs?, cause?, stack?}`.

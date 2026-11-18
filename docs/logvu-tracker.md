@@ -19,14 +19,14 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 - [x] Block reader: UTF-8 with/without BOM, LF/CRLF, characters and lines split across blocks; forward and backward line
       iteration over byte offsets.
-- [ ] Text scheme model: anchored header regex with named captures, timestamp formats, message capture; continuation lines
+- [x] Text scheme model: anchored header regex with named captures, timestamp formats, message capture; continuation lines
       (including blank) appended; orphan text → raw entry.
-- [ ] Built-in log4net schemes: core, web, scheduler, date-first. Level normalization.
-- [ ] JSON schemes: Serilog JsonFormatter (RenderedMessage else MessageTemplate rendering over Properties, Exception,
+- [x] Built-in log4net schemes: core, web, scheduler, date-first. Level normalization.
+- [x] JSON schemes: Serilog JsonFormatter (RenderedMessage else MessageTemplate rendering over Properties, Exception,
       ExceptionDetail, Scope) and Go slog (time/level/msg, cause/stack, error object). Malformed lines → raw entries.
 - [ ] Event framer in both directions with identical results; backward start inside a stack trace walks to its header;
       partial last line held in live files, accepted in closed rolls.
-- [ ] Content detection per file; custom schemes from config.
+- [ ] Content detection per file (SchemeDetector done; feed it the first lines, with the first JSON line read in full beyond the text cap); custom schemes from config (TextScheme ctor validates).
 - [ ] Fixtures for every scheme (incl. event larger than a block); forward/backward equivalence tests.
 
 ## M2. Configuration
