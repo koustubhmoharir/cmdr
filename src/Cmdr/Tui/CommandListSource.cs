@@ -14,6 +14,9 @@ namespace Cmdr.Tui;
 /// </summary>
 internal sealed class CommandListSource : IListDataSource
 {
+    /// <summary>Columns from the indent of a group header to its name: the "▾ " or "▸ " before it.</summary>
+    private const int HeaderNameOffset = 2;
+
     private readonly IReadOnlySet<GroupEntry> _collapsed;
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private DisplayLines _lines = DisplayLines.Build(Array.Empty<ListRow>());
@@ -28,6 +31,15 @@ internal sealed class CommandListSource : IListDataSource
 
     /// <summary>The marks shown on command rows.</summary>
     public Selection Selection { get; }
+
+    /// <summary>The search whose matches are highlighted in group and command names. Null when there is no search.</summary>
+    public SearchPattern? Search { get; set; }
+
+    /// <summary>
+    /// The active match, drawn in its own color: its item (compared by reference), and its range in the item's name. Null when there
+    /// is none.
+    /// </summary>
+    public (ItemEntry Item, int Start, int Length)? ActiveMatch { get; set; }
 
     /// <summary>The display lines of the rows shown. Changes with <see cref="Rows"/>.</summary>
     public DisplayLines Lines => _lines;
@@ -120,6 +132,12 @@ internal sealed class CommandListSource : IListDataSource
                     listView.AddStr(status.Glyph);
                 }
 
+                if (text.NameColumn >= 0)
+                {
+                    // The name is cut to the width after its column, so that is the room the matches are drawn in.
+                    DrawMatches(listView, baseAttr, entry, entry.Name, col + text.NameColumn, row, width - text.NameColumn);
+                }
+
                 break;
         }
     }
@@ -141,13 +159,49 @@ internal sealed class CommandListSource : IListDataSource
         GroupHeaderText header = RowLayout.FormatGroupHeader(
             width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, group.Depth, sourceLabel);
 
-        listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold));
+        var headerAttr = new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold);
+        listView.SetAttribute(headerAttr);
         listView.AddStr(header.Text);
         if (header.SourceColumn >= 0)
         {
             listView.Move(col + header.SourceColumn, row);
             listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
             listView.AddStr(header.SourceText);
+        }
+
+        // The name follows the "▾ " or "▸ " after the indent, and is cut to the width after that.
+        int shift = RowLayout.IndentOf(group.Depth);
+        DrawMatches(listView, headerAttr, group, group.Name, col + shift + HeaderNameOffset, row, width - shift - HeaderNameOffset);
+    }
+
+    /// <summary>
+    /// Draws the matches of <see cref="Search"/> in a name over the text already drawn there, in the match color, or in the active
+    /// color for <see cref="ActiveMatch"/>. Only the part of a match within the <paramref name="visible"/> columns from
+    /// <paramref name="column"/> is drawn, the rest of the name being cut. The matched text keeps the style of <paramref name="attr"/>.
+    /// </summary>
+    private void DrawMatches(ListView listView, Attribute attr, ItemEntry item, string name, int column, int row, int visible)
+    {
+        if (Search is not { } pattern || visible <= 0)
+        {
+            return;
+        }
+
+        foreach (SearchMatch match in pattern.Matches(name))
+        {
+            int offset = TextWidth.Columns(name[..match.Start]);
+            int room = visible - offset;
+            if (room <= 0)
+            {
+                continue;
+            }
+
+            bool active = ActiveMatch is { } current
+                && ReferenceEquals(current.Item, item)
+                && current.Start == match.Start
+                && current.Length == match.Length;
+            listView.Move(column + offset, row);
+            listView.SetAttribute(active ? SearchColors.Active(attr) : SearchColors.Match(attr));
+            listView.AddStr(TextWidth.Truncate(name.Substring(match.Start, match.Length), room));
         }
     }
 

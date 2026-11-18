@@ -12,9 +12,11 @@ internal static class OutputWrap
 {
     /// <summary>
     /// One drawable cell of a line: the grapheme's text (a grapheme that starts with a control character is the space that
-    /// draws it), its display column in the line, its width in columns and the index of the span that holds its first unit.
+    /// draws it), its display column in the line, its width in columns, the index of the span that holds its first unit, and
+    /// the offset and length in UTF-16 units of its grapheme in <see cref="OutputLine.PlainText"/>. The offset can jump by more
+    /// than the length, since zero-width graphemes give no cell.
     /// </summary>
-    internal readonly record struct Cell(string Text, int Column, int Width, int Span);
+    internal readonly record struct Cell(string Text, int Column, int Width, int Span, int Offset, int Length);
 
     // One string per ASCII character, shared by every cell that holds it: most cells are ASCII, and a line is cut into cells
     // whenever it is first drawn.
@@ -50,7 +52,7 @@ internal static class OutputWrap
                 string text = char.IsControl(plain[offset]) ? " "
                     : length == 1 && plain[offset] < 128 ? s_ascii[plain[offset]]
                     : plain.Substring(offset, length);
-                cells.Add(new Cell(text, column, width, span));
+                cells.Add(new Cell(text, column, width, span, offset, length));
                 column += width;
             }
 

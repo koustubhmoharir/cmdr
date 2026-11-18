@@ -357,6 +357,22 @@ acting, or captures a snapshot and acts only on that.
     the band is compared. It is ignored on the legacy Windows console and in inline mode.
   - Measured (Linux, 160×50, varied text, ~9 frames/s): 100 lines/s ~8.4 KB/frame before, ~5.1 KB with the copy, ~2.1 KB
     with scrolling too; 10 lines/s ~4.7 KB with the copy alone, ~0.26 KB with scrolling. Windows Terminal is expected to behave the same (VT scroll regions) but is not yet verified.
+- **Search**: `SearchPattern` compiles the bar's query (literal text is escaped; whole word wraps the pattern in
+  `(?<!\w)(?:…)(?!\w)` rather than `\b`, so punctuation at the ends works). Literal text has no match timeout (it cannot
+  backtrack badly); a regex uses `RegexOptions.NonBacktracking` (linear) when it can, otherwise the backtracking engine with a 1 s
+  timeout, after which the pattern is abandoned (no matches, `TimedOut`, the bar says "pattern too slow") so a pathological regex
+  costs one timeout, not one per line. A short timeout fired under CPU load on plain literals and silently gave partial counts. Each pane implements `ISearchTarget`
+  (`SetSearch`, `Find(backward, inclusive)`, `SearchStatus`); the list's is `ListSearchTarget`, which searches every row
+  (`Session.BuildRows`, collapsed groups included) and reveals a match through the controller, which remembers the groups it
+  expanded and collapses them again on close unless they hold the focused row. Matches are UTF-16 ranges in the plain text; the
+  output pane maps them to cells through `OutputWrap.Cell.Offset/Length`, the info pane through its logical lines (a match may
+  cross a wrap). An active match is a position (line, start, length); it is highlighted, and counted, only while an identical match
+  still exists, so changing text simply drops it. The output's match count (`OutputSearchIndex`) counts each completed line once
+  and drops evicted lines, recounting only partial lines, so the 100 ms status refresh does not rescan the buffer while it streams;
+  `Find` skips completed lines with no matches. Highlights are computed per drawn line and only while a search is set. The bar
+  (`SearchBar`) keeps the focus in its `TextField`; a subclass takes Enter, Tab, Esc, F3 and Alt+C/W/R before the field does,
+  and the bar swallows everything the field declines except Ctrl+Q/Ctrl+S. The target follows the focused pane (checked each
+  tick); retargeting sets the pattern without moving.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take
   the bottom ~4 content rows: a view at content row r needs `Height ≥ r + 7`.

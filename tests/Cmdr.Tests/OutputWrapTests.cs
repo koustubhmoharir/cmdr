@@ -245,4 +245,63 @@ public sealed class OutputWrapTests
         Assert.Equal(2, OutputWrap.FirstCellAt(cells, 3));
         Assert.Equal(3, OutputWrap.FirstCellAt(cells, 4));
     }
+
+    [Fact]
+    public void Ascii_cells_have_offsets_counting_up_from_zero_with_length_one()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("abc"));
+
+        Assert.Equal(new[] { 0, 1, 2 }, cells.Select(cell => cell.Offset));
+        Assert.Equal(new[] { 1, 1, 1 }, cells.Select(cell => cell.Length));
+    }
+
+    [Fact]
+    public void Wide_characters_have_one_unit_each_in_offset_and_length()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("a日本"));
+
+        Assert.Equal(new[] { 0, 1, 2 }, cells.Select(cell => cell.Offset));
+        Assert.Equal(new[] { 1, 1, 1 }, cells.Select(cell => cell.Length));
+    }
+
+    [Fact]
+    public void Combining_mark_cell_covers_base_and_mark_in_offset_and_length()
+    {
+        // "e" + U+0301 is two UTF-16 units and one grapheme.
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("e\u0301x"));
+
+        Assert.Equal(new[] { 0, 2 }, cells.Select(cell => cell.Offset));
+        Assert.Equal(new[] { 2, 1 }, cells.Select(cell => cell.Length));
+    }
+
+    [Fact]
+    public void Surrogate_pair_cell_has_length_two_and_the_next_cell_starts_after_it()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("\U0001F600x"));
+
+        Assert.Equal(new[] { 0, 2 }, cells.Select(cell => cell.Offset));
+        Assert.Equal(new[] { 2, 1 }, cells.Select(cell => cell.Length));
+    }
+
+    [Fact]
+    public void Control_character_cell_keeps_the_source_offset_and_length()
+    {
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("a\tb"));
+
+        Assert.Equal(" ", cells[1].Text);
+        Assert.Equal(1, cells[1].Offset);
+        Assert.Equal(1, cells[1].Length);
+        Assert.Equal(2, cells[2].Offset);
+    }
+
+    [Fact]
+    public void Zero_width_grapheme_gives_no_cell_so_the_next_offset_jumps_past_it()
+    {
+        // A leading combining mark has no cell: "a" is the first cell, at offset 1, and its length is 1.
+        List<OutputWrap.Cell> cells = OutputWrap.Cells(Line("\u0301a"));
+
+        Assert.Single(cells);
+        Assert.Equal(1, cells[0].Offset);
+        Assert.Equal(1, cells[0].Length);
+    }
 }

@@ -19,7 +19,7 @@ namespace Cmdr.Tui;
 /// Session events arrive on any thread. Handlers marshal to the UI thread with <see cref="IApplication.Invoke(Action)"/>.
 /// Views are touched on the UI thread only.
 /// </remarks>
-internal sealed class MainController : IDisposable
+internal sealed class MainController : IDisposable, IListSearchHost
 {
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
@@ -45,6 +45,15 @@ internal sealed class MainController : IDisposable
     // Groups collapsed in the list. UI state only: not saved, and not part of the session. Compared by identity.
     private readonly HashSet<GroupEntry> _collapsed = new(ReferenceEqualityComparer.Instance);
 
+    // Groups the list search expanded to reveal a match. Closing the search collapses them again (see RestoreSearchCollapsed).
+    private readonly HashSet<GroupEntry> _searchExpanded = new(ReferenceEqualityComparer.Instance);
+    private ListSearchTarget _listSearch = null!;
+
+    // The search bar's target: the pane that had the focus when the bar opened, while the bar is open. Null while it is closed.
+    private View? _searchPane;
+    private SearchPattern? _searchPattern;
+    private SearchQuery _lastQuery = new(string.Empty, false, false, false);
+
     // The rows shown: the session's rows without the commands of collapsed groups.
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private object? _shownKey;
@@ -61,6 +70,7 @@ internal sealed class MainController : IDisposable
     private DetailsView _details = null!;
     private OutputView _output = null!;
     private StatusLine _status = null!;
+    private SearchBar _searchBar = null!;
 
     public MainController(IApplication app, Session session)
     {
@@ -83,6 +93,7 @@ internal sealed class MainController : IDisposable
             Height = Dim.Fill(),
             TabStop = TabBehavior.TabStop,
         };
+        _listSearch = new ListSearchTarget(this, _source);
 
         _details = new DetailsView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
@@ -103,8 +114,15 @@ internal sealed class MainController : IDisposable
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
         ShowHints();
 
+        // The search bar sits above the status line and is shown only while a search is open (see SetSearchBarOpen).
+        _searchBar = new SearchBar { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1, Visible = false };
+        _searchBar.QueryChanged += OnSearchQueryChanged;
+        _searchBar.FocusPaneRequested += FocusSearchPane;
+        _searchBar.Closed += CloseSearch;
+        _searchBar.FindRequested += FindNext;
+
         _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
-        _window.Add(_listFrame, _detailsFrame, _outputHeader, _output, _status);
+        _window.Add(_listFrame, _detailsFrame, _outputHeader, _output, _status, _searchBar);
 
         // Groups marked expanded: false start collapsed. Only here, at load; the list's state is not written back.
         foreach (GroupEntry group in TreeRows.InitiallyCollapsed(_session.AllGroups))
@@ -154,8 +172,27 @@ internal sealed class MainController : IDisposable
             return true;
         }
 
+        if (IsSearchKey(key))
+        {
+            OpenSearch();
+            return true;
+        }
+
+        if (key == Key.F3)
+        {
+            return OnFindKey(backward: false);
+        }
+
+        if (key == Key.F3.WithShift)
+        {
+            return OnFindKey(backward: true);
+        }
+
         return false;
     }
+
+    /// <summary>'/' without Ctrl or Alt, and Ctrl+F: both open the search bar, see <see cref="OpenSearch"/>.</summary>
+    private static bool IsSearchKey(Key key) => key == Key.F.WithCtrl || (!key.IsCtrl && !key.IsAlt && key.AsRune.Value == '/');
 
     /// <summary>
     /// '+' and '=' are one key on most keyboards. Both are accepted, with or without Shift: the driver reports the rune
@@ -285,10 +322,10 @@ internal sealed class MainController : IDisposable
             return true;
         }
 
-        // Esc is consumed so that it never quits the application. Stopping is Ctrl+C only.
+        // Esc closes the search when it is open, and is consumed either way so that it never quits the application. Stopping is Ctrl+C only.
         if (key == Key.Esc)
         {
-            return true;
+            return OnPaneEscape();
         }
 
         if (key == Key.C.WithCtrl)
@@ -547,6 +584,7 @@ internal sealed class MainController : IDisposable
         _output.Tick();
         UpdateOutputTitle();
         UpdateDetailsTitle();
+        TickSearch();
 
         // The Enter hint depends on the targets, their states and marks; it is recomputed on every tick.
         if (_message is null)
@@ -739,6 +777,281 @@ internal sealed class MainController : IDisposable
             RebuildRows();
         }
     }
+
+    /// <summary>The search of the command list. Valid after <see cref="Build"/>.</summary>
+    internal ISearchTarget ListSearch => _listSearch;
+
+    /// <summary>
+    /// Collapses again the groups that the list search expanded, except those that hold the focused row, and forgets them. Groups the
+    /// user collapsed or expanded in the meantime need nothing: collapsing a collapsed group changes nothing.
+    /// </summary>
+    internal void RestoreSearchCollapsed()
+    {
+        ItemEntry? focused = FocusedRow is { } row ? TreeRows.ItemOf(row) : null;
+        bool changed = false;
+        foreach (GroupEntry group in _searchExpanded)
+        {
+            bool holdsFocus = focused?.Parent is { } parent && GroupTree.IsSelfOrDescendant(parent, group);
+            if (!holdsFocus && _session.AllGroups.Any(existing => ReferenceEquals(existing, group)))
+            {
+                changed |= _collapsed.Add(group);
+            }
+        }
+
+        _searchExpanded.Clear();
+        if (changed)
+        {
+            RebuildRows();
+        }
+    }
+
+    #region Search
+
+    // The search bar searches the pane that had the focus when it opened (the target). Only that pane highlights. While the bar
+    // is open, the focus moving to another pane moves the search there (see RetargetSearch). Keys go to the bar while its field
+    // has the focus; the bar reports them through its events.
+
+    /// <summary>Esc in a pane (the bar's Esc too): closes the search when it is open. Returns true: Esc is always handled.</summary>
+    public bool OnPaneEscape()
+    {
+        CloseSearch();
+        return true;
+    }
+
+    /// <summary>
+    /// '/' or Ctrl+F. Closed: opens the bar over the focused pane with the last query, the text selected, and the focus in the field.
+    /// Open: focuses the field with its text selected, and moves the search to the focused pane first when another pane has the focus.
+    /// </summary>
+    private void OpenSearch()
+    {
+        View pane = FocusedPane() ?? _list;
+        if (_searchPane is not null)
+        {
+            if (!ReferenceEquals(pane, _searchPane))
+            {
+                RetargetSearch(pane);
+            }
+
+            _searchBar.FocusField(selectAll: true);
+            return;
+        }
+
+        _searchPane = pane;
+        SetSearchBarOpen(true);
+        _searchBar.SetQuery(_lastQuery);
+        _searchBar.FocusField(selectAll: true);
+        ApplySearch(_lastQuery, find: true);
+    }
+
+    /// <summary>
+    /// F3 (backward false) and Shift+F3 (backward true) with the bar closed. With a previous query, reopens the bar over the focused
+    /// pane with that query and moves to the next match, keeping the focus in the pane. Without one, opens the bar as '/' does.
+    /// </summary>
+    private bool OnFindKey(bool backward)
+    {
+        if (_searchPane is not null)
+        {
+            FindNext(backward);
+            return true;
+        }
+
+        if (_lastQuery.Text.Length == 0)
+        {
+            OpenSearch();
+            return true;
+        }
+
+        _searchPane = FocusedPane() ?? _list;
+        SetSearchBarOpen(true);
+        _searchBar.SetQuery(_lastQuery);
+        ApplySearch(_lastQuery, find: false);
+        FindNext(backward);
+        return true;
+    }
+
+    /// <summary>Applies the query to the target. With <paramref name="find"/>, moves to the first match from the origin, as typing does.</summary>
+    private void ApplySearch(SearchQuery query, bool find)
+    {
+        _searchPattern = SearchPattern.Create(query, out _);
+        ISearchTarget target = SearchTargetFor(_searchPane!);
+        target.SetSearch(_searchPattern);
+        if (_searchPattern is not null && find)
+        {
+            target.Find(backward: false, inclusive: true);
+        }
+
+        RefreshSearchStatus();
+    }
+
+    /// <summary>The bar's query changed by the user: applies it and moves to the first match from the origin.</summary>
+    private void OnSearchQueryChanged(SearchQuery query)
+    {
+        if (_searchPane is not null)
+        {
+            ApplySearch(query, find: true);
+        }
+    }
+
+    /// <summary>Moves the target to the next (or previous) match. Wrapping shows a message; no match shows in the bar's status.</summary>
+    private void FindNext(bool backward)
+    {
+        if (_searchPane is null || _searchPattern is null)
+        {
+            return;
+        }
+
+        if (SearchTargetFor(_searchPane).Find(backward, inclusive: false) == SearchResult.Wrapped)
+        {
+            ShowMessage("Search wrapped");
+        }
+
+        RefreshSearchStatus();
+    }
+
+    /// <summary>
+    /// Moves the search to <paramref name="pane"/>: the old target drops its highlights, and the new one takes the current pattern
+    /// without moving to a match, so that it does not jump.
+    /// </summary>
+    private void RetargetSearch(View pane)
+    {
+        SearchTargetFor(_searchPane!).SetSearch(null);
+        _searchPane = pane;
+        SearchTargetFor(pane).SetSearch(_searchPattern);
+        RefreshSearchStatus();
+    }
+
+    /// <summary>Closes the search: clears the target's highlights, collapses the groups the search expanded, and hides the bar.</summary>
+    private void CloseSearch()
+    {
+        if (_searchPane is not { } pane)
+        {
+            return;
+        }
+
+        _lastQuery = _searchBar.Query;
+        SearchTargetFor(pane).SetSearch(null);
+        _searchPattern = null;
+        if (_searchBar.HasFieldFocus)
+        {
+            pane.SetFocus();
+        }
+
+        _searchPane = null;
+        RestoreSearchCollapsed();
+        SetSearchBarOpen(false);
+    }
+
+    /// <summary>Shows or hides the bar. The output pane is one row shorter while the bar is shown.</summary>
+    private void SetSearchBarOpen(bool open)
+    {
+        _searchBar.Visible = open;
+        _output.Height = Dim.Fill(open ? 2 : 1);
+        _window.SetNeedsLayout();
+    }
+
+    /// <summary>Moves the focus from the bar back to the target pane; the bar stays open.</summary>
+    private void FocusSearchPane() => _searchPane?.SetFocus();
+
+    /// <summary>
+    /// Shows the bar's status for the current query and target: empty, invalid, too slow (the pattern was abandoned after a timeout),
+    /// no matches, "N of M", or "M matches".
+    /// </summary>
+    private void RefreshSearchStatus()
+    {
+        if (_searchPane is null)
+        {
+            return;
+        }
+
+        SearchQuery query = _searchBar.Query;
+        if (query.Text.Length == 0)
+        {
+            _searchBar.SetStatus(string.Empty);
+            return;
+        }
+
+        if (_searchPattern is null)
+        {
+            _searchBar.SetStatus("invalid pattern");
+            return;
+        }
+
+        SearchStatus status = SearchTargetFor(_searchPane).SearchStatus();
+        string text = _searchPattern.TimedOut ? "pattern too slow"
+            : status.Count == 0
+            ? "no matches"
+            : status.Active > 0 ? $"{status.Active} of {status.Count}" : $"{status.Count} matches";
+        _searchBar.SetStatus(text);
+    }
+
+    /// <summary>Every tick while the bar is open: moves the search to the focused pane when it is not the target, and refreshes the status.</summary>
+    private void TickSearch()
+    {
+        if (_searchPane is null)
+        {
+            return;
+        }
+
+        if (FocusedPane() is { } pane && !ReferenceEquals(pane, _searchPane))
+        {
+            RetargetSearch(pane);
+        }
+
+        RefreshSearchStatus();
+    }
+
+    /// <summary>The pane that has the focus among the list, the info and the output panes, or null (the bar or nothing).</summary>
+    private View? FocusedPane() =>
+        _list.HasFocus ? _list
+        : _details.HasFocus ? _details
+        : _output.HasFocus ? _output
+        : null;
+
+    /// <summary>The search of a pane: the list's own search, or the pane itself.</summary>
+    private ISearchTarget SearchTargetFor(View pane)
+    {
+        if (ReferenceEquals(pane, _list))
+        {
+            return _listSearch;
+        }
+
+        return ReferenceEquals(pane, _details) ? _details : _output;
+    }
+
+    #endregion Search
+
+    /// <summary>Every row of the session, including those inside collapsed groups.</summary>
+    IReadOnlyList<ListRow> IListSearchHost.AllRows => _session.BuildRows();
+
+    /// <summary>The item of the focused row, or null when no row is focused.</summary>
+    ItemEntry? IListSearchHost.FocusedItem => FocusedRow is { } row ? TreeRows.ItemOf(row) : null;
+
+    /// <summary>Expands the collapsed groups above the item, remembering them for <see cref="RestoreSearchCollapsed"/>, then focuses it.</summary>
+    void IListSearchHost.Reveal(ItemEntry item)
+    {
+        bool removed = false;
+        for (GroupEntry? ancestor = item.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (_collapsed.Remove(ancestor))
+            {
+                _searchExpanded.Add(ancestor);
+                removed = true;
+            }
+        }
+
+        if (removed)
+        {
+            RebuildRows();
+            // The top row grows with the list; laid out first, the list reveals the item in its new height instead of scrolling
+            // for the old one.
+            _window.Layout();
+        }
+
+        FocusKey(item);
+    }
+
+    /// <summary>Redraws the command list.</summary>
+    void IListSearchHost.RedrawList() => _list.SetNeedsDraw();
 
     private bool ExtendMarks(int delta)
     {

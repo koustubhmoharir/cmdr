@@ -303,6 +303,8 @@ header they do nothing there.
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
 | c | Copy: the command line, with its directory and environment (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output). The status line names what c copies |
 | L | Turn the log file on or off for the focused command |
+| / or Ctrl+F | Search the focused pane (see below) |
+| F3 / Shift+F3 | Next / previous match |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |
 | F2 | Edit the focused command or group |
@@ -315,6 +317,32 @@ output. The mouse wheel scrolls; at the bottom it moves the cursor down, and fol
 cursor reaches the last line; Shift+↑/↓ selects lines and Esc clears the selection. Copying uses the terminal's clipboard
 escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals support it (in tmux, enable
 `set-clipboard`).
+
+### Search
+
+`/` or Ctrl+F opens a search bar above the status line. It searches the pane that has the focus: the names of the groups
+and commands in the list, the info pane's text, or the output (every retained line, partial lines included). Search only
+highlights; it does not filter. All matches are highlighted in yellow, and the current match in cyan, scrolled into view.
+In the output pane, moving to a match pauses following (End resumes it). In the list it focuses that row, expanding
+collapsed groups when the match is inside one.
+
+The bar shows the query, three options and the match count (`3 of 17`):
+
+| Key in the bar | Action |
+|---|---|
+| typing | Search as you type, from the current match (or the top of the pane) |
+| Alt+C / Alt+W / Alt+R | Toggle case sensitive (`Aa`), whole word (`Word`) and regular expression (`.*`). The options can also be clicked |
+| F3 / Shift+F3 | Next / previous match; the search wraps at the end and the status line says so |
+| Enter, Tab | Back to the pane; the bar and the highlights stay, and F3 / Shift+F3 keep working there |
+| Esc | Close the search |
+
+While the bar has the focus it takes every key except Ctrl+Q and Ctrl+S. The mouse wheel still scrolls the panes, and a
+click moves the focus to a pane. Moving the focus to another pane moves the search there. Esc in a pane clears its
+selection first and then closes the search. Closing removes the highlights and collapses again the groups the search
+expanded, except the ones that hold the focused row. F3 with the bar closed brings back the last search.
+
+Whole word means no letter, digit or `_` right before or after the match, so a query like `-v` works too. Regular
+expressions use .NET syntax.
 
 The copied command line also sets the command's working directory and the environment variables cmdr sets for it (the
 values the info pane shows), for that command only: pasting it leaves the shell's directory and variables as they were. On

@@ -22,7 +22,7 @@ namespace Cmdr.Tui;
 /// stay put as old lines are evicted. A selection or cursor on a partial line follows that line when another stream completes
 /// a line in front of it (see <see cref="PartialPins"/>). UI thread only.
 /// </summary>
-internal sealed class OutputView : View
+internal sealed class OutputView : View, ISearchTarget
 {
     private const int WheelLines = 3;
     private const int ShadePercent = 12;
@@ -47,6 +47,12 @@ internal sealed class OutputView : View
     private SelectionState? _selection;
     private bool _dragging;
 
+    // The search: its pattern (null when there is none), the match counts per line, and the active match. The active match is the
+    // origin of the next Find, and is kept as a line number, so it follows its line as old lines are evicted (see Find).
+    private SearchPattern? _search;
+    private readonly OutputSearchIndex _searchIndex = new();
+    private ActiveMatch? _active;
+
     private readonly LineCache _lines = new();
 
     // The screen rows of the last draw (the line number and row of each, top to bottom), and the screen rectangle of the viewport
@@ -65,8 +71,12 @@ internal sealed class OutputView : View
         PartialPin? AnchorPin = null,
         PartialPin? ActivePin = null);
 
-    /// <summary>A line with its cells, the attribute of each span, and the column range of each of its rows.</summary>
+    /// <summary>The active match: its absolute line, and its offset and length in UTF-16 units of that line's plain text.</summary>
+    private readonly record struct ActiveMatch(long Line, int Start, int Length);
+
+    /// <summary>A line with its text, its cells, the attribute of each span, and the column range of each of its rows.</summary>
     private sealed record PreparedLine(
+        string PlainText,
         IReadOnlyList<OutputWrap.Cell> Cells,
         IReadOnlyList<Attribute> SpanAttributes,
         IReadOnlyList<(int StartColumn, int EndColumn)> Rows);
@@ -176,6 +186,8 @@ internal sealed class OutputView : View
         _cursorLine = 0;
         _cursorPin = null;
         _selection = null;
+        _active = null;
+        _searchIndex.Reset(_search);
         _lastVersion = -1;
         _pinVersion = -1;
         _drawnCount = 0;
@@ -215,10 +227,11 @@ internal sealed class OutputView : View
             return true;
         }
 
-        // Esc clears the selection in this view and does nothing else; it never reaches the application.
+        // Esc clears the selection first. With no selection it closes the search (see MainController.OnPaneEscape).
+        // It never reaches the application.
         if (key == Key.Esc)
         {
-            return ClearSelection();
+            return HasSelection ? ClearSelection() : _controller.OnPaneEscape();
         }
 
         if (key == Key.C)
@@ -362,13 +375,25 @@ internal sealed class OutputView : View
         SelectionRange? selection = _selection is { } s ? SelectionRange.Between(s.Anchor, s.Active, s.LineMode) : null;
         Color shade = CursorShade(normal);
 
+        // The matches of a line are found once per frame: the rows of a line are consecutive, and they share them. Nothing is found
+        // without a search.
+        IReadOnlyList<SearchMatch>? matches = null;
+        long matchedLine = long.MinValue;
+        int activeStart = -1;
         for (int row = 0; row < height; row++)
         {
             if (row < rows.Count)
             {
                 ScreenRow screenRow = rows[row];
                 Color? cursorShade = screenRow.Number == cursor ? shade : null;
-                DrawRow(row, screenRow, width, normal, cursorShade, selection);
+                if (_search is { } search && screenRow.Number != matchedLine)
+                {
+                    matchedLine = screenRow.Number;
+                    matches = search.Matches(screenRow.Prepared.PlainText);
+                    activeStart = ActiveStartOn(screenRow.Number, matches);
+                }
+
+                DrawRow(row, screenRow, width, normal, cursorShade, selection, matches, activeStart);
             }
             else
             {
@@ -741,6 +766,294 @@ internal sealed class OutputView : View
     }
 
     /// <summary>
+    /// Sets the search pattern. Null ends the search: the highlights go and the active match is dropped. A pattern keeps the active
+    /// match as the origin of the next <see cref="Find"/>.
+    /// </summary>
+    public void SetSearch(SearchPattern? pattern)
+    {
+        _search = pattern;
+        _searchIndex.Reset(pattern);
+        if (pattern is null)
+        {
+            _active = null;
+        }
+
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Moves to the next (or previous) match after the active match, or after the top of the view when there is none, and scrolls
+    /// it into view. Past the end (or start) it wraps around the retained lines and returns <see cref="SearchResult.Wrapped"/>. Pauses
+    /// following, also at the tail. Changes nothing when there is no match.
+    /// </summary>
+    public SearchResult Find(bool backward, bool inclusive)
+    {
+        SearchPattern? pattern = _search;
+        OutputBuffer? buffer = _buffer;
+        if (pattern is null || buffer is null)
+        {
+            return SearchResult.NotFound;
+        }
+
+        Geometry geometry = Measure(buffer);
+
+        // The snapshot is taken before the index is updated, so the index counts at least the lines the snapshot holds.
+        BufferSnapshot snapshot = buffer.Capture(geometry.First);
+        if (snapshot.LastLineNumber < snapshot.FirstLineNumber)
+        {
+            return SearchResult.NotFound;
+        }
+
+        _searchIndex.Update(buffer);
+        long first = snapshot.FirstLineNumber;
+        long last = snapshot.LastLineNumber;
+
+        // The origin is the active match when it is retained. Otherwise it is the edge of the view in the search direction: the top
+        // row going forward, the last row going backward.
+        long originLine;
+        int originStart;
+        bool originInclusive = inclusive;
+        if (_active is { } active && active.Line >= first && active.Line <= last)
+        {
+            originLine = active.Line;
+            originStart = active.Start;
+        }
+        else if (backward)
+        {
+            originLine = ViewLine(geometry, last: true);
+            originStart = int.MaxValue;
+        }
+        else
+        {
+            originLine = ViewLine(geometry, last: false);
+            originStart = 0;
+            originInclusive = true;
+        }
+
+        originLine = Math.Clamp(originLine, first, last);
+
+        // Positions compare by line, then by start. Going backward the matches before the origin come first, going forward the ones after it.
+        bool Past(long line, int start)
+        {
+            int order = line != originLine ? line.CompareTo(originLine) : start.CompareTo(originStart);
+            bool inOrder = backward ? order < 0 : order > 0;
+            return inOrder || originInclusive && order == 0;
+        }
+
+        bool AnyMatch(long line, int start) => true;
+
+        // The first match past the origin, or else, after wrapping, the first match from the other end up to the origin.
+        ActiveMatch? match = backward
+            ? FirstMatch(pattern, snapshot, originLine, first, backward: true, Past)
+            : FirstMatch(pattern, snapshot, originLine, last, backward: false, Past);
+        bool wrapped = match is null;
+        match ??= backward
+            ? FirstMatch(pattern, snapshot, last, originLine, backward: true, AnyMatch)
+            : FirstMatch(pattern, snapshot, first, originLine, backward: false, AnyMatch);
+        if (match is not { } target)
+        {
+            return SearchResult.NotFound;
+        }
+
+        _active = target;
+        Pause(geometry);
+        SetCursorLine(buffer, target.Line);
+        ScrollToMatch(geometry, snapshot.LineAt(target.Line)!, target);
+        SetNeedsDraw();
+        return wrapped ? SearchResult.Wrapped : SearchResult.Found;
+    }
+
+    /// <summary>
+    /// The number of matches on the retained lines, and the 1-based number of the active match among them (0 when there is no active
+    /// match, or it is no longer a match of the pattern).
+    /// </summary>
+    public SearchStatus SearchStatus()
+    {
+        SearchPattern? pattern = _search;
+        OutputBuffer? buffer = _buffer;
+        if (pattern is null || buffer is null)
+        {
+            return new SearchStatus(0, 0);
+        }
+
+        _searchIndex.Update(buffer);
+        int active = 0;
+        if (_active is { } current && ReadLines(buffer, current.Line, 1) is (long found, [OutputLine line]) && found == current.Line)
+        {
+            IReadOnlyList<SearchMatch> matches = pattern.Matches(line.PlainText);
+            for (int i = 0; i < matches.Count; i++)
+            {
+                if (matches[i].Start == current.Start && matches[i].Length == current.Length)
+                {
+                    active = _searchIndex.CountBefore(current.Line) + i + 1;
+                    break;
+                }
+            }
+        }
+
+        return new SearchStatus(_searchIndex.Total, active);
+    }
+
+    /// <summary>
+    /// The first match, in search order, on the lines from <paramref name="from"/> to <paramref name="to"/> that <paramref name="accept"/>
+    /// takes. Going backward the lines and the matches on each line run downward, otherwise upward. A completed line that the index
+    /// counted no match on is skipped; a partial line is always matched, since its count is not final.
+    /// </summary>
+    private ActiveMatch? FirstMatch(
+        SearchPattern pattern,
+        BufferSnapshot snapshot,
+        long from,
+        long to,
+        bool backward,
+        Func<long, int, bool> accept)
+    {
+        long step = backward ? -1 : 1;
+        for (long line = from; line != to + step; line += step)
+        {
+            if (line < snapshot.NextLineNumber && _searchIndex.CountOn(line) == 0)
+            {
+                continue;
+            }
+
+            IReadOnlyList<SearchMatch> matches = pattern.Matches(snapshot.LineAt(line)!.PlainText);
+            for (int i = 0; i < matches.Count; i++)
+            {
+                SearchMatch match = matches[backward ? matches.Count - 1 - i : i];
+                if (accept(line, match.Start))
+                {
+                    return new ActiveMatch(line, match.Start, match.Length);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>The line of the first row shown in the view (the last row when <paramref name="last"/>). The first or last retained line when no row is shown.</summary>
+    private long ViewLine(Geometry geometry, bool last)
+    {
+        IReadOnlyList<ScreenRow> rows = ScreenRows(geometry, TopPosition(geometry), GetAttributeForRole(VisualRole.Normal));
+        if (rows.Count == 0)
+        {
+            return last ? geometry.Last : geometry.First;
+        }
+
+        return last ? rows[rows.Count - 1].Number : rows[0].Number;
+    }
+
+    /// <summary>
+    /// Scrolls so that the match is on screen. Nothing changes when its row is already shown. A line that fits the view goes fully into
+    /// view. A taller line puts the match's row at the top, clamped to the last page.
+    /// </summary>
+    private void ScrollToMatch(Geometry geometry, OutputLine line, ActiveMatch match)
+    {
+        Attribute normal = GetAttributeForRole(VisualRole.Normal);
+        ScrollPosition top = TopPosition(geometry);
+        PreparedLine prepared = _lines.Prepare(line, geometry.Width, normal);
+        int row = MatchRow(prepared, match.Start);
+        if (ScreenRows(geometry, top, normal).Any(shown => shown.Number == match.Line && shown.Row == row))
+        {
+            return;
+        }
+
+        _top = prepared.Rows.Count <= geometry.Height
+            ? geometry.EnsureVisible(top, match.Line)
+            : geometry.Clamp(new ScrollPosition(match.Line, row));
+    }
+
+    /// <summary>The row of a prepared line that holds the first cell the match touches, or row 0 when no cell does.</summary>
+    private static int MatchRow(PreparedLine prepared, int start)
+    {
+        IReadOnlyList<OutputWrap.Cell> cells = prepared.Cells;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            if (cells[i].Offset + cells[i].Length > start)
+            {
+                for (int row = 0; row < prepared.Rows.Count; row++)
+                {
+                    if (cells[i].Column < prepared.Rows[row].EndColumn)
+                    {
+                        return row;
+                    }
+                }
+
+                return prepared.Rows.Count - 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>The start of the active match when it is one of <paramref name="matches"/> on line <paramref name="number"/>, or -1.</summary>
+    private int ActiveStartOn(long number, IReadOnlyList<SearchMatch> matches)
+    {
+        if (_active is not { } active || active.Line != number)
+        {
+            return -1;
+        }
+
+        foreach (SearchMatch match in matches)
+        {
+            if (match.Start == active.Start && match.Length == active.Length)
+            {
+                return active.Start;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The index of the first match that ends after <paramref name="offset"/>, or the count when there is none. The matches are in order.</summary>
+    private static int FirstMatchEndingAfter(IReadOnlyList<SearchMatch> matches, int offset)
+    {
+        int low = 0;
+        int high = matches.Count;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (matches[middle].End <= offset)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        return low;
+    }
+
+    /// <summary>
+    /// The attribute of a cell that a match covers: the active match's color when it covers the active match, else the match color,
+    /// and <paramref name="attr"/> unchanged when no match covers it. <paramref name="matchIndex"/> moves forward over the matches the
+    /// cell is past, since the cells of a row come in order.
+    /// </summary>
+    private static Attribute HighlightAttribute(Attribute attr, IReadOnlyList<SearchMatch> matches, ref int matchIndex, OutputWrap.Cell cell, int activeStart)
+    {
+        int cellEnd = cell.Offset + cell.Length;
+        while (matchIndex < matches.Count && matches[matchIndex].End <= cell.Offset)
+        {
+            matchIndex++;
+        }
+
+        bool covered = false;
+        bool active = false;
+        for (int m = matchIndex; m < matches.Count && matches[m].Start < cellEnd; m++)
+        {
+            covered = true;
+            active |= matches[m].Start == activeStart;
+        }
+
+        if (!covered)
+        {
+            return attr;
+        }
+
+        return active ? SearchColors.Active(attr) : SearchColors.Match(attr);
+    }
+
+    /// <summary>
     /// The character position under a viewport cell. On a row that is not the last row of its line, the column stops at the
     /// row's last cell, so a drag past the right edge selects to the end of the row.
     /// </summary>
@@ -1002,7 +1315,7 @@ internal sealed class OutputView : View
             spanAttributes[i] = ColorMap.ToAttribute(runs[i].Style, line.Source, normal);
         }
 
-        return new PreparedLine(cells, spanAttributes, OutputWrap.Rows(cells.Select(cell => cell.Width).ToList(), width));
+        return new PreparedLine(line.PlainText, cells, spanAttributes, OutputWrap.Rows(cells.Select(cell => cell.Width).ToList(), width));
     }
 
     /// <summary>
@@ -1096,9 +1409,19 @@ internal sealed class OutputView : View
 
     /// <summary>
     /// Draws one screen row: the cells of the row's column range, styled as the span they belong to, with the cursor shade,
-    /// the selection and the padding exactly as the line would have them. Pads the rest of the row.
+    /// the selection, the search highlights and the padding exactly as the line would have them. Pads the rest of the row.
+    /// <paramref name="matches"/> are the matches of the row's line (null without a search), and <paramref name="activeStart"/> is the
+    /// start of the active match when it is one of them, or -1.
     /// </summary>
-    private void DrawRow(int screenRow, ScreenRow row, int width, Attribute normal, Color? cursorShade, SelectionRange? selection)
+    private void DrawRow(
+        int screenRow,
+        ScreenRow row,
+        int width,
+        Attribute normal,
+        Color? cursorShade,
+        SelectionRange? selection,
+        IReadOnlyList<SearchMatch>? matches,
+        int activeStart)
     {
         int start = row.StartColumn;
         int end = row.EndColumn;
@@ -1120,7 +1443,9 @@ internal sealed class OutputView : View
         }
 
         IReadOnlyList<OutputWrap.Cell> cells = row.Prepared.Cells;
-        for (int i = OutputWrap.FirstCellAt(cells, start); i < cells.Count && cells[i].Column < end; i++)
+        int first = OutputWrap.FirstCellAt(cells, start);
+        int matchIndex = matches is null || first >= cells.Count ? 0 : FirstMatchEndingAfter(matches, cells[first].Offset);
+        for (int i = first; i < cells.Count && cells[i].Column < end; i++)
         {
             OutputWrap.Cell cell = cells[i];
             int offset = cell.Column - start;
@@ -1139,6 +1464,11 @@ internal sealed class OutputView : View
             if (selection is { } range && range.Covers(row.Number, cell.Column, cell.Width))
             {
                 attr = Invert(attr);
+            }
+
+            if (matches is not null)
+            {
+                attr = HighlightAttribute(attr, matches, ref matchIndex, cell, activeStart);
             }
 
             if (runAttr is null || !runAttr.Value.Equals(attr))

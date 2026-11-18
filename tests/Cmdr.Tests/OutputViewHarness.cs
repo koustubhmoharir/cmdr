@@ -31,7 +31,10 @@ internal sealed class OutputViewHarness : IDisposable
     public CommandEntry Entry { get; }
 
     /// <summary>Creates the view for a sample command whose output is <paramref name="lines"/>, with a 4 × 3 viewport.</summary>
-    public static OutputViewHarness Create(IApplication app, params string[] lines)
+    public static OutputViewHarness Create(IApplication app, params string[] lines) => Create(app, 4, 3, lines);
+
+    /// <summary>Creates the view for a sample command whose output is <paramref name="lines"/>, with a viewport of <paramref name="width"/> × <paramref name="height"/>.</summary>
+    public static OutputViewHarness Create(IApplication app, int width, int height, params string[] lines)
     {
         TempSession temp = TempSession.Sample();
         var controller = new MainController(app, temp.Session);
@@ -42,8 +45,8 @@ internal sealed class OutputViewHarness : IDisposable
         }
 
         var view = new OutputView(controller);
-        view.Width = 4;
-        view.Height = 3;
+        view.Width = width;
+        view.Height = height;
         view.Show(entry);
         view.Layout();
         return new OutputViewHarness(temp, controller, view, entry);
@@ -73,6 +76,9 @@ internal sealed class OutputViewHarness : IDisposable
             return (long)Method("CursorLine", geometry)!;
         }
     }
+
+    /// <summary>A second sample command, for showing a different entry in a test.</summary>
+    public CommandEntry OtherEntry => _temp.Session.AllEntries.Last();
 
     /// <summary>The command's output pipeline, for writing output in a test.</summary>
     public CommandOutput Output => Entry.Process.Output;

@@ -17,8 +17,10 @@ namespace Cmdr.Tui;
 /// The text can be selected with the mouse: a press starts a character selection, a drag extends it (dragging past the top or
 /// bottom scrolls), and <c>c</c> copies it. The selection is kept as logical positions (see <see cref="DetailsSelection"/>), so
 /// it survives redraws and scrolling; it is cleared by Esc and when another row is shown.
+/// The text can also be searched (see <see cref="ISearchTarget"/>): the matches are highlighted in the logical text, so a match
+/// that wraps is highlighted on each of its rows.
 /// </remarks>
-internal sealed class DetailsView : View
+internal sealed class DetailsView : View, ISearchTarget
 {
     private const int WheelLines = 3;
 
@@ -30,7 +32,31 @@ internal sealed class DetailsView : View
     private SelectionState? _selection;
     private bool _dragging;
 
+    // The search: its pattern (null when there is none) and the active match, which is the origin of the next Find. Positions are
+    // logical, as the selection's are (see DetailsSelection), so they are kept across wrapping and scrolling.
+    private SearchPattern? _search;
+    private ActiveMatch? _active;
+
     private readonly record struct SelectionState(LogicalPoint Anchor, LogicalPoint Active);
+
+    /// <summary>A match of the search: its logical line, and its range in that line's text. The active match is the origin of the next Find.</summary>
+    private readonly record struct ActiveMatch(int Line, int Start, int Length);
+
+    /// <summary>The highlight of one character: none, a match, or the active match.</summary>
+    private enum MatchState
+    {
+        /// <summary>The character is not in a match.</summary>
+        None,
+
+        /// <summary>The character is in a match that is not the active one.</summary>
+        Match,
+
+        /// <summary>The character is in the active match.</summary>
+        Active,
+    }
+
+    /// <summary>The highlight of each character of the logical lines in one draw. A line with no match has a null entry.</summary>
+    private sealed record SearchHighlights(MatchState[]?[] Lines);
 
     /// <summary>The wrapped rows of the content, and the logical text of each line.</summary>
     private sealed record DetailsLayout(IReadOnlyList<DetailsRow> Rows, IReadOnlyList<string> Texts);
@@ -58,7 +84,8 @@ internal sealed class DetailsView : View
 
     /// <summary>
     /// Shows the row. <paramref name="configDir"/> is where relative working directories resolve. The scroll position goes back
-    /// to the top when the item changes, and the selection and any drag end with it; showing the same item again keeps them.
+    /// to the top when the item changes, and the selection, the active match and any drag end with it; the search pattern stays.
+    /// Showing the same item again keeps them all.
     /// </summary>
     public void Show(ListRow? row, string configDir)
     {
@@ -66,6 +93,7 @@ internal sealed class DetailsView : View
         {
             _offset = 0;
             _selection = null;
+            _active = null;
             StopDrag();
         }
 
@@ -73,6 +101,117 @@ internal sealed class DetailsView : View
         _configDir = configDir;
         _drawn = null;
         SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Sets the search pattern. Null ends the search: the highlights go and the active match is dropped. A pattern keeps the active
+    /// match as the origin of the next <see cref="Find"/>.
+    /// </summary>
+    public void SetSearch(SearchPattern? pattern)
+    {
+        _search = pattern;
+        if (pattern is null)
+        {
+            _active = null;
+        }
+
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Moves to the next (or previous) match after the active match, or after the top visible row (the end of the last visible row
+    /// going backward) when there is none, and scrolls it into view. Past the end (or start) it wraps around the lines and returns
+    /// <see cref="SearchResult.Wrapped"/>. Changes nothing when there is no match.
+    /// </summary>
+    public SearchResult Find(bool backward, bool inclusive)
+    {
+        SearchPattern? pattern = _search;
+        DetailsLayout layout = Arrange(Viewport.Width);
+        if (pattern is null || layout.Texts.Count == 0)
+        {
+            return SearchResult.NotFound;
+        }
+
+        int last = layout.Texts.Count - 1;
+        IReadOnlyList<IReadOnlyList<SearchMatch>> matches = layout.Texts.Select(text => pattern.Matches(text)).ToList();
+        int height = Math.Max(0, Viewport.Height);
+        int top = DetailsText.ClampOffset(_offset, layout.Rows.Count, height);
+
+        LogicalPoint origin;
+        bool originInclusive;
+        if (_active is { } active && active.Line <= last)
+        {
+            origin = new LogicalPoint(active.Line, active.Start);
+            originInclusive = inclusive;
+        }
+        else
+        {
+            // Going forward, the top row's own match counts, so the search from the top is inclusive.
+            origin = ViewOrigin(layout, top, height, backward);
+            originInclusive = inclusive || !backward;
+        }
+
+        // Positions compare by line, then by start. Going backward the matches before the origin come first, going forward the ones after it.
+        bool Past(int line, int start)
+        {
+            int order = line != origin.Line ? line.CompareTo(origin.Line) : start.CompareTo(origin.Offset);
+            bool inOrder = backward ? order < 0 : order > 0;
+            return inOrder || originInclusive && order == 0;
+        }
+
+        bool AnyMatch(int line, int start) => true;
+
+        // The first match past the origin, or else, after wrapping, the first match from the other end up to the origin.
+        ActiveMatch? match = backward
+            ? FirstMatch(matches, origin.Line, 0, backward: true, Past)
+            : FirstMatch(matches, origin.Line, last, backward: false, Past);
+        bool wrapped = match is null;
+        match ??= backward
+            ? FirstMatch(matches, last, origin.Line, backward: true, AnyMatch)
+            : FirstMatch(matches, 0, origin.Line, backward: false, AnyMatch);
+        if (match is not { } target)
+        {
+            return SearchResult.NotFound;
+        }
+
+        _active = target;
+        int row = MatchRow(layout.Rows, target);
+        ScrollTo(TopShowing(top, row, Math.Max(1, height)));
+        SetNeedsDraw();
+        return wrapped ? SearchResult.Wrapped : SearchResult.Found;
+    }
+
+    /// <summary>
+    /// The number of matches in the lines of the text, and the 1-based number of the active match among them (0 when there is no
+    /// active match, or it is no longer a match of the pattern).
+    /// </summary>
+    public SearchStatus SearchStatus()
+    {
+        SearchPattern? pattern = _search;
+        if (pattern is null)
+        {
+            return new SearchStatus(0, 0);
+        }
+
+        IReadOnlyList<string> texts = DrawnOrArranged(Viewport.Width).Texts;
+        int count = 0;
+        int active = 0;
+        for (int line = 0; line < texts.Count; line++)
+        {
+            IReadOnlyList<SearchMatch> matches = pattern.Matches(texts[line]);
+            if (_active is { } current && current.Line == line)
+            {
+                int index = IndexOfMatch(matches, current);
+                if (index >= 0)
+                {
+                    active = count + index + 1;
+                }
+            }
+
+            count += matches.Count;
+        }
+
+        return new SearchStatus(count, active);
     }
 
     protected override bool OnKeyDown(Key key)
@@ -88,10 +227,11 @@ internal sealed class DetailsView : View
             return true;
         }
 
-        // Esc clears the selection in this view and does nothing else; it never reaches the application.
+        // Esc clears the selection first. With no selection it closes the search (see MainController.OnPaneEscape).
+        // It never reaches the application.
         if (key == Key.Esc)
         {
-            return ClearSelection();
+            return HasSelection ? ClearSelection() : _controller.OnPaneEscape();
         }
 
         if (key == Key.C)
@@ -189,6 +329,7 @@ internal sealed class DetailsView : View
         _drawn = (width, layout);
         _offset = DetailsText.ClampOffset(_offset, layout.Rows.Count, height);
         LogicalRange? selection = SelectedRange(layout.Texts);
+        SearchHighlights? highlights = _search is { } pattern ? Highlights(pattern, layout.Texts, _active) : null;
 
         for (int row = 0; row < height; row++)
         {
@@ -196,7 +337,7 @@ internal sealed class DetailsView : View
             Move(0, row);
             if (index < layout.Rows.Count)
             {
-                DrawRow(layout.Rows[index], width, normal, selection);
+                DrawRow(layout.Rows[index], width, normal, selection, highlights);
             }
             else
             {
@@ -210,10 +351,11 @@ internal sealed class DetailsView : View
 
     /// <summary>
     /// Draws one wrapped row: each span in its own attribute, then the rest of the width in the normal attribute, so the row is
-    /// exactly <paramref name="width"/> columns. The selected characters are drawn in reverse video. A standalone zero-width
+    /// exactly <paramref name="width"/> columns. The selected characters are drawn in reverse video, and the characters of a search
+    /// match in the match colors (the active match in its own), which win over the reverse video. A standalone zero-width
     /// grapheme is not drawn, because the driver advances a cell for it while the layout counts none (see <see cref="Drawn"/>).
     /// </summary>
-    private void DrawRow(DetailsRow row, int width, Attribute normal, LogicalRange? selection)
+    private void DrawRow(DetailsRow row, int width, Attribute normal, LogicalRange? selection, SearchHighlights? highlights)
     {
         if (TextWidth.Columns(row.Line.Text) > width)
         {
@@ -234,11 +376,14 @@ internal sealed class DetailsView : View
             int i = 0;
             while (i < text.Length)
             {
-                // A piece is a run of characters with the same selection state, without the hidden ones.
+                // A piece is a run of characters with the same selection and highlight state, without the hidden ones.
                 bool selected = IsSelected(selection, row.LogicalLine, offset + i);
+                MatchState state = StateAt(highlights, row.LogicalLine, offset + i);
                 var piece = new StringBuilder();
                 int j = i;
-                while (j < text.Length && IsSelected(selection, row.LogicalLine, offset + j) == selected)
+                while (j < text.Length
+                    && IsSelected(selection, row.LogicalLine, offset + j) == selected
+                    && StateAt(highlights, row.LogicalLine, offset + j) == state)
                 {
                     int length = DetailsSelection.RuneAt(text, j).Length;
                     if (!hidden[position + j])
@@ -252,7 +397,7 @@ internal sealed class DetailsView : View
                 if (piece.Length > 0)
                 {
                     string drawn = piece.ToString();
-                    SetAttribute(selected ? Invert(attr) : attr);
+                    SetAttribute(Highlighted(selected ? Invert(attr) : attr, state));
                     AddStr(drawn);
                     used += TextWidth.Columns(drawn);
                 }
@@ -266,6 +411,148 @@ internal sealed class DetailsView : View
 
         SetAttribute(normal);
         AddStr(new string(' ', Math.Max(0, width - used)));
+    }
+
+    /// <summary>
+    /// The matches of the pattern in each logical line, with the active match marked on its line, computed once per draw. A line with
+    /// no match has no entry. The active match is marked only when an identical match exists.
+    /// </summary>
+    private static SearchHighlights Highlights(SearchPattern pattern, IReadOnlyList<string> texts, ActiveMatch? active)
+    {
+        var lines = new MatchState[]?[texts.Count];
+        for (int line = 0; line < texts.Count; line++)
+        {
+            IReadOnlyList<SearchMatch> matches = pattern.Matches(texts[line]);
+            if (matches.Count == 0)
+            {
+                continue;
+            }
+
+            var states = new MatchState[texts[line].Length];
+            foreach (SearchMatch match in matches)
+            {
+                Array.Fill(states, MatchState.Match, match.Start, match.Length);
+            }
+
+            if (active is { } current && current.Line == line && IndexOfMatch(matches, current) >= 0)
+            {
+                Array.Fill(states, MatchState.Active, current.Start, current.Length);
+            }
+
+            lines[line] = states;
+        }
+
+        return new SearchHighlights(lines);
+    }
+
+    /// <summary>The highlight of the character at <paramref name="offset"/> of logical line <paramref name="line"/>, or none without a search.</summary>
+    private static MatchState StateAt(SearchHighlights? highlights, int line, int offset) =>
+        highlights?.Lines[line] is { } states && offset < states.Length ? states[offset] : MatchState.None;
+
+    /// <summary>The attribute of a character in a search highlight: the match color, or the active color. <paramref name="attr"/> otherwise.</summary>
+    private static Attribute Highlighted(Attribute attr, MatchState state) => state switch
+    {
+        MatchState.Active => SearchColors.Active(attr),
+        MatchState.Match => SearchColors.Match(attr),
+        _ => attr,
+    };
+
+    /// <summary>The index of the match that <paramref name="active"/> names among <paramref name="matches"/> (the same start and length), or -1.</summary>
+    private static int IndexOfMatch(IReadOnlyList<SearchMatch> matches, ActiveMatch active)
+    {
+        for (int i = 0; i < matches.Count; i++)
+        {
+            if (matches[i].Start == active.Start && matches[i].Length == active.Length)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The first match, in search order, on the lines from <paramref name="from"/> to <paramref name="to"/> that <paramref name="accept"/>
+    /// takes. Going backward the lines and the matches on each line run downward, otherwise upward. Null when none is taken.
+    /// </summary>
+    private static ActiveMatch? FirstMatch(
+        IReadOnlyList<IReadOnlyList<SearchMatch>> matches,
+        int from,
+        int to,
+        bool backward,
+        Func<int, int, bool> accept)
+    {
+        int step = backward ? -1 : 1;
+        for (int line = from; line != to + step; line += step)
+        {
+            IReadOnlyList<SearchMatch> lineMatches = matches[line];
+            for (int i = 0; i < lineMatches.Count; i++)
+            {
+                SearchMatch match = lineMatches[backward ? lineMatches.Count - 1 - i : i];
+                if (accept(line, match.Start))
+                {
+                    return new ActiveMatch(line, match.Start, match.Length);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The origin of a Find without an active match: the start of the top visible row going forward, or the end of the last visible
+    /// row going backward. The start of the first line, or the end of the last line, when no row is visible.
+    /// </summary>
+    private static LogicalPoint ViewOrigin(DetailsLayout layout, int top, int height, bool backward)
+    {
+        int visible = Math.Min(height, layout.Rows.Count - top);
+        if (visible <= 0)
+        {
+            int last = layout.Texts.Count - 1;
+            return backward ? new LogicalPoint(last, layout.Texts[last].Length) : new LogicalPoint(0, 0);
+        }
+
+        DetailsRow row = backward ? layout.Rows[top + visible - 1] : layout.Rows[top];
+        return new LogicalPoint(row.LogicalLine, backward ? row.End : row.Start);
+    }
+
+    /// <summary>
+    /// The index of the row that holds the start of the match: the row of its line whose range contains the start, or else the last
+    /// row of that line (a start on a space that wrapping dropped).
+    /// </summary>
+    private static int MatchRow(IReadOnlyList<DetailsRow> rows, ActiveMatch match)
+    {
+        int found = -1;
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (rows[i].LogicalLine != match.Line)
+            {
+                continue;
+            }
+
+            if (match.Start >= rows[i].Start && match.Start < rows[i].End)
+            {
+                return i;
+            }
+
+            found = i;
+        }
+
+        return found;
+    }
+
+    /// <summary>
+    /// The top row after scrolling so that <paramref name="row"/> is shown: <paramref name="top"/> when it already is, the row itself when
+    /// it is above the view, and the row that makes it the last visible one when it is below.
+    /// </summary>
+    private static int TopShowing(int top, int row, int height)
+    {
+        if (row < top)
+        {
+            return row;
+        }
+
+        return row >= top + height ? row - height + 1 : top;
     }
 
     /// <summary>
