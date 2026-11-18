@@ -96,3 +96,66 @@ When `format` is not configured, the first up to 20 non-blank lines of a file ar
 chosen when the first non-blank line parses as an object: `serilog-json` if it has `Timestamp` or `MessageTemplate`, `slog-json`
 if it has `time` or `msg`. Otherwise the text scheme whose header matches the most lines wins (ties in table order); no match
 leaves the file undetected (retried as it grows).
+
+## Configuration (M2)
+
+```json
+{
+  "logsDirectory": "../Logs",
+  "filePrefix": "SheetKraft",
+  "fileNamePattern": "^SheetKraft(?:[0-9]+)?[.]log$",
+  "activeFile": "SheetKraft.log",
+  "format": "log4net-core",
+  "timeZone": "local",
+  "recentCapacity": 20000,
+  "schemes": [ { "name": "my-app", "header": "(?<time>…) (?<level>\\w+) (?<message>.*)", "timeFormats": ["yyyy-MM-dd HH:mm:ss"] } ],
+  "highlights": [ { "field": "message", "pattern": "timeout|deadlock", "style": "warning" } ],
+  "styles": { "deploy": { "foreground": "brightCyan", "bold": true } },
+  "frameworkPrefixes": ["System.", "Microsoft.", "runtime.", "net/http."]
+}
+```
+
+- Parsed like cmdr's config (UTF-8, optional BOM, comments and trailing commas allowed, camelCase), but **unknown members are
+  errors** (`JsonUnmappedMemberHandling.Disallow`) so typos are reported. Every error is a `LogvuConfigException` whose
+  message names the config file and the JSON path of the offending field (`fileNamePattern: …`, `schemes[1].header: …`),
+  plus line/position for malformed JSON.
+- Required: `logsDirectory` (relative to the config file's directory), `filePrefix` (non-empty literal), `fileNamePattern`
+  (regex matched against the whole basename: wrapped `\A(?:…)\z`, case-insensitive on Windows/macOS, 250 ms timeout).
+- `activeFile`: optional basename; it must start with `filePrefix` and match `fileNamePattern`.
+- `format`: `"auto"` (default) or the name of a built-in or configured scheme. Configured scheme names must be unique and
+  must not shadow built-ins; their `header` is validated by `TextScheme`'s constructor.
+- `timeZone`: `"local"` (default), `"utc"`, or a system time zone id (IANA or Windows); unknown ids are errors.
+- `recentCapacity`: events kept in the recent-history ring; default 20000, range 100–1000000.
+- `highlights`: ordered; `field` is `message`, `raw`, or a field name (JSON dotted path for JSON events); `pattern` is a
+  regex (validated, 250 ms timeout); `style` is a built-in style (`error`, `warning`, `info`, `debug`, `accent`, `emphasis`,
+  `dim`, `success`) or a key of `styles`.
+- `styles`: name → `{foreground?, background?, bold?, italic?, underline?}`; colors are the 16 ANSI names (`black` … `white`,
+  `brightBlack` … `brightWhite`) or `#rrggbb`.
+- `frameworkPrefixes`: namespace/package prefixes whose stack frames are dimmed and foldable. Default: `System.`,
+  `Microsoft.`, `Newtonsoft.`, `log4net.`, `Serilog.`, `runtime.`, `net/http.`, `github.com/labstack/`.
+
+### File set
+
+Members are regular files (not directories, not symlinks to directories) directly in `logsDirectory` whose basename starts
+with `filePrefix` (ordinal, case-insensitive on Windows/macOS) and matches `fileNamePattern`, excluding compressed files
+(extensions `.gz`, `.zip`, `.bz2`, `.xz`, `.zst`, `.7z`, `.br`, `.lz4`). A missing directory is not a config error: the view is
+empty and waits (the directory may be created later).
+
+## Catalog (M3)
+
+A **member** is one generation (file incarnation) in the set. Per member: session generation id (int, increasing), current path,
+file identity (from the open handle: device+inode / volume serial+file index), scheme, first-event offset and time, state
+(`Pending` = no complete event yet, `Dated`, `UnknownTime`, `Expired`), and `IsLive` (the active file, or the newest member
+when there is no `activeFile`).
+
+Ordering: dated members by first-event time (compared as instants); equal times broken by rotation order — for numbered names
+(`<stem><n><ext>`, no number = 0) higher numbers are older — else by basename (ordinal). Unknown-time members sort before all
+dated members, in basename order, as a separate marked group. Pending members are not in the order until their first event.
+
+## Paging and memory (M4)
+
+A **row key** is `(generation, offset)` of an event start. The **ring** holds the newest `recentCapacity` row summaries
+(key, extent, time, level, source, first-line preview capped at 512 chars, raw/provisional flags). The **page** is the list of
+row summaries currently visible plus a margin; it is filled from the ring when possible and otherwise by framing backward or
+forward from an anchor row, crossing to the adjacent member at a file boundary. Detail and search read full text through
+`EventText.Read` on a freshly opened handle whose identity is verified against the member.
