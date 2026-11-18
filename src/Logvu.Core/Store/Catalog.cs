@@ -12,8 +12,9 @@ namespace Logvu.Core.Store;
 /// <remarks>
 /// <para>
 /// <b>Ordering.</b> The timeline holds the members in state <see cref="MemberState.UnknownTime"/> and
-/// <see cref="MemberState.Dated"/>, in this order: the unknown-time group first, ordered by basename (ordinal); then the dated members,
-/// by first time as an instant. Members with equal times are ordered as follows. When the configuration sets an active file, a
+/// <see cref="MemberState.Dated"/>, and the members that expired from one of those states, in this order: the unknown-time group
+/// first, ordered by basename (ordinal); then the dated members, by first time as an instant. An expired member keeps the group and
+/// the first time it had, so it stays where it was and history can still be traversed through it. Members with equal times are ordered as follows. When the configuration sets an active file, a
 /// rotation name (<c>&lt;activeStem&gt;&lt;n&gt;&lt;activeExt&gt;</c>, with the active file itself as 0) is older the higher <c>n</c>
 /// is, and rotation names come before the other names. Any other pair is ordered by basename (ordinal). The order is therefore a
 /// single lexicographic key: time, then rotation group, then rotation number, then basename, then generation. That makes it a
@@ -51,8 +52,9 @@ public sealed class Catalog
     public IEnumerable<Member> All => _members.AsReadOnly();
 
     /// <summary>
-    /// The members in the timeline, oldest first: the unknown-time group, then the dated members. Pending and expired members are not
-    /// in it. The list is a snapshot that is never changed afterwards; the members in it are live and may change.
+    /// The members in the timeline, oldest first: the unknown-time group, then the dated members. Expired members that were in one of
+    /// those groups are included at their place. Pending members are not in it. The list is a snapshot that is never changed
+    /// afterwards; the members in it are live and may change.
     /// </summary>
     public IReadOnlyList<Member> Ordered
     {
@@ -151,7 +153,7 @@ public sealed class Catalog
     /// compared by offset.
     /// </summary>
     /// <returns>A negative number, zero, or a positive number as <paramref name="a"/> is before, the same as, or after <paramref name="b"/>.</returns>
-    /// <exception cref="ArgumentException">A key's generation is not in the timeline order (its member is pending or expired, or unknown).</exception>
+    /// <exception cref="ArgumentException">A key's generation is not in the timeline order (its member is pending, or unknown to the catalog).</exception>
     public int Compare(RowKey a, RowKey b)
     {
         int positionA = PositionOf(a.Generation, nameof(a));
@@ -181,7 +183,7 @@ public sealed class Catalog
         }
 
         var ordered = _members
-            .Where(member => member.State is MemberState.UnknownTime or MemberState.Dated)
+            .Where(member => member.TimelineState is MemberState.UnknownTime or MemberState.Dated)
             .ToList();
         ordered.Sort(CompareTimeline);
 
@@ -198,12 +200,12 @@ public sealed class Catalog
 
     private int CompareTimeline(Member a, Member b)
     {
-        if (a.State != b.State)
+        if (a.TimelineState != b.TimelineState)
         {
-            return a.State == MemberState.UnknownTime ? -1 : 1;
+            return a.TimelineState == MemberState.UnknownTime ? -1 : 1;
         }
 
-        if (a.State == MemberState.Dated)
+        if (a.TimelineState == MemberState.Dated)
         {
             int byTime = a.FirstTime!.Value.CompareTo(b.FirstTime!.Value);
             if (byTime != 0)

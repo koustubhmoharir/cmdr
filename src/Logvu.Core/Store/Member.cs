@@ -20,6 +20,9 @@ public sealed class Member
 {
     private readonly Catalog _owner;
 
+    /// <summary>The state the member had when it expired. Its timeline group and first time are kept after expiry.</summary>
+    private MemberState _stateBeforeExpiry = MemberState.Pending;
+
     internal Member(Catalog owner, int generation, string path, string identity)
     {
         _owner = owner;
@@ -62,6 +65,17 @@ public sealed class Member
     /// <summary>Whether the member is the live one: the file named by the configured active file, or else the newest member.</summary>
     public bool IsLive { get; set; }
 
+    /// <summary>
+    /// Whether the member's events can be read from its file: it is in the timeline as dated or unknown-time, and it has not expired.
+    /// </summary>
+    public bool IsReadable => State is MemberState.Dated or MemberState.UnknownTime;
+
+    /// <summary>
+    /// The group the member is in the timeline by: <see cref="MemberState.Dated"/> or <see cref="MemberState.UnknownTime"/>, or
+    /// <see cref="MemberState.Pending"/> when it is not in the timeline. An expired member keeps the group it had when it expired.
+    /// </summary>
+    internal MemberState TimelineState => State == MemberState.Expired ? _stateBeforeExpiry : State;
+
     /// <summary>Records what a probe found. The member takes the probe's scheme, state, first event and time.</summary>
     /// <param name="result">The probe's result. It may not report <see cref="MemberState.Expired"/>; use <see cref="Expire"/>.</param>
     /// <exception cref="InvalidOperationException">The member has expired.</exception>
@@ -102,8 +116,9 @@ public sealed class Member
     }
 
     /// <summary>
-    /// Marks the member expired: its file is gone. It leaves the timeline and keeps its generation, so its rows can still be found.
-    /// Expiring an expired member does nothing.
+    /// Marks the member expired: its file is gone. It keeps its generation, its first time and its place in the timeline, so its
+    /// rows can still be found and ordered, but its events cannot be read any more (see <see cref="IsReadable"/>). A member that
+    /// expires while <see cref="MemberState.Pending"/> stays out of the timeline. Expiring an expired member does nothing.
     /// </summary>
     public void Expire()
     {
@@ -112,6 +127,7 @@ public sealed class Member
             return;
         }
 
+        _stateBeforeExpiry = State;
         State = MemberState.Expired;
         _owner.MarkChanged();
     }

@@ -12,6 +12,9 @@ public enum MemberState
     /// <summary>The member is in the timeline, in the unknown-time group before all dated members.</summary>
     UnknownTime,
 
-    /// <summary>The file is gone. Its rows stay, but it is no longer in the timeline and its disk reads report that.</summary>
+    /// <summary>
+    /// The file is gone. Its rows stay and it keeps its place in the timeline, but its disk reads report that. A member that expired
+    /// while pending has no place in the timeline.
+    /// </summary>
     Expired,
 }

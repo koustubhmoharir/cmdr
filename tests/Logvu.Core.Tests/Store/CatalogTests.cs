@@ -126,7 +126,7 @@ public sealed class CatalogTests
     }
 
     [Fact]
-    public void Pending_and_expired_members_are_not_ordered()
+    public void Pending_members_are_not_ordered_and_expired_dated_members_keep_their_place()
     {
         using var dir = new ConfigTestDirectory();
         Catalog catalog = NewCatalog(dir);
@@ -137,8 +137,101 @@ public sealed class CatalogTests
         Member dated = Add(catalog, dir, "SheetKraft.log");
         SetDated(dated, T);
 
-        Assert.Equal(new[] { dated }, catalog.Ordered);
+        // The expired member had the same time, so it keeps its place after the active file by basename.
+        Assert.Equal(new[] { dated, expired }, catalog.Ordered);
         Assert.Equal(3, catalog.All.Count());
+    }
+
+    [Fact]
+    public void A_member_that_expires_while_pending_is_never_ordered()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir);
+        Member pending = Add(catalog, dir, "SheetKraft1.log");
+        Member dated = Add(catalog, dir, "SheetKraft.log");
+        SetDated(dated, T);
+        pending.Expire();
+
+        Assert.Equal(new[] { dated }, catalog.Ordered);
+        Assert.Null(catalog.Next(dated));
+        Assert.Throws<ArgumentException>(() => catalog.Compare(new RowKey(pending.Generation, 0), new RowKey(dated.Generation, 0)));
+    }
+
+    [Fact]
+    public void Expired_members_keep_their_group_first_time_and_place()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir);
+        Member older = Add(catalog, dir, "SheetKraft.log");
+        Member middle = Add(catalog, dir, "SheetKraft1.log");
+        Member newer = Add(catalog, dir, "SheetKraft2.log");
+        Member unknown = Add(catalog, dir, "Unknown.log");
+        SetDated(older, T);
+        SetDated(middle, T.AddHours(1));
+        SetDated(newer, T.AddHours(2));
+        SetUnknown(unknown);
+
+        middle.Expire();
+
+        Assert.Equal(new[] { "Unknown.log", "SheetKraft.log", "SheetKraft1.log", "SheetKraft2.log" }, Names(catalog));
+        Assert.Equal(MemberState.Expired, middle.State);
+        Assert.Equal(T.AddHours(1), middle.FirstTime);
+        Assert.False(middle.IsReadable);
+        Assert.Same(middle, catalog.Next(older));
+        Assert.Same(older, catalog.Previous(middle));
+        Assert.Same(newer, catalog.Next(middle));
+        Assert.Same(middle, catalog.Previous(newer));
+
+        unknown.Expire();
+        Assert.Equal(new[] { "Unknown.log", "SheetKraft.log", "SheetKraft1.log", "SheetKraft2.log" }, Names(catalog));
+        Assert.Equal(MemberState.Expired, unknown.State);
+        Assert.Null(unknown.FirstTime);
+        Assert.Same(unknown, catalog.Ordered[0]);
+    }
+
+    [Fact]
+    public void Compare_works_for_keys_of_an_expired_generation_and_Previous_and_Next_traverse_through_it()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir);
+        Member older = Add(catalog, dir, "SheetKraft.log");
+        Member expired = Add(catalog, dir, "SheetKraft1.log");
+        Member newer = Add(catalog, dir, "SheetKraft2.log");
+        SetDated(older, T);
+        SetDated(expired, T.AddHours(1));
+        SetDated(newer, T.AddHours(2));
+        expired.Expire();
+
+        var inExpired = new RowKey(expired.Generation, 500);
+        Assert.True(catalog.Compare(new RowKey(older.Generation, 900), inExpired) < 0);
+        Assert.True(catalog.Compare(inExpired, new RowKey(newer.Generation, 0)) < 0);
+        Assert.True(catalog.Compare(new RowKey(expired.Generation, 600), inExpired) > 0);
+        Assert.Equal(0, catalog.Compare(inExpired, inExpired));
+
+        Assert.Same(expired, catalog.Next(older));
+        Assert.Same(newer, catalog.Next(expired));
+        Assert.Null(catalog.Next(newer));
+        Assert.Null(catalog.Previous(older));
+    }
+
+    [Fact]
+    public void IsReadable_is_true_for_dated_and_unknown_time_members_only()
+    {
+        using var dir = new ConfigTestDirectory();
+        Catalog catalog = NewCatalog(dir);
+        Member pending = Add(catalog, dir, "SheetKraft3.log");
+        Member dated = Add(catalog, dir, "SheetKraft.log");
+        Member unknown = Add(catalog, dir, "SheetKraft1.log");
+        Member expired = Add(catalog, dir, "SheetKraft2.log");
+        SetDated(dated, T);
+        SetUnknown(unknown);
+        SetDated(expired, T);
+        expired.Expire();
+
+        Assert.False(pending.IsReadable);
+        Assert.True(dated.IsReadable);
+        Assert.True(unknown.IsReadable);
+        Assert.False(expired.IsReadable);
     }
 
     [Fact]
@@ -198,7 +291,6 @@ public sealed class CatalogTests
         Member member = Add(catalog, dir, "SheetKraft.log");
         SetDated(member, T);
         Member expired = Add(catalog, dir, "SheetKraft1.log");
-        SetDated(expired, T);
         expired.Expire();
 
         Assert.Throws<ArgumentException>(() => catalog.Compare(new RowKey(member.Generation, 0), new RowKey(expired.Generation, 0)));
@@ -233,9 +325,9 @@ public sealed class CatalogTests
         SetUnknown(beta);
         Assert.Equal(new[] { "Beta.log", "Zulu.log" }, Names(catalog));
 
-        // Expiring removes it.
+        // Expiring keeps it at its place in the timeline.
         alpha.Expire();
-        Assert.Equal(new[] { "Beta.log" }, Names(catalog));
+        Assert.Equal(new[] { "Beta.log", "Zulu.log" }, Names(catalog));
 
         // The list taken before the changes keeps its members and their order; the members themselves are live.
         Assert.Equal(new[] { alpha, beta }, before);
