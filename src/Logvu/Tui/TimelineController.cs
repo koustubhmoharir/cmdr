@@ -27,7 +27,7 @@ namespace Logvu.Tui;
 /// model while the detail is open. A read that completes after the detail was closed is ignored.
 /// </para>
 /// </remarks>
-internal sealed class TimelineController : IDisposable
+internal sealed class TimelineController : IDisposable, ISearchHost
 {
     /// <summary>The status line's key hints.</summary>
     internal const string Hints = "Space pause/follow  End newest  ^Q quit";
@@ -46,6 +46,7 @@ internal sealed class TimelineController : IDisposable
     private readonly TimelineModel _model;
     private readonly TimelineView _view;
     private readonly StatusLine _statusLine;
+    private readonly SearchController _search;
     private StoreStatus? _storeStatus;
     private RetentionGap? _latestGap;
     private bool _gapShown;
@@ -53,6 +54,7 @@ internal sealed class TimelineController : IDisposable
     private bool _started;
     private DetailSession? _detail;
     private string _statusLeft = "Loading…";
+    private string _statusRight = string.Empty;
     private volatile bool _disposed;
 
     /// <summary>Creates the controller and the window. Call <see cref="Start"/> to subscribe to the store and start it.</summary>
@@ -65,7 +67,7 @@ internal sealed class TimelineController : IDisposable
     {
     }
 
-    /// <summary>Creates the controller over a detail source, and an optional scheduler for the UI-thread continuations.</summary>
+    /// <summary>Creates the controller over a detail source, a timeline source and an optional scheduler for the UI-thread continuations.</summary>
     /// <param name="app">The initialized application.</param>
     /// <param name="store">The store to show. It must not be started yet.</param>
     /// <param name="details">Reads the details of the events. The store's by default; a test may hold or fail the reads.</param>
@@ -73,8 +75,17 @@ internal sealed class TimelineController : IDisposable
     /// <param name="post">
     /// Runs a continuation on the UI thread. The application's <see cref="IApplication.Invoke(Action)"/> by default.
     /// </param>
-    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/> is <c>null</c>.</exception>
-    internal TimelineController(IApplication app, LogStore store, IDetailSource details, LogvuConfig config, Action<Action>? post)
+    /// <param name="source">The rows the timeline loads and searches. The store's by default; a test may supply its own.</param>
+    /// <param name="compare">Orders the keys of <paramref name="source"/>. The store's order by default.</param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/>, <paramref name="source"/> and <paramref name="compare"/> is <c>null</c>.</exception>
+    internal TimelineController(
+        IApplication app,
+        LogStore store,
+        IDetailSource details,
+        LogvuConfig config,
+        Action<Action>? post,
+        ITimelineSource? source = null,
+        Comparison<RowKey>? compare = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(store);
@@ -86,10 +97,12 @@ internal sealed class TimelineController : IDisposable
         _details = details;
         _config = config;
         _post = post ?? (action => app.Invoke(action));
-        _model = new TimelineModel(new LogStoreTimelineSource(store), Post, store.Compare);
+        ITimelineSource timeline = source ?? new LogStoreTimelineSource(store);
+        _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
         _view = new TimelineView(_model, config.TimeZone) { Placeholder = "Loading…" };
         _statusLine = new StatusLine();
-        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine);
+        _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
+        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, _search.HandleShortcut, _search.CancelScan);
     }
 
     /// <summary>The main window. Run it with the application.</summary>
@@ -106,6 +119,12 @@ internal sealed class TimelineController : IDisposable
 
     /// <summary>The left part of the status line as last shown.</summary>
     internal string StatusLeft => _statusLeft;
+
+    /// <summary>The right part of the status line as last shown: the key hints, with the hints of an active search first.</summary>
+    internal string StatusRight => _statusRight;
+
+    /// <summary>The search of the timeline and the detail. Its bar is the window's search bar.</summary>
+    internal SearchController Search => _search;
 
     /// <summary>Subscribes to the store and to the model, focuses the timeline and starts the store.</summary>
     /// <exception cref="InvalidOperationException">The store is already started.</exception>
@@ -136,6 +155,7 @@ internal sealed class TimelineController : IDisposable
         _model.Changed -= OnModelChanged;
         _view.ViewportRowsChanged -= OnViewportRowsChanged;
         _view.OpenRequested -= OpenDetail;
+        _search.StopScan();
         if (_detail is { } session)
         {
             _detail = null;
@@ -229,6 +249,7 @@ internal sealed class TimelineController : IDisposable
         }
 
         _model.Pause();
+        _search.StopScan();
         var view = new DetailView { Placeholder = "Loading…" };
         var session = new DetailSession(key, view, new CancellationTokenSource());
         view.CloseRequested += CloseDetail;
@@ -269,6 +290,7 @@ internal sealed class TimelineController : IDisposable
 
         session.Detail = detail;
         session.View.Load(detail, _config);
+        _search.OnDetailLoaded(session.View);
         RefreshStatus();
     }
 
@@ -286,6 +308,7 @@ internal sealed class TimelineController : IDisposable
         _detail = null;
         session.Cancellation.Cancel();
         Window.SetContent(_view);
+        _search.OnDetailClosed();
 
         // The detail is still handling the key that closes it, so it is disposed once that has returned.
         Post(() => session.View.Dispose());
@@ -310,17 +333,36 @@ internal sealed class TimelineController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Refreshes both parts of the status line. The right part names the keys of the matches while a query is active, before the key hints.
+    /// </summary>
     private void RefreshStatus()
     {
-        _statusLeft = _detail is { } session ? DetailLeft(session) : LeftText();
-        _statusLine.Show(_statusLeft, message: false, right: _detail is null ? Hints : DetailHints);
+        bool inDetail = _detail is not null;
+        _statusLeft = _detail is { } session ? DetailLeft(session, _search.Status) : LeftText();
+        string keys = inDetail ? DetailHints : Hints;
+        string right = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
+        _statusRight = right;
+        _statusLine.Show(_statusLeft, message: false, right: right);
     }
+
+    DetailView? ISearchHost.Detail => _detail?.View;
+
+    void ISearchHost.ShowSearchBar(bool open) => Window.ShowSearchBar(open);
+
+    void ISearchHost.FocusContent()
+    {
+        View content = _detail is { } session ? session.View : _view;
+        content.SetFocus();
+    }
+
+    void ISearchHost.RefreshStatus() => RefreshStatus();
 
     /// <summary>
     /// The left part of the status line of the detail: <c>DETAIL</c>, then the file and offset of a loaded event, then <c>raw</c> in the raw
-    /// view and <c>truncated</c> for a cut event. An unavailable event shows only <c>DETAIL</c>.
+    /// view and <c>truncated</c> for a cut event, and last the search's status. An unavailable event shows only <c>DETAIL</c>.
     /// </summary>
-    private static string DetailLeft(DetailSession session)
+    private static string DetailLeft(DetailSession session, string? search)
     {
         var parts = new List<string> { "DETAIL" };
         if (session.Detail is EventDetail.Loaded loaded)
@@ -337,6 +379,11 @@ internal sealed class TimelineController : IDisposable
             }
         }
 
+        if (search is not null)
+        {
+            parts.Add(search);
+        }
+
         return string.Join(" · ", parts);
     }
 
@@ -349,6 +396,11 @@ internal sealed class TimelineController : IDisposable
         }
 
         var parts = new List<string> { ModeText() };
+        if (_search.Status is { } search)
+        {
+            parts.Add(search);
+        }
+
         if (TimelineLayout.PageDate(_model.VisibleRows, _config.TimeZone) is { } day)
         {
             parts.Add(day);

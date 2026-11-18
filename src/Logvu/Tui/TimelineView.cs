@@ -1,9 +1,10 @@
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
-using Shared.Tui;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Logvu.Tui;
@@ -24,6 +25,8 @@ internal sealed class TimelineView : View
     private readonly TimelineModel _model;
     private readonly TimeZoneInfo _zone;
     private string? _placeholder;
+    private SearchPattern? _search;
+    private RowKey? _activeRow;
 
     /// <summary>Creates the view. It draws nothing but its header until a placeholder or rows are shown.</summary>
     /// <param name="model">The model the view draws and drives.</param>
@@ -53,6 +56,34 @@ internal sealed class TimelineView : View
         set
         {
             _placeholder = value;
+            SetNeedsDraw();
+        }
+    }
+
+    /// <summary>
+    /// The search whose matches are highlighted in the Source and Message cells of the rows. Null for none. Changing it keeps
+    /// <see cref="ActiveRow"/>; the owner clears that when the query changes.
+    /// </summary>
+    public SearchPattern? Search
+    {
+        get => _search;
+        set
+        {
+            _search = value;
+            SetNeedsDraw();
+        }
+    }
+
+    /// <summary>
+    /// The row of the match the search last moved to. Its matches are drawn in the active colors, the others in the match colors. Null
+    /// for none.
+    /// </summary>
+    public RowKey? ActiveRow
+    {
+        get => _activeRow;
+        set
+        {
+            _activeRow = value;
             SetNeedsDraw();
         }
     }
@@ -203,13 +234,14 @@ internal sealed class TimelineView : View
 
         IReadOnlyList<EventRow> visible = _model.VisibleRows;
         TimelinePage page = TimelineLayout.Compose(visible, width, _zone);
-        DrawLine(0, TimelineLayout.Header(page.Columns), page.Columns, header, selected: false);
+        DrawLine(0, TimelineLayout.Header(page.Columns), page.Columns, header, selected: false, active: false);
 
         for (int i = 0; i < page.Lines.Count && i + 1 < height; i++)
         {
             bool selected = i == _model.SelectedScreenRow;
             Attribute baseline = selected ? focus : normal;
-            DrawLine(i + 1, page.Lines[i], page.Columns, baseline, selected);
+            bool active = _activeRow is { } key && key == visible[i].Key;
+            DrawLine(i + 1, page.Lines[i], page.Columns, baseline, selected, active);
         }
 
         if (visible.Count == 0 && _placeholder is { } text && height > 1)
@@ -222,28 +254,44 @@ internal sealed class TimelineView : View
         return true;
     }
 
-    /// <summary>Draws one line: each column at its offset, with the attribute of its cell.</summary>
-    private void DrawLine(int row, TimelineLine line, TimelineColumns columns, Attribute baseline, bool selected)
+    /// <summary>Draws one line: each column at its offset, with the attribute of its cell. Only the source and the message are searched.</summary>
+    private void DrawLine(int row, TimelineLine line, TimelineColumns columns, Attribute baseline, bool selected, bool active)
     {
         int x = 0;
-        DrawCell(x, row, columns.Time, line.Time, LevelColors.Text(line.Severity, baseline, selected));
+        DrawCell(x, row, columns.Time, line.Time, LevelColors.Text(line.Severity, baseline, selected), searched: false, active);
         x += columns.Time > 0 ? columns.Time + 1 : 0;
-        DrawCell(x, row, columns.Level, line.LevelLabel, LevelColors.Label(line.Severity, baseline, selected));
+        DrawCell(x, row, columns.Level, line.LevelLabel, LevelColors.Label(line.Severity, baseline, selected), searched: false, active);
         x += columns.Level > 0 ? columns.Level + 1 : 0;
-        DrawCell(x, row, columns.Source, line.Source, LevelColors.Text(line.Severity, baseline, selected));
+        DrawCell(x, row, columns.Source, line.Source, LevelColors.Text(line.Severity, baseline, selected), searched: true, active);
         x += columns.Source > 0 ? columns.Source + 1 : 0;
-        DrawCell(x, row, columns.Message, line.Message, LevelColors.Message(line.Severity, baseline, selected));
+        DrawCell(x, row, columns.Message, line.Message, LevelColors.Message(line.Severity, baseline, selected), searched: true, active);
     }
 
-    private void DrawCell(int x, int row, int width, string text, Attribute attribute)
+    /// <summary>
+    /// Draws one cell. A searched cell is drawn in runs: its matches in the match colors, or the active colors on the active row, and
+    /// the rest in <paramref name="attribute"/>. The matches are those of the cell's text as drawn.
+    /// </summary>
+    private void DrawCell(int x, int row, int width, string text, Attribute attribute, bool searched, bool active)
     {
         if (width <= 0)
         {
             return;
         }
 
-        Move(x, row);
-        SetAttribute(attribute);
-        AddStr(text);
+        IReadOnlyList<SearchMatch>? matches = searched ? _search?.Matches(text) : null;
+        if (matches is null or { Count: 0 })
+        {
+            Move(x, row);
+            SetAttribute(attribute);
+            AddStr(text);
+            return;
+        }
+
+        foreach (SearchRun run in SearchHighlight.Split(text, 0, text.Length, matches, _ => active))
+        {
+            Move(x + TextWidth.Columns(text[..run.Start]), row);
+            SetAttribute(SearchHighlight.Paint(attribute, run.Kind));
+            AddStr(text[run.Start..run.End]);
+        }
     }
 }

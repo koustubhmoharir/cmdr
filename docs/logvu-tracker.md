@@ -78,7 +78,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] `logvu` → picker with **Open file** (works with empty history): generic recent picker in Shared.Tui (faithful copy of cmdr's).
 - [x] Timeline view: Time/Level/Source/Message columns, day crossing dates, level colors + labels, selection.
 - [x] Status line: Follow/Paused, new count, filters, search progress, read errors.
-- [ ] Key routing: printable shortcuts in timeline focus only (arrows/Page/End/Space/mouse done; `/`, `f`, `n`, Enter come with M8–M10).
+- [ ] Key routing: printable shortcuts in timeline focus only (done for `/`, `n`, `N`, Enter; `f` comes with M10).
 
 ## M8. Detail view
 
@@ -93,9 +93,9 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 - [x] Engine: IRowFilter gets the event text; LogStore.FindAsync (older/newer, filter AND pattern, live row, progress, cancel, TimedOut); TimelineModel.JumpTo.
 
-- [ ] Search editor (shared SearchBar): literal case-insensitive and regex; `/`, Ctrl+F; n/F3, N/Shift+F3.
-- [ ] Traverse full events in the active filter across pages and files; boundary indication; cancel; progress.
-- [ ] Opening a hit scrolls/expands detail to it, including inside folded frames.
+- [x] Search editor (shared SearchBar): literal case-insensitive and regex; `/`, Ctrl+F; n/F3, N/Shift+F3.
+- [x] Traverse full events in the active filter across pages and files; boundary indication; cancel; progress.
+- [x] Opening a hit scrolls/expands detail to it, including inside folded frames.
 
 ## M10. Filter
 
@@ -110,6 +110,10 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
 - [ ] README section / logvu README, publish script entry.
 - [ ] Windows checklist for the user *(Windows)*, including Shared.Core's AtomicFile File.Replace / error-1176 recovery (copied verbatim from cmdr, unverified there too).
+
+## Notes for M12
+
+- Shared SearchBar raises FocusPaneRequested for Enter, Tab and Shift+Tab alike; logvu runs the search on all three. Consider distinguishing them when generalizing.
 
 ## M12. Refactoring round (after logvu is done)
 

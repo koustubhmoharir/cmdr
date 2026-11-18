@@ -22,6 +22,12 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>The kinds of read that wait until the test completes them.</summary>
     public HashSet<ReadKind> Held { get; } = [];
 
+    /// <summary>Whether the searches wait until the test completes them. A search that is not held finds its result at once.</summary>
+    public bool HoldFinds { get; set; }
+
+    /// <summary>Every search asked for, in order, held or not.</summary>
+    public List<FindRequest> Finds { get; } = [];
+
     /// <summary>The number of held reads still waiting.</summary>
     public int Waiting(ReadKind kind) => _held.Count(read => read.Kind == kind);
 
@@ -76,15 +82,31 @@ internal sealed class FakeTimelineSource : ITimelineSource
         return new RowPage(newer.Take(count).ToList(), newer.Count < count, []);
     }
 
-    /// <summary>Finds the nearest row in the direction whose preview matches the pattern and that passes the filter.</summary>
+    /// <summary>
+    /// Finds the nearest row in the direction whose preview matches the pattern and that passes the filter. The search is recorded in
+    /// <see cref="Finds"/>; while <see cref="HoldFinds"/> is set, the test completes it.
+    /// </summary>
     public Task<SearchResult> FindAsync(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    {
+        var request = new FindRequest(from, direction, pattern, filter, progress, ct, new TaskCompletionSource<SearchResult>());
+        Finds.Add(request);
+        if (!HoldFinds)
+        {
+            request.Complete(Search(from, direction, pattern, filter));
+        }
+
+        return request.Completion.Task;
+    }
+
+    /// <summary>Finds the nearest matching row in the direction, or the boundary when there is none.</summary>
+    private SearchResult Search(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter)
     {
         IEnumerable<EventRow> candidates = direction == SearchDirection.Older
             ? Rows.Where(row => CompareKeys(row.Key, from) < 0).Reverse()
             : Rows.Where(row => CompareKeys(row.Key, from) > 0);
         EventRow? found = candidates.FirstOrDefault(row =>
             pattern.Count(row.Preview) > 0 && (filter is null || filter.Matches(row, Event(row), row.Preview)));
-        return Task.FromResult(found is null ? SearchResult.Boundary : SearchResult.Found(found));
+        return found is null ? SearchResult.Boundary : SearchResult.Found(found);
     }
 
     private static RowPage Backward(List<EventRow> candidates, int count) =>
@@ -94,6 +116,27 @@ internal sealed class FakeTimelineSource : ITimelineSource
     private static LogEvent Event(EventRow row) => new() { Message = row.Preview };
 
     private sealed record PendingRead(ReadKind Kind, RowPage Page, TaskCompletionSource<RowPage> Completion);
+
+    /// <summary>A search asked for: its arguments, the progress it reports to, its cancellation and the completion that finishes it.</summary>
+    /// <param name="From">The row the search starts from.</param>
+    /// <param name="Direction">The direction of the search.</param>
+    /// <param name="Pattern">The pattern searched for.</param>
+    /// <param name="Filter">The filter, or <c>null</c>.</param>
+    /// <param name="Progress">The progress the search reports to, or <c>null</c>.</param>
+    /// <param name="Token">The search's cancellation.</param>
+    /// <param name="Completion">Finishes the search.</param>
+    public sealed record FindRequest(
+        RowKey From,
+        SearchDirection Direction,
+        SearchPattern Pattern,
+        IRowFilter? Filter,
+        IProgress<long>? Progress,
+        CancellationToken Token,
+        TaskCompletionSource<SearchResult> Completion)
+    {
+        /// <summary>Finishes the search with a result. A search that has finished already is unchanged.</summary>
+        public void Complete(SearchResult result) => Completion.TrySetResult(result);
+    }
 }
 
 /// <summary>The kinds of read a fake source performs.</summary>

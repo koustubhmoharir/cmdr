@@ -3,6 +3,7 @@ using System.Text;
 using Logvu.Core.Config;
 using Logvu.Core.Detail;
 using Logvu.Core.Store;
+using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
@@ -40,6 +41,7 @@ internal sealed class DetailView : View
     private int _topLine;
     private int _topRow;
     private string? _placeholder;
+    private SearchPattern? _search;
 
     /// <summary>Creates the view. It draws its placeholder until a detail is loaded with <see cref="Load"/>.</summary>
     public DetailView()
@@ -61,6 +63,23 @@ internal sealed class DetailView : View
 
     /// <summary>The index of the cursor's line in <see cref="Document"/>'s visible lines.</summary>
     internal int CursorLine => _cursor;
+
+    /// <summary>
+    /// The search whose matches are highlighted in the lines. Null for none. The matches are those of each full line's text, so a match
+    /// that wraps is drawn across its rows.
+    /// </summary>
+    public SearchPattern? Search
+    {
+        get => _search;
+        set
+        {
+            _search = value;
+            SetNeedsDraw();
+        }
+    }
+
+    /// <summary>The match the search last moved to, drawn in the active colors, or <c>null</c> for none.</summary>
+    internal DetailHit? ActiveHit { get; private set; }
 
     /// <summary>
     /// The text shown on the first row while no detail is loaded, for example "Loading…". Null for none.
@@ -88,7 +107,38 @@ internal sealed class DetailView : View
 
         _detail = detail;
         _config = config;
+        ActiveHit = null;
         Rebuild(DetailOptions.Default, resetPosition: true);
+    }
+
+    /// <summary>
+    /// Scrolls to a match and moves the cursor onto its line, revealing the line first when a collapsed node or fold hides it. The match
+    /// becomes the active one. Does nothing while no detail is loaded.
+    /// </summary>
+    /// <param name="hit">The match, with the index of its line among the full lines of <see cref="Document"/>.</param>
+    internal void ShowHit(DetailHit hit)
+    {
+        if (_document is null)
+        {
+            return;
+        }
+
+        if (_document.VisibleIndex(hit.Line) < 0)
+        {
+            Rebuild(_document.ExpandToReveal(hit.Line), resetPosition: false);
+        }
+
+        _cursor = _document!.VisibleIndex(hit.Line);
+        ActiveHit = hit;
+        EnsureCursorVisible();
+        SetNeedsDraw();
+    }
+
+    /// <summary>Forgets the active match, so that no match is drawn in the active colors.</summary>
+    internal void ClearActiveHit()
+    {
+        ActiveHit = null;
+        SetNeedsDraw();
     }
 
     /// <summary>
@@ -243,9 +293,11 @@ internal sealed class DetailView : View
         int row = _topRow;
         while (screen < height && line < LineCount)
         {
+            IReadOnlyList<SearchMatch>? matches = _search?.Matches(_document.Lines[line].Text);
+            int activeStart = ActiveHit is { } hit && hit.Line == _document.FullIndex(line) ? hit.Start : -1;
             foreach (WrapRow wrapRow in Wrap(line).Rows(row, height - screen))
             {
-                DrawRow(screen, line, wrapRow, width, normal, focus);
+                DrawRow(screen, line, wrapRow, width, normal, focus, matches, activeStart);
                 screen++;
             }
 
@@ -291,6 +343,12 @@ internal sealed class DetailView : View
 
         DetailDocument? previous = _document;
         DetailDocument document = DetailDocument.Build(_detail, _config, options);
+
+        // The full lines of the raw view are not the structured ones, so the active match of one does not name a line of the other.
+        if (previous is not null && previous.Options.Raw != options.Raw)
+        {
+            ActiveHit = null;
+        }
 
         int cursor = 0;
         Pos top = new(0, 0);
@@ -513,8 +571,19 @@ internal sealed class DetailView : View
         }
     }
 
-    /// <summary>Draws one wrapped row: the indent in the line's attribute, then each span in its own attribute, then the padding to the width.</summary>
-    private void DrawRow(int screen, int lineIndex, WrapRow row, int width, Attribute normal, Attribute focus)
+    /// <summary>
+    /// Draws one wrapped row: the indent in the line's attribute, then each span in its own attribute, then the padding to the width. The
+    /// search matches of the line are drawn in the match colors over the spans, and the active one in the active colors.
+    /// </summary>
+    private void DrawRow(
+        int screen,
+        int lineIndex,
+        WrapRow row,
+        int width,
+        Attribute normal,
+        Attribute focus,
+        IReadOnlyList<SearchMatch>? matches,
+        int activeStart)
     {
         DetailLine line = _document!.Lines[lineIndex];
         bool selected = lineIndex == _cursor;
@@ -529,9 +598,10 @@ internal sealed class DetailView : View
             used = row.Indent;
         }
 
-        foreach (Piece piece in Pieces(line, row, normal))
+        foreach (Piece piece in Pieces(line, row, normal, matches, activeStart))
         {
-            SetAttribute(selected ? DetailColors.Selected(piece.Attribute, focus) : piece.Attribute);
+            Attribute attribute = selected ? DetailColors.Selected(piece.Attribute, focus) : piece.Attribute;
+            SetAttribute(SearchHighlight.Paint(attribute, piece.Kind));
             AddStr(piece.Text);
             used += piece.Columns;
         }
@@ -544,15 +614,25 @@ internal sealed class DetailView : View
     }
 
     /// <summary>
-    /// The text of a row in runs of one attribute: the spans that overlap the row in their attributes, the rest in the normal one. Zero-width
-    /// graphemes are not drawn, and a control character is drawn as a space, as the grapheme widths count them.
+    /// The text of a row in runs of one attribute: the spans that overlap the row in their attributes, the rest in the normal one, each cut
+    /// where a search match starts or ends. Zero-width graphemes are not drawn, and a control character is drawn as a space, as the
+    /// grapheme widths count them.
     /// </summary>
-    private List<Piece> Pieces(DetailLine line, WrapRow row, Attribute normal)
+    private List<Piece> Pieces(DetailLine line, WrapRow row, Attribute normal, IReadOnlyList<SearchMatch>? matches, int activeStart)
     {
         var pieces = new List<Piece>();
         int start = row.Start;
         int end = row.Start + row.Length;
         int position = start;
+
+        void Add(int from, int to, Attribute attribute)
+        {
+            foreach (SearchRun run in SearchHighlight.Split(line.Text, from, to, matches, match => match.Start == activeStart))
+            {
+                AddPiece(pieces, line.Text, run.Start, run.End, attribute, run.Kind);
+            }
+        }
+
         foreach (StyledSpan span in line.Spans)
         {
             int from = Math.Max(span.Start, start);
@@ -564,22 +644,22 @@ internal sealed class DetailView : View
 
             if (from > position)
             {
-                AddPiece(pieces, line.Text, position, from, normal);
+                Add(position, from, normal);
             }
 
-            AddPiece(pieces, line.Text, from, to, DetailColors.For(span, normal, _config!));
+            Add(from, to, DetailColors.For(span, normal, _config!));
             position = to;
         }
 
         if (position < end)
         {
-            AddPiece(pieces, line.Text, position, end, normal);
+            Add(position, end, normal);
         }
 
         return pieces;
     }
 
-    private static void AddPiece(List<Piece> pieces, string text, int from, int to, Attribute attribute)
+    private static void AddPiece(List<Piece> pieces, string text, int from, int to, Attribute attribute, SearchRunKind kind)
     {
         ReadOnlySpan<char> slice = text.AsSpan(from, to - from);
         var drawn = new StringBuilder(slice.Length);
@@ -609,7 +689,7 @@ internal sealed class DetailView : View
 
         if (drawn.Length > 0)
         {
-            pieces.Add(new Piece(drawn.ToString(), attribute, columns));
+            pieces.Add(new Piece(drawn.ToString(), attribute, columns, kind));
         }
     }
 
@@ -624,8 +704,8 @@ internal sealed class DetailView : View
         }
     }
 
-    /// <summary>A run of text of one attribute, with its width in columns.</summary>
-    private readonly record struct Piece(string Text, Attribute Attribute, int Columns);
+    /// <summary>A run of text of one attribute, with its width in columns and its search highlight.</summary>
+    private readonly record struct Piece(string Text, Attribute Attribute, int Columns, SearchRunKind Kind);
 
     /// <summary>A position in the wrapped document: a visible line and a row of that line.</summary>
     private readonly record struct Pos(int Line, int Row);
