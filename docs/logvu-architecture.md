@@ -310,3 +310,41 @@ rules scoped to `raw`).
 longer than 64 KiB are wrapped lazily by the view (only visible rows are measured).
 
 **Expired.** `Unavailable` details render a single message (`Source file expired` or the error) with the row's preview.
+
+## Search (M9)
+
+`/` or Ctrl+F opens the shared `SearchBar` above the status line (case-insensitive literal by default; `Aa`, `Word` and `.*`
+toggles; session history). Enter confirms and searches **toward older events** from the selected row (inclusive of rows above
+it, exclusive of the selected row) — the reader usually starts at the newest event, at the bottom. `n` / F3 repeat toward older
+events, `N` / Shift+F3 search toward newer events. There is no wrap-around: at the start/end of history the status line says
+`No more matches above` / `below` and the selection stays.
+
+- **What matches**: the full event text (all lines, JSON field names and values, stack frames) and, for JSON events, the
+  rendered message (Serilog templates). Only events passing the active filter are searched.
+- **Engine**: `IRowFilter.Matches(EventRow row, LogEvent ev, string text)` receives the event text; `LogStore.FindAsync(RowKey
+  from, SearchDirection, SearchPattern, IRowFilter? filter, IProgress<long>, CancellationToken)` scans (ring rows are re-read
+  from disk like history) and returns the first matching row or a boundary result. Scans run off the UI thread, report scanned
+  bytes, and are cancelled by Esc or a new search.
+- **Timeline**: `TimelineModel.JumpTo(RowKey)` pauses, reloads around the key and selects it, keeping surrounding (filtered)
+  rows visible. Matches in visible previews are highlighted with the shared search colors.
+- **Detail**: Enter on a hit opens its detail scrolled to the first match; matches are highlighted (search hits override
+  structural and rule styles); `n`/`N` inside the detail move between matches within the event; a hit inside a collapsed
+  fold/node is revealed (`ExpandToReveal`).
+- **Status**: `Searching… 12.3 MB` while scanning (Esc cancels), then `Match 2026-11-18 10:20:31` or the boundary message.
+
+## Filter (M10)
+
+`f` opens the filter editor (a dialog): minimum level (or a level set), source contains, file name contains, time from / to
+(in the config time zone, `yyyy-MM-dd HH:mm[:ss]`), text (literal or regex, case-insensitive by default) and any number of
+field predicates `path = value` (text-scheme field name or JSON dotted path; exact string match). All predicates are ANDed.
+`EventFilter : IRowFilter` checks row-level predicates (level, source, file, time) before reading anything else.
+
+- **Time-interval skipping**: `IRowFilter.TimeWindow` lets `HistoryReader` skip whole members whose range `[FirstTime, next
+  member's FirstTime]` lies outside the window; members touching a boundary are kept (equal times are candidates).
+- **Incoming events**: with a filter active, the controller does not pass store arrivals to the model directly; when the model
+  is at the newest end it requests `ReadNewer` from its newest row with the filter (the store applies the same predicate), and
+  `NewCount` counts the matching rows returned. Without a filter arrivals flow as before.
+- **Filter to this value**: `f` on a field / JSON scalar line in the detail adds `path = value` to the active filter and returns
+  to the timeline.
+- **Status**: `Filter: level ≥ WARN · text ~ timeout`; while a filtered load scans: `Scanning… 34 MB`; when a completed scan found
+  nothing: `No matching events`.
