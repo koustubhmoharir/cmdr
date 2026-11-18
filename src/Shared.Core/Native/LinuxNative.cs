@@ -43,6 +43,14 @@ internal static partial class LinuxNative
         [FieldOffset(32)]
         public ulong Ino;
 
+        /// <summary>The birth time in seconds, when STATX_BTIME is in the mask.</summary>
+        [FieldOffset(80)]
+        public long BtimeSec;
+
+        /// <summary>The birth time's nanoseconds, when STATX_BTIME is in the mask.</summary>
+        [FieldOffset(88)]
+        public uint BtimeNsec;
+
         [FieldOffset(136)]
         public uint DevMajor;
 

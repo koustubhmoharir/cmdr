@@ -221,6 +221,43 @@ public class FileIdentityTests
     }
 
     [Fact]
+    public void File_re_created_on_a_reused_inode_has_a_different_identity_when_birth_time_is_reported()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return; // the birth time is read with statx, which only Linux is tested with
+        }
+
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("a.log"), "old");
+        string? identity = FileIdentity.TryGet(dir.File("a.log"));
+        Assert.NotNull(identity);
+        if (identity.Split(':').Length < 4)
+        {
+            return; // this file system reports no birth time, so the identity is device and inode only
+        }
+
+        // Delete and re-create until the new file takes the old inode number. Birth times come from a coarse clock, so each cycle waits a little.
+        // File systems that never reuse a freed inode leave the loop without a reuse, and the test then has nothing to check.
+        for (int cycle = 0; cycle < 10; cycle++)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(20));
+            File.Delete(dir.File("a.log"));
+            File.WriteAllText(dir.File("a.log"), "new");
+            string? recreated = FileIdentity.TryGet(dir.File("a.log"));
+            Assert.NotNull(recreated);
+            if (string.Join(':', identity.Split(':')[..3]) == string.Join(':', recreated.Split(':')[..3]))
+            {
+                // Device and inode match: only the birth time tells the files apart.
+                Assert.NotEqual(identity, recreated);
+                return;
+            }
+
+            identity = recreated;
+        }
+    }
+
+    [Fact]
     public void Symbolic_link_has_the_identity_of_its_target()
     {
         if (!OperatingSystem.IsLinux())

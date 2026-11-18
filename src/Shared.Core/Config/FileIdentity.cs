@@ -12,13 +12,16 @@ public static class FileIdentity
     private const int AtFdcwd = -100;
     private const int AtEmptyPath = 0x1000; // AT_EMPTY_PATH
     private const uint StatxTypeIno = 0x1 | 0x100; // STATX_TYPE | STATX_INO
+    private const uint StatxBtime = 0x800; // STATX_BTIME: the birth time, which tells a re-created file from one that reused its inode
+    private const uint StatxRequested = StatxTypeIno | StatxBtime;
     private const uint SIfmt = 0xF000; // S_IFMT
     private const uint SIfreg = 0x8000; // S_IFREG
     private const uint FileAttributeDirectory = 0x10;
 
     /// <summary>
     /// A string that is the same for every path naming one existing regular file, and different for other files. On Linux it is the
-    /// device and inode; on Windows the volume serial number and file index. Null for a path that does not name an existing regular
+    /// device, the inode and, when the file system reports it, the birth time, so that a file re-created in place of a deleted one, which
+    /// may reuse its inode number, has another identity. On Windows the volume serial number and file index. Null for a path that does not name an existing regular
     /// file, for a path whose identity cannot be read, and on other systems. Never throws for I/O or permission errors.
     /// </summary>
     public static string? TryGet(string path)
@@ -70,7 +73,7 @@ public static class FileIdentity
         LinuxNative.StatxBuffer buffer;
         try
         {
-            if (LinuxNative.Statx(AtFdcwd, path, flags: 0, StatxTypeIno, out buffer) != 0)
+            if (LinuxNative.Statx(AtFdcwd, path, flags: 0, StatxRequested, out buffer) != 0)
             {
                 return null;
             }
@@ -91,7 +94,7 @@ public static class FileIdentity
         LinuxNative.StatxBuffer buffer;
         try
         {
-            if (LinuxNative.Statx((int)handle.DangerousGetHandle(), string.Empty, AtEmptyPath, StatxTypeIno, out buffer) != 0)
+            if (LinuxNative.Statx((int)handle.DangerousGetHandle(), string.Empty, AtEmptyPath, StatxRequested, out buffer) != 0)
             {
                 return null;
             }
@@ -105,7 +108,9 @@ public static class FileIdentity
     }
 
     // The identity of a regular file from the statx fields. Shared by both Linux variants, so that a path and a handle to one file give
-    // the same string.
+    // the same string. The birth time is part of the identity when the file system reports it: an inode number is reused as soon as its
+    // file is deleted, so dev:ino alone cannot tell a re-created file from the one it replaced. When the file system does not report a
+    // birth time the identity is dev:ino, as before.
     [UnsupportedOSPlatform("windows")]
     private static string? FromStatx(LinuxNative.StatxBuffer buffer)
     {
@@ -114,7 +119,10 @@ public static class FileIdentity
             return null;
         }
 
-        return $"{buffer.DevMajor}:{buffer.DevMinor}:{buffer.Ino}";
+        string identity = $"{buffer.DevMajor}:{buffer.DevMinor}:{buffer.Ino}";
+        return (buffer.Mask & StatxBtime) == StatxBtime
+            ? $"{identity}:{buffer.BtimeSec}.{buffer.BtimeNsec}"
+            : identity;
     }
 
     // NOT VERIFIED ON WINDOWS: written without a Windows machine to run it on. The file index is 64 bits; ReFS can have 128-bit file
