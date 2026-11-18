@@ -41,10 +41,16 @@ public enum LineKind
 /// The highlight scope of the text on this line: <c>message</c>, <c>raw</c>, a field name, or a JSON dotted path. Highlight rules
 /// match the text from <paramref name="Indent"/> on. <c>null</c> when the line carries no scoped text.
 /// </param>
+/// <param name="Value">
+/// The exact value of a single-valued field line — a text-event field, or a JSON scalar (strings unquoted, other scalars as
+/// their raw JSON text) — in the form <c>EventFilter</c> compares field predicates with, so "filter to this value" never has to
+/// parse display text. <c>null</c> for every other line, including the lines of multi-line strings.
+/// </param>
 public sealed record DetailLine(
     string Text,
     IReadOnlyList<StyledSpan> Spans,
     LineKind Kind,
     int Indent,
     string? NodeId,
-    string? Scope);
+    string? Scope,
+    string? Value = null);

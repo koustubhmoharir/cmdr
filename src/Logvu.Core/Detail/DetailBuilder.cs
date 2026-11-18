@@ -182,7 +182,7 @@ internal sealed class DetailBuilder
                 new(0, field.Name.Length, SpanStyle.FieldName),
                 new(field.Name.Length, 2, SpanStyle.Punctuation),
             };
-            Add(new DetailLine(head + field.Value, spans, LineKind.Field, head.Length, null, field.Name), null);
+            Add(new DetailLine(head + field.Value, spans, LineKind.Field, head.Length, null, field.Name, field.Value), null);
         }
 
         EmitTextValue(
@@ -335,19 +335,19 @@ internal sealed class DetailBuilder
                 }
                 else
                 {
-                    AddScalar(pad, label, path, value.GetRawText(), SpanStyle.JsonString, parent);
+                    AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonString, parent);
                 }
 
                 return isError;
 
             case JsonValueKind.Number:
-                AddScalar(pad, label, path, value.GetRawText(), SpanStyle.JsonNumber, parent);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonNumber, parent);
                 return isError;
 
             case JsonValueKind.True:
             case JsonValueKind.False:
             case JsonValueKind.Null:
-                AddScalar(pad, label, path, value.GetRawText(), SpanStyle.JsonLiteral, parent);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonLiteral, parent);
                 return isError;
 
             default:
@@ -415,7 +415,7 @@ internal sealed class DetailBuilder
             }
             else
             {
-                AddScalar(pad, label, path, text, SpanStyle.JsonString, parent);
+                AddScalar(pad, label, path, text, text, SpanStyle.JsonString, parent);
             }
 
             return false;
@@ -577,7 +577,7 @@ internal sealed class DetailBuilder
         }
     }
 
-    private void AddScalar(int pad, string label, string path, string valueText, SpanStyle style, Anchor? parent)
+    private void AddScalar(int pad, string label, string path, string valueText, string value, SpanStyle style, Anchor? parent)
     {
         string head = Head(pad, label);
         var spans = new List<StyledSpan>
@@ -590,7 +590,7 @@ internal sealed class DetailBuilder
             spans.Add(new StyledSpan(head.Length, valueText.Length, style));
         }
 
-        Add(new DetailLine(head + valueText, spans, LineKind.Json, head.Length, null, path), parent);
+        Add(new DetailLine(head + valueText, spans, LineKind.Json, head.Length, null, path, value), parent);
     }
 
     private void AddEmptyNode(int pad, string label, string path, string suffix, Anchor? parent)
