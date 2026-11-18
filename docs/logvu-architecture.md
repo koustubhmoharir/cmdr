@@ -148,8 +148,10 @@ file identity (from the open handle: device+inode / volume serial+file index), s
 (`Pending` = no complete event yet, `Dated`, `UnknownTime`, `Expired`), and `IsLive` (the active file, or the newest member
 when there is no `activeFile`).
 
-Ordering: dated members by first-event time (compared as instants); equal times broken by rotation order — for numbered names
-(`<stem><n><ext>`, no number = 0) higher numbers are older — else by basename (ordinal). Unknown-time members sort before all
+Ordering: dated members by first-event time (compared as instants); equal times broken by rotation order — only when `activeFile` is
+configured and both names have the form `<activeStem><n><activeExt>` (the active file itself counts as 0), higher numbers are
+older (log4net numbered backups) — else by basename (ordinal). Serilog's `_001` sequences and lumberjack's timestamped backups
+are thus ordered by name, which is chronological for them. Unknown-time members sort before all
 dated members, in basename order, as a separate marked group. Pending members are not in the order until their first event.
 
 ## Paging and memory (M4)
