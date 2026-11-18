@@ -1,9 +1,12 @@
 using System.IO;
 using Logvu.Core.Config;
+using Logvu.Core.Detail;
+using Logvu.Core.Filter;
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Shared.Tui;
 using Terminal.Gui.App;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 
 namespace Logvu.Tui;
@@ -30,13 +33,16 @@ namespace Logvu.Tui;
 internal sealed class TimelineController : IDisposable, ISearchHost
 {
     /// <summary>The status line's key hints.</summary>
-    internal const string Hints = "Space pause/follow  End newest  ^Q quit";
+    internal const string Hints = "f filter  Space pause/follow  End newest  ^Q quit";
 
     /// <summary>The status line's key hints while the detail is open.</summary>
-    internal const string DetailHints = "Enter toggle  z folds  r raw  Esc back";
+    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  Esc back";
 
     /// <summary>How long a new retention gap stays on the status line. The gap stays in the store's status.</summary>
     internal static readonly TimeSpan GapShownFor = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long a notice of a filter key stays on the status line.</summary>
+    internal static readonly TimeSpan NoticeShownFor = TimeSpan.FromSeconds(3);
 
     private readonly IApplication _app;
     private readonly LogStore _store;
@@ -47,12 +53,16 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private readonly TimelineView _view;
     private readonly StatusLine _statusLine;
     private readonly SearchController _search;
+    private readonly Func<EventFilter?, FilterEdit?> _editFilter;
     private StoreStatus? _storeStatus;
     private RetentionGap? _latestGap;
     private bool _gapShown;
     private int _gapEpoch;
     private bool _started;
     private DetailSession? _detail;
+    private EventFilter? _filter;
+    private string? _notice;
+    private int _noticeEpoch;
     private string _statusLeft = "Loading…";
     private string _statusRight = string.Empty;
     private volatile bool _disposed;
@@ -77,7 +87,11 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// </param>
     /// <param name="source">The rows the timeline loads and searches. The store's by default; a test may supply its own.</param>
     /// <param name="compare">Orders the keys of <paramref name="source"/>. The store's order by default.</param>
-    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/>, <paramref name="source"/> and <paramref name="compare"/> is <c>null</c>.</exception>
+    /// <param name="editFilter">
+    /// Shows the filter editor over the active filter and returns its edit, or <c>null</c> when it was cancelled. The editor is shown with
+    /// <see cref="FilterDialog.Ask(IApplication, EventFilter?, TimeZoneInfo)"/> by default.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/>, <paramref name="source"/>, <paramref name="compare"/> and <paramref name="editFilter"/> is <c>null</c>.</exception>
     internal TimelineController(
         IApplication app,
         LogStore store,
@@ -85,7 +99,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         LogvuConfig config,
         Action<Action>? post,
         ITimelineSource? source = null,
-        Comparison<RowKey>? compare = null)
+        Comparison<RowKey>? compare = null,
+        Func<EventFilter?, FilterEdit?>? editFilter = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(store);
@@ -97,12 +112,13 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _details = details;
         _config = config;
         _post = post ?? (action => app.Invoke(action));
+        _editFilter = editFilter ?? (current => FilterDialog.Ask(app, current, config.TimeZone));
         ITimelineSource timeline = source ?? new LogStoreTimelineSource(store);
         _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
         _view = new TimelineView(_model, config.TimeZone) { Placeholder = "Loading…" };
         _statusLine = new StatusLine();
         _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
-        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, _search.HandleShortcut, _search.CancelScan);
+        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, HandleShortcut, _search.CancelScan);
     }
 
     /// <summary>The main window. Run it with the application.</summary>
@@ -125,6 +141,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
 
     /// <summary>The search of the timeline and the detail. Its bar is the window's search bar.</summary>
     internal SearchController Search => _search;
+
+    /// <summary>The active filter of the timeline, or <c>null</c> when every event is shown.</summary>
+    internal EventFilter? Filter => _filter;
 
     /// <summary>Subscribes to the store and to the model, focuses the timeline and starts the store.</summary>
     /// <exception cref="InvalidOperationException">The store is already started.</exception>
@@ -176,7 +195,6 @@ internal sealed class TimelineController : IDisposable, ISearchHost
             if (update.Batch.Initial || update.Resync)
             {
                 _started = true;
-                _view.Placeholder = "Waiting for events…";
                 _model.Start(TimelineView.RowsFor(_view.Viewport.Height));
             }
 
@@ -254,6 +272,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         var session = new DetailSession(key, view, new CancellationTokenSource());
         view.CloseRequested += CloseDetail;
         view.DocumentChanged += RefreshStatus;
+        view.FilterRequested += FilterFromDetail;
         _detail = session;
         Window.SetContent(view);
         RefreshStatus();
@@ -315,6 +334,126 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         RefreshStatus();
     }
 
+    /// <summary>
+    /// The keys the window routes when no focused view took them. In the timeline <c>f</c> opens the filter editor and <c>F</c> clears the
+    /// filter; the search's keys come after them. The detail handles its own <c>f</c>, so only the search's keys reach here while it is open.
+    /// </summary>
+    private bool HandleShortcut(Key key)
+    {
+        if (_detail is null)
+        {
+            if (IsPlain(key, 'f'))
+            {
+                OpenFilterEditor();
+                return true;
+            }
+
+            if (IsPlain(key, 'F'))
+            {
+                ClearFilter();
+                return true;
+            }
+        }
+
+        return _search.HandleShortcut(key);
+    }
+
+    /// <summary>
+    /// Opens the filter editor over the active filter, in the timeline. Apply replaces the filter; Cancel and Esc keep it. The timeline keeps
+    /// its selection and viewport when the filter changes.
+    /// </summary>
+    private void OpenFilterEditor()
+    {
+        if (_disposed || _detail is not null)
+        {
+            return;
+        }
+
+        FilterEdit? edit = _editFilter(_filter);
+        _view.SetFocus();
+        if (edit is { } applied)
+        {
+            ApplyFilter(applied.Filter);
+        }
+        else
+        {
+            RefreshStatus();
+        }
+    }
+
+    /// <summary>
+    /// Makes <paramref name="filter"/> the active filter, or none for <c>null</c>: the model reloads with it, and a running search is cancelled,
+    /// since it was started with the filter it replaces.
+    /// </summary>
+    private void ApplyFilter(EventFilter? filter)
+    {
+        _filter = filter;
+        _notice = null;
+        _noticeEpoch++;
+        if (_search.IsScanning)
+        {
+            _search.CancelScan();
+        }
+
+        _model.SetFilter(filter);
+        RefreshStatus();
+    }
+
+    /// <summary>Clears the active filter, as <c>F</c> does in the timeline, and says so on the status line.</summary>
+    private void ClearFilter()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        ApplyFilter(null);
+        ShowNotice(FilterMessages.Cleared);
+    }
+
+    /// <summary>
+    /// Filters on the field under the cursor of the detail: the predicate is added to the active filter, the detail closes, and the timeline
+    /// shows the filter. A line that is not a field only shows a notice, and the detail stays open.
+    /// </summary>
+    /// <param name="line">The line under the cursor.</param>
+    private void FilterFromDetail(DetailLine line)
+    {
+        if (_disposed || _detail is null)
+        {
+            return;
+        }
+
+        if (FilterForm.FieldPredicateOf(line) is not { } predicate)
+        {
+            ShowNotice(FilterMessages.NotAField);
+            return;
+        }
+
+        EventFilter filter = FilterForm.Extend(_filter, predicate);
+        CloseDetail();
+        ApplyFilter(filter);
+    }
+
+    /// <summary>Shows a notice of a filter key in the left part of the status line for <see cref="NoticeShownFor"/>. A newer notice restarts the time.</summary>
+    private void ShowNotice(string text)
+    {
+        _notice = text;
+        int epoch = ++_noticeEpoch;
+        _app.AddTimeout(NoticeShownFor, () =>
+        {
+            if (!_disposed && epoch == _noticeEpoch)
+            {
+                _notice = null;
+                RefreshStatus();
+            }
+
+            return false;
+        });
+        RefreshStatus();
+    }
+
+    private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;
+
     /// <summary>Runs a continuation on the UI thread. Work posted after the application stopped is dropped.</summary>
     private void Post(Action action)
     {
@@ -339,7 +478,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private void RefreshStatus()
     {
         bool inDetail = _detail is not null;
-        _statusLeft = _detail is { } session ? DetailLeft(session, _search.Status) : LeftText();
+        _view.Placeholder = BodyText();
+        _statusLeft = _detail is { } session ? DetailLeft(session, _notice, _search.Status) : LeftText();
         string keys = inDetail ? DetailHints : Hints;
         string right = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
         _statusRight = right;
@@ -347,6 +487,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     }
 
     DetailView? ISearchHost.Detail => _detail?.View;
+
+    IRowFilter? ISearchHost.Filter => _filter;
 
     void ISearchHost.ShowSearchBar(bool open) => Window.ShowSearchBar(open);
 
@@ -360,9 +502,10 @@ internal sealed class TimelineController : IDisposable, ISearchHost
 
     /// <summary>
     /// The left part of the status line of the detail: <c>DETAIL</c>, then the file and offset of a loaded event, then <c>raw</c> in the raw
-    /// view and <c>truncated</c> for a cut event, and last the search's status. An unavailable event shows only <c>DETAIL</c>.
+    /// view and <c>truncated</c> for a cut event, then a notice of a filter key, and last the search's status. An unavailable event shows only
+    /// <c>DETAIL</c>.
     /// </summary>
-    private static string DetailLeft(DetailSession session, string? search)
+    private static string DetailLeft(DetailSession session, string? notice, string? search)
     {
         var parts = new List<string> { "DETAIL" };
         if (session.Detail is EventDetail.Loaded loaded)
@@ -377,6 +520,11 @@ internal sealed class TimelineController : IDisposable, ISearchHost
             {
                 parts.Add("truncated");
             }
+        }
+
+        if (notice is not null)
+        {
+            parts.Add(notice);
         }
 
         if (search is not null)
@@ -396,6 +544,30 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         }
 
         var parts = new List<string> { ModeText() };
+        if (_filter is { } filter)
+        {
+            parts.Add(FilterMessages.Active(filter.Describe()));
+        }
+
+        if (_model.IsScanning)
+        {
+            parts.Add(FilterMessages.Scanning(_model.ScannedBytes));
+        }
+        else if (_model.NoMatches)
+        {
+            parts.Add(FilterMessages.NoMatches);
+        }
+
+        if (_model.FilterTimedOut)
+        {
+            parts.Add(FilterMessages.TimedOut);
+        }
+
+        if (_notice is not null)
+        {
+            parts.Add(_notice);
+        }
+
         if (_search.Status is { } search)
         {
             parts.Add(search);
@@ -419,11 +591,40 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         return string.Join(" · ", parts);
     }
 
+    /// <summary>
+    /// The text of the timeline's body while it has no rows: why there is none. A filter that matched nothing says so, a scan in progress
+    /// says that it is scanning, and only otherwise does the timeline wait for events.
+    /// </summary>
+    private string BodyText()
+    {
+        if (!_started)
+        {
+            return "Loading…";
+        }
+
+        if (_model.NoMatches)
+        {
+            return FilterMessages.NoMatches;
+        }
+
+        if (_model.IsScanning)
+        {
+            return "Scanning…";
+        }
+
+        return "Waiting for events…";
+    }
+
     private string ModeText()
     {
         if (_model.Mode == TimelineMode.Follow)
         {
             return "FOLLOW";
+        }
+
+        if (_model.HasUnseenArrivals)
+        {
+            return "PAUSED · " + FilterMessages.NewEvents;
         }
 
         return _model.NewCount > 0 ? $"PAUSED · {_model.NewCount} new" : "PAUSED";

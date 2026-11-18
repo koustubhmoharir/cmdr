@@ -42,6 +42,14 @@ internal sealed class FakeTimelineSource : ITimelineSource
         read.Completion.SetResult(read.Page);
     }
 
+    /// <summary>Completes the oldest held read of a kind with its page, marked as abandoned: the filter's pattern timed out during it.</summary>
+    public void CompleteOldestAbandoned(ReadKind kind)
+    {
+        PendingRead read = _held.First(candidate => candidate.Kind == kind);
+        _held.Remove(read);
+        read.Completion.SetResult(read.Page with { Abandoned = true });
+    }
+
     public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
         Read(ReadKind.Newest, default, count, filter);
 

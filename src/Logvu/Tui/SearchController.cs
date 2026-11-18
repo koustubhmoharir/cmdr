@@ -22,6 +22,9 @@ internal interface ISearchHost
 
     /// <summary>Refreshes the status line.</summary>
     void RefreshStatus();
+
+    /// <summary>The active filter, which a search passes on to the history, or <c>null</c> for every event.</summary>
+    IRowFilter? Filter { get; }
 }
 
 /// <summary>
@@ -294,17 +297,27 @@ internal sealed class SearchController
             bytes => _post(() => Progressed(epoch, bytes)),
             ProgressIntervalMs,
             () => _clock.ElapsedMilliseconds);
-        _ = RunScanAsync(epoch, from, older, pattern, cancellation.Token, progress);
+        _ = RunScanAsync(epoch, from, older, pattern, _host.Filter, cancellation.Token, progress);
     }
 
-    /// <summary>Runs the scan on the thread pool and posts its outcome to the UI thread. A cancelled scan posts nothing.</summary>
-    private async Task RunScanAsync(int epoch, RowKey from, bool older, SearchPattern pattern, CancellationToken ct, IProgress<long> progress)
+    /// <summary>
+    /// Runs the scan on the thread pool and posts its outcome to the UI thread. A cancelled scan posts nothing. The scan passes the filter
+    /// that was active when it started, so a filter applied later does not change its results.
+    /// </summary>
+    private async Task RunScanAsync(
+        int epoch,
+        RowKey from,
+        bool older,
+        SearchPattern pattern,
+        IRowFilter? filter,
+        CancellationToken ct,
+        IProgress<long> progress)
     {
         Logvu.Core.Store.SearchResult result;
         try
         {
             SearchDirection direction = older ? SearchDirection.Older : SearchDirection.Newer;
-            result = await _source.FindAsync(from, direction, pattern, null, progress, ct).ConfigureAwait(false);
+            result = await _source.FindAsync(from, direction, pattern, filter, progress, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

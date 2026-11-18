@@ -78,7 +78,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] `logvu` → picker with **Open file** (works with empty history): generic recent picker in Shared.Tui (faithful copy of cmdr's).
 - [x] Timeline view: Time/Level/Source/Message columns, day crossing dates, level colors + labels, selection.
 - [x] Status line: Follow/Paused, new count, filters, search progress, read errors.
-- [ ] Key routing: printable shortcuts in timeline focus only (done for `/`, `n`, `N`, Enter; `f` comes with M10).
+- [x] Key routing: printable shortcuts in timeline focus only.
 
 ## M8. Detail view
 
@@ -101,7 +101,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 - [x] Predicates: source, level, time interval, text, field value; AND; same predicate for history and incoming (EventFilter; filtered arrivals refill from the changed row).
 - [x] Time-interval file skipping via catalog boundaries (keep equal-time candidates).
-- [ ] Filter editor (`f`); **Filter to this value** from detail; scanning vs zero-match distinction.
+- [x] Filter editor (`f`, Shift+F clears); **Filter to this value** from detail (DetailLine.Value); scanning vs zero-match distinction.
 
 ## M11. Acceptance and docs
 

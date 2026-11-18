@@ -55,6 +55,11 @@ internal sealed class DetailView : View
     /// <summary>Raised after the document is rebuilt: a fold or node was toggled, the raw view changed, or a detail was loaded.</summary>
     public event Action? DocumentChanged;
 
+    /// <summary>
+    /// Raised by <c>f</c> with the line under the cursor. The owner decides what the line filters on; the view does not judge the line.
+    /// </summary>
+    public event Action<DetailLine>? FilterRequested;
+
     /// <summary>The detail shown, or <c>null</c> until one is loaded.</summary>
     public EventDetail? Detail => _detail;
 
@@ -201,6 +206,13 @@ internal sealed class DetailView : View
         else if (key == Key.R)
         {
             Rebuild(_document.Options with { Raw = !_document.Options.Raw }, resetPosition: true);
+        }
+        else if (key == Key.F)
+        {
+            if (_cursor < _document.Lines.Count)
+            {
+                FilterRequested?.Invoke(_document.Lines[_cursor]);
+            }
         }
         else
         {
