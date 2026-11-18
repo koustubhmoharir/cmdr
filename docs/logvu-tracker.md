@@ -51,16 +51,17 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Page older/newer history from an anchor row across member boundaries (HistoryReader).
 - [x] Immutable CatalogSnapshot so history scans run off the store worker; HistoryReader over snapshots.
 - [ ] Visible rows survive ring eviction (page holds its own rows).
-- [ ] On-demand full event fetch with bounded buffers; oversized values streamed/paged.
-- [ ] Background worker: off-UI reads, cancellation of superseded work, batched publication.
+- [x] On-demand full event fetch with bounded buffers (LogStore.ReadDetailAsync, 4 MiB cap).
+- [ ] Oversized detail values streamed/paged in the detail view (M8).
+- [x] Background worker: off-UI reads, cancellation of superseded work, batched publication.
 
 ## M5. Live tail and rotation
 
 - [x] Per-generation read cursor; provisional current event grows without counting as a new arrival.
-- [ ] LogStore: worker, directory watcher (coalesced) + 2 s rescans + overflow, 250 ms tail polls, async reads over snapshots (transient-identity retry is in Reconciler).
+- [x] LogStore: worker, directory watcher (coalesced) + 2 s rescans + overflow, 250 ms tail polls, async reads over snapshots (transient-identity retry is in Reconciler).
 - [x] Reconcile by identity (Reconciler; identity includes birth time on Linux, plus a 256-byte content fingerprint): rename (keep offsets), delete (expire), new file (fresh generation), truncation (fresh
       generation), unverifiable identity (rediscover). Drain predecessor before successor.
-- [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: treat as truncation.
+- [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: check Reconciler/StoreReader catch it (EndOfStreamException is an IOException, so the existing IOException handlers record it) — add a test.
 - [x] Retention gap indication (RetentionGap in ChangeBatch).
 - [ ] "Source file expired" for detail reads of deleted generations (M8).
 - [ ] Windows share modes read/write/delete *(Windows)*: verify log4net numbered rotation succeeds while logvu tails (brief opens of backups during rescans; Windows 10+ POSIX delete semantics should make a concurrent delete safe).

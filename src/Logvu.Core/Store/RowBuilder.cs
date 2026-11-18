@@ -30,13 +30,30 @@ public static class RowBuilder
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(context);
-        if (scheme is null)
-        {
-            throw new InvalidOperationException($"Generation {generation} has no scheme.");
-        }
+        RequireScheme(scheme, generation);
 
         (string text, _) = EventText.Read(stream, extent, TextCap);
-        LogEvent ev = scheme.Parse(text, context);
+        return BuildFromText(text, scheme, generation, extent, context);
+    }
+
+    /// <summary>
+    /// Parses the text of one event and builds its row, for callers that have read the text themselves (a detail read keeps the text it shows).
+    /// </summary>
+    /// <param name="text">The event's text, as <see cref="EventText.Read"/> gives it. It may be a prefix of the event when it was cut.</param>
+    /// <param name="scheme">The scheme of the event's member, which parses the text.</param>
+    /// <param name="generation">The generation of the event's member, which the row's key carries.</param>
+    /// <param name="extent">The event's bytes within its file.</param>
+    /// <param name="context">The parse settings.</param>
+    /// <returns>The row, and the parsed event it was built from.</returns>
+    /// <exception cref="ArgumentNullException">A required argument is <c>null</c>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="scheme"/> is <c>null</c>: the member has no scheme.</exception>
+    public static (EventRow Row, LogEvent Event) BuildFromText(string text, ILogScheme? scheme, int generation, EventExtent extent, ParseContext context)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(context);
+        RequireScheme(scheme, generation);
+
+        LogEvent ev = scheme!.Parse(text, context);
         var row = new EventRow(
             new RowKey(generation, extent.Start),
             extent,
@@ -50,6 +67,14 @@ public static class RowBuilder
             extent.Orphan,
             extent.Provisional);
         return (row, ev);
+    }
+
+    private static void RequireScheme(ILogScheme? scheme, int generation)
+    {
+        if (scheme is null)
+        {
+            throw new InvalidOperationException($"Generation {generation} has no scheme.");
+        }
     }
 
     /// <summary>
