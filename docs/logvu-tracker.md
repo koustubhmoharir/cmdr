@@ -98,7 +98,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
 - [ ] README section / logvu README, publish script entry.
-- [ ] Windows checklist for the user *(Windows)*.
+- [ ] Windows checklist for the user *(Windows)*, including Shared.Core's AtomicFile File.Replace / error-1176 recovery (copied verbatim from cmdr, unverified there too).
 
 ## M12. Refactoring round (after logvu is done)
 
