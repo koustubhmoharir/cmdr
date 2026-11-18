@@ -137,6 +137,25 @@ public sealed partial class TimelineModel
         Finish();
     }
 
+    /// <summary>
+    /// Pauses Follow and selects a visible row, as a click does. The viewport does not move. A row outside the viewport's rows is
+    /// ignored, and so is any call while no rows are loaded. Queued navigation is dropped: the selection the caller made supersedes it.
+    /// </summary>
+    /// <param name="screenRow">The row's screen row within the viewport, counted from the top, with 0 the top visible row.</param>
+    public void SelectVisibleRow(int screenRow)
+    {
+        if (screenRow < 0 || screenRow >= VisibleRows.Count)
+        {
+            return;
+        }
+
+        SetPaused();
+        _queue.Clear();
+        _pivot = null;
+        _selected = _top + screenRow;
+        Finish();
+    }
+
     /// <summary>Changes the viewport height. The selected row keeps its screen row where it can, and the window is refilled.</summary>
     /// <param name="height">The new viewport height. It is at least 1.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="height"/> is below 1.</exception>

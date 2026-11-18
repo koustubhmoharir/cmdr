@@ -17,7 +17,9 @@ public sealed class ChangeBatch
         bool ringReset,
         IEnumerable<MemberReadError> errors,
         string? directoryError,
-        bool morePending)
+        bool morePending,
+        IEnumerable<int> readGenerations,
+        bool rescanNeeded)
     {
         Initial = initial;
         Added = added.ToList().AsReadOnly();
@@ -29,6 +31,8 @@ public sealed class ChangeBatch
         Errors = errors.ToList().AsReadOnly();
         DirectoryError = directoryError;
         MorePending = morePending;
+        ReadGenerations = readGenerations.ToList().AsReadOnly();
+        RescanNeeded = rescanNeeded;
     }
 
     /// <summary>
@@ -78,8 +82,20 @@ public sealed class ChangeBatch
     public bool MorePending { get; }
 
     /// <summary>
+    /// The generations whose file was opened and read without error in this run. A read error of such a generation, from an earlier run,
+    /// no longer holds: the store drops it. Expired generations are not listed here; <see cref="Expired"/> covers them.
+    /// </summary>
+    public IReadOnlyList<int> ReadGenerations { get; }
+
+    /// <summary>
+    /// Whether a tail-only run found a member's path not naming its file (not found, or another file now): the file is being rotated. No
+    /// error is recorded for it, and the store runs a rescan straight away, which relocates or expires the member.
+    /// </summary>
+    public bool RescanNeeded { get; }
+
+    /// <summary>
     /// Whether nothing changed: no rows, no expiry, no gap, no catalog change, no ring reset, no error and no directory error.
-    /// <see cref="Initial"/> and <see cref="MorePending"/> do not count.
+    /// <see cref="Initial"/>, <see cref="MorePending"/>, <see cref="ReadGenerations"/> and <see cref="RescanNeeded"/> do not count.
     /// </summary>
     public bool IsEmpty =>
         Added.Count == 0

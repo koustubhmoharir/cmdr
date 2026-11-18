@@ -74,10 +74,11 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M7. TUI shell and timeline
 
-- [ ] Program: `logvu <config>`, `logvu` → picker with **Open file** (works with empty history), remember on success.
-- [ ] Timeline view: Time/Level/Source/Message columns, day crossing dates, level colors + labels, selection.
-- [ ] Status line: Follow/Paused, new count, filters, search progress, read errors.
-- [ ] Key routing: printable shortcuts in timeline focus only.
+- [x] Program: `logvu <config>` (config errors → stderr, exit 1), remember on success.
+- [ ] `logvu` → picker with **Open file** (works with empty history): generic recent picker in Shared.Tui (faithful copy of cmdr's).
+- [x] Timeline view: Time/Level/Source/Message columns, day crossing dates, level colors + labels, selection.
+- [x] Status line: Follow/Paused, new count, filters, search progress, read errors.
+- [ ] Key routing: printable shortcuts in timeline focus only (arrows/Page/End/Space/mouse done; `/`, `f`, `n`, Enter come with M8–M10).
 
 ## M8. Detail view
 
@@ -101,6 +102,8 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [ ] Filter editor (`f`); **Filter to this value** from detail; scanning vs zero-match distinction.
 
 ## M11. Acceptance and docs
+
+- [ ] Startup: rows appear ~2 s after launch on a 220 KB demo set in a Debug build (cmdr: ~1–1.5 s). Measure a Release build; profile the initial run + ring warm-up (2000 rows) and compiled-regex construction if still slow.
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
 - [ ] README section / logvu README, publish script entry.

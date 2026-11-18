@@ -76,6 +76,7 @@ public sealed class LogStore : IAsyncDisposable
     private bool _morePending;
     private bool _failureAdded;
     private bool _resyncPending;
+    private bool _rescanNow;
     private HashSet<(int Generation, string Message)> _lastRaisedErrors = [];
     private long _lastRescan;
     private long _lastTail;
@@ -282,7 +283,8 @@ public sealed class LogStore : IAsyncDisposable
             {
                 long now = Stopwatch.GetTimestamp();
                 long requested = Volatile.Read(ref _requestedAt);
-                bool rescanRequested = requested != 0 && now - requested >= Ticks(CoalesceDelay);
+                bool rescanRequested = _rescanNow || (requested != 0 && now - requested >= Ticks(CoalesceDelay));
+                _rescanNow = false;
                 bool rescanDue = now - _lastRescan >= Ticks(RescanInterval);
                 bool tailDue = now - _lastTail >= Ticks(TailInterval);
                 if (!_morePending && !rescanRequested && !rescanDue && !tailDue)
@@ -347,16 +349,14 @@ public sealed class LogStore : IAsyncDisposable
             ChangeBatch batch = _reconciler.Run(rescan);
             _ranOnce = true;
             _morePending = batch.MorePending;
+            _rescanNow = batch.RescanNeeded;
             if (!_warmed)
             {
                 Warm();
                 _warmed = true;
             }
 
-            foreach (MemberReadError error in batch.Errors)
-            {
-                Remember(_recentErrors, error, RecentErrorCap);
-            }
+            bool errorsCleared = UpdateRecentErrors(batch.Errors, batch.ReadGenerations.Concat(batch.Expired));
 
             foreach (RetentionGap gap in batch.Gaps)
             {
@@ -373,7 +373,7 @@ public sealed class LogStore : IAsyncDisposable
             StoreState state = Publish();
             bool errorsRepeated = batch.Errors.Count > 0 && !HasContent(batch)
                 && _lastRaisedErrors.SetEquals(ErrorSet(batch));
-            bool raise = batch.Initial || _resyncPending || directoryChanged || _failureAdded
+            bool raise = batch.Initial || _resyncPending || directoryChanged || _failureAdded || errorsCleared
                 || ((HasContent(batch) || batch.Errors.Count > 0) && !errorsRepeated);
             if (raise)
             {
@@ -411,6 +411,25 @@ public sealed class LogStore : IAsyncDisposable
         || batch.CatalogChanged
         || batch.RingReset;
 
+    /// <summary>
+    /// Brings the recent read errors up to date with a run. A generation that the run reported has its errors replaced by the run's
+    /// errors; a generation that the run read without error, or that expired, has its errors dropped. So the status shows the errors of
+    /// the latest run that read each member. Returns whether an error was dropped, which changes the status.
+    /// </summary>
+    private bool UpdateRecentErrors(IEnumerable<MemberReadError> reported, IEnumerable<int> resolved)
+    {
+        var reportedGenerations = reported.Select(error => error.Generation).ToHashSet();
+        var resolvedGenerations = resolved.ToHashSet();
+        bool cleared = _recentErrors.RemoveAll(error => resolvedGenerations.Contains(error.Generation)) > 0;
+        _recentErrors.RemoveAll(error => reportedGenerations.Contains(error.Generation));
+        foreach (MemberReadError error in reported)
+        {
+            Remember(_recentErrors, error, RecentErrorCap);
+        }
+
+        return cleared;
+    }
+
     private static HashSet<(int Generation, string Message)> ErrorSet(ChangeBatch batch) =>
         batch.Errors.Select(error => (error.Generation, error.Message)).ToHashSet();
 
@@ -422,10 +441,7 @@ public sealed class LogStore : IAsyncDisposable
     {
         CatalogSnapshot catalog = _catalog.Snapshot();
         RowPage history = _history.ReadNewest(catalog, Math.Min(_ring.Capacity, WarmRows), null, null, CancellationToken.None);
-        foreach (MemberReadError error in history.Errors)
-        {
-            Remember(_recentErrors, error, RecentErrorCap);
-        }
+        UpdateRecentErrors(history.Errors, []);
 
         RowKey? oldest = _ring.Oldest;
         List<EventRow> older = oldest is { } first
@@ -579,5 +595,7 @@ public sealed class LogStore : IAsyncDisposable
         ringReset: false,
         errors: [],
         directoryError: null,
-        morePending: false);
+        morePending: false,
+        readGenerations: [],
+        rescanNeeded: false);
 }

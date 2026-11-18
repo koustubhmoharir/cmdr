@@ -445,6 +445,89 @@ public sealed class ReconcilerTests
     }
 
     [Fact]
+    public void A_rename_of_the_live_file_between_tail_runs_is_not_an_error_and_asks_for_a_rescan()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft.log", Events(T0, "live", 2));
+        ReconcilerRig rig = ReconcilerRig.Numbered(dir);
+        rig.Run(rescan: true);
+        Member live = rig.Find("SheetKraft.log");
+        rig.Append("SheetKraft.log", Line(T0.AddHours(1), "INFO", "before rotation"));
+        ChangeBatch quiet = rig.Run();
+        Assert.False(quiet.RescanNeeded);
+        Assert.Equal(new[] { "before rotation" }, quiet.Added.Select(row => row.Preview));
+
+        // The producer renames the live file away; the next tail run finds no file at the live path.
+        File.Move(rig.Path("SheetKraft.log"), rig.Path("SheetKraft1.log"));
+        ChangeBatch rotating = rig.Run();
+
+        Assert.Empty(rotating.Errors);
+        Assert.Empty(rotating.Added);
+        Assert.Empty(rotating.Expired);
+        Assert.True(rotating.RescanNeeded);
+        Assert.Null(rotating.DirectoryError);
+
+        // The rescan relocates the member to its new name, and the new live file is read from its start.
+        rig.Write("SheetKraft.log", Events(T0.AddHours(2), "rot", 2));
+        ChangeBatch rescan = rig.Run(rescan: true);
+
+        Assert.Empty(rescan.Errors);
+        Assert.False(rescan.RescanNeeded);
+        Assert.Empty(rescan.Expired);
+        Assert.Same(live, rig.Find("SheetKraft1.log"));
+        Assert.Equal(rig.Path("SheetKraft1.log"), live.Path);
+        Member fresh = rig.Find("SheetKraft.log");
+        Assert.NotEqual(live.Generation, fresh.Generation);
+        Assert.Equal(new[] { "rot event 0", "rot event 1" }, rescan.Added.Select(row => row.Preview));
+    }
+
+    [Fact]
+    public void A_live_path_that_names_another_file_between_tail_runs_is_not_an_error_either()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft.log", Events(T0, "live", 2));
+        ReconcilerRig rig = ReconcilerRig.Numbered(dir);
+        rig.Run(rescan: true);
+        Member live = rig.Find("SheetKraft.log");
+
+        // Rotated and re-created before the next run: the path names a file with another identity.
+        File.Move(rig.Path("SheetKraft.log"), rig.Path("SheetKraft1.log"));
+        rig.Write("SheetKraft.log", Events(T0.AddHours(2), "rot", 2));
+        ChangeBatch tail = rig.Run();
+
+        Assert.Empty(tail.Errors);
+        Assert.True(tail.RescanNeeded);
+        Assert.Empty(tail.Added);
+
+        ChangeBatch rescan = rig.Run(rescan: true);
+
+        Assert.Empty(rescan.Errors);
+        Assert.False(rescan.RescanNeeded);
+        Assert.Same(live, rig.Find("SheetKraft1.log"));
+        Assert.Equal(new[] { "rot event 0", "rot event 1" }, rescan.Added.Select(row => row.Preview));
+    }
+
+    [Fact]
+    public void Reads_that_succeed_are_listed_and_an_unread_member_is_not()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft1.log", Events(T0, "old", 2));
+        dir.Write("SheetKraft.log", Events(T0.AddHours(1), "live", 2));
+        ReconcilerRig rig = ReconcilerRig.Numbered(dir);
+        ChangeBatch initial = rig.Run(rescan: true);
+        Member live = rig.Find("SheetKraft.log");
+        Member old = rig.Find("SheetKraft1.log");
+
+        // A tail-only run reads the live member; the backup is only read when its backlog is drained.
+        rig.Append("SheetKraft.log", Line(T0.AddHours(2), "INFO", "tail"));
+        ChangeBatch tail = rig.Run();
+
+        Assert.Contains(live.Generation, tail.ReadGenerations);
+        Assert.DoesNotContain(old.Generation, tail.ReadGenerations);
+        Assert.Empty(initial.Errors);
+    }
+
+    [Fact]
     public void A_transient_identity_failure_is_retried_and_the_new_file_is_found_in_the_same_run()
     {
         using var dir = new ConfigTestDirectory();

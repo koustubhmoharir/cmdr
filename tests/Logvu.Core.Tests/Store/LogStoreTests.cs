@@ -453,11 +453,41 @@ public sealed class LogStoreTests
             // Updates still flow for real changes.
             AppendText(dir, "SheetKraft.log", Line(T0.AddHours(2), "INFO", "still flowing"));
             await h.WaitFor(u => u.Batch.Added.Any(row => row.Preview == "still flowing"), raised);
+
+            // Once a run reads the backup, its error is no longer current, and the status drops it.
+            File.SetUnixFileMode(backup, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            await h.WaitUntil(() => h.Store.CurrentStatus.RecentErrors.Count == 0);
+            Assert.Empty(h.Store.CurrentStatus.RecentErrors);
         }
         finally
         {
             File.SetUnixFileMode(backup, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
+    }
+
+    [Fact]
+    public async Task A_rotation_surfaces_no_read_error_in_the_status()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft1.log", Events(T0, "one", 3));
+        dir.Write("SheetKraft.log", Events(T0.AddHours(1), "live", 4));
+        await using Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+
+        int mark = h.Count;
+        File.Move(dir.Full("SheetKraft1.log"), dir.Full("SheetKraft2.log"));
+        File.Move(dir.Full("SheetKraft.log"), dir.Full("SheetKraft1.log"));
+
+        // Tail polls run while the live path is empty. Those runs find nothing at the path, which is the rotation in progress.
+        int rescans = h.Store.RescanCount;
+        await h.WaitUntil(() => h.Store.RescanCount >= rescans + 2);
+        dir.Write("SheetKraft.log", Events(T0.AddHours(3), "new", 2));
+        await h.WaitFor(u => u.Batch.Added.Any(row => row.Preview == "new event 1"), mark);
+
+        Assert.Empty(h.Since(mark).SelectMany(update => update.Batch.Errors));
+        Assert.Empty(h.Store.CurrentStatus.RecentErrors);
+        Assert.Equal("SheetKraft.log", h.Store.CurrentStatus.LiveMemberName);
     }
 
     private static bool CanRead(string path)

@@ -431,6 +431,66 @@ public sealed class TimelineModelTests
         Assert.True(model.AtEnd);
     }
 
+    [Fact]
+    public void SelectVisibleRow_pauses_and_selects_that_row_without_moving_the_viewport()
+    {
+        var model = Model(Store());
+        model.Start(3);
+        Assert.Equal("r97 r98 [r99]", Render(model));
+
+        model.SelectVisibleRow(0);
+
+        Assert.Equal("[r97] r98 r99", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+
+        model.SelectVisibleRow(2);
+        Assert.Equal("r97 r98 [r99]", Render(model));
+    }
+
+    [Fact]
+    public void SelectVisibleRow_in_a_paused_viewport_keeps_the_viewport()
+    {
+        var model = Model(Store());
+        model.Start(3);
+        Seek(model, 50);
+        Assert.Equal("[r50] r51 r52", Render(model));
+
+        model.SelectVisibleRow(2);
+
+        Assert.Equal("r50 r51 [r52]", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+        Assert.Equal(0, model.NewCount);
+    }
+
+    [Fact]
+    public void SelectVisibleRow_ignores_a_row_outside_the_viewport()
+    {
+        var model = Model(Store());
+        model.Start(3);
+        int changes = 0;
+        model.Changed += () => changes++;
+
+        model.SelectVisibleRow(-1);
+        model.SelectVisibleRow(3);
+        model.SelectVisibleRow(int.MaxValue);
+
+        Assert.Equal("r97 r98 [r99]", Render(model));
+        Assert.Equal(TimelineMode.Follow, model.Mode);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
+    public void SelectVisibleRow_does_nothing_while_there_are_no_rows()
+    {
+        var model = Model(new FakeTimelineSource([]));
+        model.Start(3);
+
+        model.SelectVisibleRow(0);
+
+        Assert.Null(model.SelectedRow);
+        Assert.Equal(TimelineMode.Follow, model.Mode);
+    }
+
     private static EventRow Row(int index, string? preview = null) => new(
         new RowKey(1, index * 100L),
         new EventExtent(0, 0, 0, false, false),

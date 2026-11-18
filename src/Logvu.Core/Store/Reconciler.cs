@@ -50,7 +50,8 @@ namespace Logvu.Core.Store;
 /// <para>
 /// <b>Failures.</b> A member that cannot be read in a step is recorded in <see cref="ChangeBatch.Errors"/> and skipped for the rest of that
 /// run. An I/O error that happens after some rows of a member were published leaves the cursor after the last published row, so those rows
-/// are not published again.
+/// are not published again. In a tail-only run, a path that is not found or names another file is not an error: the file is being rotated,
+/// so the run asks for a rescan (<see cref="ChangeBatch.RescanNeeded"/>), which relocates or expires the member.
 /// </para>
 /// </remarks>
 public sealed class Reconciler
@@ -124,7 +125,7 @@ public sealed class Reconciler
             throw new InvalidOperationException("The first run must rescan the directory: it is the initial run.");
         }
 
-        var run = new RunChanges(initial: !_started);
+        var run = new RunChanges(initial: !_started) { Rescan = rescanDirectory };
         _started = true;
 
         Scan? scan = rescanDirectory ? ScanDirectory(run) : null;
@@ -165,7 +166,9 @@ public sealed class Reconciler
             run.RingReset,
             run.Errors,
             run.DirectoryError,
-            run.MorePending);
+            run.MorePending,
+            run.Opened.Where(generation => !run.Failed.Contains(generation)).Order(),
+            run.RescanNeeded);
     }
 
     /// <summary>The files found by a rescan, and the paths whose identity could not be read.</summary>
@@ -218,8 +221,17 @@ public sealed class Reconciler
 
         public List<MemberReadError> Errors { get; } = [];
 
-        /// <summary>The generations that had a read error in this run. They are not read again in it.</summary>
+        /// <summary>The generations that had a read error in this run, or were skipped for a rotation. They are not read again in it.</summary>
         public HashSet<int> Failed { get; } = [];
+
+        /// <summary>The generations whose file was opened in this run, with the identity verified.</summary>
+        public HashSet<int> Opened { get; } = [];
+
+        /// <summary>Whether the run is a rescan. A tail-only run does not report a rotation as an error.</summary>
+        public bool Rescan { get; init; }
+
+        /// <summary>Whether a tail-only run found a path that no longer names its member's file.</summary>
+        public bool RescanNeeded { get; set; }
 
         public bool CatalogChanged { get; set; }
 
@@ -729,13 +741,22 @@ public sealed class Reconciler
     }
 
     /// <summary>
-    /// Opens a member's path with its identity verified. A failure is recorded as a read error of the member.
+    /// Opens a member's path with its identity verified. A failure is recorded as a read error of the member, except that a tail-only run
+    /// that finds the path missing or naming another file records nothing: the member is skipped for the run and a rescan is requested.
     /// </summary>
     private bool TryOpen(Member member, RunChanges run, out FileStream? stream)
     {
         if (MemberFile.TryOpen(member.Path, member.Identity, out stream, out _, out string? error))
         {
+            run.Opened.Add(member.Generation);
             return true;
+        }
+
+        if (!run.Rescan && error is MemberFile.NotFound or MemberFile.IdentityChanged)
+        {
+            run.Failed.Add(member.Generation);
+            run.RescanNeeded = true;
+            return false;
         }
 
         Fail(member, run, error ?? "the file cannot be opened");
