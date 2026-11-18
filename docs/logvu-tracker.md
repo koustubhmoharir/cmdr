@@ -64,7 +64,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: check Reconciler/StoreReader catch it (EndOfStreamException is an IOException, so the existing IOException handlers record it) — add a test.
 - [x] Retention gap indication (RetentionGap in ChangeBatch).
 - [x] "Source file expired" for detail reads of deleted generations.
-- [ ] Windows share modes read/write/delete *(Windows)*: verify log4net numbered rotation succeeds while logvu tails (brief opens of backups during rescans; Windows 10+ POSIX delete semantics should make a concurrent delete safe).
+- [ ] Windows share modes read/write/delete *(Windows)*: covered by docs/logvu-windows-testing.md §1.
 
 ## M6. Timeline model (UI-free)
 
@@ -111,7 +111,8 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
 - [x] User guide (docs/logvu.md), README pointer, publish script entry.
-- [ ] Windows checklist for the user *(Windows)*, including Shared.Core's AtomicFile File.Replace / error-1176 recovery (copied verbatim from cmdr, unverified there too).
+- [x] Windows checklist for the user: docs/logvu-windows-testing.md with tools/logvu/log4net-writer.ps1.
+- [ ] *(Windows)* User runs docs/logvu-windows-testing.md and reports results.
 
 ## Notes for M12
 
