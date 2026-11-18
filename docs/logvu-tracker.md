@@ -99,12 +99,13 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M10. Filter
 
-- [ ] Predicates: source, level, time interval, text, field value; AND; same predicate for history and incoming.
-- [ ] Time-interval file skipping via catalog boundaries (keep equal-time candidates).
+- [x] Predicates: source, level, time interval, text, field value; AND; same predicate for history and incoming (EventFilter; filtered arrivals refill from the changed row).
+- [x] Time-interval file skipping via catalog boundaries (keep equal-time candidates).
 - [ ] Filter editor (`f`); **Filter to this value** from detail; scanning vs zero-match distinction.
 
 ## M11. Acceptance and docs
 
+- [ ] Perf: row-level filter predicates run after RowBuilder has read and parsed the event; consider building rows lazily (header line first) so level/source/time rejections skip the full read.
 - [ ] Startup: rows appear ~2 s after launch on a 220 KB demo set in a Debug build (cmdr: ~1–1.5 s). Measure a Release build; profile the initial run + ring warm-up (2000 rows) and compiled-regex construction if still slow.
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).

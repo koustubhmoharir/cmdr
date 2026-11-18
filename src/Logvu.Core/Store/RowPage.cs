@@ -7,4 +7,9 @@ namespace Logvu.Core.Store;
 /// read, the end for a newer one. It is <c>false</c> when the page was filled, even if the page happens to end at the boundary.
 /// </param>
 /// <param name="Errors">The members that could not be read. The walk went on past them.</param>
-public sealed record RowPage(IReadOnlyList<EventRow> Rows, bool ReachedBoundary, IReadOnlyList<MemberReadError> Errors);
+/// <param name="Abandoned">
+/// Whether the walk stopped early because the filter was abandoned (see <see cref="IRowFilter.Abandoned"/>), such as after its pattern timed
+/// out. The rows are what was found before the walk stopped. <paramref name="ReachedBoundary"/> is then <c>true</c>, since the walk did not
+/// continue, and the page is not the whole of history.
+/// </param>
+public sealed record RowPage(IReadOnlyList<EventRow> Rows, bool ReachedBoundary, IReadOnlyList<MemberReadError> Errors, bool Abandoned = false);

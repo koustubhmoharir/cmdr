@@ -41,6 +41,9 @@ public sealed partial class TimelineModel
     private int _pivotScreenRow;
     private TimelineMode _mode = TimelineMode.Follow;
     private int _newCount;
+    private bool _hasUnseenArrivals;
+    private long _unseenMark;
+    private bool _filterTimedOut;
 
     /// <summary>Creates a model with no rows. Call <see cref="Start"/> to load the timeline.</summary>
     /// <param name="source">The rows to load.</param>
@@ -63,8 +66,36 @@ public sealed partial class TimelineModel
     /// <summary>Whether the timeline follows the newest rows or is paused.</summary>
     public TimelineMode Mode => _mode;
 
-    /// <summary>The matching rows that arrived while paused, since the last resume.</summary>
+    /// <summary>
+    /// The matching rows that arrived while paused, since the last resume or filter change. Under a filter, an arrival is counted when the
+    /// window reaches the newest end and the rows are read; arrivals the window has not reached are counted by
+    /// <see cref="HasUnseenArrivals"/> instead, without a number.
+    /// </summary>
     public int NewCount => _newCount;
+
+    /// <summary>
+    /// Whether matching rows arrived while paused and the window did not reach the newest end, so that <see cref="NewCount"/> cannot count
+    /// them. The flag clears when a load issued after the arrival reaches the newest end, or on resume.
+    /// </summary>
+    public bool HasUnseenArrivals => _hasUnseenArrivals;
+
+    /// <summary>
+    /// Whether a load under the current filter stopped early because the filter's pattern timed out. The rows are then partial, and the
+    /// filter matches nothing further. Reset when the filter changes.
+    /// </summary>
+    public bool FilterTimedOut => _filterTimedOut;
+
+    /// <summary>Whether a filtered load is outstanding, which is a scan of history under the filter.</summary>
+    public bool IsScanning => _filter is not null && IsLoading;
+
+    /// <summary>
+    /// Whether the window is empty under the filter at both ends of history, which a completed load from the newest end leaves when no event
+    /// matches. A scan in progress is not a completed scan, so this is false while a load is outstanding.
+    /// </summary>
+    public bool NoMatches => _filter is not null && _rows.Count == 0 && _atStart && _atEnd && !IsLoading;
+
+    /// <summary>The event bytes the outstanding loads have scanned so far, summed over the loads. Zero when none is scanning.</summary>
+    public long ScannedBytes => (_newest?.Scanned ?? 0) + (_older?.Scanned ?? 0) + (_newer?.Scanned ?? 0);
 
     /// <summary>The viewport height, in rows.</summary>
     public int Height => _height;
@@ -99,6 +130,8 @@ public sealed partial class TimelineModel
         _height = height;
         _mode = TimelineMode.Follow;
         _newCount = 0;
+        _hasUnseenArrivals = false;
+        _filterTimedOut = false;
         ReloadNewest();
         Finish();
     }
@@ -178,10 +211,17 @@ public sealed partial class TimelineModel
 
     /// <summary>
     /// Applies a row filter and reloads. Paused, the reload is positioned around the selected row; in Follow it loads the newest rows.
+    /// A different filter restarts the count of new rows, since the count was of the rows of the previous filter.
     /// </summary>
     /// <param name="filter">The filter, or <c>null</c> for every row.</param>
     public void SetFilter(IRowFilter? filter)
     {
+        if (!ReferenceEquals(_filter, filter))
+        {
+            _newCount = 0;
+            _filterTimedOut = false;
+        }
+
         _filter = filter;
         ReloadAroundSelection();
         Finish();
@@ -214,15 +254,26 @@ public sealed partial class TimelineModel
     }
 
     /// <summary>
-    /// Takes in the rows the store published. Follow appends the added rows and keeps the newest selected. Paused counts them, and
-    /// appends them to the window when the window reaches the newest end. Updated rows replace the loaded rows with their keys.
+    /// Takes in the rows the store published. Without a filter, Follow appends the added rows and keeps the newest selected, Paused counts
+    /// them and appends them when the window reaches the newest end, and updated rows replace the loaded rows with their keys.
     /// </summary>
-    /// <param name="added">The matching rows that arrived, oldest first. The caller has applied the filter.</param>
-    /// <param name="updated">The matching rows that changed in place. The caller has applied the filter.</param>
+    /// <remarks>
+    /// With a filter the rows are not trusted: they were not filtered. The model reads the matching rows itself, from the window's newest
+    /// row when the window reaches the newest end (see <c>TimelineModel.Arrivals.cs</c>). A loaded row that changed reloads the window.
+    /// </remarks>
+    /// <param name="added">The rows that arrived, oldest first. Without a filter they are the matching rows; with one, they are only a signal.</param>
+    /// <param name="updated">The rows that changed in place. Without a filter they are the matching rows.</param>
     public void Arrive(IReadOnlyList<EventRow> added, IReadOnlyList<EventRow> updated)
     {
         ArgumentNullException.ThrowIfNull(added);
         ArgumentNullException.ThrowIfNull(updated);
+        if (_filter is not null)
+        {
+            ArriveFiltered(added, updated);
+            Finish();
+            return;
+        }
+
         ReplaceRows(updated);
         if (_mode == TimelineMode.Follow)
         {
@@ -245,12 +296,18 @@ public sealed partial class TimelineModel
 
     private int LastIndex => Math.Max(0, _rows.Count - 1);
 
-    private void SetPaused() => _mode = TimelineMode.Paused;
+    /// <summary>Pauses Follow. A navigation by the user supersedes a selection that a truncation was to restore.</summary>
+    private void SetPaused()
+    {
+        _mode = TimelineMode.Paused;
+        _restoreSelection = null;
+    }
 
     private void ResumeFollow()
     {
         _mode = TimelineMode.Follow;
         _newCount = 0;
+        _hasUnseenArrivals = false;
         ReloadNewest();
     }
 
@@ -292,6 +349,9 @@ public sealed partial class TimelineModel
         _atEnd = false;
         _placed = false;
         _pivot = null;
+        _countHorizon = null;
+        _countSuppressed = false;
+        _restoreSelection = null;
     }
 
     /// <summary>Places the newest page: the loaded rows that arrived while it ran are kept after it.</summary>

@@ -4,8 +4,7 @@ using Shared.Core;
 namespace Logvu.Core.Timeline;
 
 /// <summary>
-/// Adapts a <see cref="LogStore"/> to an <see cref="ITimelineSource"/>. The page reads report no progress; a search reports the bytes it
-/// scans to the progress it is given.
+/// Adapts a <see cref="LogStore"/> to an <see cref="ITimelineSource"/>. Every read reports the bytes it scans to the progress it is given.
 /// </summary>
 public sealed class LogStoreTimelineSource : ITimelineSource
 {
@@ -21,16 +20,16 @@ public sealed class LogStoreTimelineSource : ITimelineSource
     }
 
     /// <inheritdoc/>
-    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, CancellationToken ct) =>
-        _store.ReadNewestAsync(count, filter, progress: null, ct);
+    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
+        _store.ReadNewestAsync(count, filter, progress, ct);
 
     /// <inheritdoc/>
-    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct) =>
-        _store.ReadOlderAsync(anchor, count, filter, progress: null, ct);
+    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
+        _store.ReadOlderAsync(anchor, count, filter, progress, ct);
 
     /// <inheritdoc/>
-    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct, bool inclusive = false) =>
-        _store.ReadNewerAsync(anchor, count, filter, progress: null, ct, inclusive);
+    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct, bool inclusive = false) =>
+        _store.ReadNewerAsync(anchor, count, filter, progress, ct, inclusive);
 
     /// <inheritdoc/>
     public Task<SearchResult> FindAsync(RowKey from, SearchDirection direction, SearchPattern pattern, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>

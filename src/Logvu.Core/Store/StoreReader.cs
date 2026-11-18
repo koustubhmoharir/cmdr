@@ -51,6 +51,7 @@ internal sealed class StoreReader
     public RowPage Newest(StoreState state, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
     {
         CatalogSnapshot catalog = state.Catalog;
+        filter = RowFilterBinding.Bind(filter, catalog);
         IReadOnlyList<EventRow> ring = state.Ring;
         if (filter is null)
         {
@@ -80,7 +81,7 @@ internal sealed class StoreReader
         RowPage history = _history.ReadNewest(catalog, count, filter, progress, ct);
         List<EventRow> page = Merge(history.Rows, tail, catalog);
         page = page.GetRange(Math.Max(0, page.Count - count), Math.Min(count, page.Count));
-        return new RowPage(page, page.Count < count, history.Errors.Concat(errors).ToList());
+        return FilteredPage(page, count, history, filter, errors);
     }
 
     /// <summary>Reads up to <paramref name="count"/> rows strictly older than <paramref name="anchor"/>, oldest first.</summary>
@@ -95,6 +96,7 @@ internal sealed class StoreReader
     {
         RequireKnown(state, anchor);
         CatalogSnapshot catalog = state.Catalog;
+        filter = RowFilterBinding.Bind(filter, catalog);
         if (filter is null)
         {
             int index = Find(state, anchor);
@@ -123,7 +125,7 @@ internal sealed class StoreReader
         RowPage history = _history.ReadOlder(catalog, anchor, count, filter, progress, ct);
         List<EventRow> page = Merge(history.Rows, tail, catalog);
         page = page.GetRange(Math.Max(0, page.Count - count), Math.Min(count, page.Count));
-        return new RowPage(page, page.Count < count, history.Errors.Concat(errors).ToList());
+        return FilteredPage(page, count, history, filter, errors);
     }
 
     /// <summary>
@@ -142,6 +144,7 @@ internal sealed class StoreReader
     {
         RequireKnown(state, anchor);
         CatalogSnapshot catalog = state.Catalog;
+        filter = RowFilterBinding.Bind(filter, catalog);
         if (filter is null)
         {
             int index = Find(state, anchor);
@@ -182,7 +185,7 @@ internal sealed class StoreReader
         RowPage filtered = _history.ReadNewer(catalog, anchor, count, filter, progress, ct, inclusive);
         List<EventRow> merged = Merge(filtered.Rows, tail, catalog);
         merged = merged.GetRange(0, Math.Min(count, merged.Count));
-        return new RowPage(merged, merged.Count < count, filtered.Errors.Concat(errors).ToList());
+        return FilteredPage(merged, count, filtered, filter, errors);
     }
 
     /// <summary>
@@ -203,25 +206,22 @@ internal sealed class StoreReader
         RequireKnown(state, from);
         ct.ThrowIfCancellationRequested();
         CatalogSnapshot catalog = state.Catalog;
+        filter = RowFilterBinding.Bind(filter, catalog);
         bool older = direction == SearchDirection.Older;
         var predicate = new EventSearchFilter(filter, pattern);
 
         var errors = new List<MemberReadError>();
-        List<EventRow> tail;
-        RowPage history;
-        try
-        {
-            tail = MatchedTail(state, predicate, from, after: !older, includeAnchor: false, errors, ct);
-            history = older
-                ? _history.ReadOlder(catalog, from, 1, predicate, progress, ct)
-                : _history.ReadNewer(catalog, from, 1, predicate, progress, ct);
-        }
-        catch (PatternTimedOutException)
-        {
-            return SearchResult.TimedOut.WithErrors(errors);
-        }
+        List<EventRow> tail = MatchedTail(state, predicate, from, after: !older, includeAnchor: false, errors, ct);
+        RowPage history = older
+            ? _history.ReadOlder(catalog, from, 1, predicate, progress, ct)
+            : _history.ReadNewer(catalog, from, 1, predicate, progress, ct);
 
         IReadOnlyList<MemberReadError> allErrors = history.Errors.Concat(errors).ToList();
+        if (predicate.Abandoned)
+        {
+            // The pattern (or the filter) timed out, so the walk stopped: the boundary would read as "no more matches".
+            return SearchResult.TimedOut.WithErrors(allErrors);
+        }
         List<EventRow> candidates = Merge(history.Rows, tail, catalog);
         if (candidates.Count == 0)
         {
@@ -330,6 +330,11 @@ internal sealed class StoreReader
             {
                 matches.Add(matched);
             }
+
+            if (filter.Abandoned)
+            {
+                break;
+            }
         }
 
         return matches;
@@ -362,6 +367,16 @@ internal sealed class StoreReader
             errors.Add(new MemberReadError(member.Generation, member.Path, ex.Message));
             return null;
         }
+    }
+
+    /// <summary>
+    /// A filtered page: the rows, and whether the page stopped early because the filter was abandoned. An abandoned page reports the
+    /// boundary, since the walk did not continue.
+    /// </summary>
+    private static RowPage FilteredPage(List<EventRow> page, int count, RowPage history, IRowFilter filter, List<MemberReadError> errors)
+    {
+        bool abandoned = history.Abandoned || filter.Abandoned;
+        return new RowPage(page, page.Count < count || abandoned, history.Errors.Concat(errors).ToList(), abandoned);
     }
 
     /// <summary>Both lists in timeline order, as one list.</summary>

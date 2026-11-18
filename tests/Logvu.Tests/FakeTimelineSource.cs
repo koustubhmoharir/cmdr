@@ -42,13 +42,13 @@ internal sealed class FakeTimelineSource : ITimelineSource
         read.Completion.SetResult(read.Page);
     }
 
-    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, CancellationToken ct) =>
+    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
         Read(ReadKind.Newest, default, count, filter);
 
-    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct) =>
+    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
         Read(ReadKind.Older, anchor, count, filter);
 
-    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct, bool inclusive = false) =>
+    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct, bool inclusive = false) =>
         Read(ReadKind.Newer, anchor, count, filter, inclusive);
 
     private Task<RowPage> Read(ReadKind kind, RowKey anchor, int count, IRowFilter? filter, bool inclusive = false)

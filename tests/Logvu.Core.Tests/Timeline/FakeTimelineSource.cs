@@ -19,6 +19,9 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>The rows, in key order. A test appends to it to simulate arrivals.</summary>
     public List<EventRow> Rows { get; }
 
+    /// <summary>Every read the source was asked for, in order, with its kind and anchor (default for a newest read).</summary>
+    public List<(ReadKind Kind, RowKey Anchor)> Requests { get; } = [];
+
     /// <summary>The kinds of read that wait until the test completes them.</summary>
     public HashSet<ReadKind> Held { get; } = [];
 
@@ -28,6 +31,13 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>Compares keys by offset, which orders the test rows.</summary>
     public static int CompareKeys(RowKey a, RowKey b) => a.Offset.CompareTo(b.Offset);
 
+    /// <summary>Reports scanned bytes to the progress of the oldest held read of a kind, as a read in history would while it runs.</summary>
+    public void Report(ReadKind kind, long bytes)
+    {
+        PendingRead read = _held.First(candidate => candidate.Kind == kind);
+        read.Progress?.Report(bytes);
+    }
+
     /// <summary>Completes the oldest held read of a kind with the page it computed.</summary>
     public void CompleteOldest(ReadKind kind)
     {
@@ -36,25 +46,26 @@ internal sealed class FakeTimelineSource : ITimelineSource
         read.Completion.SetResult(read.Page);
     }
 
-    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, CancellationToken ct) =>
-        Read(ReadKind.Newest, default, count, filter);
+    public Task<RowPage> ReadNewestAsync(int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
+        Read(ReadKind.Newest, default, count, filter, progress);
 
-    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct) =>
-        Read(ReadKind.Older, anchor, count, filter);
+    public Task<RowPage> ReadOlderAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct) =>
+        Read(ReadKind.Older, anchor, count, filter, progress);
 
-    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, CancellationToken ct, bool inclusive = false) =>
-        Read(ReadKind.Newer, anchor, count, filter, inclusive);
+    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct, bool inclusive = false) =>
+        Read(ReadKind.Newer, anchor, count, filter, progress, inclusive);
 
-    private Task<RowPage> Read(ReadKind kind, RowKey anchor, int count, IRowFilter? filter, bool inclusive = false)
+    private Task<RowPage> Read(ReadKind kind, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, bool inclusive = false)
     {
-        RowPage page = Page(kind, anchor, count, filter, inclusive);
+        Requests.Add((kind, anchor));
+        RowPage page = Page(kind, anchor, count, filter, inclusive) with { Abandoned = filter?.Abandoned ?? false };
         if (!Held.Contains(kind))
         {
             return Task.FromResult(page);
         }
 
         var completion = new TaskCompletionSource<RowPage>();
-        _held.Add(new PendingRead(kind, page, completion));
+        _held.Add(new PendingRead(kind, page, completion, progress));
         return completion.Task;
     }
 
@@ -93,7 +104,7 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>The parsed event a filter sees. The test filters read only the row.</summary>
     private static LogEvent Event(EventRow row) => new() { Message = row.Preview };
 
-    private sealed record PendingRead(ReadKind Kind, RowPage Page, TaskCompletionSource<RowPage> Completion);
+    private sealed record PendingRead(ReadKind Kind, RowPage Page, TaskCompletionSource<RowPage> Completion, IProgress<long>? Progress);
 }
 
 /// <summary>The kinds of read a fake source performs.</summary>

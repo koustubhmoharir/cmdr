@@ -66,6 +66,30 @@ public sealed class CatalogSnapshot
     }
 
     /// <summary>
+    /// The first time of the nearest member after <paramref name="member"/> that is dated. It is where the member's time range ends:
+    /// a dated member's events lie in <c>[FirstTime, NextDatedTime]</c>.
+    /// </summary>
+    /// <returns>The time, or <c>null</c> when no later member is dated, which leaves the range open-ended, or when the member is not in the snapshot.</returns>
+    internal DateTimeOffset? NextDatedTime(MemberInfo member)
+    {
+        ArgumentNullException.ThrowIfNull(member);
+        if (!_positions.TryGetValue(member.Generation, out int position))
+        {
+            return null;
+        }
+
+        for (int i = position + 1; i < Ordered.Count; i++)
+        {
+            if (Ordered[i].TimelineState == MemberState.Dated && Ordered[i].FirstTime is { } time)
+            {
+                return time;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Compares two events in the timeline: by the timeline position of their members, then by offset. Same semantics as
     /// <see cref="Catalog.Compare"/>.
     /// </summary>

@@ -27,6 +27,11 @@ namespace Logvu.Core.Store;
 /// walk moves on to the next member. A snapshot's path may be stale: a file renamed since the snapshot is not found at that path, and
 /// the read reports it so, rather than reading whatever now lives there.
 /// </para>
+/// <para>
+/// <b>Time windows.</b> A filter's <see cref="IRowFilter.TimeWindow"/> lets a read skip a dated member whose time range lies wholly outside
+/// it. A skipped member is not opened and contributes no scanned bytes. The skip never changes the rows: a filter with the same predicate and
+/// no window returns the same rows.
+/// </para>
 /// </remarks>
 public sealed class HistoryReader
 {
@@ -169,18 +174,22 @@ public sealed class HistoryReader
         private readonly CatalogSnapshot _snapshot;
         private readonly int _count;
         private readonly IRowFilter? _filter;
+        private readonly DateTimeOffset? _from;
+        private readonly DateTimeOffset? _to;
         private readonly IProgress<long>? _progress;
         private readonly CancellationToken _ct;
         private readonly List<EventRow> _rows = [];
         private readonly List<MemberReadError> _errors = [];
         private long _scanned;
+        private bool _abandoned;
 
         public Scan(HistoryReader reader, CatalogSnapshot snapshot, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
         {
             _reader = reader;
             _snapshot = snapshot;
             _count = count;
-            _filter = filter;
+            _filter = RowFilterBinding.Bind(filter, snapshot);
+            (_from, _to) = _filter?.TimeWindow ?? (null, null);
             _progress = progress;
             _ct = ct;
         }
@@ -193,9 +202,9 @@ public sealed class HistoryReader
         public bool Backward(MemberInfo? start, long before)
         {
             long from = before;
-            for (MemberInfo? member = start; member is not null; member = _snapshot.Previous(member))
+            for (MemberInfo? member = start; member is not null && !_abandoned; member = _snapshot.Previous(member))
             {
-                if (member.IsReadable && ScanBackward(member, from) == Step.Filled)
+                if (member.IsReadable && !OutsideWindow(member) && ScanBackward(member, from) == Step.Filled)
                 {
                     return false;
                 }
@@ -213,9 +222,9 @@ public sealed class HistoryReader
         /// <returns><c>true</c> when the end of history was reached before the page was filled.</returns>
         public bool Forward(MemberInfo? start, long from, long? skipUpTo)
         {
-            for (MemberInfo? member = start; member is not null; member = _snapshot.Next(member))
+            for (MemberInfo? member = start; member is not null && !_abandoned; member = _snapshot.Next(member))
             {
-                if (member.IsReadable && ScanForward(member, from, skipUpTo) == Step.Filled)
+                if (member.IsReadable && !OutsideWindow(member) && ScanForward(member, from, skipUpTo) == Step.Filled)
                 {
                     return false;
                 }
@@ -227,6 +236,32 @@ public sealed class HistoryReader
             return true;
         }
 
+        /// <summary>
+        /// Tells whether a member's whole time range lies outside the filter's time window, so that none of its events can match and it
+        /// need not be opened. The range of a dated member is <c>[FirstTime, next dated member's FirstTime]</c>, open-ended for the newest
+        /// dated member. A member that touches a bound is kept, since equal times are candidates. A member of the unknown-time group has no
+        /// range and is never skipped.
+        /// </summary>
+        private bool OutsideWindow(MemberInfo member)
+        {
+            if (_from is null && _to is null)
+            {
+                return false;
+            }
+
+            if (member.TimelineState != MemberState.Dated || member.FirstTime is not { } start)
+            {
+                return false;
+            }
+
+            if (_to is { } to && start > to)
+            {
+                return true;
+            }
+
+            return _from is { } from && _snapshot.NextDatedTime(member) is { } end && end < from;
+        }
+
         /// <summary>Builds the page. Rows collected by a backward walk are reversed into oldest-first order.</summary>
         public RowPage Finish(bool reachedBoundary, bool backward)
         {
@@ -235,7 +270,7 @@ public sealed class HistoryReader
                 _rows.Reverse();
             }
 
-            return new RowPage(_rows, reachedBoundary, _errors);
+            return new RowPage(_rows, reachedBoundary, _errors, _abandoned);
         }
 
         /// <summary>Reads one member backward from <paramref name="before"/>, batch by batch, until it is exhausted or the page is filled.</summary>
@@ -278,7 +313,14 @@ public sealed class HistoryReader
                         _scanned += length;
                         before = extent.Start;
 
-                        if (Accept(member, window, extent))
+                        bool filled = Accept(member, window, extent);
+                        if (_abandoned)
+                        {
+                            step = Step.Exhausted;
+                            break;
+                        }
+
+                        if (filled)
                         {
                             step = Step.Filled;
                             break;
@@ -342,7 +384,14 @@ public sealed class HistoryReader
                         from = extent.End;
 
                         bool skipped = skipUpTo is { } skip && extent.Start <= skip;
-                        if (!skipped && Accept(member, window, extent))
+                        bool filled = !skipped && Accept(member, window, extent);
+                        if (_abandoned)
+                        {
+                            step = Step.Exhausted;
+                            break;
+                        }
+
+                        if (filled)
                         {
                             step = Step.Filled;
                             break;
@@ -392,13 +441,21 @@ public sealed class HistoryReader
             return stream;
         }
 
-        /// <summary>Builds the row of an event, keeps it if it matches, and tells whether the page is now full.</summary>
+        /// <summary>
+        /// Builds the row of an event, keeps it if it matches, and tells whether the page is now full. When the filter is abandoned after
+        /// the match, the walk stops: the page holds what was found, and <see cref="RowPage.Abandoned"/> is set.
+        /// </summary>
         private bool Accept(MemberInfo member, Stream window, EventExtent extent)
         {
             (EventRow row, LogEvent ev, string text) = RowBuilder.Build(window, member.Scheme, member.Generation, extent, _reader._context);
             if (_filter is null || _filter.Matches(row, ev, text))
             {
                 _rows.Add(row);
+            }
+
+            if (_filter is not null && _filter.Abandoned)
+            {
+                _abandoned = true;
             }
 
             return _rows.Count >= _count;
