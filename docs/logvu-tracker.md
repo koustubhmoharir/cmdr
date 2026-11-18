@@ -17,7 +17,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M1. Decoding and framing (Logvu.Core)
 
-- [ ] Block reader: UTF-8 with/without BOM, LF/CRLF, characters and lines split across blocks; forward and backward line
+- [x] Block reader: UTF-8 with/without BOM, LF/CRLF, characters and lines split across blocks; forward and backward line
       iteration over byte offsets.
 - [ ] Text scheme model: anchored header regex with named captures, timestamp formats, message capture; continuation lines
       (including blank) appended; orphan text → raw entry.
@@ -56,6 +56,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [ ] Directory watcher + periodic reconciliation + overflow handling; coalescing; transient-open retry.
 - [ ] Reconcile by identity: rename (keep offsets), delete (expire), new file (fresh generation), truncation (fresh
       generation), unverifiable identity (rediscover). Drain predecessor before successor.
+- [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: treat as truncation.
 - [ ] Retention gap indication; "Source file expired" for deleted generations.
 - [ ] Windows share modes read/write/delete *(Windows)*.
 
