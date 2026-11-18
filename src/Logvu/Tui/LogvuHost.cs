@@ -83,7 +83,7 @@ internal static class LogvuHost
         var store = new LogStore(config);
         try
         {
-            RunMain(app, store, config.TimeZone);
+            RunMain(app, store, config);
         }
         finally
         {
@@ -92,9 +92,9 @@ internal static class LogvuHost
     }
 
     // The controller unsubscribes before it returns, so the store can be disposed after the application has stopped.
-    private static void RunMain(IApplication app, LogStore store, TimeZoneInfo zone)
+    private static void RunMain(IApplication app, LogStore store, LogvuConfig config)
     {
-        using var controller = new TimelineController(app, store, zone);
+        using var controller = new TimelineController(app, store, config);
         controller.Start();
         app.Run(controller.Window);
     }

@@ -52,7 +52,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Immutable CatalogSnapshot so history scans run off the store worker; HistoryReader over snapshots.
 - [x] Visible rows survive ring eviction (page holds its own rows).
 - [x] On-demand full event fetch with bounded buffers (LogStore.ReadDetailAsync, 4 MiB cap).
-- [ ] Oversized detail values streamed/paged in the detail view (M8).
+- [x] Oversized detail values: store caps at 4 MiB with a truncation notice; the view wraps lazily.
 - [x] Background worker: off-UI reads, cancellation of superseded work, batched publication.
 
 ## M5. Live tail and rotation
@@ -63,7 +63,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
       generation), unverifiable identity (rediscover). Drain predecessor before successor.
 - [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: check Reconciler/StoreReader catch it (EndOfStreamException is an IOException, so the existing IOException handlers record it) — add a test.
 - [x] Retention gap indication (RetentionGap in ChangeBatch).
-- [ ] "Source file expired" for detail reads of deleted generations (M8).
+- [x] "Source file expired" for detail reads of deleted generations.
 - [ ] Windows share modes read/write/delete *(Windows)*: verify log4net numbered rotation succeeds while logvu tails (brief opens of backups during rescans; Windows 10+ POSIX delete semantics should make a concurrent delete safe).
 
 ## M6. Timeline model (UI-free)
@@ -87,7 +87,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Highlight rules: ordered, field-scoped, named styles, first rule wins; selection/search priority.
 - [x] Stack traces (DetailDocument/StackTraceAnalyzer; the view comes next): .NET exception/inner boundaries, Go cause/stack; emphasize messages, methods, file:line; dim
       directories and framework namespaces; fold framework-frame runs with a count.
-- [ ] DetailView: render/wrap/navigate the document, toggles (Enter/Space on nodes and folds, z, r), Esc returns to the same selection and viewport; opening detail pauses.
+- [x] DetailView: render/wrap/navigate the document, toggles (Enter/Space on nodes and folds, z, r), Esc returns to the same selection and viewport; opening detail pauses.
 
 ## M9. Search
 

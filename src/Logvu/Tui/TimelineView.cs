@@ -41,6 +41,9 @@ internal sealed class TimelineView : View
     /// <summary>Raised when the view's height changes, with the model's viewport height for the new height.</summary>
     public event Action<int>? ViewportRowsChanged;
 
+    /// <summary>Raised when Enter is pressed with a row selected, with the selected row's key. The owner opens the event's detail.</summary>
+    public event Action<RowKey>? OpenRequested;
+
     /// <summary>
     /// The text shown on the first row below the header while there are no rows to show, for example "Loading…". Null for none.
     /// </summary>
@@ -64,7 +67,11 @@ internal sealed class TimelineView : View
     {
         if (key == Key.Enter)
         {
-            // Opening the event detail is the next milestone; Enter is consumed so that it does nothing here.
+            if (_model.SelectedRow is { } row)
+            {
+                OpenRequested?.Invoke(row.Key);
+            }
+
             return true;
         }
 

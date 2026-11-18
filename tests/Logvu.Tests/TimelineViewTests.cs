@@ -194,16 +194,33 @@ public sealed class TimelineViewTests
     }
 
     [Fact]
-    public void Enter_is_consumed_and_changes_nothing_yet()
+    public void Enter_opens_the_selected_row_and_leaves_the_model_to_the_owner()
     {
         TimelineModel model = Model(Store(100));
         model.Start(3);
         var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
 
         Assert.True(view.HandleKey(Key.Enter));
 
+        Assert.Equal(new[] { model.SelectedRow!.Key }, opened);
         Assert.Equal(TimelineMode.Follow, model.Mode);
         Assert.Equal("r99", model.SelectedRow!.Preview);
+    }
+
+    [Fact]
+    public void Enter_with_no_rows_is_consumed_and_opens_nothing()
+    {
+        TimelineModel model = Model(Store(0));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        Assert.True(view.HandleKey(Key.Enter));
+
+        Assert.Empty(opened);
     }
 
     [Theory]
