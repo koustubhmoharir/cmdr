@@ -5,14 +5,29 @@ namespace Logvu.Tests;
 public sealed class ProgramTests
 {
     [Fact]
-    public void No_arguments_print_usage_and_return_2()
+    public void No_arguments_show_the_recent_picker_and_print_nothing()
     {
+        var stdout = new StringWriter();
         var stderr = new StringWriter();
+        int pickerShown = 0;
 
-        int code = Program.Run([], new StringWriter(), stderr);
+        int code = Program.Run([], stdout, stderr, _ => pickerShown++);
+
+        Assert.Equal(0, code);
+        Assert.Equal(1, pickerShown);
+        Assert.Equal(string.Empty, stdout.ToString());
+        Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public void Unknown_arguments_do_not_show_the_picker()
+    {
+        int pickerShown = 0;
+
+        int code = Program.Run(["a.json", "b.json"], new StringWriter(), new StringWriter(), _ => pickerShown++);
 
         Assert.Equal(2, code);
-        Assert.StartsWith("usage: logvu <config.json>", stderr.ToString());
+        Assert.Equal(0, pickerShown);
     }
 
     [Fact]

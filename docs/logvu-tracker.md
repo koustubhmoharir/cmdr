@@ -75,7 +75,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 ## M7. TUI shell and timeline
 
 - [x] Program: `logvu <config>` (config errors → stderr, exit 1), remember on success.
-- [ ] `logvu` → picker with **Open file** (works with empty history): generic recent picker in Shared.Tui (faithful copy of cmdr's).
+- [x] `logvu` → picker with **Open file** (works with empty history): generic recent picker in Shared.Tui (faithful copy of cmdr's).
 - [x] Timeline view: Time/Level/Source/Message columns, day crossing dates, level colors + labels, selection.
 - [x] Status line: Follow/Paused, new count, filters, search progress, read errors.
 - [ ] Key routing: printable shortcuts in timeline focus only (arrows/Page/End/Space/mouse done; `/`, `f`, `n`, Enter come with M8–M10).

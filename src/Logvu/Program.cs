@@ -9,12 +9,25 @@ internal static class Program
 {
     private static int Main(string[] args) => Run(args, Console.Out, Console.Error);
 
-    /// <summary>Runs the command line. Returns the process exit code.</summary>
-    internal static int Run(string[] args, TextWriter stdout, TextWriter stderr)
+    /// <summary>Runs the command line with the recent-configs picker. Returns the process exit code.</summary>
+    internal static int Run(string[] args, TextWriter stdout, TextWriter stderr) =>
+        Run(args, stdout, stderr, LogvuHost.RunPicker);
+
+    /// <summary>
+    /// Runs the command line. With no arguments, <paramref name="showPicker"/> is given the recent list (null when there is no
+    /// store) and the picker is shown. Returns the process exit code.
+    /// </summary>
+    internal static int Run(string[] args, TextWriter stdout, TextWriter stderr, Action<RecentFiles?> showPicker)
     {
         if (args is ["--version"])
         {
             stdout.WriteLine("logvu " + Version());
+            return 0;
+        }
+
+        if (args is [])
+        {
+            showPicker(LoadRecent());
             return 0;
         }
 
@@ -46,16 +59,22 @@ internal static class Program
         return 0;
     }
 
+    // The recent list, or null when there is no store location.
+    private static RecentFiles? LoadRecent()
+    {
+        string? store = RecentFiles.DefaultStorePathFor("logvu");
+        return store is null ? null : RecentFiles.Load(store);
+    }
+
     // Moves an opened config to the front of logvu's recent list. Skipped without a store location; a failed save is ignored.
     private static void RecordRecent(string configPath)
     {
-        string? store = RecentFiles.DefaultStorePathFor("logvu");
-        if (store is null)
+        RecentFiles? recent = LoadRecent();
+        if (recent is null)
         {
             return;
         }
 
-        RecentFiles recent = RecentFiles.Load(store);
         recent.Add(configPath);
         recent.TrySave();
     }
