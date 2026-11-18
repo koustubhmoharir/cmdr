@@ -24,6 +24,9 @@ internal sealed class DetailsView : View, ISearchTarget
 {
     private const int WheelLines = 3;
 
+    /// <summary>The longest selected text, in UTF-16 units, that seeds a search (see <see cref="SelectionSeed"/>).</summary>
+    private const int SeedMaxLength = 200;
+
     private readonly MainController _controller;
     private ListRow? _row;
     private string _configDir = string.Empty;
@@ -213,6 +216,40 @@ internal sealed class DetailsView : View, ISearchTarget
 
         return new SearchStatus(count, active);
     }
+
+    /// <summary>
+    /// The selected text a search starts from: a non-empty selection within one logical line, of at most 200 UTF-16 units. The seed
+    /// is the text, the logical line, and the offset of the text in the line's text, which are the units of the matches. Null for
+    /// a selection that spans lines, an empty one, one that is too long, or no selection. The text is the one a copy takes.
+    /// </summary>
+    internal SearchSeed? SelectionSeed()
+    {
+        if (_selection is null)
+        {
+            return null;
+        }
+
+        IReadOnlyList<string> texts = DetailsSelection.Texts(Lines());
+        if (SelectedRange(texts) is not { } range || range.Start.Line != range.End.Line)
+        {
+            return null;
+        }
+
+        string text = DetailsSelection.Extract(texts, range);
+        if (text.Length > SeedMaxLength)
+        {
+            return null;
+        }
+
+        return new SearchSeed(text, range.Start.Line, range.Start.Offset);
+    }
+
+    /// <summary>
+    /// Makes the seed's text the active match, the origin of the next <see cref="Find"/>, so that a Find with <c>inclusive</c> set
+    /// takes the selected occurrence first. Call after <see cref="SetSearch"/>. The text is highlighted only when it is a match.
+    /// </summary>
+    internal void ActivateSeed(SearchSeed seed) =>
+        _active = new ActiveMatch((int)seed.Line, seed.Start, seed.Text.Length);
 
     protected override bool OnKeyDown(Key key)
     {

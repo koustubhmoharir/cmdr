@@ -1,5 +1,7 @@
+using System.Reflection;
 using Cmdr.Tui;
 using Terminal.Gui.App;
+using Terminal.Gui.Input;
 
 namespace Cmdr.Tests;
 
@@ -267,5 +269,126 @@ public sealed class OutputSearchTests
 
         h.View.Show(h.OtherEntry);
         Assert.Equal(0, h.View.SearchStatus().Active);
+    }
+
+    /// <summary>Selects from one cell of the view to another, with the view's own mouse handling (press, drag, release). The end cell is included.</summary>
+    private static void Select(OutputViewHarness h, int fromX, int fromY, int toX, int toY)
+    {
+        h.Press(fromX, fromY);
+        h.Drag(toX, toY);
+        h.Release(toX, toY);
+    }
+
+    private static bool KeyDown(OutputView view, Key key) =>
+        (bool)typeof(OutputView).GetMethod("OnKeyDown", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(view, new object[] { key })!;
+
+    [Fact]
+    public void Seed_is_the_selected_text_with_its_line_and_offset_within_one_line()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two", "y");
+
+        // The cells 2 to 4 of line 1: "hit".
+        Select(h, 2, 1, 4, 1);
+
+        Assert.True(h.View.HasSelection);
+        Assert.Equal(new SearchSeed("hit", 1L, 2), h.View.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_null_without_a_selection_and_after_a_press_without_a_drag()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two", "y");
+        Assert.Null(h.View.SelectionSeed());
+
+        Select(h, 2, 1, 2, 1);
+
+        Assert.False(h.View.HasSelection);
+        Assert.Null(h.View.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_null_for_a_selection_across_lines()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two", "y");
+
+        Select(h, 2, 0, 1, 1);
+
+        Assert.True(h.View.HasSelection);
+        Assert.Null(h.View.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_null_for_a_line_selection_within_one_line()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two");
+
+        // Shift+Up then Shift+Down from the cursor line (the last line) selects that line in line mode.
+        Assert.True(KeyDown(h.View, Key.CursorUp.WithShift));
+        Assert.True(KeyDown(h.View, Key.CursorDown.WithShift));
+
+        Assert.NotNull(h.Selection);
+        Assert.Null(h.View.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_limited_to_200_characters()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 300, 3, new string('a', 250));
+
+        Select(h, 0, 0, 199, 0);
+        Assert.Equal(200, h.View.SelectionSeed()!.Value.Text.Length);
+
+        Select(h, 0, 0, 200, 0);
+        Assert.Null(h.View.SelectionSeed());
+    }
+
+    /// <summary>The selected occurrence is the first match even when an earlier one is visible above it.</summary>
+    [Fact]
+    public void Activating_the_seed_makes_the_selected_occurrence_the_first_find_below_an_earlier_one()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two", "y");
+        Select(h, 2, 1, 4, 1);
+        SearchSeed? seed = h.View.SelectionSeed();
+        Assert.Equal(new SearchSeed("hit", 1L, 2), seed);
+
+        h.View.SetSearch(Literal("hit"));
+        h.View.ActivateSeed(seed!.Value);
+
+        Assert.Equal(SearchResult.Found, h.View.Find(backward: false, inclusive: true));
+        Assert.Equal(new SearchStatus(2, 2), h.View.SearchStatus());
+        Assert.Equal(1L, h.CursorLine);
+        Assert.True(h.View.HasSelection);
+    }
+
+    /// <summary>When the selected text is not a match (a part of a word under Whole word), the search goes on from its start.</summary>
+    [Fact]
+    public void Activating_a_seed_that_is_not_a_match_continues_the_search_forward_from_its_start()
+    {
+        using var app = Application.Create();
+        app.Init("ansi");
+        using OutputViewHarness h = OutputViewHarness.Create(app, 40, 6, "hit one", "x hit two", "hit three");
+        Select(h, 3, 1, 4, 1);
+        SearchSeed? seed = h.View.SelectionSeed();
+        Assert.Equal(new SearchSeed("it", 1L, 3), seed);
+
+        SearchPattern? wholeWord = SearchPattern.Create(new SearchQuery("hit", CaseSensitive: true, WholeWord: true, Regex: false), out _);
+        h.View.SetSearch(wholeWord);
+        h.View.ActivateSeed(seed!.Value);
+
+        Assert.Equal(SearchResult.Found, h.View.Find(backward: false, inclusive: true));
+        Assert.Equal(new SearchStatus(3, 3), h.View.SearchStatus());
+        Assert.Equal(2L, h.CursorLine);
     }
 }

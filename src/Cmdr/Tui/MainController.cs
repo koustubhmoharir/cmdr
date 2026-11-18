@@ -25,6 +25,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
     // The c hint sits between the two parts and is left out when c copies nothing (see CopyHint).
+    // While the search bar's find field has the focus, the search keys replace both parts (see SearchHint).
     private const string HintsBeforeCopy = "^C Stop  F5 Restart  Space Mark  ^A All  L Log  ";
     private const string HintsAfterCopy = "^S Save  + Max";
     private const string HintsRight = "  ^Q Quit";
@@ -52,6 +53,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     // The search bar's target: the pane that had the focus when the bar opened, while the bar is open. Null while it is closed.
     private View? _searchPane;
     private SearchPattern? _searchPattern;
+
+    // The last query with non-empty text, reopened by F3 and '/'. Its option flags follow the bar when it closes (see CloseSearch).
     private SearchQuery _lastQuery = new(string.Empty, false, false, false);
 
     // The rows shown: the session's rows without the commands of collapsed groups.
@@ -112,7 +115,6 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _output = new OutputView(this) { X = 0, Y = Pos.Bottom(_outputHeader), Width = Dim.Fill(), Height = Dim.Fill(1) };
 
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        ShowHints();
 
         // The search bar sits above the status line and is shown only while a search is open (see SetSearchBarOpen).
         _searchBar = new SearchBar { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1, Visible = false };
@@ -120,6 +122,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _searchBar.FocusPaneRequested += FocusSearchPane;
         _searchBar.Closed += CloseSearch;
         _searchBar.FindRequested += FindNext;
+        ShowHints();
 
         _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _window.Add(_listFrame, _detailsFrame, _outputHeader, _output, _status, _searchBar);
@@ -811,7 +814,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
     // is open, the focus moving to another pane moves the search there (see RetargetSearch). Keys go to the bar while its field
     // has the focus; the bar reports them through its events.
 
-    /// <summary>Esc in a pane (the bar's Esc too): closes the search when it is open. Returns true: Esc is always handled.</summary>
+    /// <summary>Esc in a pane: closes the search when it is open, without clearing its text. Returns true: Esc is always handled.</summary>
     public bool OnPaneEscape()
     {
         CloseSearch();
@@ -821,15 +824,27 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>
     /// '/' or Ctrl+F. Closed: opens the bar over the focused pane with the last query, the text selected, and the focus in the field.
     /// Open: focuses the field with its text selected, and moves the search to the focused pane first when another pane has the focus.
+    /// When the info or output pane has a selection within one line (see <see cref="SelectionSeedOf"/>), the query is the selected text
+    /// instead, with the options of the last query (closed) or of the bar (open), and the selected occurrence is the first match. A
+    /// selection that spans lines leaves the query as it was.
     /// </summary>
     private void OpenSearch()
     {
         View pane = FocusedPane() ?? _list;
+        SearchSeed? seed = SelectionSeedOf(pane);
         if (_searchPane is not null)
         {
             if (!ReferenceEquals(pane, _searchPane))
             {
                 RetargetSearch(pane);
+            }
+
+            if (seed is { } open)
+            {
+                SearchQuery query = SeedQuery(_searchBar.Query, open.Text);
+                _lastQuery = query;
+                _searchBar.SetQuery(query);
+                ApplySearch(query, find: true, open);
             }
 
             _searchBar.FocusField(selectAll: true);
@@ -838,9 +853,49 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         _searchPane = pane;
         SetSearchBarOpen(true);
-        _searchBar.SetQuery(_lastQuery);
+        SearchQuery start = seed is { } closed ? SeedQuery(_lastQuery, closed.Text) : _lastQuery;
+        if (seed is not null)
+        {
+            _lastQuery = start;
+        }
+
+        _searchBar.SetQuery(start);
         _searchBar.FocusField(selectAll: true);
-        ApplySearch(_lastQuery, find: true);
+        ApplySearch(start, find: true, seed);
+    }
+
+    /// <summary>
+    /// The query a selection seeds: the options of <paramref name="options"/> and the selected text as the pattern, escaped when the
+    /// Regex option is on so that it matches itself.
+    /// </summary>
+    private static SearchQuery SeedQuery(SearchQuery options, string text) =>
+        options with { Text = options.Regex ? System.Text.RegularExpressions.Regex.Escape(text) : text };
+
+    /// <summary>
+    /// The selection seed of a pane (see <c>SelectionSeed</c> on the info and output panes): null for the list, which has no
+    /// selection, and for a pane with no seed.
+    /// </summary>
+    private SearchSeed? SelectionSeedOf(View pane)
+    {
+        if (ReferenceEquals(pane, _details))
+        {
+            return _details.SelectionSeed();
+        }
+
+        return ReferenceEquals(pane, _output) ? _output.SelectionSeed() : null;
+    }
+
+    /// <summary>Makes the seed the active match of the info or output pane (see <c>ActivateSeed</c>). The list has no seed.</summary>
+    private void ActivateSeed(View pane, SearchSeed seed)
+    {
+        if (ReferenceEquals(pane, _details))
+        {
+            _details.ActivateSeed(seed);
+        }
+        else if (ReferenceEquals(pane, _output))
+        {
+            _output.ActivateSeed(seed);
+        }
     }
 
     /// <summary>
@@ -869,12 +924,21 @@ internal sealed class MainController : IDisposable, IListSearchHost
         return true;
     }
 
-    /// <summary>Applies the query to the target. With <paramref name="find"/>, moves to the first match from the origin, as typing does.</summary>
-    private void ApplySearch(SearchQuery query, bool find)
+    /// <summary>
+    /// Applies the query to the target. With a <paramref name="seed"/>, the selected occurrence becomes the active match before the
+    /// find, so the find starts there. With <paramref name="find"/>, moves to the first match from the origin, as typing does.
+    /// </summary>
+    private void ApplySearch(SearchQuery query, bool find, SearchSeed? seed = null)
     {
         _searchPattern = SearchPattern.Create(query, out _);
-        ISearchTarget target = SearchTargetFor(_searchPane!);
+        View pane = _searchPane!;
+        ISearchTarget target = SearchTargetFor(pane);
         target.SetSearch(_searchPattern);
+        if (seed is { } selected && _searchPattern is not null)
+        {
+            ActivateSeed(pane, selected);
+        }
+
         if (_searchPattern is not null && find)
         {
             target.Find(backward: false, inclusive: true);
@@ -883,9 +947,17 @@ internal sealed class MainController : IDisposable, IListSearchHost
         RefreshSearchStatus();
     }
 
-    /// <summary>The bar's query changed by the user: applies it and moves to the first match from the origin.</summary>
+    /// <summary>
+    /// The bar's query changed by the user: applies it and moves to the first match from the origin. A non-empty query becomes
+    /// <see cref="_lastQuery"/> at once, so that clearing the field does not lose it for F3 and '/' after the bar closes.
+    /// </summary>
     private void OnSearchQueryChanged(SearchQuery query)
     {
+        if (query.Text.Length > 0)
+        {
+            _lastQuery = query;
+        }
+
         if (_searchPane is not null)
         {
             ApplySearch(query, find: true);
@@ -920,7 +992,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
         RefreshSearchStatus();
     }
 
-    /// <summary>Closes the search: clears the target's highlights, collapses the groups the search expanded, and hides the bar.</summary>
+    /// <summary>
+    /// Closes the search: remembers the text as a history term, keeps the last non-empty query for F3 and '/' (with the bar's current
+    /// options, even when the field was cleared), clears the target's highlights, collapses the groups the search expanded, and hides the bar.
+    /// </summary>
     private void CloseSearch()
     {
         if (_searchPane is not { } pane)
@@ -928,7 +1003,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return;
         }
 
-        _lastQuery = _searchBar.Query;
+        _searchBar.RememberQuery();
+        SearchQuery query = _searchBar.Query;
+        // An empty field keeps the last non-empty text, so that F3 after a clear and a close brings it back.
+        _lastQuery = query.Text.Length > 0
+            ? query
+            : _lastQuery with { CaseSensitive = query.CaseSensitive, WholeWord = query.WholeWord, Regex = query.Regex };
         SearchTargetFor(pane).SetSearch(null);
         _searchPattern = null;
         if (_searchBar.HasFieldFocus)
@@ -1692,9 +1772,17 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// </summary>
     private ActionTarget? HintTarget() => _details.HasFocus || _output.HasFocus ? ShownTarget() : TargetOf(FocusedRow);
 
-    /// <summary>The hint text left of "^Q Quit": "Enter Start" / "Enter Kill" for the current targets, when Enter does something.</summary>
+    /// <summary>
+    /// The hint text left of "^Q Quit". While the find field has the focus, the search keys (see <see cref="SearchHint"/>). Otherwise
+    /// "Enter Start" / "Enter Kill" for the current targets, when Enter does something, and the keys of the focused pane.
+    /// </summary>
     private string HintLeft()
     {
+        if (_searchBar.HasFieldFocus)
+        {
+            return SearchHint.Describe(_searchBar.Query.Text.Length > 0);
+        }
+
         ActionTarget? target = HintTarget();
         IReadOnlyList<CommandEntry> targets = target is null ? Array.Empty<CommandEntry>() : CommandsOf(target);
         var enterTargets = targets

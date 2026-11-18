@@ -1,8 +1,10 @@
+using System.Reflection;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using Attribute = Terminal.Gui.Drawing.Attribute;
@@ -474,5 +476,97 @@ public sealed class DetailsSearchTests
         });
         app.Run(window);
         return frames;
+    }
+
+    /// <summary>Selects from one cell of the details view to another, with the view's own mouse handling (press, drag, release).</summary>
+    private static void Select(DetailsView details, int fromRow, int fromColumn, int toRow, int toColumn)
+    {
+        SendMouse(details, MouseFlags.LeftButtonPressed, fromColumn, fromRow);
+        SendMouse(details, MouseFlags.LeftButtonPressed, toColumn, toRow);
+        SendMouse(details, MouseFlags.LeftButtonReleased, toColumn, toRow);
+    }
+
+    private static void SendMouse(DetailsView details, MouseFlags flags, int x, int y) =>
+        typeof(DetailsView).GetMethod("OnMouseEvent", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(details, new object[] { new Mouse { Flags = flags, Position = new(x, y) } });
+
+    /// <summary>The seed of a selection within one line is its text, its line and its offset; the rows of the description are the logical lines 2 to 8.</summary>
+    [Fact]
+    public void Seed_is_the_selected_text_with_its_line_and_offset_within_one_line()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 3);
+
+        Assert.True(shown.Details.HasSelection);
+        Assert.Equal(new SearchSeed("HIT", 2L, 0), shown.Details.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_null_without_a_selection_and_after_a_press_without_a_drag()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+        Assert.Null(shown.Details.SelectionSeed());
+
+        Select(shown.Details, fromRow: 4, fromColumn: 2, toRow: 4, toColumn: 2);
+
+        Assert.Null(shown.Details.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_null_for_a_selection_across_logical_lines()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 3, toColumn: 1);
+
+        Assert.True(shown.Details.HasSelection);
+        Assert.Null(shown.Details.SelectionSeed());
+    }
+
+    [Fact]
+    public void Seed_is_limited_to_200_characters()
+    {
+        using Shown shown = Shown.Open(300, 12, Group("g", new string('x', 210)));
+
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 200);
+        Assert.Equal(200, shown.Details.SelectionSeed()!.Value.Text.Length);
+
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 201);
+        Assert.Null(shown.Details.SelectionSeed());
+    }
+
+    /// <summary>The selected occurrence is the first match even when an earlier one is visible above it.</summary>
+    [Fact]
+    public void Activating_the_seed_makes_the_selected_occurrence_the_first_find_below_an_earlier_one()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+        DetailsView details = shown.Details;
+        Select(details, fromRow: 4, fromColumn: 2, toRow: 4, toColumn: 5);
+        SearchSeed? seed = details.SelectionSeed();
+        Assert.Equal(new SearchSeed("HIT", 4L, 2), seed);
+
+        details.SetSearch(Literal(Hit));
+        details.ActivateSeed(seed!.Value);
+
+        Assert.Equal(SearchResult.Found, details.Find(backward: false, inclusive: true));
+        Assert.Equal(new SearchStatus(4, 3), details.SearchStatus());
+        Assert.True(details.HasSelection);
+    }
+
+    /// <summary>When the selected text is not a match (a part of a word under Whole word), the search goes on from its start.</summary>
+    [Fact]
+    public void Activating_a_seed_that_is_not_a_match_continues_the_search_forward_from_its_start()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+        DetailsView details = shown.Details;
+        Select(details, fromRow: 2, fromColumn: 1, toRow: 2, toColumn: 3);
+        SearchSeed? seed = details.SelectionSeed();
+        Assert.Equal(new SearchSeed("IT", 2L, 1), seed);
+
+        SearchPattern? wholeWord = SearchPattern.Create(new SearchQuery(Hit, CaseSensitive: true, WholeWord: true, Regex: false), out _);
+        details.SetSearch(wholeWord);
+        details.ActivateSeed(seed!.Value);
+
+        Assert.Equal(SearchResult.Found, details.Find(backward: false, inclusive: true));
+        Assert.Equal(new SearchStatus(4, 2), details.SearchStatus());
     }
 }

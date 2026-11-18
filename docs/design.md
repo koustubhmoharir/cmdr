@@ -370,8 +370,13 @@ acting, or captures a snapshot and acts only on that.
   still exists, so changing text simply drops it. The output's match count (`OutputSearchIndex`) counts each completed line once
   and drops evicted lines, recounting only partial lines, so the 100 ms status refresh does not rescan the buffer while it streams;
   `Find` skips completed lines with no matches. Highlights are computed per drawn line and only while a search is set. The bar
-  (`SearchBar`) keeps the focus in its `TextField`; a subclass takes Enter, Tab, Esc, F3 and Alt+C/W/R before the field does,
-  and the bar swallows everything the field declines except Ctrl+Q/Ctrl+S. The target follows the focused pane (checked each
+  (`SearchBar`) keeps the focus in its `TextField`; a subclass takes Enter, Tab, Esc, F3, ↑/↓ and Alt+C/W/R before the field
+  does, and the bar swallows everything the field declines except Ctrl+Q/Ctrl+S. The options are drawn by the bar, not
+  `CheckBox`es: a CheckBox under the mouse takes the scheme's Highlight role, which is italic and dim. While the field has the
+  focus the status line shows `SearchHint` instead of the pane hints. `SearchHistory` (pure) holds the session's terms and the
+  ↑/↓ navigation with its draft; a text change not made by the navigation resets it. Seeding from a selection
+  (`SelectionSeed` on the info and output panes, one line, ≤ 200 UTF-16 units) sets the pane's active match to the selection
+  before an inclusive Find, so the selected occurrence comes first; when it is not a match the Find just continues from there. The target follows the focused pane (checked each
   tick); retargeting sets the pattern without moving.
 - **Dialogs**: `Confirm.Ask`/`Choose` make the action the user initiated the default — Terminal.Gui 2.5
   makes the last button of a MessageBox the default, so choices are passed reversed. Dialog buttons take

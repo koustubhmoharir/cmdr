@@ -26,6 +26,10 @@ internal sealed class OutputView : View, ISearchTarget
 {
     private const int WheelLines = 3;
     private const int ShadePercent = 12;
+
+    /// <summary>The longest selected text, in UTF-16 units, that seeds a search (see <see cref="SelectionSeed"/>).</summary>
+    private const int SeedMaxLength = 200;
+
     private static readonly Color FallbackCursorShade = new(0x3A, 0x3F, 0x4B);
 
     private readonly MainController _controller;
@@ -892,6 +896,73 @@ internal sealed class OutputView : View, ISearchTarget
         }
 
         return new SearchStatus(_searchIndex.Total, active);
+    }
+
+    /// <summary>
+    /// The selected text a search starts from: a character selection within one buffer line, of at most 200 UTF-16 units. The
+    /// seed is the text, the absolute number of its line, and the UTF-16 offset of the text in the line's plain text, which are the
+    /// units of the matches. Null when there is no selection, it is a line selection or spans lines, or its text is empty or too
+    /// long. The selection and the line are read from one snapshot, as the copy reads them (see <see cref="CopyTextFrom"/>).
+    /// </summary>
+    internal SearchSeed? SelectionSeed()
+    {
+        if (_selection is not { LineMode: false })
+        {
+            return null;
+        }
+
+        BufferSnapshot? snapshot = CaptureForCopy();
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        Revalidate(snapshot);
+        if (_selection is not { LineMode: false } selection)
+        {
+            return null;
+        }
+
+        SelectionRange range = SelectionRange.Between(selection.Anchor, selection.Active, lineMode: false);
+        if (range.Start.Line != range.End.Line || snapshot.LineAt(range.Start.Line)?.PlainText is not { } plain)
+        {
+            return null;
+        }
+
+        string text = SelectionText.Slice(plain, range.Start.Column, range.End.Column);
+        if (text.Length == 0 || text.Length > SeedMaxLength)
+        {
+            return null;
+        }
+
+        return new SearchSeed(text, range.Start.Line, FirstCellOffset(plain, range.Start.Column, range.End.Column));
+    }
+
+    /// <summary>
+    /// Makes the seed's text the active match, the origin of the next <see cref="Find"/>, so that a Find with <c>inclusive</c> set
+    /// takes the selected occurrence first. Call after <see cref="SetSearch"/>. The text is highlighted only when it is a match.
+    /// </summary>
+    internal void ActivateSeed(SearchSeed seed) =>
+        _active = new ActiveMatch(seed.Line, seed.Start, seed.Text.Length);
+
+    /// <summary>
+    /// The UTF-16 offset of the first character that <see cref="SelectionText.Slice"/> takes for the columns from
+    /// <paramref name="fromColumn"/> to <paramref name="toColumn"/>. Zero when no character is in those columns.
+    /// </summary>
+    private static int FirstCellOffset(string text, int fromColumn, int toColumn)
+    {
+        int column = 0;
+        foreach ((int offset, int _, int width) in TextWidth.Graphemes(text))
+        {
+            if (width > 0 && column + width - 1 >= fromColumn && column <= toColumn)
+            {
+                return offset;
+            }
+
+            column += width;
+        }
+
+        return 0;
     }
 
     /// <summary>

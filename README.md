@@ -326,20 +326,30 @@ highlights; it does not filter. All matches are highlighted in yellow, and the c
 In the output pane, moving to a match pauses following (End resumes it). In the list it focuses that row, expanding
 collapsed groups when the match is inside one.
 
-The bar shows the query, three options and the match count (`3 of 17`):
+The bar shows the query, three options and the match count (`3 of 17`). An option that is on is highlighted in cyan.
+While the query field has the focus the status line lists the keys of the search; once the focus is back in a pane, the
+bar shows `F3 next · Shift+F3 prev` in place of the options.
+
+With a selection within one line in the info or output pane, `/` or Ctrl+F puts the selected text in the field (escaped
+when `.*` is on) and starts at the selected occurrence; the selection stays. Otherwise the field shows the last query.
 
 | Key in the bar | Action |
 |---|---|
 | typing | Search as you type, from the current match (or the top of the pane) |
 | Alt+C / Alt+W / Alt+R | Toggle case sensitive (`Aa`), whole word (`Word`) and regular expression (`.*`). The options can also be clicked |
 | F3 / Shift+F3 | Next / previous match; the search wraps at the end and the status line says so |
+| ↑ / ↓ | Previous / next search term of this session; ↓ past the newest brings back the text being typed |
 | Enter, Tab | Back to the pane; the bar and the highlights stay, and F3 / Shift+F3 keep working there |
-| Esc | Close the search |
+| Esc | Clear the query; with an empty query, close the search |
+
+A term is kept in the history when you leave the field (Enter, Tab), press F3 / Shift+F3, clear it with Esc, or close
+the search (the last 50, without duplicates).
 
 While the bar has the focus it takes every key except Ctrl+Q and Ctrl+S. The mouse wheel still scrolls the panes, and a
 click moves the focus to a pane. Moving the focus to another pane moves the search there. Esc in a pane clears its
 selection first and then closes the search. Closing removes the highlights and collapses again the groups the search
-expanded, except the ones that hold the focused row. F3 with the bar closed brings back the last search.
+expanded, except the ones that hold the focused row. F3 with the bar closed brings back the last search (the last
+non-empty query, even after Esc cleared it).
 
 Whole word means no letter, digit or `_` right before or after the match, so a query like `-v` works too. Regular
 expressions use .NET syntax.

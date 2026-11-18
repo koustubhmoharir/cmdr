@@ -20,7 +20,8 @@ public sealed class SearchBarTests
 {
     private const int Width = 120;
     private const int Height = 40;
-    private const string Hint = "F3 next · Shift+F3 prev · Enter to pane · Esc close";
+    private const string NextPrevHint = "F3 next · Shift+F3 prev";
+    private const string SearchKeys = "F3 Next  ⇧F3 Prev  ↑↓ History  Alt+C Case  Alt+W Word  Alt+R Regex  Enter Pane";
 
     [Fact]
     public void Slash_in_the_list_opens_the_bar_above_the_status_line_and_Esc_closes_it_and_restores_the_layout()
@@ -310,6 +311,7 @@ public sealed class SearchBarTests
             Press(app, (Key)'/');
             Type(app, "hit");
             Press(app, Key.Esc);
+            Press(app, Key.Esc);
             Assert.False(bar.Visible);
 
             Press(app, Key.F3);
@@ -323,10 +325,11 @@ public sealed class SearchBarTests
     }
 
     [Theory]
-    [InlineData(80, "F3 next · Shift+F3 prev · Esc close", true)]
-    [InlineData(64, "F3 next · Shift+F3 prev", true)]
-    [InlineData(50, "F3 next · Shift+F3 prev", false)]
-    public void A_narrow_bar_shortens_the_hint_but_always_shows_the_next_and_previous_keys(int width, string hint, bool options)
+    [InlineData(120, true)]
+    [InlineData(31, true)]
+    [InlineData(30, false)]
+    [InlineData(20, false)]
+    public void A_narrow_bar_hides_the_options_when_the_field_has_no_room_for_them_while_the_field_has_the_focus(int width, bool options)
     {
         using TempSession temp = Session();
 
@@ -337,20 +340,459 @@ public sealed class SearchBarTests
             list.SetFocus();
             app.LayoutAndDraw();
             Press(app, (Key)'/');
-            foreach (char ch in "hit")
-            {
-                Press(app, (Key)ch);
-            }
-
-            app.LayoutAndDraw();
+            Type(app, "hit");
 
             string row = ScreenRow(app, bar.Frame.Y, width);
-            Assert.EndsWith(hint, row.TrimEnd());
-            Assert.Equal(1, CountOf(row, "F3 next"));
-            Assert.Equal(options, row.Contains("Word", StringComparison.Ordinal));
             Assert.StartsWith("Find: hit", row);
+            Assert.Equal(options, row.Contains("Word", StringComparison.Ordinal));
+            Assert.DoesNotContain(NextPrevHint, row);
         });
     }
+
+    [Theory]
+    [InlineData(38, true)]
+    [InlineData(37, false)]
+    public void A_narrow_bar_hides_the_next_and_previous_hint_when_the_field_has_no_room_for_it(int width, bool hint)
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            TypeHitInOutput(temp, app, controller);
+            Press(app, Key.Enter);
+
+            string row = ScreenRow(app, bar.Frame.Y, width);
+            Assert.StartsWith("Find: hit", row);
+            Assert.Equal(hint, row.Contains(NextPrevHint, StringComparison.Ordinal));
+            Assert.Equal(hint ? 1 : 0, CountOf(row, "F3 next"));
+        });
+    }
+
+    [Fact]
+    public void At_full_width_with_the_field_focused_the_bar_row_shows_the_caption_field_toggles_and_status_but_no_hint()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            TypeHitInOutput(temp, app, controller);
+
+            string row = ScreenRow(app, bar.Frame.Y, Width);
+            Assert.True(bar.HasFieldFocus);
+            Assert.StartsWith("Find: hit", row);
+            Assert.Contains(" Aa ", row);
+            Assert.Contains(" Word ", row);
+            Assert.Contains(" .* ", row);
+            Assert.EndsWith("1 of 3", row.TrimEnd());
+            Assert.DoesNotContain(NextPrevHint, row);
+        });
+    }
+
+    [Fact]
+    public void After_Enter_the_bar_row_shows_the_next_and_previous_hint_in_place_of_the_toggles_until_the_field_has_the_focus_again()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            TypeHitInOutput(temp, app, controller);
+            Press(app, Key.Enter);
+
+            string row = ScreenRow(app, bar.Frame.Y, Width);
+            Assert.False(bar.HasFieldFocus);
+            int hintAt = row.IndexOf(NextPrevHint, StringComparison.Ordinal);
+            Assert.True(hintAt > 0, "The hint must be shown.");
+            Assert.Equal("Find: hit", row[..hintAt].TrimEnd());
+            Assert.DoesNotContain(" Aa ", row);
+            Assert.DoesNotContain(" Word ", row);
+            Assert.DoesNotContain(" .* ", row);
+
+            bar.FocusField(false);
+            app.LayoutAndDraw();
+
+            row = ScreenRow(app, bar.Frame.Y, Width);
+            Assert.True(bar.HasFieldFocus);
+            Assert.Contains(" Aa ", row);
+            Assert.Contains(" Word ", row);
+            Assert.DoesNotContain(NextPrevHint, row);
+        });
+    }
+
+    [Fact]
+    public void A_toggle_that_is_on_is_drawn_in_the_active_colour_and_one_that_is_off_in_the_normal_colour()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            TypeHitInOutput(temp, app, controller);
+            Press(app, Key.C.WithAlt);
+
+            int row = bar.Frame.Y;
+            string text = ScreenRow(app, row, Width);
+            Terminal.Gui.Drawing.Attribute normal = AttributeAt(app, row, 0);
+            Terminal.Gui.Drawing.Attribute on = AttributeAt(app, row, text.IndexOf(" Aa ", StringComparison.Ordinal) + 1);
+            Terminal.Gui.Drawing.Attribute off = AttributeAt(app, row, text.IndexOf(" Word ", StringComparison.Ordinal) + 1);
+
+            Assert.Equal(SearchColors.Active(normal), on);
+            Assert.Equal(normal, off);
+            Assert.False(normal.Style.HasFlag(Terminal.Gui.Drawing.TextStyle.Italic));
+            Assert.False(on.Style.HasFlag(Terminal.Gui.Drawing.TextStyle.Italic));
+        });
+    }
+
+    [Fact]
+    public void A_left_click_on_a_toggle_flips_its_option_updates_the_matches_and_leaves_the_focus_in_the_field()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            WriteOutput(temp, "Hit hit HIT\n");
+            ShowFirstCommand(app, controller);
+            OutputView output = Field<OutputView>(controller, "_output");
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Type(app, "hit");
+            Assert.EndsWith(" of 3", bar.Status);
+
+            int column = ScreenRow(app, bar.Frame.Y, Width).IndexOf(" Aa ", StringComparison.Ordinal) + 1;
+            Click(app, column, bar.Frame.Y);
+
+            Assert.True(bar.Query.CaseSensitive);
+            Assert.True(bar.HasFieldFocus);
+            Assert.Equal("1 of 1", bar.Status);
+
+            Click(app, column, bar.Frame.Y);
+
+            Assert.False(bar.Query.CaseSensitive);
+            Assert.True(bar.HasFieldFocus);
+            Assert.EndsWith(" of 3", bar.Status);
+        });
+    }
+
+    [Fact]
+    public void Status_line_shows_the_search_keys_while_the_find_field_has_the_focus_and_the_pane_hints_otherwise()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            StatusLine status = Field<StatusLine>(controller, "_status");
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            Field<CommandListView>(controller, "_list").SetFocus();
+            app.LayoutAndDraw();
+            Tick(controller);
+            string paneHints = StatusText(status);
+            Assert.Contains("^S Save", paneHints);
+
+            Press(app, (Key)'/');
+            Tick(controller);
+            Assert.True(bar.HasFieldFocus);
+            Assert.EndsWith(SearchKeys + "  Esc Close", StatusText(status));
+
+            Press(app, (Key)'x');
+            Tick(controller);
+            Assert.EndsWith(SearchKeys + "  Esc Clear", StatusText(status));
+
+            Press(app, Key.Enter);
+            Tick(controller);
+            Assert.False(bar.HasFieldFocus);
+            Assert.True(bar.Visible);
+            Assert.Equal(paneHints, StatusText(status));
+
+            Press(app, (Key)'/');
+            Tick(controller);
+            Assert.True(bar.HasFieldFocus);
+            Assert.EndsWith(SearchKeys + "  Esc Clear", StatusText(status));
+
+            Press(app, Key.Esc);
+            Tick(controller);
+            Assert.True(bar.Visible);
+            Assert.EndsWith(SearchKeys + "  Esc Close", StatusText(status));
+
+            Press(app, Key.Esc);
+            Tick(controller);
+            Assert.False(bar.Visible);
+            Assert.Equal(paneHints, StatusText(status));
+        });
+    }
+
+    [Fact]
+    public void Esc_with_text_clears_the_field_and_keeps_the_bar_open_with_no_status_and_the_next_Esc_closes_it()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            StatusLine status = Field<StatusLine>(controller, "_status");
+            TypeHitInOutput(temp, app, controller);
+            Assert.Equal("1 of 3", bar.Status);
+
+            Press(app, Key.Esc);
+            Tick(controller);
+
+            Assert.True(bar.Visible);
+            Assert.True(bar.HasFieldFocus);
+            Assert.Equal(string.Empty, bar.Query.Text);
+            Assert.Equal(string.Empty, bar.Status);
+            Assert.Equal(new SearchStatus(0, 0), output.SearchStatus());
+            Assert.EndsWith(SearchKeys + "  Esc Close", StatusText(status));
+
+            Press(app, Key.Esc);
+
+            Assert.False(bar.Visible);
+        });
+    }
+
+    [Fact]
+    public void After_Esc_clears_and_Esc_closes_F3_with_the_bar_closed_reopens_with_the_cleared_query()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            TypeHitInOutput(temp, app, controller);
+            Press(app, Key.Esc);
+            Press(app, Key.Esc);
+            Assert.False(bar.Visible);
+            Press(app, Key.F3);
+
+            Assert.True(bar.Visible);
+            Assert.True(output.HasFocus);
+            Assert.Equal("hit", bar.Query.Text);
+            Assert.EndsWith(" of 3", bar.Status);
+        });
+    }
+
+    [Fact]
+    public void Up_and_Down_step_through_the_terms_of_this_session_and_Down_past_the_newest_restores_the_draft()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "alpha line\nbeta line\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+
+            Press(app, (Key)'/');
+            Type(app, "alpha");
+            Press(app, Key.Enter);
+            Press(app, (Key)'/');
+            Type(app, "beta");
+            Press(app, Key.Enter);
+            Press(app, (Key)'/');
+            Type(app, "draft");
+            Assert.Equal("draft", bar.Query.Text);
+
+            Press(app, Key.CursorUp);
+            Assert.Equal("beta", bar.Query.Text);
+            Press(app, Key.CursorUp);
+            Assert.Equal("alpha", bar.Query.Text);
+            Press(app, Key.CursorUp);
+            Assert.Equal("alpha", bar.Query.Text);
+            Press(app, Key.CursorDown);
+            Assert.Equal("beta", bar.Query.Text);
+            Press(app, Key.CursorDown);
+            Assert.Equal("draft", bar.Query.Text);
+            Assert.True(bar.HasFieldFocus);
+            Assert.True(bar.Visible);
+        });
+    }
+
+    [Fact]
+    public void Up_puts_the_cursor_at_the_end_of_the_term_shown()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "alpha line\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Type(app, "alpha");
+            Press(app, Key.Enter);
+            Press(app, (Key)'/');
+
+            Press(app, Key.CursorUp);
+
+            Assert.Equal("alpha", bar.Query.Text);
+            Assert.Equal(5, InsertionPointOf(bar));
+        });
+    }
+
+    [Fact]
+    public void Up_updates_the_match_count_live()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "alpha one\nalpha two\nbeta\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Type(app, "alpha");
+            Press(app, Key.Enter);
+            Press(app, (Key)'/');
+            Type(app, "beta");
+            Assert.Equal("1 of 1", bar.Status);
+
+            Press(app, Key.CursorUp);
+
+            Assert.Equal("alpha", bar.Query.Text);
+            Assert.Equal(new SearchStatus(2, 1), output.SearchStatus());
+            Assert.Equal("1 of 2", bar.Status);
+        });
+    }
+
+    /// <summary>A selection in the output pane (press, drag, release at view cells, the end cell included) is the query of '/'.</summary>
+    [Fact]
+    public void Slash_with_a_selection_in_the_output_seeds_the_field_and_the_selected_occurrence_is_the_active_match()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "hit one\nhit two\nhit three\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+
+            // "hit" on the second line.
+            SelectInOutput(app, output, 0, 1, 2, 1);
+            Press(app, (Key)'/');
+
+            Assert.Equal("hit", bar.Query.Text);
+            Assert.Equal("2 of 3", bar.Status);
+            Assert.True(output.HasSelection);
+        });
+    }
+
+    /// <summary>With Regex on, the selected text is escaped, so that it matches itself.</summary>
+    [Fact]
+    public void Slash_with_Regex_on_escapes_the_selected_text()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "xa.by a-b\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Press(app, Key.R.WithAlt);
+            Press(app, Key.Esc);
+            Assert.False(bar.Visible);
+
+            // "a.b" in the first line (the "a-b" after it does not match the escaped text).
+            SelectInOutput(app, output, 1, 0, 3, 0);
+            Press(app, (Key)'/');
+
+            Assert.Equal(@"a\.b", bar.Query.Text);
+            Assert.True(bar.Query.Regex);
+            Assert.Equal("1 of 1", bar.Status);
+        });
+    }
+
+    /// <summary>With the bar open and the focus back in the output, a new selection replaces the text.</summary>
+    [Fact]
+    public void Slash_with_the_bar_open_replaces_the_text_with_a_new_selection()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "hit one\nhit two\nhit three\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Type(app, "hit");
+            Press(app, Key.Enter);
+            Assert.True(output.HasFocus);
+
+            // "two" on the second line.
+            SelectInOutput(app, output, 4, 1, 6, 1);
+            Press(app, (Key)'/');
+
+            Assert.True(bar.HasFieldFocus);
+            Assert.Equal("two", bar.Query.Text);
+            Assert.Equal("1 of 1", bar.Status);
+        });
+    }
+
+    /// <summary>A selection across lines is not a seed: the query stays as it was.</summary>
+    [Fact]
+    public void Slash_with_a_multi_line_selection_keeps_the_previous_query()
+    {
+        using TempSession temp = Session();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            OutputView output = Field<OutputView>(controller, "_output");
+            WriteOutput(temp, "hit one\nhit two\nhit three\n");
+            ShowFirstCommand(app, controller);
+            output.SetFocus();
+            app.LayoutAndDraw();
+            Press(app, (Key)'/');
+            Type(app, "hit");
+            Press(app, Key.Enter);
+
+            SelectInOutput(app, output, 0, 0, 2, 1);
+            Press(app, (Key)'/');
+
+            Assert.True(bar.HasFieldFocus);
+            Assert.Equal("hit", bar.Query.Text);
+        });
+    }
+
+    /// <summary>Selects from one cell of the output pane to another, through its own mouse handling (press, drag, release).</summary>
+    private static void SelectInOutput(IApplication app, OutputView output, int fromX, int fromY, int toX, int toY)
+    {
+        SendMouse(output, MouseFlags.LeftButtonPressed, fromX, fromY);
+        SendMouse(output, MouseFlags.LeftButtonPressed, toX, toY);
+        SendMouse(output, MouseFlags.LeftButtonReleased, toX, toY);
+        app.LayoutAndDraw();
+    }
+
+    private static void SendMouse(OutputView output, MouseFlags flags, int x, int y) =>
+        typeof(OutputView).GetMethod("OnMouseEvent", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(output, new object[] { new Mouse { Flags = flags, Position = new(x, y) } });
+
+    /// <summary>The cursor position of the bar's find field, in graphemes.</summary>
+    private static int InsertionPointOf(SearchBar bar) =>
+        ((Terminal.Gui.Views.TextField)typeof(SearchBar).GetField("_field", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(bar)!)
+        .InsertionPoint;
 
     private static int CountOf(string text, string part)
     {
@@ -361,28 +803,6 @@ public sealed class SearchBarTests
         }
 
         return count;
-    }
-
-    [Fact]
-    public void At_full_width_the_bar_row_shows_the_caption_the_options_the_status_and_the_hint()
-    {
-        using TempSession temp = Session();
-
-        RunLaidOut(temp, Width, Height, (app, controller) =>
-        {
-            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
-            CommandListView list = Field<CommandListView>(controller, "_list");
-            list.SetFocus();
-            app.LayoutAndDraw();
-            Press(app, (Key)'/');
-
-            string row = ScreenRow(app, bar.Frame.Y, Width);
-            Assert.StartsWith("Find: ", row);
-            Assert.Contains("Aa", row);
-            Assert.Contains("Word", row);
-            Assert.Contains(".*", row);
-            Assert.EndsWith(Hint, row.TrimEnd());
-        });
     }
 
     /// <summary>A session with one group "work" holding a command "hit-build" (run as "hit-tool") and a command "other".</summary>
@@ -399,6 +819,28 @@ public sealed class SearchBarTests
     /// <summary>Writes the text to the output of the first command of the session, without starting it.</summary>
     private static void WriteOutput(TempSession temp, string text) =>
         temp.Session.AllEntries.First().Process.Output.WriteStdOut(text);
+
+    /// <summary>Writes "hit one, hit two, hit three" to the first command's output, focuses the output and types "hit" into the search.</summary>
+    private static void TypeHitInOutput(TempSession temp, IApplication app, MainController controller)
+    {
+        WriteOutput(temp, "hit one\nhit two\nhit three\n");
+        ShowFirstCommand(app, controller);
+        Field<OutputView>(controller, "_output").SetFocus();
+        app.LayoutAndDraw();
+        Press(app, (Key)'/');
+        Type(app, "hit");
+    }
+
+    /// <summary>A left press at the screen position, through the application's mouse routing.</summary>
+    private static void Click(IApplication app, int x, int y)
+    {
+        app.Mouse.RaiseMouseEvent(new Mouse { Flags = MouseFlags.LeftButtonPressed, ScreenPosition = new(x, y) });
+        app.LayoutAndDraw();
+    }
+
+    /// <summary>The attribute of the screen cell at the position.</summary>
+    private static Terminal.Gui.Drawing.Attribute AttributeAt(IApplication app, int row, int column) =>
+        app.Driver!.Contents![row, column].Attribute!.Value;
 
     /// <summary>Moves the list focus to the first command, so that the output and the info pane show it.</summary>
     private static void ShowFirstCommand(IApplication app, MainController controller)
