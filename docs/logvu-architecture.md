@@ -39,7 +39,7 @@ An event is a run of lines `[Start, End)` in one file. `HeaderEnd` is the end of
   multi-line event walks back to its header (or to file start, giving the orphan event).
 
 ```csharp
-public readonly record struct EventExtent(long Start, long End, long HeaderEnd, bool Provisional);
+public readonly record struct EventExtent(long Start, long End, long HeaderEnd, bool Provisional, bool Orphan);
 ```
 
 ## Parsed events (M1)
