@@ -50,7 +50,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Recent-history ring (bounded; offsets, extents, normalized fields, capped previews), independent of filters.
 - [x] Page older/newer history from an anchor row across member boundaries (HistoryReader).
 - [x] Immutable CatalogSnapshot so history scans run off the store worker; HistoryReader over snapshots.
-- [ ] Visible rows survive ring eviction (page holds its own rows).
+- [x] Visible rows survive ring eviction (page holds its own rows).
 - [x] On-demand full event fetch with bounded buffers (LogStore.ReadDetailAsync, 4 MiB cap).
 - [ ] Oversized detail values streamed/paged in the detail view (M8).
 - [x] Background worker: off-UI reads, cancellation of superseded work, batched publication.
@@ -68,9 +68,9 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M6. Timeline model (UI-free)
 
-- [ ] Viewport/selection state machine: Up/Down, Shift+Up/Down, PgUp/PgDn, End, history boundaries, single-row viewport.
-- [ ] Follow/Pause: manual navigation pauses; resume jumps to newest; new-arrival counter.
-- [ ] Tests incl. the three-row Shift+Up acceptance scenario and its mirror.
+- [x] Viewport/selection state machine: Up/Down, Shift+Up/Down, PgUp/PgDn, End, history boundaries, single-row viewport.
+- [x] Follow/Pause: manual navigation pauses; resume jumps to newest; new-arrival counter.
+- [x] Tests incl. the three-row Shift+Up acceptance scenario and its mirror.
 
 ## M7. TUI shell and timeline
 

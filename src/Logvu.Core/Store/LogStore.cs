@@ -202,20 +202,22 @@ public sealed class LogStore : IAsyncDisposable
     }
 
     /// <summary>
-    /// Reads up to <paramref name="count"/> rows strictly newer than <paramref name="anchor"/>, oldest first, that match the filter.
+    /// Reads up to <paramref name="count"/> rows strictly newer than <paramref name="anchor"/>, oldest first, that match the filter. When
+    /// <paramref name="inclusive"/> is set, the anchor's own row is the first candidate, so the page may start with it.
     /// </summary>
-    /// <param name="anchor">The row the page is newer than.</param>
+    /// <param name="anchor">The row the page is newer than, or starts at when inclusive.</param>
     /// <param name="count">The most rows to return. It is at least 1.</param>
     /// <param name="filter">The predicate a row must match, or <c>null</c>.</param>
     /// <param name="progress">Receives the event bytes scanned in history. May be <c>null</c>.</param>
     /// <param name="ct">Cancels the read.</param>
+    /// <param name="inclusive">Whether the anchor's own row may be the page's first row.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is below 1, or the anchor's offset is negative.</exception>
     /// <exception cref="ArgumentException">The anchor's generation is not in the timeline.</exception>
-    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    public Task<RowPage> ReadNewerAsync(RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct, bool inclusive = false)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(anchor.Offset, nameof(anchor));
-        return Task.Run(() => ReadPage(state => _reader.Newer(state, anchor, count, filter, progress, ct)), ct);
+        return Task.Run(() => ReadPage(state => _reader.Newer(state, anchor, count, filter, progress, ct, inclusive)), ct);
     }
 
     /// <summary>

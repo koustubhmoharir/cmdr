@@ -98,11 +98,12 @@ public sealed class HistoryReader
     }
 
     /// <summary>
-    /// Reads up to <paramref name="count"/> matching rows strictly newer than <paramref name="anchor"/>.
+    /// Reads up to <paramref name="count"/> matching rows strictly newer than <paramref name="anchor"/>, or, when
+    /// <paramref name="inclusive"/> is set, the anchor's own event followed by the rows newer than it.
     /// </summary>
     /// <remarks>
-    /// The walk starts just after the anchor within its member and continues into later members from their first event. An anchor
-    /// whose member has expired is read from the member after it.
+    /// The walk starts at the anchor within its member and continues into later members from their first event. An anchor whose member
+    /// has expired is read from the member after it, so an inclusive read has no row for it there.
     /// </remarks>
     /// <param name="snapshot">The timeline the read walks. It is taken by the caller and not changed by the read.</param>
     /// <param name="anchor">The row the page is newer than: a key of an event start.</param>
@@ -110,19 +111,21 @@ public sealed class HistoryReader
     /// <param name="filter">The predicate a row must match, or <c>null</c> to match every row.</param>
     /// <param name="scannedBytes">Receives the running total of event bytes scanned, at least once per batch. May be <c>null</c>.</param>
     /// <param name="ct">Checked at least once per batch and per event.</param>
+    /// <param name="inclusive">Whether the anchor's own event may be the page's first row, when it exists and matches the filter.</param>
     /// <returns>The matching rows, oldest first.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="snapshot"/> is <c>null</c>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is below 1, or the anchor's offset is negative.</exception>
     /// <exception cref="ArgumentException">The anchor's generation is not in the snapshot's timeline.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was cancelled.</exception>
-    public RowPage ReadNewer(CatalogSnapshot snapshot, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct)
+    public RowPage ReadNewer(CatalogSnapshot snapshot, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? scannedBytes, CancellationToken ct, bool inclusive = false)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
         ct.ThrowIfCancellationRequested();
         MemberInfo member = AnchorMember(snapshot, anchor);
 
         var scan = new Scan(this, snapshot, count, filter, scannedBytes, ct);
-        bool reachedBoundary = scan.Forward(member, anchor.Offset, skipUpTo: anchor.Offset);
+        // The walk starts at the anchor's offset, so an inclusive read needs no skip; an exclusive one skips the anchor's event.
+        bool reachedBoundary = scan.Forward(member, anchor.Offset, skipUpTo: inclusive ? null : anchor.Offset);
         return scan.Finish(reachedBoundary, backward: false);
     }
 

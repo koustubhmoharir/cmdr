@@ -75,7 +75,7 @@ internal sealed class StoreReader
         }
 
         var errors = new List<MemberReadError>();
-        List<EventRow> tail = MatchedTail(state, filter, anchor: null, after: false, errors, ct);
+        List<EventRow> tail = MatchedTail(state, filter, anchor: null, after: false, includeAnchor: false, errors, ct);
         RowPage history = _history.ReadNewest(catalog, count, filter, progress, ct);
         List<EventRow> page = Merge(history.Rows, tail, catalog);
         page = page.GetRange(Math.Max(0, page.Count - count), Math.Min(count, page.Count));
@@ -118,22 +118,26 @@ internal sealed class StoreReader
         }
 
         var errors = new List<MemberReadError>();
-        List<EventRow> tail = MatchedTail(state, filter, anchor, after: false, errors, ct);
+        List<EventRow> tail = MatchedTail(state, filter, anchor, after: false, includeAnchor: false, errors, ct);
         RowPage history = _history.ReadOlder(catalog, anchor, count, filter, progress, ct);
         List<EventRow> page = Merge(history.Rows, tail, catalog);
         page = page.GetRange(Math.Max(0, page.Count - count), Math.Min(count, page.Count));
         return new RowPage(page, page.Count < count, history.Errors.Concat(errors).ToList());
     }
 
-    /// <summary>Reads up to <paramref name="count"/> rows strictly newer than <paramref name="anchor"/>, oldest first.</summary>
+    /// <summary>
+    /// Reads up to <paramref name="count"/> rows strictly newer than <paramref name="anchor"/>, or, when <paramref name="inclusive"/> is
+    /// set, the anchor's own row followed by the rows newer than it. Oldest first.
+    /// </summary>
     /// <param name="state">The state to read.</param>
     /// <param name="anchor">The row the page is newer than. Its generation must be in the state's timeline.</param>
     /// <param name="count">The most rows to return. It is at least 1.</param>
     /// <param name="filter">The predicate a row must match, or <c>null</c>.</param>
     /// <param name="progress">Receives the event bytes scanned in history. May be <c>null</c>.</param>
     /// <param name="ct">Checked at least once per batch and per event.</param>
+    /// <param name="inclusive">Whether the anchor's own row may be the page's first row, when it exists and matches the filter.</param>
     /// <exception cref="ArgumentException">The anchor's generation is not in the timeline.</exception>
-    public RowPage Newer(StoreState state, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct)
+    public RowPage Newer(StoreState state, RowKey anchor, int count, IRowFilter? filter, IProgress<long>? progress, CancellationToken ct, bool inclusive = false)
     {
         RequireKnown(state, anchor);
         CatalogSnapshot catalog = state.Catalog;
@@ -142,7 +146,7 @@ internal sealed class StoreReader
             int index = Find(state, anchor);
             if (index >= 0)
             {
-                int first = index + 1;
+                int first = inclusive ? index : index + 1;
                 int take = Math.Min(count, state.Ring.Count - first);
                 var rows = new List<EventRow>(take);
                 for (int i = first; i < first + take; i++)
@@ -153,7 +157,7 @@ internal sealed class StoreReader
                 return new RowPage(rows, ReachedBoundary: take < count, Errors: []);
             }
 
-            RowPage history = _history.ReadNewer(catalog, anchor, count, null, progress, ct);
+            RowPage history = _history.ReadNewer(catalog, anchor, count, null, progress, ct, inclusive);
             if (history.Rows.Count == count || !history.ReachedBoundary)
             {
                 return history;
@@ -173,8 +177,8 @@ internal sealed class StoreReader
         }
 
         var errors = new List<MemberReadError>();
-        List<EventRow> tail = MatchedTail(state, filter, anchor, after: true, errors, ct);
-        RowPage filtered = _history.ReadNewer(catalog, anchor, count, filter, progress, ct);
+        List<EventRow> tail = MatchedTail(state, filter, anchor, after: true, includeAnchor: inclusive, errors, ct);
+        RowPage filtered = _history.ReadNewer(catalog, anchor, count, filter, progress, ct, inclusive);
         List<EventRow> merged = Merge(filtered.Rows, tail, catalog);
         merged = merged.GetRange(0, Math.Min(count, merged.Count));
         return new RowPage(merged, merged.Count < count, filtered.Errors.Concat(errors).ToList());
@@ -241,10 +245,10 @@ internal sealed class StoreReader
 
     /// <summary>
     /// The tail rows of the ring that match the filter, in timeline order. With an anchor, only the rows after it (<paramref name="after"/>)
-    /// or before it. A tail row whose file cannot be read, or whose member has expired, is not matched and is recorded in
-    /// <paramref name="errors"/>.
+    /// or before it; <paramref name="includeAnchor"/> keeps the anchor's own row when the rows are after it. A tail row whose file cannot
+    /// be read, or whose member has expired, is not matched and is recorded in <paramref name="errors"/>.
     /// </summary>
-    private List<EventRow> MatchedTail(StoreState state, IRowFilter filter, RowKey? anchor, bool after, List<MemberReadError> errors, CancellationToken ct)
+    private List<EventRow> MatchedTail(StoreState state, IRowFilter filter, RowKey? anchor, bool after, bool includeAnchor, List<MemberReadError> errors, CancellationToken ct)
     {
         var matches = new List<EventRow>();
         foreach (EventRow row in state.Ring)
@@ -258,7 +262,8 @@ internal sealed class StoreReader
             if (anchor is RowKey key)
             {
                 int order = state.Catalog.Compare(row.Key, key);
-                if (after ? order <= 0 : order >= 0)
+                bool excluded = after ? (includeAnchor ? order < 0 : order <= 0) : order >= 0;
+                if (excluded)
                 {
                     continue;
                 }

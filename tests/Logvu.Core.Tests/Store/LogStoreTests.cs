@@ -283,6 +283,50 @@ public sealed class LogStoreTests
     }
 
     [Fact]
+    public async Task An_inclusive_newer_read_starts_with_the_anchor_whether_it_is_in_history_or_in_the_ring()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft2.log", Events(T0, "two", 3));
+        dir.Write("SheetKraft1.log", Events(T0.AddHours(1), "one", 3));
+        dir.Write("SheetKraft.log", Events(T0.AddHours(2), "live", 6));
+        await using Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        List<RowKey> expected = TimelineKeys(h.Store.Snapshot);
+
+        foreach (int index in new[] { 0, 3, 7, 11 })
+        {
+            RowPage inclusive = await h.Store.ReadNewerAsync(expected[index], 100, null, null, NoCancel, inclusive: true);
+            Assert.Equal(expected.Skip(index), inclusive.Rows.Select(row => row.Key));
+            Assert.True(inclusive.ReachedBoundary);
+
+            RowPage exclusive = await h.Store.ReadNewerAsync(expected[index], 100, null, null, NoCancel);
+            Assert.Equal(expected.Skip(index + 1), exclusive.Rows.Select(row => row.Key));
+        }
+    }
+
+    [Fact]
+    public async Task An_inclusive_newer_read_with_a_filter_leaves_out_an_anchor_that_the_filter_rejects()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft2.log", Events(T0, "two", 3));
+        dir.Write("SheetKraft1.log", Events(T0.AddHours(1), "one", 3));
+        dir.Write("SheetKraft.log", Events(T0.AddHours(2), "live", 6));
+        await using Harness h = Harness.Create(dir);
+        h.Start();
+        await h.WaitFor(u => u.Batch.Initial);
+        List<RowKey> expected = TimelineKeys(h.Store.Snapshot);
+        RowPage all = await h.Store.ReadNewestAsync(100, null, null, NoCancel);
+        RowKey anchor = expected[4];
+
+        RowPage rejected = await h.Store.ReadNewerAsync(anchor, 100, new ExceptPreview(all.Rows[4].Preview), null, NoCancel, inclusive: true);
+        Assert.Equal(expected.Skip(5), rejected.Rows.Select(row => row.Key));
+
+        RowPage accepted = await h.Store.ReadNewerAsync(anchor, 100, new ExceptPreview(all.Rows[9].Preview), null, NoCancel, inclusive: true);
+        Assert.Equal(expected.Skip(4).Where((_, i) => i != 5), accepted.Rows.Select(row => row.Key));
+    }
+
+    [Fact]
     public async Task Dispose_stops_the_worker_and_its_watcher_so_no_update_follows()
     {
         using var dir = new ConfigTestDirectory();
@@ -544,6 +588,12 @@ public sealed class LogStoreTests
 
     private static void AppendText(ConfigTestDirectory dir, string name, string text) =>
         File.AppendAllText(dir.Full(name), text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+    /// <summary>A filter that rejects one row by its preview.</summary>
+    private sealed class ExceptPreview(string preview) : IRowFilter
+    {
+        public bool Matches(EventRow row, LogEvent ev) => row.Preview != preview;
+    }
 
     private sealed class LevelFilter(LogLevel level) : IRowFilter
     {

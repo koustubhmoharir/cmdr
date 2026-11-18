@@ -21,6 +21,12 @@ public sealed class HistoryReaderTests
         public bool Matches(EventRow row, LogEvent ev) => ev.Level == level;
     }
 
+    /// <summary>A filter that rejects one row by its preview.</summary>
+    private sealed class ExceptPreview(string preview) : IRowFilter
+    {
+        public bool Matches(EventRow row, LogEvent ev) => row.Preview != preview;
+    }
+
     /// <summary>Records every report synchronously. <see cref="Progress{T}"/> would post its reports to the thread pool.</summary>
     private sealed class Recorder : IProgress<long>
     {
@@ -378,6 +384,76 @@ public sealed class HistoryReaderTests
         RowPage afterOldest = reader.ReadNewer(catalog.Snapshot(), rows[0].Key, 5, null, null, none);
         Assert.True(afterOldest.ReachedBoundary);
         Assert.Equal(rows.Skip(1), afterOldest.Rows);
+    }
+
+    [Fact]
+    public void Inclusive_newer_read_starts_with_the_anchor_event_and_exclusive_does_not()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft.log", Events(T0, "only", 4));
+        LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log");
+        Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
+        List<EventRow> rows = Expected(catalog, config);
+        HistoryReader reader = NewReader(config);
+        CancellationToken none = CancellationToken.None;
+
+        RowPage inclusive = reader.ReadNewer(catalog.Snapshot(), rows[1].Key, 5, null, null, none, inclusive: true);
+        Assert.Equal(rows.Skip(1), inclusive.Rows);
+        Assert.True(inclusive.ReachedBoundary);
+
+        RowPage exclusive = reader.ReadNewer(catalog.Snapshot(), rows[1].Key, 5, null, null, none);
+        Assert.Equal(rows.Skip(2), exclusive.Rows);
+
+        // A filled page is the same page, starting with the anchor when it is included.
+        Assert.Equal(rows.Skip(1).Take(2), reader.ReadNewer(catalog.Snapshot(), rows[1].Key, 2, null, null, none, inclusive: true).Rows);
+        Assert.Equal(rows.Skip(2).Take(2), reader.ReadNewer(catalog.Snapshot(), rows[1].Key, 2, null, null, none).Rows);
+    }
+
+    [Fact]
+    public void Inclusive_newer_read_leaves_out_an_anchor_the_filter_rejects()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft.log", Events(T0, "only", 4));
+        LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log");
+        Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
+        List<EventRow> rows = Expected(catalog, config);
+        HistoryReader reader = NewReader(config);
+
+        RowPage page = reader.ReadNewer(catalog.Snapshot(), rows[1].Key, 5, new ExceptPreview(rows[1].Preview), null, CancellationToken.None, inclusive: true);
+
+        Assert.Equal(rows.Skip(2), page.Rows);
+        Assert.True(page.ReachedBoundary);
+    }
+
+    [Fact]
+    public void Inclusive_newer_read_from_the_first_event_of_history_starts_with_it()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write("SheetKraft.log", Events(T0, "only", 3));
+        LogvuConfig config = StoreTestConfig.Create(dir, activeFile: "SheetKraft.log");
+        Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
+        List<EventRow> rows = Expected(catalog, config);
+        Assert.Equal(0, rows[0].Key.Offset);
+
+        RowPage page = NewReader(config).ReadNewer(catalog.Snapshot(), rows[0].Key, 100, null, null, CancellationToken.None, inclusive: true);
+
+        Assert.Equal(rows, page.Rows);
+        Assert.True(page.ReachedBoundary);
+    }
+
+    [Fact]
+    public void Inclusive_newer_read_from_an_anchor_in_an_expired_member_starts_with_the_member_after_it()
+    {
+        using var dir = new ConfigTestDirectory();
+        (LogvuConfig config, Catalog catalog, Member a, Member b, Member c) = ThreeMembers(dir);
+        List<EventRow> readable = Expected(catalog, config);
+        b.Expire();
+        var anchor = new RowKey(b.Generation, 0);
+
+        RowPage newer = NewReader(config).ReadNewer(catalog.Snapshot(), anchor, 100, null, null, CancellationToken.None, inclusive: true);
+
+        Assert.Empty(newer.Errors);
+        Assert.Equal(readable.Where(row => row.Key.Generation == c.Generation), newer.Rows);
     }
 
     [Fact]
