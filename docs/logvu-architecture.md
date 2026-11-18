@@ -261,3 +261,51 @@ Operations (every manual one pauses Follow first):
   (beyond 8·H on either side) are trimmed, clearing the corresponding `AtStart`/`AtEnd`. Results of superseded loads
   (after a reset) are discarded by a generation counter.
 - Rows in the window are independent of the ring: a paused selection survives ring eviction and rotation.
+
+## Detail (M8)
+
+Enter opens the selected event full-screen (the timeline pauses); Esc returns to the same selection and viewport. The detail is
+built by a pure `DetailDocument` (Logvu.Core, no Terminal.Gui) from `EventDetail` + config; the `DetailView` renders and
+navigates it.
+
+**Document model.** A list of logical lines, each a sequence of styled spans (`SpanStyle`: none, field-name, punctuation,
+exception-type, exception-message, method, file-location, directory, framework (dim), json-key, json-string, json-number,
+json-literal, highlight:<name>, fold-marker, muted). Lines carry an optional `NodeId` (JSON node or fold) so the view can toggle
+expansion, and a `Kind` (header, field, message, json, raw, fold). Wrapping to the width is the view's job (continuation rows
+indented by 2 under the value column).
+
+**Header.** `Path`, `Offset`, `Length`, then `Time` (normalized in the config zone and, if different, the original spelling),
+`Level` (label + original text), `Source`. Then a blank line.
+
+**Text events.** Named fields (`name: value`) in scheme order (except message), then `Message:` and the full multi-line message
+as one value (continuation lines at the value indent).
+
+**JSON events.** First the surfaced summary: the message (`msg` / rendered Serilog message) and an **error summary** when
+present — Serilog: `Exception` first line (type: message); Go: `err.message`/`error.message` or top-level `cause[0]`.
+Then the tree: objects and arrays as expandable nodes (`▾ key {n}` / `▸ key [n]`), scalars as `key: value` with JSON styling.
+Default expansion: depth ≤ 2 expanded, deeper collapsed, except nodes on the path to an error/exception/stack/cause value
+(expanded so stacks are visible). Strings containing newlines (Serilog `Exception`) are shown as multi-line values and get
+stack-trace treatment.
+
+**Stack traces.** `StackTraceAnalyzer` classifies lines of a multi-line value (or elements of a Go `stack` array):
+- .NET: exception header `Namespace.TypeException: message` (also after ` ---> `), frame `   at Ns.Type.Method(args) in
+  path:line N` (and without ` in …`), `--- End of inner exception stack trace ---`, `--- End of stack trace from previous
+  location ---`.
+- Go: frame `pkg/path.Func (path/file.go:42)` / `pkg.(*T).Method (file.go:42)`; `cause` arrays (strings or `{message, attrs}`)
+  render as a numbered cause chain.
+- Styles: exception type and message emphasized; method name emphasized; `file:line` emphasized; the directory part of paths
+  dimmed; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
+- Folding: every run of ≥ 2 consecutive framework frames gets a fold marker line `… N framework frames` above it; folds start
+  expanded ("keep all frames visible by default"); Enter/Space on a marker toggles it; `z` toggles all folds of the event.
+  Navigating to a search hit inside a folded run expands it.
+
+**Highlight rules.** Applied after structural styling to the scoped field's text (`message`, `raw`, a field name, or a JSON
+dotted path); ordered, first rule wins on overlapping spans; search hits and the selection line override everything.
+
+**Raw view.** `r` toggles between the structured document and the raw event text (exact lines, no styling except highlight
+rules scoped to `raw`).
+
+**Limits.** Event text is capped by the store (4 MiB); a truncated event shows `… truncated at N bytes` at the end. Lines
+longer than 64 KiB are wrapped lazily by the view (only visible rows are measured).
+
+**Expired.** `Unavailable` details render a single message (`Source file expired` or the error) with the row's preview.
