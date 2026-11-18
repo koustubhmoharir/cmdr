@@ -151,7 +151,8 @@ when there is no `activeFile`).
 Ordering: dated members by first-event time (compared as instants); equal times broken by rotation order — only when `activeFile` is
 configured and both names have the form `<activeStem><n><activeExt>` (the active file itself counts as 0), higher numbers are
 older (log4net numbered backups) — else by basename (ordinal). Serilog's `_001` sequences and lumberjack's timestamped backups
-are thus ordered by name, which is chronological for them. Unknown-time members sort before all
+are thus ordered by name, which is chronological for them. At equal times the key is: rotation names (as defined above) before other names, higher rotation number first, then basename,
+then generation — one lexicographic key, so the order is transitive. Unknown-time members sort before all
 dated members, in basename order, as a separate marked group. Pending members are not in the order until their first event.
 
 ## Paging and memory (M4)

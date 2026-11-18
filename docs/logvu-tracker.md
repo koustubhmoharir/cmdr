@@ -39,11 +39,13 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M3. Catalog
 
-- [ ] Discovery: first event per member → start time and scheme; identity, path, generation; pending empty members;
+- [x] Discovery: first event per member → start time and scheme; identity, path, generation; pending empty members;
       unknown-time group with diagnostic.
-- [ ] Ordering: by first timestamp with offsets/timezone; rotation order on equal starts; physical order within a file.
+- [x] Ordering: by first timestamp with offsets/timezone; rotation order on equal starts; physical order within a file.
 
 ## M4. Paging and memory
+
+- [ ] Store decides when to re-probe a live member that probed UnknownTime/raw (format may become detectable as it grows).
 
 - [ ] Row keys (generation + offset); first-page fill reading backward across members.
 - [ ] Recent-history ring (bounded; offsets, extents, normalized fields, capped previews), independent of filters.
