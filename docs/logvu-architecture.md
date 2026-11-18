@@ -161,3 +161,48 @@ A **row key** is `(generation, offset)` of an event start. The **ring** holds th
 row summaries currently visible plus a margin; it is filled from the ring when possible and otherwise by framing backward or
 forward from an anchor row, crossing to the adjacent member at a file boundary. Detail and search read full text through
 `EventText.Read` on a freshly opened handle whose identity is verified against the member.
+
+## Live tail and rotation (M5)
+
+**No long-lived handles.** Every read opens the member's path with `FileShare.ReadWrite | FileShare.Delete`, verifies the
+handle's identity against the member, reads, and closes. Holding handles would, on Windows, leave a deleted backup
+"delete pending", and log4net's next rename onto that name would fail — logvu must never disturb the producer. A handle whose
+identity differs from the member's means the path now belongs to another file: the read is abandoned and reconciliation runs.
+
+Identity: `Shared.Core.FileIdentity` — `TryGet(path)` (copied from cmdr) and `TryGet(SafeFileHandle)` (Linux `statx` with
+`AT_EMPTY_PATH` on the fd → device+inode; Windows `GetFileInformationByHandle` → volume serial+file index).
+
+**Reconciliation** (triggered by a `FileSystemWatcher` on the directory — coalesced over 100 ms — by a periodic timer every
+2 s, and after watcher overflow/error; always run on the store's worker, never concurrently):
+1. Enumerate the file set; take each path's identity (retry a transient failure up to 3 times, 50 ms apart; a path that keeps
+   failing is skipped this round).
+2. Match known members by identity. Same identity, other path → rename: update the path, keep generation and offsets. Known
+   member whose identity is gone → `Expired` (rows stay; their disk reads report **Source file expired**).
+3. A member whose current length is below its read cursor → truncated: the old generation expires and the identity gets a
+   fresh generation read from 0.
+4. Unknown identities → new members (fresh generation, `Pending` until the first event is found).
+5. The live member is the one named `activeFile` (if configured) or else the newest member in catalog order. A member that
+   stops being live is **drained**: framed forward from its cursor as a closed file (unterminated last line accepted), its
+   provisional event finalized.
+6. Members are drained/read in catalog order, so rows from a predecessor are published before rows from its successor.
+
+**Tail polling.** The live member's length is checked every 250 ms by opening it (directory metadata lags for files held open
+by the writer on Windows). New bytes are framed forward from the provisional event's start (or the cursor). The provisional
+row's extent is updated in place (not a new arrival); events after it are new arrivals. The read cursor advances to the end of
+the last complete event; a held-back unterminated tail is re-read next time.
+
+**Retention gap.** If a member expires before its cursor reached its length (unread bytes lost), a gap marker row is inserted
+after its last known row ("N bytes of <file> expired before they were read").
+
+**Idempotence.** Rows are keyed `(generation, offset)`; publishing an existing key updates it instead of adding a row, so
+repeated notifications and re-reads cannot duplicate rows.
+
+## Store and timeline source (M3–M5)
+
+`LogStore` (Logvu.Core) owns the catalog, the ring and a single worker task. The UI talks to it only through:
+- `Snapshot` events: batched changes (new rows, updated provisional row, expired generations, catalog/status changes),
+  marshalled to the UI thread by the caller.
+- `Task<RowPage> ReadAsync(RowKey? anchor, Direction, int count, EventFilter?, CancellationToken)`: rows older/newer than the
+  anchor (null anchor = newest), served from the ring when it covers the range, else framed from disk via the catalog.
+- `Task<EventDetail> ReadDetailAsync(RowKey, CancellationToken)`: full text and parsed event, or an expired/unavailable result.
+Superseded requests are cancelled by the caller; results carry the request id so stale ones are dropped.
