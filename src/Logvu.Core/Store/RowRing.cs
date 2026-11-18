@@ -257,6 +257,22 @@ public sealed class RowRing
         return _snapshot;
     }
 
+    /// <summary>Whether a row with the key is in the ring.</summary>
+    public bool Contains(RowKey key) => _sequences.ContainsKey(key);
+
+    /// <summary>
+    /// Removes every row. The ring then holds nothing, and covers no history until rows are appended or warmed.
+    /// </summary>
+    public void Clear()
+    {
+        Array.Clear(_slots);
+        _sequences.Clear();
+        _first = 0;
+        _count = 0;
+        _coversNewest = false;
+        _snapshot = null;
+    }
+
     /// <summary>The slot of a sequence number. Sequence numbers may be negative after warm-up, hence the adjustment.</summary>
     private int Slot(long sequence)
     {

@@ -11,7 +11,8 @@ internal static class StoreTestConfig
     public const string SheetKraftPattern = @"^SheetKraft(?:[0-9]+)?[.]log$";
 
     /// <summary>
-    /// Writes <c>logvu.json</c> in <paramref name="dir"/>, with the logs in the same directory, and loads it.
+    /// Writes <c>logvu.json</c> in <paramref name="dir"/>, with the logs in <paramref name="logsDirectory"/> (relative to it; the same
+    /// directory by default), and loads it.
     /// </summary>
     public static LogvuConfig Create(
         ConfigTestDirectory dir,
@@ -20,11 +21,12 @@ internal static class StoreTestConfig
         string? activeFile = null,
         string? format = null,
         string timeZone = "utc",
-        JsonArray? schemes = null)
+        JsonArray? schemes = null,
+        string logsDirectory = ".")
     {
         var document = new JsonObject
         {
-            ["logsDirectory"] = ".",
+            ["logsDirectory"] = logsDirectory,
             ["filePrefix"] = prefix,
             ["fileNamePattern"] = pattern,
             ["timeZone"] = timeZone,

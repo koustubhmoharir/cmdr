@@ -45,7 +45,6 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M4. Paging and memory
 
-- [ ] Store decides when to re-probe a live member that probed UnknownTime/raw (format may become detectable as it grows).
 
 - [x] Row keys (generation + offset); first-page fill reading backward across members (HistoryReader.ReadNewest).
 - [x] Recent-history ring (bounded; offsets, extents, normalized fields, capped previews), independent of filters.
@@ -57,13 +56,14 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M5. Live tail and rotation
 
-- [ ] Per-generation read cursor; provisional current event grows without counting as a new arrival.
-- [ ] Directory watcher + periodic reconciliation + overflow handling; coalescing; transient-open retry.
-- [ ] Reconcile by identity: rename (keep offsets), delete (expire), new file (fresh generation), truncation (fresh
+- [x] Per-generation read cursor; provisional current event grows without counting as a new arrival.
+- [ ] LogStore: worker, directory watcher (coalesced) + 2 s rescans + overflow, 250 ms tail polls, async reads over snapshots (transient-identity retry is in Reconciler).
+- [x] Reconcile by identity (Reconciler; identity includes birth time on Linux, plus a 256-byte content fingerprint): rename (keep offsets), delete (expire), new file (fresh generation), truncation (fresh
       generation), unverifiable identity (rediscover). Drain predecessor before successor.
 - [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: treat as truncation.
-- [ ] Retention gap indication; "Source file expired" for deleted generations.
-- [ ] Windows share modes read/write/delete *(Windows)*.
+- [x] Retention gap indication (RetentionGap in ChangeBatch).
+- [ ] "Source file expired" for detail reads of deleted generations (M8).
+- [ ] Windows share modes read/write/delete *(Windows)*: verify log4net numbered rotation succeeds while logvu tails (brief opens of backups during rescans; Windows 10+ POSIX delete semantics should make a concurrent delete safe).
 
 ## M6. Timeline model (UI-free)
 
