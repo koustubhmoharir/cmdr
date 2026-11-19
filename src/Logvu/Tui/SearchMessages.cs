@@ -20,11 +20,11 @@ internal static class SearchMessages
     /// <summary>The text of a detail search that found no further match in the event.</summary>
     public const string NoMatchesInEvent = "No more matches in this event";
 
-    /// <summary>The key hint of the matches of the timeline, while a query is active.</summary>
-    public const string TimelineKeys = "n older  N newer";
+    /// <summary>The key hint of the matches of the timeline, while a query is active: <c>n older  N newer</c>.</summary>
+    public static Hint TimelineKeys { get; } = KeyHints.Join(KeyHints.Bound('n', "n older"), KeyHints.Bound('N', "N newer"));
 
-    /// <summary>The key hint of the matches of a detail, while a query is active.</summary>
-    public const string DetailKeys = "n next  N prev";
+    /// <summary>The key hint of the matches of a detail, while a query is active: <c>n next  N prev</c>.</summary>
+    public static Hint DetailKeys { get; } = KeyHints.Join(KeyHints.Bound('n', "n next"), KeyHints.Bound('N', "N prev"));
 
     private const double BytesPerMegabyte = 1024.0 * 1024.0;
     private const string TimeFormat = "yyyy-MM-dd HH:mm:ss";

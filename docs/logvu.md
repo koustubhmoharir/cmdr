@@ -67,7 +67,7 @@ When a page spans more than one day every row shows the date.
 
 The status bar on the first row shows Follow or Paused, the number of new events while paused, the active filter, search progress,
 read problems and notices such as a copy. The last row lists the keys that work where the cursor is, with the keys of an active
-search first. While the search bar is open it sits on the row above those keys.
+search first; each key's label is drawn as a button, and a click on it performs the key (a click elsewhere on that row does nothing). While the search bar is open it sits on the row above those keys.
 
 | Timeline | |
 |---|---|

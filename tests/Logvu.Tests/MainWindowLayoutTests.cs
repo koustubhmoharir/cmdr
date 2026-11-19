@@ -60,12 +60,15 @@ public sealed class MainWindowLayoutTests : IDisposable
     }
 
     [Fact]
-    public void The_status_bar_is_inverted_like_the_hints()
+    public void The_status_bar_and_the_hints_are_drawn_on_the_bar_colours_and_the_hint_labels_as_buttons()
     {
         TerminalScreen screen = Run()[0];
 
-        Assert.Equal(screen.Normal.Background, screen.Cells[0][0].Attribute.Foreground);
-        Assert.Equal(screen.Normal.Background, screen.Cells[Height - 1][0].Attribute.Foreground);
+        Assert.Equal(BarColors.Background, screen.Cells[0][0].Attribute.Background);
+        Assert.Equal(BarColors.Text, screen.Cells[0][0].Attribute.Foreground);
+        Assert.Equal(BarColors.Background, screen.Cells[Height - 1][119].Attribute.Background);
+        Assert.Equal(BarColors.TargetBackground, screen.Cells[Height - 1][0].Attribute.Background);
+        Assert.Equal(BarColors.TargetText, screen.Cells[Height - 1][0].Attribute.Foreground);
     }
 
     [Fact]

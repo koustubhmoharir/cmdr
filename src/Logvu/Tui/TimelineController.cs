@@ -50,17 +50,17 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         Quit,
     }
 
-    /// <summary>The status line's key hints, with no selection in the timeline.</summary>
-    internal const string Hints = "f filter  -/+ level  Space pause/follow  c copy event  End newest  ^O open  ^Q quit";
+    /// <summary>The text of the key hints with no selection in the timeline. The data is <see cref="KeyHints.Timeline"/>.</summary>
+    internal static string Hints => KeyHints.Timeline.Text;
 
-    /// <summary>The status line's key hints while the timeline's selected row has a selection, which <c>c</c> copies.</summary>
-    internal const string SelectionHints = "f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^O open  ^Q quit";
+    /// <summary>The text of the key hints while the timeline's selected row has a selection, which <c>c</c> copies.</summary>
+    internal static string SelectionHints => KeyHints.TimelineSelection.Text;
 
-    /// <summary>The status line's key hints while the detail is open and has no selection.</summary>
-    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back";
+    /// <summary>The text of the key hints while the detail is open and has no selection.</summary>
+    internal static string DetailHints => KeyHints.Detail.Text;
 
-    /// <summary>The status line's key hints while the detail is open and has a selection, which <c>c</c> copies.</summary>
-    internal const string DetailSelectionHints = "f filter on value  Enter toggle  z folds  r raw  c copy selection  ←/Esc back";
+    /// <summary>The text of the key hints while the detail is open and has a selection, which <c>c</c> copies.</summary>
+    internal static string DetailSelectionHints => KeyHints.DetailSelection.Text;
 
     /// <summary>How long a new retention gap stays on the status line. The gap stays in the store's status.</summary>
     internal static readonly TimeSpan GapShownFor = TimeSpan.FromSeconds(10);
@@ -81,8 +81,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private readonly Action<Action> _post;
     private readonly TimelineModel _model;
     private readonly TimelineView _view;
-    private readonly StatusLine _statusLine;
-    private readonly StatusLine _hintsLine;
+    private readonly StatusBar _statusLine;
+    private readonly HintsLine _hintsLine;
     private readonly SearchController _search;
     private readonly Func<EventFilter?, FilterEdit?> _editFilter;
     private readonly Func<(PickOutcome Outcome, LogvuConfig? Config)>? _pickSet;
@@ -160,8 +160,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _filter = config.MinLevel is { } minLevel ? new EventFilter(new FilterSpec(MinLevel: minLevel)) : null;
         _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
         _view = new TimelineView(_model, config.TimeZone, config.Columns) { Placeholder = "Loading…" };
-        _statusLine = new StatusLine();
-        _hintsLine = new StatusLine();
+        _statusLine = new StatusBar();
+        _hintsLine = new HintsLine();
         _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
         WriteRaw = sequence => _app.Driver?.WriteRaw(sequence);
         Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _hintsLine, _search.Bar, HandleShortcut, _search.CancelScan);
@@ -187,7 +187,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// <summary>The status text on the status bar at the top of the window as last shown.</summary>
     internal string StatusLeft => _statusLeft;
 
-    /// <summary>The key hints on the last row of the window as last shown: the hints of an active search first, then the keys.</summary>
+    /// <summary>The key hints on the last row of the window as last shown, as text: the hints of an active search first, then the keys.</summary>
     internal string StatusHints => _statusHints;
 
     /// <summary>The search of the timeline and the detail. Its bar is the window's search bar.</summary>
@@ -735,13 +735,13 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         bool inDetail = _detail is not null;
         _view.Placeholder = BodyText();
         _statusLeft = _detail is { } session ? DetailLeft(session, _notice, _search.Status) : LeftText();
-        string keys = _detail is { } open
-            ? (open.View.HasSelection ? DetailSelectionHints : DetailHints)
-            : (_view.HasSelection ? SelectionHints : Hints);
-        string hints = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
-        _statusHints = hints;
+        Hint keys = _detail is { } open
+            ? (open.View.HasSelection ? KeyHints.DetailSelection : KeyHints.Detail)
+            : (_view.HasSelection ? KeyHints.TimelineSelection : KeyHints.Timeline);
+        Hint hints = _search.KeyHint(inDetail) is { } search ? KeyHints.Join(search, keys) : keys;
+        _statusHints = hints.Text;
         _statusLine.Show(_statusLeft, message: false);
-        _hintsLine.Show(hints, message: false);
+        _hintsLine.Show(hints);
     }
 
     DetailView? ISearchHost.Detail => _detail?.View;

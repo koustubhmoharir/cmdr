@@ -144,10 +144,10 @@ internal sealed class SearchController
 
     /// <summary>
     /// The key hint of the matches, while a query is active in the open bar: <c>n older  N newer</c> in the timeline, <c>n next  N prev</c>
-    /// in a detail. Null when no query is active.
+    /// in a detail, with the keys as clickable targets. Null when no query is active.
     /// </summary>
     /// <param name="inDetail">Whether a detail is open.</param>
-    public string? KeyHint(bool inDetail)
+    public Hint? KeyHint(bool inDetail)
     {
         if (!_open || Bar.Query.Text.Length == 0)
         {
