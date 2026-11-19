@@ -61,7 +61,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] LogStore: worker, directory watcher (coalesced) + 2 s rescans + overflow, 250 ms tail polls, async reads over snapshots (transient-identity retry is in Reconciler).
 - [x] Reconcile by identity (Reconciler; identity includes birth time on Linux, plus a 256-byte content fingerprint): rename (keep offsets), delete (expire), new file (fresh generation), truncation (fresh
       generation), unverifiable identity (rediscover). Drain predecessor before successor.
-- [ ] A file shrinking mid-read surfaces as EndOfStreamException from LineReader: check Reconciler/StoreReader catch it (EndOfStreamException is an IOException, so the existing IOException handlers record it) — add a test.
+- [x] A file shrinking mid-read surfaces as EndOfStreamException (an IOException), recorded by the readers' IOException handlers (ShrinkingStreamTests).
 - [x] Retention gap indication (RetentionGap in ChangeBatch).
 - [x] "Source file expired" for detail reads of deleted generations.
 - [ ] Windows share modes read/write/delete *(Windows)*: covered by docs/logvu-windows-testing.md §1.
