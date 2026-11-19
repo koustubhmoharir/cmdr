@@ -26,9 +26,21 @@ internal sealed class MainController : IDisposable, IListSearchHost
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
     // The c hint sits between the two parts and is left out when c copies nothing (see CopyHint).
     // While the search bar's find field has the focus, the search keys replace both parts (see SearchHint).
-    private const string HintsBeforeCopy = "^C Stop  F5 Restart  Space Mark  ^A All  L Log  ";
-    private const string HintsAfterCopy = "^S Save  + Max";
-    private const string HintsRight = "  ^Q Quit";
+    // Each label is a click target that performs its key (see KeyHints).
+    private static readonly Hint HintsBeforeCopy = KeyHints.Concat(
+        KeyHints.Join(
+            KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
+            KeyHints.Bound(Key.F5, "F5 Restart"),
+            KeyHints.Bound(Key.Space, "Space Mark"),
+            KeyHints.Bound(Key.A.WithCtrl, "^A All"),
+            KeyHints.Bound(Key.L, "L Log")),
+        KeyHints.Plain(KeyHints.Separator));
+    private static readonly Hint HintsAfterCopy = KeyHints.Join(
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
+        KeyHints.Bound((Key)'+', "+ Max"));
+    private static readonly Hint HintsRight = KeyHints.Concat(
+        KeyHints.Plain(KeyHints.Separator),
+        KeyHints.Bound(Key.Q.WithCtrl, "^Q Quit"));
     private const int TopRowMinHeight = 5;
     private const int TopRowMaxPercent = 60;
 
@@ -1775,17 +1787,17 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _status.Show(text, message: true);
     }
 
-    /// <summary>Shows the hints unless the text is already shown.</summary>
+    /// <summary>Shows the hints unless the text is already shown. The text decides: each label's key is fixed by its text.</summary>
     private void ShowHints()
     {
-        string left = HintLeft();
-        if (left == _shownHints)
+        Hint left = HintLeftHint();
+        if (left.Text == _shownHints)
         {
             return;
         }
 
-        _shownHints = left;
-        _status.Show(left, message: false, right: HintsRight);
+        _shownHints = left.Text;
+        _status.Show(left, HintsRight);
     }
 
     /// <summary>
@@ -1794,15 +1806,18 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// </summary>
     private ActionTarget? HintTarget() => _details.HasFocus || _output.HasFocus ? ShownTarget() : TargetOf(FocusedRow);
 
+    /// <summary>The text of <see cref="HintLeftHint"/>.</summary>
+    private string HintLeft() => HintLeftHint().Text;
+
     /// <summary>
-    /// The hint text left of "^Q Quit". While the find field has the focus, the search keys (see <see cref="SearchHint"/>). Otherwise
-    /// "Enter Start" / "Enter Kill" for the current targets, when Enter does something, and the keys of the focused pane.
+    /// The hint left of "^Q Quit", with its click targets. While the find field has the focus, the search keys (see <see cref="SearchHint"/>).
+    /// Otherwise "Enter Start" / "Enter Kill" for the current targets, when Enter does something, and the keys of the focused pane.
     /// </summary>
-    private string HintLeft()
+    private Hint HintLeftHint()
     {
         if (_searchBar.HasFieldFocus)
         {
-            return SearchHint.Describe(_searchBar.Query.Text.Length > 0);
+            return SearchHint.Build(_searchBar.Query.Text.Length > 0);
         }
 
         ActionTarget? target = HintTarget();
@@ -1820,10 +1835,22 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
         string? copy = CopyHint.Describe(FocusedCopyPane(), hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
-        return (enter is null ? string.Empty : "Enter " + enter + "  ")
-            + HintsBeforeCopy
-            + (copy is null ? string.Empty : copy + "  ")
-            + HintsAfterCopy;
+        var parts = new List<Hint>();
+        if (enter is not null)
+        {
+            parts.Add(KeyHints.Bound(Key.Enter, "Enter " + enter));
+            parts.Add(KeyHints.Plain(KeyHints.Separator));
+        }
+
+        parts.Add(HintsBeforeCopy);
+        if (copy is not null)
+        {
+            parts.Add(KeyHints.Bound(Key.C, copy));
+            parts.Add(KeyHints.Plain(KeyHints.Separator));
+        }
+
+        parts.Add(HintsAfterCopy);
+        return KeyHints.Concat([.. parts]);
     }
 
     /// <summary>The pane that c acts on: the focused one, or None when neither the list nor the info or output pane has the focus.</summary>

@@ -294,6 +294,8 @@ act on everything in the group. Marks are limited to one group. In the info and 
 F5, L, F2 and Del act on the command the panes show (the focused command) alone, ignoring marks; on a group
 header they do nothing there.
 
+The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing.
+
 | Key | Action |
 |---|---|
 | Enter | Start (or force-kill what is stopping or left over) |
