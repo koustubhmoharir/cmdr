@@ -213,4 +213,106 @@ public sealed class DetailsSelectionTests
         Assert.Equal(P(0, 2), DetailsSelection.PointAt(rows, texts, 0, 1));
         Assert.Equal(P(0, 3), DetailsSelection.PointAt(rows, texts, 0, 2));
     }
+
+    private static DetailsRow Row(int line, int start, int end, string text) => new(line, start, end, Plain(text));
+
+    [Fact]
+    public void Cell_of_a_one_column_grapheme_is_the_whole_grapheme_on_both_sides()
+    {
+        string[] texts = { "abc def" };
+        DetailsRow[] rows = { Row(0, 0, 3, "abc"), Row(0, 4, 7, "def") };
+
+        // The cell of "b" is [1, 2), whichever side of the cell's middle the pointer is on: it is one column wide.
+        Assert.Equal((P(0, 1), P(0, 2)), DetailsSelection.CellAt(rows, texts, 0, 1));
+        Assert.Equal((P(0, 4), P(0, 5)), DetailsSelection.CellAt(rows, texts, 1, 0));
+        Assert.Equal((P(0, 6), P(0, 7)), DetailsSelection.CellAt(rows, texts, 1, 2));
+    }
+
+    [Fact]
+    public void Cell_of_a_wide_grapheme_is_the_same_from_either_column()
+    {
+        string[] texts = { "日本" };
+        DetailsRow[] rows = { Row(0, 0, 2, "日本") };
+
+        Assert.Equal((P(0, 0), P(0, 1)), DetailsSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 0), P(0, 1)), DetailsSelection.CellAt(rows, texts, 0, 1));
+        Assert.Equal((P(0, 1), P(0, 2)), DetailsSelection.CellAt(rows, texts, 0, 2));
+        Assert.Equal((P(0, 1), P(0, 2)), DetailsSelection.CellAt(rows, texts, 0, 3));
+    }
+
+    [Fact]
+    public void Cell_takes_the_zero_width_graphemes_that_follow_it()
+    {
+        // U+200B is a zero-width space: its own grapheme, with no cell, that stays with the "a" before it.
+        string[] texts = { "a​b" };
+        DetailsRow[] rows = { Row(0, 0, 3, texts[0]) };
+
+        Assert.Equal((P(0, 0), P(0, 2)), DetailsSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 2), P(0, 3)), DetailsSelection.CellAt(rows, texts, 0, 1));
+    }
+
+    [Fact]
+    public void Cell_keeps_a_combining_mark_with_its_grapheme()
+    {
+        string[] texts = { "éx" };
+        DetailsRow[] rows = { Row(0, 0, 3, texts[0]) };
+
+        Assert.Equal((P(0, 0), P(0, 2)), DetailsSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 2), P(0, 3)), DetailsSelection.CellAt(rows, texts, 0, 1));
+    }
+
+    [Fact]
+    public void Cell_of_the_first_column_of_a_row_that_starts_mid_line_is_the_row_start()
+    {
+        string[] texts = { "abc def" };
+        DetailsRow[] rows = { Row(0, 4, 7, "def") };
+
+        Assert.Equal((P(0, 4), P(0, 5)), DetailsSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 5), P(0, 6)), DetailsSelection.CellAt(rows, texts, 0, 1));
+    }
+
+    [Fact]
+    public void Cell_past_the_end_of_the_row_is_the_end_of_the_row_on_both_sides()
+    {
+        string[] texts = { "abc def" };
+        DetailsRow[] rows = { Row(0, 0, 3, "abc"), Row(0, 4, 7, "def") };
+
+        Assert.Equal((P(0, 3), P(0, 3)), DetailsSelection.CellAt(rows, texts, 0, 3));
+        Assert.Equal((P(0, 7), P(0, 7)), DetailsSelection.CellAt(rows, texts, 1, 40));
+    }
+
+    [Fact]
+    public void Cell_of_an_empty_row_is_its_start_on_both_sides()
+    {
+        string[] texts = { "abc", string.Empty };
+        DetailsRow[] rows = { Row(1, 0, 0, string.Empty) };
+
+        Assert.Equal((P(1, 0), P(1, 0)), DetailsSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(1, 0), P(1, 0)), DetailsSelection.CellAt(rows, texts, 0, 5));
+    }
+
+    [Fact]
+    public void Cell_clamps_the_row_index_and_handles_no_rows()
+    {
+        string[] texts = { "abc" };
+        DetailsRow[] rows = { Row(0, 0, 3, "abc") };
+
+        Assert.Equal((P(0, 1), P(0, 2)), DetailsSelection.CellAt(rows, texts, 5, 1));
+        Assert.Equal(default((LogicalPoint, LogicalPoint)), DetailsSelection.CellAt(Array.Empty<DetailsRow>(), texts, 0, 0));
+    }
+
+    [Fact]
+    public void Points_of_the_cell_bracket_the_point_that_PointAt_gives()
+    {
+        string[] texts = { "日áb" };
+        DetailsRow[] rows = { Row(0, 0, texts[0].Length, texts[0]) };
+
+        for (int column = 0; column < 8; column++)
+        {
+            (LogicalPoint before, LogicalPoint after) = DetailsSelection.CellAt(rows, texts, 0, column);
+            LogicalPoint point = DetailsSelection.PointAt(rows, texts, 0, column);
+
+            Assert.True(point == before || point == after, $"column {column}");
+        }
+    }
 }

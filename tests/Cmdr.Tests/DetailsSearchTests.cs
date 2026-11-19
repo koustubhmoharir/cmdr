@@ -495,7 +495,7 @@ public sealed class DetailsSearchTests
     public void Seed_is_the_selected_text_with_its_line_and_offset_within_one_line()
     {
         using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
-        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 3);
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 2);
 
         Assert.True(shown.Details.HasSelection);
         Assert.Equal(new SearchSeed("HIT", 2L, 0), shown.Details.SelectionSeed());
@@ -507,8 +507,10 @@ public sealed class DetailsSearchTests
         using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
         Assert.Null(shown.Details.SelectionSeed());
 
-        Select(shown.Details, fromRow: 4, fromColumn: 2, toRow: 4, toColumn: 2);
+        SendMouse(shown.Details, MouseFlags.LeftButtonPressed, 2, 4);
+        SendMouse(shown.Details, MouseFlags.LeftButtonReleased, 2, 4);
 
+        Assert.False(shown.Details.HasSelection);
         Assert.Null(shown.Details.SelectionSeed());
     }
 
@@ -527,10 +529,10 @@ public sealed class DetailsSearchTests
     {
         using Shown shown = Shown.Open(300, 12, Group("g", new string('x', 210)));
 
-        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 200);
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 199);
         Assert.Equal(200, shown.Details.SelectionSeed()!.Value.Text.Length);
 
-        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 201);
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 200);
         Assert.Null(shown.Details.SelectionSeed());
     }
 
@@ -558,7 +560,7 @@ public sealed class DetailsSearchTests
     {
         using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
         DetailsView details = shown.Details;
-        Select(details, fromRow: 2, fromColumn: 1, toRow: 2, toColumn: 3);
+        Select(details, fromRow: 2, fromColumn: 1, toRow: 2, toColumn: 2);
         SearchSeed? seed = details.SelectionSeed();
         Assert.Equal(new SearchSeed("IT", 2L, 1), seed);
 
@@ -568,5 +570,39 @@ public sealed class DetailsSearchTests
 
         Assert.Equal(SearchResult.Found, details.Find(backward: false, inclusive: true));
         Assert.Equal(new SearchStatus(4, 2), details.SearchStatus());
+    }
+
+    /// <summary>A drag from the first letter of a word to its last takes the whole word: both cells are included.</summary>
+    [Fact]
+    public void Forward_drag_over_a_word_selects_the_whole_word()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+
+        Select(shown.Details, fromRow: 2, fromColumn: 0, toRow: 2, toColumn: 2);
+
+        Assert.Equal(new SearchSeed("HIT", 2L, 0), shown.Details.SelectionSeed());
+    }
+
+    /// <summary>A drag from the last letter of a word back to its first takes the whole word too.</summary>
+    [Fact]
+    public void Backward_drag_over_a_word_selects_the_whole_word()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+
+        Select(shown.Details, fromRow: 2, fromColumn: 2, toRow: 2, toColumn: 0);
+
+        Assert.Equal(new SearchSeed("HIT", 2L, 0), shown.Details.SelectionSeed());
+    }
+
+    /// <summary>A drag that ends on the cell the press started on selects that one character.</summary>
+    [Fact]
+    public void Drag_back_onto_the_press_cell_selects_that_one_character()
+    {
+        using Shown shown = Shown.Open(Wide, 12, Group("g", Described()));
+
+        Select(shown.Details, fromRow: 2, fromColumn: 1, toRow: 2, toColumn: 1);
+
+        Assert.True(shown.Details.HasSelection);
+        Assert.Equal(new SearchSeed("I", 2L, 1), shown.Details.SelectionSeed());
     }
 }

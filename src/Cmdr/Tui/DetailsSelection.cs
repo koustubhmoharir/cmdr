@@ -87,17 +87,79 @@ internal static class DetailsSelection
     /// </summary>
     public static LogicalPoint PointAt(IReadOnlyList<DetailsRow> rows, IReadOnlyList<string> texts, int rowIndex, int column)
     {
+        if (!Locate(rows, texts, rowIndex, column, out DetailsRow row, out string text, out int target))
+        {
+            return default;
+        }
+
+        if (!FindCell(row, text, target, out Grapheme grapheme, out _, out _))
+        {
+            return new LogicalPoint(row.LogicalLine, row.End);
+        }
+
+        bool before = (target - grapheme.Cell) * 2 < grapheme.Width;
+        return new LogicalPoint(row.LogicalLine, before ? grapheme.Offset : grapheme.Offset + grapheme.Length);
+    }
+
+    /// <summary>
+    /// The cell under a display cell, as the two points either side of it: <c>Before</c> is where the text before the cell ends and
+    /// <c>After</c> is the end of the cell's grapheme. The cell is the grapheme under the column, as <see cref="PointAt"/> finds it,
+    /// with any zero-width graphemes that follow it, so a combining mark is never split off. A cell that is wide takes both of its
+    /// columns. The first cell of a row starts at the row's start. A column past the end of the row, or any column of a row with no
+    /// cells, gives the end of the row for both points. A drag selects from one cell to another, both included, so a cell's two
+    /// points are used as the ends of the selection.
+    /// </summary>
+    public static (LogicalPoint Before, LogicalPoint After) CellAt(IReadOnlyList<DetailsRow> rows, IReadOnlyList<string> texts, int rowIndex, int column)
+    {
+        if (!Locate(rows, texts, rowIndex, column, out DetailsRow row, out string text, out int target))
+        {
+            return default;
+        }
+
+        if (!FindCell(row, text, target, out _, out int before, out int after))
+        {
+            var end = new LogicalPoint(row.LogicalLine, row.End);
+            return (end, end);
+        }
+
+        return (new LogicalPoint(row.LogicalLine, before), new LogicalPoint(row.LogicalLine, after));
+    }
+
+    /// <summary>
+    /// The row a display cell is on, its text and the column within the row, at least 0. False when there are no rows.
+    /// </summary>
+    private static bool Locate(
+        IReadOnlyList<DetailsRow> rows,
+        IReadOnlyList<string> texts,
+        int rowIndex,
+        int column,
+        out DetailsRow row,
+        out string text,
+        out int target)
+    {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(texts);
 
         if (rows.Count == 0)
         {
-            return default;
+            (row, text, target) = (default!, string.Empty, 0);
+            return false;
         }
 
-        DetailsRow row = rows[Math.Clamp(rowIndex, 0, rows.Count - 1)];
-        string text = texts[row.LogicalLine];
-        int target = Math.Max(0, column);
+        row = rows[Math.Clamp(rowIndex, 0, rows.Count - 1)];
+        text = texts[row.LogicalLine];
+        target = Math.Max(0, column);
+        return true;
+    }
+
+    /// <summary>
+    /// Walks the graphemes of a row from its start to the one that covers cell <paramref name="target"/>. When that grapheme is found,
+    /// <paramref name="before"/> is the start of its cell and <paramref name="after"/> the end of the zero-width graphemes after it.
+    /// Zero-width graphemes take no cell, so they are never the grapheme found, and a zero-width grapheme before the first cell belongs
+    /// with that cell. False when the row ends before the target cell.
+    /// </summary>
+    private static bool FindCell(DetailsRow row, string text, int target, out Grapheme grapheme, out int before, out int after)
+    {
         int cells = 0;
         int offset = row.Start;
         while (offset < row.End)
@@ -107,16 +169,34 @@ internal static class DetailsSelection
             int width = TextWidth.WidthOf(text.AsSpan(offset, length));
             if (target < cells + width)
             {
-                bool before = (target - cells) * 2 < width;
-                return new LogicalPoint(row.LogicalLine, before ? offset : offset + length);
+                grapheme = new Grapheme(offset, length, cells, width);
+                before = cells == 0 ? row.Start : offset;
+                after = offset + length;
+                while (after < row.End)
+                {
+                    int next = StringInfo.GetNextTextElementLength(text.AsSpan(after, row.End - after));
+                    if (TextWidth.WidthOf(text.AsSpan(after, next)) > 0)
+                    {
+                        break;
+                    }
+
+                    after += next;
+                }
+
+                return true;
             }
 
             cells += width;
             offset += length;
         }
 
-        return new LogicalPoint(row.LogicalLine, row.End);
+        (grapheme, before, after) = (default, row.End, row.End);
+        return false;
     }
+
+    /// <summary>A grapheme of a row: its UTF-16 offset and length, and the cell it starts at and its width in cells.</summary>
+    private readonly record struct Grapheme(int Offset, int Length, int Cell, int Width);
+
 
     /// <summary>The rune starting at <paramref name="offset"/> and the number of UTF-16 units it takes. An invalid unit is one replacement character.</summary>
     internal static (Rune Rune, int Length) RuneAt(string text, int offset) =>

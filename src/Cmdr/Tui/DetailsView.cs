@@ -40,7 +40,15 @@ internal sealed class DetailsView : View, ISearchTarget
     private SearchPattern? _search;
     private ActiveMatch? _active;
 
-    private readonly record struct SelectionState(LogicalPoint Anchor, LogicalPoint Active);
+    /// <summary>
+    /// The selection between two cells (see <see cref="DetailsSelection.CellAt"/>): the cell the press was on, and the cell under
+    /// the pointer. It selects nothing until a drag has moved the active end (<see cref="Dragged"/>), so a press and release alone
+    /// leave none.
+    /// </summary>
+    private readonly record struct SelectionState(CellPoints Anchor, CellPoints Active, bool Dragged);
+
+    /// <summary>A cell of the logical text: the point before it and the point after it (see <see cref="DetailsSelection.CellAt"/>).</summary>
+    private readonly record struct CellPoints(LogicalPoint Before, LogicalPoint After);
 
     /// <summary>A match of the search: its logical line, and its range in that line's text. The active match is the origin of the next Find.</summary>
     private readonly record struct ActiveMatch(int Line, int Start, int Length);
@@ -677,12 +685,13 @@ internal sealed class DetailsView : View, ISearchTarget
             return true;
         }
 
-        LogicalPoint point = DetailsSelection.PointAt(
+        (LogicalPoint before, LogicalPoint after) = DetailsSelection.CellAt(
             layout.Rows,
             layout.Texts,
             Scroll.Offset + (mouse.Position?.Y ?? 0),
             mouse.Position?.X ?? 0);
-        _selection = new SelectionState(point, point);
+        var cell = new CellPoints(before, after);
+        _selection = new SelectionState(cell, cell, Dragged: false);
         _dragging = true;
         App?.Mouse.GrabMouse(this);
         SetNeedsDraw();
@@ -720,8 +729,8 @@ internal sealed class DetailsView : View, ISearchTarget
             return;
         }
 
-        LogicalPoint point = DetailsSelection.PointAt(layout.Rows, layout.Texts, Scroll.Offset + row, column);
-        _selection = _selection.Value with { Active = point };
+        (LogicalPoint before, LogicalPoint after) = DetailsSelection.CellAt(layout.Rows, layout.Texts, Scroll.Offset + row, column);
+        _selection = _selection.Value with { Active = new CellPoints(before, after), Dragged = true };
         SetNeedsDraw();
     }
 
@@ -729,7 +738,7 @@ internal sealed class DetailsView : View, ISearchTarget
     private void EndDrag()
     {
         StopDrag();
-        if (_selection is { } s && s.Anchor == s.Active)
+        if (_selection is { Dragged: false })
         {
             _selection = null;
         }
@@ -771,9 +780,24 @@ internal sealed class DetailsView : View, ISearchTarget
             return null;
         }
 
-        LogicalRange range = DetailsSelection.Clamp(s.Anchor, s.Active, texts);
+        if (!s.Dragged)
+        {
+            return null;
+        }
+
+        LogicalRange cells = CellRange(s);
+        LogicalRange range = DetailsSelection.Clamp(cells.Start, cells.End, texts);
         return range.IsEmpty ? null : range;
     }
+
+    /// <summary>
+    /// The characters from the anchor cell to the active cell, both cells included: from the start of the earlier cell to the end of
+    /// the later one. A drag forwards ends after the pointer's cell, and a drag backwards starts at it.
+    /// </summary>
+    private static LogicalRange CellRange(SelectionState s) =>
+        s.Active.Before.CompareTo(s.Anchor.Before) >= 0
+            ? new LogicalRange(s.Anchor.Before, s.Active.After)
+            : new LogicalRange(s.Active.Before, s.Anchor.After);
 
     /// <summary>
     /// Copies the selection. Without one, copies the command line of a command row, as the command list does (a group row
