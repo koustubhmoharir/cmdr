@@ -281,4 +281,35 @@ public sealed class SlogSchemeTests
         Assert.Equal(JsonValueKind.Number, e.Json!.Value.GetProperty("duration_ms").ValueKind);
         Assert.Equal("api", e.Json.Value.GetProperty("logger").GetString());
     }
+
+    [Theory]
+    [InlineData("2026-10-20T15:50:23+5:30", 5, 30)]
+    [InlineData("2026-10-20 15:50:23 +5", 5, 0)]
+    public void An_offset_the_pattern_does_not_know_keeps_the_instant_in_any_context_zone(string time, int hours, int minutes)
+    {
+        // A context zone an hour ahead of the machine's, so that a time the parser converted to the machine's zone cannot pass as one in
+        // the context zone.
+        TimeSpan offset = TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow) + TimeSpan.FromHours(1);
+        var context = new ParseContext(TimeZoneInfo.CreateCustomTimeZone("logvu-test", offset, "logvu test", "logvu test"));
+
+        LogEvent e = Scheme.Parse($$"""{"time":"{{time}}","level":"INFO","msg":"x"}""", context);
+
+        Assert.NotNull(e.Time);
+        var expected = new DateTimeOffset(2026, 10, 20, 15, 50, 23, new TimeSpan(hours, minutes, 0));
+        Assert.Equal(expected.UtcDateTime, e.Time.Value.UtcDateTime);
+        Assert.Equal(expected.Offset, e.Time.Value.Offset);
+    }
+
+    [Fact]
+    public void A_time_without_an_offset_is_read_in_the_context_zone()
+    {
+        TimeSpan offset = TimeZoneInfo.Local.GetUtcOffset(DateTime.UtcNow) + TimeSpan.FromHours(1);
+        var context = new ParseContext(TimeZoneInfo.CreateCustomTimeZone("logvu-test", offset, "logvu test", "logvu test"));
+
+        LogEvent e = Scheme.Parse("""{"time":"2026-10-20T15:50:23","level":"INFO","msg":"x"}""", context);
+
+        Assert.NotNull(e.Time);
+        Assert.Equal(new DateTime(2026, 10, 20, 15, 50, 23), e.Time.Value.DateTime);
+        Assert.Equal(offset, e.Time.Value.Offset);
+    }
 }

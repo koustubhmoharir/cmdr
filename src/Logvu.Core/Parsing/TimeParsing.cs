@@ -16,10 +16,14 @@ internal static partial class TimeParsing
     private static partial Regex TrailingOffset();
 
     /// <summary>
-    /// Converts a local time without an offset to an instant in the context zone.
+    /// Converts a local time without an offset to an instant in the context zone. The time is read as a wall-clock time whatever its
+    /// <see cref="DateTime.Kind"/>: a <see cref="DateTimeKind.Local"/> time would otherwise have to carry the machine's offset.
     /// </summary>
-    public static DateTimeOffset InZone(DateTime local, ParseContext context) =>
-        new(local, context.Zone.GetUtcOffset(local));
+    public static DateTimeOffset InZone(DateTime local, ParseContext context)
+    {
+        DateTime wallClock = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        return new DateTimeOffset(wallClock, context.Zone.GetUtcOffset(wallClock));
+    }
 
     /// <summary>
     /// Parses an RFC 3339 style timestamp. A value with an offset keeps it; a value without one is read in the context
@@ -35,8 +39,20 @@ internal static partial class TimeParsing
                 : null;
         }
 
-        return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime local)
-            ? InZone(local, context)
-            : null;
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime local))
+        {
+            return null;
+        }
+
+        // The parser found an offset or a UTC designator that the pattern above does not know (such as +5:30). It converted the time to
+        // the machine's zone, so the instant is read again with its own offset rather than placed in the context zone.
+        if (local.Kind != DateTimeKind.Unspecified)
+        {
+            return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTimeOffset parsed)
+                ? parsed
+                : null;
+        }
+
+        return InZone(local, context);
     }
 }
