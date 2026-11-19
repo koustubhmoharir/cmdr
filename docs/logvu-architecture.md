@@ -302,8 +302,9 @@ stack-trace treatment.
 - Go: frame `pkg/path.Func (path/file.go:42)` / `pkg.(*T).Method (file.go:42)`. A `stack` array of single-line strings keeps
   the index label on every frame (`[ 3]: pkg.Func (file.go:42)`); fold markers sit at the frame text column. `cause` arrays
   are ordinary arrays.
-- Styles: exception type and message emphasized; method name emphasized; `file:line` emphasized; the directory part of paths
-  dimmed; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
+- Styles: exception type and message emphasized; the method name (the last `.` segment of the frame's name, splitting outside
+  `()`, `[]` and `<>`; `.ctor`/`.cctor` whole) in its own colour, the qualifier before it plain, a Go package path up to the last `/`
+  dimmed; `file:line` emphasized; the directory part of paths dimmed; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
 - Folding: every run of ≥ 2 consecutive framework frames gets a fold marker line `… N framework frames` above it; folds start
   expanded ("keep all frames visible by default"); Enter/Space on a marker toggles it; `z` toggles all folds of the event.
   Navigating to a search hit inside a folded run expands it.

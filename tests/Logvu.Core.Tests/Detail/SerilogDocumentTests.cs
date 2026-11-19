@@ -113,7 +113,7 @@ public sealed class SerilogDocumentTests
         DetailLine frame = lines.Single(l => l.Text.Contains("Pipeline.Run(", StringComparison.Ordinal));
         Assert.Equal(13, frame.Indent);
         Assert.Equal("Exception", frame.Scope);
-        Assert.Contains((SpanStyle.Method, "SheetKraft.Orders.Pipeline.Run"), DetailRig.SpansOf(frame));
+        Assert.Contains((SpanStyle.Method, "Run"), DetailRig.SpansOf(frame));
         Assert.Contains((SpanStyle.Directory, @"C:\src\Orders\"), DetailRig.SpansOf(frame));
         Assert.Contains((SpanStyle.FileLocation, "Pipeline.cs:line 42"), DetailRig.SpansOf(frame));
     }

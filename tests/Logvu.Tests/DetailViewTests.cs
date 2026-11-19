@@ -35,7 +35,7 @@ public sealed class DetailViewTests
         Assert.True(message.Style.HasFlag(TextStyle.Bold));
 
         Attribute method = screen.At("Execute(Int32");
-        Assert.Equal(screen.Normal.Foreground, method.Foreground);
+        Assert.Equal(new Color(ColorName16.Yellow), method.Foreground);
         Assert.True(method.Style.HasFlag(TextStyle.Bold));
 
         Attribute directory = screen.At("C:\\src\\Engine\\");

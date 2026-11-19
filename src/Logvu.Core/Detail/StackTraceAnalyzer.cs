@@ -159,8 +159,8 @@ public static partial class StackTraceAnalyzer
         var spans = new List<StyledSpan>
         {
             new(lead.Index + lead.Length, 2, SpanStyle.Muted),
-            new(method.Index, method.Length, SpanStyle.Method),
         };
+        AddMethodSpan(spans, method.Index, method.Value, MethodStart(method.Value));
 
         Group args = match.Groups["args"];
         int open = method.Index + method.Length;
@@ -206,22 +206,91 @@ public static partial class StackTraceAnalyzer
         Group file = match.Groups["file"];
         Group line = match.Groups["line"];
         int open = function.Index + function.Length + 1;
-        int directory = file.Value.LastIndexOfAny(['/', '\\']) + 1;
+        int fileDirectory = file.Value.LastIndexOfAny(['/', '\\']) + 1;
 
-        var spans = new List<StyledSpan>
+        var spans = new List<StyledSpan>();
+        int package = GoPackageLength(function.Value);
+        if (package > 0)
         {
-            new(function.Index, function.Length, SpanStyle.Method),
-            new(open, 1, SpanStyle.Punctuation),
-        };
-        if (directory > 0)
-        {
-            spans.Add(new StyledSpan(file.Index, directory, SpanStyle.Directory));
+            spans.Add(new StyledSpan(function.Index, package, SpanStyle.Directory));
         }
 
-        int locationStart = file.Index + directory;
+        AddMethodSpan(spans, function.Index + package, function.Value[package..], MethodStart(function.Value[package..]));
+        spans.Add(new StyledSpan(open, 1, SpanStyle.Punctuation));
+        if (fileDirectory > 0)
+        {
+            spans.Add(new StyledSpan(file.Index, fileDirectory, SpanStyle.Directory));
+        }
+
+        int locationStart = file.Index + fileDirectory;
         spans.Add(new StyledSpan(locationStart, line.Index + line.Length - locationStart, SpanStyle.FileLocation));
         spans.Add(new StyledSpan(text.Length - 1, 1, SpanStyle.Punctuation));
         return new StackLine(StackLineKind.Frame, false, text, spans);
+    }
+
+    /// <summary>
+    /// The length of the package path of a Go function: everything up to and including the last <c>/</c> before the first <c>(</c> or
+    /// <c>[</c>. Zero when there is no such slash.
+    /// </summary>
+    private static int GoPackageLength(string function)
+    {
+        int stop = function.IndexOfAny(['(', '[']);
+        if (stop < 0)
+        {
+            stop = function.Length;
+        }
+
+        int slash = function[..stop].LastIndexOf('/');
+        return slash + 1;
+    }
+
+    /// <summary>
+    /// The index of the method name in a function or method name. The name is split at each <c>.</c> outside <c>()</c>, <c>[]</c> and
+    /// <c>&lt;&gt;</c>, and the last segment is the method name. A dot directly after another split dot is a constructor marker, so the
+    /// method name is <c>.ctor</c> or <c>.cctor</c>. A name without a split dot is its own method name.
+    /// </summary>
+    /// <param name="name">The name, without a package path.</param>
+    /// <returns>The index of the first character of the method name.</returns>
+    private static int MethodStart(string name)
+    {
+        int depth = 0;
+        int last = -1;
+        for (int i = 0; i < name.Length; i++)
+        {
+            switch (name[i])
+            {
+                case '(' or '[' or '<':
+                    depth++;
+                    break;
+                case ')' or ']' or '>':
+                    if (depth > 0)
+                    {
+                        depth--;
+                    }
+
+                    break;
+                case '.' when depth == 0:
+                    last = i;
+                    break;
+            }
+        }
+
+        if (last < 0)
+        {
+            return 0;
+        }
+
+        return last > 0 && name[last - 1] == '.' ? last : last + 1;
+    }
+
+    /// <summary>Adds the method span of a name, from <paramref name="start"/> within the name to its end, when it is not empty.</summary>
+    private static void AddMethodSpan(List<StyledSpan> spans, int nameIndex, string name, int start)
+    {
+        int length = name.Length - start;
+        if (length > 0)
+        {
+            spans.Add(new StyledSpan(nameIndex + start, length, SpanStyle.Method));
+        }
     }
 
     private static StackLine Marker(StackLineKind kind, string text) =>

@@ -18,7 +18,7 @@ public sealed class StackTraceAnalyzerDotNetTests
         Assert.Equal<(SpanStyle, string)>(
         [
             (SpanStyle.Muted, "at"),
-            (SpanStyle.Method, "SheetKraft.Engine.Runner.Execute"),
+            (SpanStyle.Method, "Execute"),
             (SpanStyle.Punctuation, "("),
             (SpanStyle.Punctuation, ")"),
             (SpanStyle.Muted, " in "),
@@ -36,7 +36,7 @@ public sealed class StackTraceAnalyzerDotNetTests
         Assert.Equal<(SpanStyle, string)>(
         [
             (SpanStyle.Muted, "at"),
-            (SpanStyle.Method, "Ns.Type.Method"),
+            (SpanStyle.Method, "Method"),
             (SpanStyle.Punctuation, "("),
             (SpanStyle.Punctuation, ")"),
         ], DetailRig.SpansOf(line));
@@ -48,16 +48,71 @@ public sealed class StackTraceAnalyzerDotNetTests
         StackLine line = Analyze("   at Ns.Type.<Method>d__5.MoveNext()").Single();
 
         Assert.Equal(StackLineKind.Frame, line.Kind);
-        Assert.Contains((SpanStyle.Method, "Ns.Type.<Method>d__5.MoveNext"), DetailRig.SpansOf(line));
+        Assert.Contains((SpanStyle.Method, "MoveNext"), DetailRig.SpansOf(line));
     }
 
     [Fact]
-    public void Generic_frame_keeps_its_backtick_arity_and_type_parameters()
+    public void Generic_frame_keeps_its_type_parameters_in_the_method_name()
     {
-        StackLine line = Analyze("   at Ns.Type`1.Method[T](T x)").Single();
+        StackLine line = Analyze("   at MyApp.Repo`1.Get[T](Int32 id)").Single();
 
         Assert.Equal(StackLineKind.Frame, line.Kind);
-        Assert.Contains((SpanStyle.Method, "Ns.Type`1.Method[T]"), DetailRig.SpansOf(line));
+        Assert.Contains((SpanStyle.Method, "Get[T]"), DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Frame_method_is_the_last_segment_of_a_dotted_name_with_file_and_line()
+    {
+        StackLine line = Analyze(@"   at MyApp.Services.OrderService.Process(Int32 id) in C:\src\OrderService.cs:line 42").Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Muted, "at"),
+            (SpanStyle.Method, "Process"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.Punctuation, ")"),
+            (SpanStyle.Muted, " in "),
+            (SpanStyle.Directory, @"C:\src\"),
+            (SpanStyle.FileLocation, "OrderService.cs:line 42"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Theory]
+    [InlineData("   at MyApp.Widget..ctor()", ".ctor")]
+    [InlineData("   at MyApp.Widget..cctor()", ".cctor")]
+    public void Constructor_names_keep_the_dot_before_the_name(string text, string method)
+    {
+        StackLine line = Analyze(text).Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Muted, "at"),
+            (SpanStyle.Method, method),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Compiler_generated_name_in_angle_brackets_is_one_method_segment()
+    {
+        StackLine line = Analyze("   at MyApp.Program.<>c.<Main>b__0_0(String s)").Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Muted, "at"),
+            (SpanStyle.Method, "<Main>b__0_0"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Dots_inside_brackets_do_not_split_the_name()
+    {
+        StackLine line = Analyze("   at MyApp.Repo.Load[System.Int32](Int32 id)").Single();
+
+        Assert.Contains((SpanStyle.Method, "Load[System.Int32]"), DetailRig.SpansOf(line));
     }
 
     [Fact]
@@ -196,7 +251,7 @@ public sealed class StackTraceAnalyzerGoTests
         Assert.False(line.IsFramework);
         Assert.Equal<(SpanStyle, string)>(
         [
-            (SpanStyle.Method, "main.handler"),
+            (SpanStyle.Method, "handler"),
             (SpanStyle.Punctuation, "("),
             (SpanStyle.Directory, "/src/app/"),
             (SpanStyle.FileLocation, "main.go:42"),
@@ -221,7 +276,7 @@ public sealed class StackTraceAnalyzerGoTests
 
         Assert.Equal<(SpanStyle, string)>(
         [
-            (SpanStyle.Method, "pkg.(*T).Method"),
+            (SpanStyle.Method, "Method"),
             (SpanStyle.Punctuation, "("),
             (SpanStyle.FileLocation, "file.go:10"),
             (SpanStyle.Punctuation, ")"),
@@ -235,6 +290,66 @@ public sealed class StackTraceAnalyzerGoTests
 
         Assert.True(line.IsFramework);
         Assert.Equal(StackLineKind.Frame, line.Kind);
+    }
+
+    [Fact]
+    public void Package_path_is_dimmed_and_the_method_is_the_last_segment_of_a_pointer_receiver()
+    {
+        StackLine line = Analyze("CodeKraft/golang/ckiecho/internal.(*CodeKraftClient).requestToken (ckclient.go:607)").Single();
+
+        Assert.Equal(StackLineKind.Frame, line.Kind);
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Directory, "CodeKraft/golang/ckiecho/"),
+            (SpanStyle.Method, "requestToken"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.FileLocation, "ckclient.go:607"),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Generic_method_keeps_its_brackets_and_the_package_path_stops_before_them()
+    {
+        StackLine line = Analyze("CodeKraft/golang/ckiecho/utils.getJsonResponse[...] (http.go:155)").Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Directory, "CodeKraft/golang/ckiecho/"),
+            (SpanStyle.Method, "getJsonResponse[...]"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.FileLocation, "http.go:155"),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Closure_name_has_its_package_directory_and_its_last_segment_as_the_method()
+    {
+        StackLine line = Analyze("CodeKraft/golang/ckiecho.(*CodeKraftIntegration).BeforeServe.func1 (cki.go:558)").Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Directory, "CodeKraft/golang/"),
+            (SpanStyle.Method, "func1"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.FileLocation, "cki.go:558"),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
+    }
+
+    [Fact]
+    public void Main_package_function_has_no_directory_and_its_name_is_the_method()
+    {
+        StackLine line = Analyze("main.main (main.go:10)").Single();
+
+        Assert.Equal<(SpanStyle, string)>(
+        [
+            (SpanStyle.Method, "main"),
+            (SpanStyle.Punctuation, "("),
+            (SpanStyle.FileLocation, "main.go:10"),
+            (SpanStyle.Punctuation, ")"),
+        ], DetailRig.SpansOf(line));
     }
 
     [Fact]

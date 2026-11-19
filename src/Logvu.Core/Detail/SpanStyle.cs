@@ -20,7 +20,7 @@ public enum SpanStyle
     /// <summary>The message of a .NET exception header.</summary>
     ExceptionMessage,
 
-    /// <summary>The method of a stack frame.</summary>
+    /// <summary>The method name of a stack frame: the last segment of its function or method name.</summary>
     Method,
 
     /// <summary>The source file name and line of a stack frame.</summary>

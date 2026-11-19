@@ -116,7 +116,7 @@ public sealed class TextEventDocumentTests
     {
         DetailLine frame = Document().Lines.Single(l => l.Text.Contains("SheetKraft.Engine.Runner.Execute", StringComparison.Ordinal));
 
-        Assert.Contains((SpanStyle.Method, "SheetKraft.Engine.Runner.Execute"), DetailRig.SpansOf(frame));
+        Assert.Contains((SpanStyle.Method, "Execute"), DetailRig.SpansOf(frame));
         Assert.Contains((SpanStyle.Directory, @"C:\src\Engine\"), DetailRig.SpansOf(frame));
         Assert.Contains((SpanStyle.FileLocation, "Runner.cs:line 88"), DetailRig.SpansOf(frame));
     }

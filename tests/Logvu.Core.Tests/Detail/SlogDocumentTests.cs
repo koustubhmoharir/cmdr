@@ -69,7 +69,7 @@ public sealed class SlogDocumentTests
         DetailLine handler = lines.Single(l => l.Text.Contains("main.handler", StringComparison.Ordinal));
         Assert.Equal("      [1]: main.handler (/src/app/main.go:42)", handler.Text);
         Assert.Equal("err.stack[0]", handler.Scope);
-        Assert.Contains((SpanStyle.Method, "main.handler"), DetailRig.SpansOf(handler));
+        Assert.Contains((SpanStyle.Method, "handler"), DetailRig.SpansOf(handler));
         Assert.Contains((SpanStyle.Directory, "/src/app/"), DetailRig.SpansOf(handler));
         Assert.Contains((SpanStyle.FileLocation, "main.go:42"), DetailRig.SpansOf(handler));
 
