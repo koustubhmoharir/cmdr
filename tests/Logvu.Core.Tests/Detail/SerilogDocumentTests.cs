@@ -144,7 +144,7 @@ public sealed class SerilogDocumentTests
         Assert.True(doc.IsExpanded("Properties.Customer"));
         Assert.True(doc.IsExpanded("Properties.Scope"));
         Assert.True(doc.IsExpanded("Properties.ExceptionDetail"));
-        Assert.Contains(doc.Lines, l => l.Text == "▾ Properties {6}");
+        Assert.Contains(doc.Lines, l => l.Text == "▾ Properties");
         Assert.Contains(doc.Lines, l => l.Text == "    OrderId: 42");
     }
 
@@ -159,9 +159,9 @@ public sealed class SerilogDocumentTests
         Assert.False(doc.IsExpanded("Properties.Context.Inner.Bag"));
         Assert.False(doc.IsExpanded("Properties.Context.Tags"));
 
-        Assert.Contains(doc.Lines, l => l.Text.Contains("▸ Tags {1}", StringComparison.Ordinal));
+        Assert.Contains(doc.Lines, l => l.Text.Contains("▸ Tags", StringComparison.Ordinal));
         Assert.DoesNotContain(doc.Lines, l => l.Text.Contains("tier:", StringComparison.Ordinal));
-        Assert.Contains(doc.Lines, l => l.Text.Contains("▸ Bag {1}", StringComparison.Ordinal));
+        Assert.Contains(doc.Lines, l => l.Text.Contains("▸ Bag", StringComparison.Ordinal));
         Assert.Contains(doc.Lines, l => l.Text.Contains("Type: \"System.TimeoutException\"", StringComparison.Ordinal));
         Assert.DoesNotContain(doc.Lines, l => l.Text.Contains("attempt: 3", StringComparison.Ordinal));
     }
@@ -173,7 +173,7 @@ public sealed class SerilogDocumentTests
         DetailDocument collapsed = Document(options);
 
         Assert.False(collapsed.IsExpanded("Properties"));
-        Assert.Contains(collapsed.Lines, l => l.Text == "▸ Properties {6}");
+        Assert.Contains(collapsed.Lines, l => l.Text == "▸ Properties");
         Assert.DoesNotContain(collapsed.Lines, l => l.Text == "    OrderId: 42");
 
         DetailDocument restored = Document(collapsed.Toggle("Properties"));
@@ -207,13 +207,13 @@ public sealed class SerilogDocumentTests
     }
 
     [Fact]
-    public void Node_markers_show_their_state_and_counts()
+    public void Node_markers_show_their_state_and_no_counts()
     {
         IReadOnlyList<DetailLine> lines = Document().Lines;
 
-        Assert.Contains(lines, l => l.Text == "  ▾ Customer {1}");
-        Assert.Contains(lines, l => l.Text == "  ▾ Scope [1]");
-        Assert.Contains(lines, l => l.Text == "  ▾ ExceptionDetail {3}");
+        Assert.Contains(lines, l => l.Text == "  ▾ Customer");
+        Assert.Contains(lines, l => l.Text == "  ▾ Scope");
+        Assert.Contains(lines, l => l.Text == "  ▾ ExceptionDetail");
     }
 
 }

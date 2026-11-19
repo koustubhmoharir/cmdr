@@ -11,8 +11,9 @@ namespace Logvu.Core.Detail;
 /// </summary>
 /// <remarks>
 /// <para>
-/// JSON layout: a node is <c>▾ key {n}</c> or <c>▸ key {n}</c> (objects) or <c>key [n]</c> with the same markers (arrays). It sits at
-/// its depth column and its children one step deeper. Scalars sit at the same label column as nodes: <c>  key: value</c>.
+/// JSON layout: a node is <c>▾ key</c> or <c>▸ key</c>, for an object or an array. It sits at its depth column and its children one step
+/// deeper. Scalars sit at the same label column as nodes: <c>  key: value</c>. Array items are labelled <c>[i]</c> counting from 1, with
+/// the numbers right-aligned to the array's length; the labels are dimmed.
 /// </para>
 /// <para>
 /// Depth counts the root's members as depth 1. A node is expanded by default when it is at depth two or less, sits inside an error key
@@ -20,8 +21,9 @@ namespace Logvu.Core.Detail;
 /// members are all skipped has no marker and no id.
 /// </para>
 /// <para>
-/// Ids: a node's id is its path (<c>a.b[2].c</c>); a member that repeats a name in the same object takes <c>#n</c> after the name. A
-/// fold's id is <c>fold:{scope}#{index}</c>, where index is its first frame's position in the scope's lines.
+/// Ids: a node's id is its path (<c>a.b[2].c</c>); a member that repeats a name in the same object takes <c>#n</c> after the name. Paths
+/// count array items from 0, so only the displayed labels start at 1. A fold's id is <c>fold:{scope}#{index}</c>, where index is its first
+/// frame's position in the scope's lines.
 /// </para>
 /// </remarks>
 internal sealed class DetailBuilder
@@ -173,24 +175,36 @@ internal sealed class DetailBuilder
             occurrences.TryGetValue(name, out int seen);
             occurrences[name] = seen + 1;
             string segment = seen == 0 ? name : $"{name}#{seen + 1}";
-            childError |= EmitValue(name, name, Join(basePath, segment), property.Value, depth, pad, parent, inError);
+            childError |= EmitValue(name, name, Join(basePath, segment), property.Value, depth, pad, parent, inError, SpanStyle.JsonKey);
         }
 
         return childError;
     }
 
-    /// <summary>Emits one value, labelled. Returns whether the key is an error key or anything under it is.</summary>
-    private bool EmitValue(string label, string? memberName, string path, JsonElement value, int depth, int pad, Anchor? parent, bool inError)
+    /// <summary>
+    /// Emits one value, labelled. The label is drawn in <paramref name="labelStyle"/>: a member's key, or a dimmed array index. Returns
+    /// whether the key is an error key or anything under it is.
+    /// </summary>
+    private bool EmitValue(
+        string label,
+        string? memberName,
+        string path,
+        JsonElement value,
+        int depth,
+        int pad,
+        Anchor? parent,
+        bool inError,
+        SpanStyle labelStyle)
     {
         bool isError = IsErrorKey(memberName);
         bool error = inError || isError;
         switch (value.ValueKind)
         {
             case JsonValueKind.Object:
-                return EmitObject(label, path, value, depth, pad, parent, error) || isError;
+                return EmitObject(label, path, value, depth, pad, parent, error, labelStyle) || isError;
 
             case JsonValueKind.Array:
-                return EmitArray(label, memberName, path, value, depth, pad, parent, error) || isError;
+                return EmitArray(label, memberName, path, value, depth, pad, parent, error, labelStyle) || isError;
 
             case JsonValueKind.String:
                 string text = value.GetString()!;
@@ -198,7 +212,7 @@ internal sealed class DetailBuilder
                 {
                     EmitTextValue(
                         Head(pad, label),
-                        LabelSpans(pad + Step, label, SpanStyle.JsonKey),
+                        LabelSpans(pad + Step, label, labelStyle),
                         text,
                         LineKind.Json,
                         _ => path,
@@ -207,19 +221,19 @@ internal sealed class DetailBuilder
                 }
                 else
                 {
-                    AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonString, parent);
+                    AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonString, parent, labelStyle);
                 }
 
                 return isError;
 
             case JsonValueKind.Number:
-                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonNumber, parent);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonNumber, parent, labelStyle);
                 return isError;
 
             case JsonValueKind.True:
             case JsonValueKind.False:
             case JsonValueKind.Null:
-                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonLiteral, parent);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonLiteral, parent, labelStyle);
                 return isError;
 
             default:
@@ -227,127 +241,59 @@ internal sealed class DetailBuilder
         }
     }
 
-    private bool EmitObject(string label, string path, JsonElement obj, int depth, int pad, Anchor? parent, bool error)
+    private bool EmitObject(string label, string path, JsonElement obj, int depth, int pad, Anchor? parent, bool error, SpanStyle labelStyle)
     {
-        int count = obj.GetPropertyCount();
-        if (count == 0)
+        if (obj.GetPropertyCount() == 0)
         {
-            AddEmptyNode(pad, label, path, "{}", parent);
+            AddEmptyNode(pad, label, path, "{}", parent, labelStyle);
             return false;
         }
 
         int index = Reserve();
         bool childError = EmitMembers(obj, path, depth + 1, pad + Step, new Anchor(path, parent), error, skip: null);
-        Finish(index, label, $"{{{count}}}", path, pad, parent, depth <= 2 || error || childError);
+        Finish(index, label, path, pad, parent, depth <= 2 || error || childError, labelStyle);
         return childError;
     }
 
-    private bool EmitArray(string label, string? memberName, string path, JsonElement arr, int depth, int pad, Anchor? parent, bool error)
+    private bool EmitArray(
+        string label,
+        string? memberName,
+        string path,
+        JsonElement arr,
+        int depth,
+        int pad,
+        Anchor? parent,
+        bool error,
+        SpanStyle labelStyle)
     {
         int count = arr.GetArrayLength();
         if (count == 0)
         {
-            AddEmptyNode(pad, label, path, "[]", parent);
+            AddEmptyNode(pad, label, path, "[]", parent, labelStyle);
             return false;
         }
 
         if (memberName == "stack" && IsSingleLineStrings(arr))
         {
-            return EmitGoStack(label, path, arr, pad, parent);
+            return EmitGoStack(label, path, arr, pad, parent, labelStyle);
         }
 
-        bool isCause = memberName == "cause";
         int index = Reserve();
         var anchor = new Anchor(path, parent);
+        string[] labels = IndexLabels(count);
         bool childError = false;
         int i = 0;
         foreach (JsonElement item in arr.EnumerateArray())
         {
-            string itemPath = $"{path}[{i}]";
-            childError |= isCause
-                ? EmitCauseItem(i, itemPath, item, depth + 1, pad + Step, anchor, error)
-                : EmitValue($"[{i}]", null, itemPath, item, depth + 1, pad + Step, anchor, error);
+            childError |= EmitValue(labels[i], null, $"{path}[{i}]", item, depth + 1, pad + Step, anchor, error, SpanStyle.Muted);
             i++;
         }
 
-        Finish(index, label, $"[{count}]", path, pad, parent, depth <= 2 || error || childError);
+        Finish(index, label, path, pad, parent, depth <= 2 || error || childError, labelStyle);
         return childError;
     }
 
-    /// <summary>One item of a <c>cause</c> array: a string is <c>cause[i]: text</c>; an object with a message heads its own node.</summary>
-    private bool EmitCauseItem(int index, string path, JsonElement item, int depth, int pad, Anchor? parent, bool error)
-    {
-        string label = $"cause[{index}]";
-        if (item.ValueKind == JsonValueKind.String)
-        {
-            string text = item.GetString()!;
-            if (text.Contains('\n'))
-            {
-                EmitTextValue(Head(pad, label), LabelSpans(pad + Step, label, SpanStyle.JsonKey), text, LineKind.Json, _ => path, path, parent);
-            }
-            else
-            {
-                AddScalar(pad, label, path, text, text, SpanStyle.JsonString, parent);
-            }
-
-            return false;
-        }
-
-        if (item.ValueKind == JsonValueKind.Object
-            && item.TryGetProperty("message", out JsonElement message)
-            && message.ValueKind == JsonValueKind.String
-            && !message.GetString()!.Contains('\n'))
-        {
-            return EmitCauseNode(label, path, item, message.GetString()!, depth, pad, parent, error);
-        }
-
-        return EmitValue(label, null, path, item, depth, pad, parent, error);
-    }
-
-    /// <summary>A cause object: its message heads the line, and its other members are the children.</summary>
-    private bool EmitCauseNode(string label, string path, JsonElement obj, string message, int depth, int pad, Anchor? parent, bool error)
-    {
-        bool hasOthers = false;
-        foreach (JsonProperty property in obj.EnumerateObject())
-        {
-            if (property.Name != "message")
-            {
-                hasOthers = true;
-                break;
-            }
-        }
-
-        string messageScope = path + ".message";
-        if (!hasOthers)
-        {
-            string head = Head(pad, label);
-            var spans = new List<StyledSpan>
-            {
-                new(pad + Step, label.Length, SpanStyle.JsonKey),
-                new(head.Length - 2, 2, SpanStyle.Punctuation),
-            };
-            Add(new DetailLine(head + message, spans, LineKind.Json, head.Length, null, messageScope), parent);
-            return false;
-        }
-
-        int index = Reserve();
-        bool childError = EmitMembers(obj, path, depth + 1, pad + Step, new Anchor(path, parent), error, skip: "message");
-        bool expanded = depth <= 2 || error || childError;
-        string prefix = Pad(pad) + (expanded ? ExpandedMarker : CollapsedMarker) + " " + label + ": ";
-        var headSpans = new List<StyledSpan>
-        {
-            new(pad, 1, SpanStyle.Punctuation),
-            new(pad + Step, label.Length, SpanStyle.JsonKey),
-            new(pad + Step + label.Length, 2, SpanStyle.Punctuation),
-        };
-        RecordNode(path, expanded);
-        _lines[index] = new ModelLine(
-            new DetailLine(prefix + message, headSpans, LineKind.Json, prefix.Length, path, messageScope),
-            parent);
-        return childError;
-    }
-
-    private bool EmitGoStack(string label, string path, JsonElement arr, int pad, Anchor? parent)
+    private bool EmitGoStack(string label, string path, JsonElement arr, int pad, Anchor? parent, SpanStyle labelStyle)
     {
         var frames = new List<string>();
         foreach (JsonElement item in arr.EnumerateArray())
@@ -357,8 +303,16 @@ internal sealed class DetailBuilder
 
         int index = Reserve();
         IReadOnlyList<StackLine> analysis = StackTraceAnalyzer.AnalyzeGoStack(frames, _config.FrameworkPrefixes);
-        EmitStack(analysis, Pad(pad + Step), [], LineKind.Json, k => $"{path}[{k}]", path, new Anchor(path, parent));
-        Finish(index, label, $"[{frames.Count}]", path, pad, parent, expanded: true);
+        EmitStack(
+            analysis,
+            Pad(pad + 2 * Step),
+            [],
+            LineKind.Json,
+            k => $"{path}[{k}]",
+            path,
+            new Anchor(path, parent),
+            IndexLabels(frames.Count));
+        Finish(index, label, path, pad, parent, expanded: true, labelStyle: labelStyle);
         return true;
     }
 
@@ -379,6 +333,11 @@ internal sealed class DetailBuilder
     /// Emits analyzed lines. Each run of two or more consecutive framework frames gets a fold marker above it, and its frames sit under the
     /// marker's id. The first line carries the prefix (and its spans); every line is indented to the prefix's width.
     /// </summary>
+    /// <param name="labels">
+    /// Optional. When given, every line opens with its label instead of the prefix: the label sits at the column of
+    /// <paramref name="firstPrefix"/>, which is then only an indent, and the text follows <c>: </c>. The labels must all have the same
+    /// length. The fold markers and the frames are indented past the labels.
+    /// </param>
     private void EmitStack(
         IReadOnlyList<StackLine> analysis,
         string firstPrefix,
@@ -386,18 +345,30 @@ internal sealed class DetailBuilder
         LineKind kind,
         Func<int, string> scopeOf,
         string foldScope,
-        Anchor? parent)
+        Anchor? parent,
+        IReadOnlyList<string>? labels = null)
     {
-        int width = firstPrefix.Length;
+        int width = labels is null ? firstPrefix.Length : firstPrefix.Length + labels[0].Length + 2;
         string rest = Pad(width);
 
         void EmitOne(int k, Anchor? anchor)
         {
             StackLine line = analysis[k];
             var spans = new List<StyledSpan>();
-            if (k == 0)
+            string prefix;
+            if (labels is null)
             {
-                spans.AddRange(firstPrefixSpans);
+                prefix = k == 0 ? firstPrefix : rest;
+                if (k == 0)
+                {
+                    spans.AddRange(firstPrefixSpans);
+                }
+            }
+            else
+            {
+                prefix = firstPrefix + labels[k] + ": ";
+                spans.Add(new StyledSpan(firstPrefix.Length, labels[k].Length, SpanStyle.Muted));
+                spans.Add(new StyledSpan(firstPrefix.Length + labels[k].Length, 2, SpanStyle.Punctuation));
             }
 
             foreach (StyledSpan span in line.Spans)
@@ -405,7 +376,7 @@ internal sealed class DetailBuilder
                 spans.Add(span with { Start = span.Start + width });
             }
 
-            Add(new DetailLine((k == 0 ? firstPrefix : rest) + line.Text, spans, kind, width, null, scopeOf(k)), anchor);
+            Add(new DetailLine(prefix + line.Text, spans, kind, width, null, scopeOf(k)), anchor);
         }
 
         int i = 0;
@@ -449,12 +420,20 @@ internal sealed class DetailBuilder
         }
     }
 
-    private void AddScalar(int pad, string label, string path, string valueText, string value, SpanStyle style, Anchor? parent)
+    private void AddScalar(
+        int pad,
+        string label,
+        string path,
+        string valueText,
+        string value,
+        SpanStyle style,
+        Anchor? parent,
+        SpanStyle labelStyle)
     {
         string head = Head(pad, label);
         var spans = new List<StyledSpan>
         {
-            new(pad + Step, label.Length, SpanStyle.JsonKey),
+            new(pad + Step, label.Length, labelStyle),
             new(head.Length - 2, 2, SpanStyle.Punctuation),
         };
         if (valueText.Length > 0)
@@ -465,12 +444,12 @@ internal sealed class DetailBuilder
         Add(new DetailLine(head + valueText, spans, LineKind.Json, head.Length, null, path, value), parent);
     }
 
-    private void AddEmptyNode(int pad, string label, string path, string suffix, Anchor? parent)
+    private void AddEmptyNode(int pad, string label, string path, string suffix, Anchor? parent, SpanStyle labelStyle)
     {
         string head = Pad(pad + Step) + label + " ";
         var spans = new List<StyledSpan>
         {
-            new(pad + Step, label.Length, SpanStyle.JsonKey),
+            new(pad + Step, label.Length, labelStyle),
             new(head.Length, suffix.Length, SpanStyle.Muted),
         };
         Add(new DetailLine(head + suffix, spans, LineKind.Json, pad + Step, null, path), parent);
@@ -483,17 +462,17 @@ internal sealed class DetailBuilder
         return _lines.Count - 1;
     }
 
-    private void Finish(int index, string label, string suffix, string path, int pad, Anchor? parent, bool expanded)
+    /// <summary>Fills the slot of a node line: its marker, its label in <paramref name="labelStyle"/>, and its expanded state.</summary>
+    private void Finish(int index, string label, string path, int pad, Anchor? parent, bool expanded, SpanStyle labelStyle)
     {
-        string head = Pad(pad) + (expanded ? ExpandedMarker : CollapsedMarker) + " " + label + " ";
+        string head = Pad(pad) + (expanded ? ExpandedMarker : CollapsedMarker) + " " + label;
         var spans = new List<StyledSpan>
         {
             new(pad, 1, SpanStyle.Punctuation),
-            new(pad + Step, label.Length, SpanStyle.JsonKey),
-            new(head.Length, suffix.Length, SpanStyle.Muted),
+            new(pad + Step, label.Length, labelStyle),
         };
         RecordNode(path, expanded);
-        _lines[index] = new ModelLine(new DetailLine(head + suffix, spans, LineKind.Json, pad + Step, path, path), parent);
+        _lines[index] = new ModelLine(new DetailLine(head, spans, LineKind.Json, pad + Step, path, path), parent);
     }
 
     private void RecordNode(string path, bool expanded)
@@ -517,6 +496,19 @@ internal sealed class DetailBuilder
         }
 
         return true;
+    }
+
+    /// <summary>The labels of the items of an array of <paramref name="count"/> items: <c>[1]</c> to <c>[count]</c>, right-aligned.</summary>
+    private static string[] IndexLabels(int count)
+    {
+        int digits = count.ToString().Length;
+        var labels = new string[count];
+        for (int i = 0; i < count; i++)
+        {
+            labels[i] = "[" + (i + 1).ToString().PadLeft(digits) + "]";
+        }
+
+        return labels;
     }
 
     private static List<StyledSpan> LabelSpans(int start, string label, SpanStyle style) =>

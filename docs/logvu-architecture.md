@@ -288,7 +288,9 @@ message as one value (stack analysis, continuation lines at the value indent).
 
 **JSON events.** The tree only: the message and error are already values in it. The one exception is a Serilog message
 logvu rendered from `MessageTemplate` + `Properties` (`LogEvent.MessageRendered`), which is shown first as `Message:` since it
-appears nowhere else. The tree: objects and arrays as expandable nodes (`▾ key {n}` / `▸ key [n]`), scalars as `key: value` with JSON styling.
+appears nowhere else. The tree: objects and arrays as expandable nodes (`▾ key` / `▸ key`, no counts), scalars as `key: value` with JSON styling.
+Array items are labelled with their 1-based index, dimmed and right-aligned to the widest index (`[ 1]` … `[10]`); paths, highlight
+scopes and node ids keep 0-based indices (`cause[0].message`). No array is special-cased by name except a Go `stack` (below).
 Default expansion: depth ≤ 2 expanded, deeper collapsed, except nodes on the path to an error/exception/stack/cause value
 (expanded so stacks are visible). Strings containing newlines (Serilog `Exception`) are shown as multi-line values and get
 stack-trace treatment.
@@ -297,8 +299,9 @@ stack-trace treatment.
 - .NET: exception header `Namespace.TypeException: message` (also after ` ---> `), frame `   at Ns.Type.Method(args) in
   path:line N` (and without ` in …`), `--- End of inner exception stack trace ---`, `--- End of stack trace from previous
   location ---`.
-- Go: frame `pkg/path.Func (path/file.go:42)` / `pkg.(*T).Method (file.go:42)`; `cause` arrays (strings or `{message, attrs}`)
-  render as a numbered cause chain.
+- Go: frame `pkg/path.Func (path/file.go:42)` / `pkg.(*T).Method (file.go:42)`. A `stack` array of single-line strings keeps
+  the index label on every frame (`[ 3]: pkg.Func (file.go:42)`); fold markers sit at the frame text column. `cause` arrays
+  are ordinary arrays.
 - Styles: exception type and message emphasized; method name emphasized; `file:line` emphasized; the directory part of paths
   dimmed; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
 - Folding: every run of ≥ 2 consecutive framework frames gets a fold marker line `… N framework frames` above it; folds start
