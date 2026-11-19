@@ -110,7 +110,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] Scan throughput: literal search 18 → 112 MB/s (log4net), 21 → 209 MB/s (slog); exact pre-checks, span framing, larger batches.
 - [ ] Level-only filter scans ≈ 30 MB/s (two compiled-regex calls per event). Option: a hand-written header matcher for the built-in schemes, verified against the regex by randomized equivalence tests.
 
-- [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
+- [x] Run the design's acceptance list end to end: docs/logvu-acceptance.md.
 - [x] User guide (docs/logvu.md), README pointer, publish script entry.
 - [x] Windows checklist for the user: docs/logvu-windows-testing.md with tools/logvu/log4net-writer.ps1.
 - [ ] *(Windows)* User runs docs/logvu-windows-testing.md and reports results.
