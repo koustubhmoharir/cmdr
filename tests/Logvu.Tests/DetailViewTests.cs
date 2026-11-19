@@ -313,6 +313,18 @@ public sealed class DetailViewTests
     }
 
     [Fact]
+    public void The_keys_of_configured_columns_and_message_fields_are_bright_magenta_without_a_style()
+    {
+        var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
+
+        Attribute attribute = DetailColors.For(SpanStyle.ConfiguredKey, normal);
+
+        Assert.Equal(new Color(ColorName16.BrightMagenta), attribute.Foreground);
+        Assert.Equal(normal.Background, attribute.Background);
+        Assert.Equal(TextStyle.None, attribute.Style);
+    }
+
+    [Fact]
     public void A_link_in_a_message_is_drawn_underlined_and_the_text_around_it_is_not()
     {
         DetailView view = Loaded(DetailFixtures.Text("ERROR 2026-11-18 10:20:31,007 [Worker 3] Engine - See https://example.com/a for info"), DetailFixtures.Config());

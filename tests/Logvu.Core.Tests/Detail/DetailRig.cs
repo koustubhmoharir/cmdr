@@ -16,12 +16,14 @@ internal static class DetailRig
     public const string EventPath = "/var/log/SheetKraft1.log";
 
     /// <summary>
-    /// A configuration with the given highlight rules and framework prefixes. It is built directly, not from a file, so a rule can carry
-    /// its own regex timeout.
+    /// A configuration with the given highlight rules, framework prefixes, columns and message fields. It is built directly, not from a
+    /// file, so a rule can carry its own regex timeout.
     /// </summary>
     public static LogvuConfig Config(
         IReadOnlyList<HighlightRule>? highlights = null,
-        IReadOnlyList<string>? frameworkPrefixes = null) =>
+        IReadOnlyList<string>? frameworkPrefixes = null,
+        IReadOnlyList<ColumnSpec>? columns = null,
+        IReadOnlyList<string>? messageFields = null) =>
         new(
             configPath: "/etc/logvu/logvu.json",
             logsDirectory: "/var/log",
@@ -33,10 +35,11 @@ internal static class DetailRig
             timeZone: TimeZoneInfo.Utc,
             recentCapacity: LogvuConfig.DefaultRecentCapacity,
             minLevel: null,
-            columns: [],
+            columns: columns ?? [],
             highlights: highlights ?? [],
             styles: new Dictionary<string, StyleSpec>(StringComparer.OrdinalIgnoreCase),
-            frameworkPrefixes: frameworkPrefixes ?? LogvuConfig.DefaultFrameworkPrefixes);
+            frameworkPrefixes: frameworkPrefixes ?? LogvuConfig.DefaultFrameworkPrefixes,
+            messageFields: messageFields ?? []);
 
     /// <summary>A highlight rule with the configuration's 250 ms timeout.</summary>
     public static HighlightRule Rule(string field, string pattern, string style) =>

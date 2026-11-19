@@ -35,6 +35,12 @@ public enum SpanStyle
     /// <summary>A JSON member name or array index.</summary>
     JsonKey,
 
+    /// <summary>
+    /// The key of a value the timeline shows, as a column or a message field: a JSON member name or array index whose path is configured,
+    /// or a text event's field name that a column names.
+    /// </summary>
+    ConfiguredKey,
+
     /// <summary>A JSON string value.</summary>
     JsonString,
 

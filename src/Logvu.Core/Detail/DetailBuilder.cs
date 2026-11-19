@@ -1,5 +1,8 @@
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Logvu.Core.Config;
+using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Logvu.Core.Store;
 
@@ -25,6 +28,12 @@ namespace Logvu.Core.Detail;
 /// count array items from 0, so only the displayed labels start at 1. A fold's id is <c>fold:{scope}#{index}</c>, where index is its first
 /// frame's position in the scope's lines.
 /// </para>
+/// <para>
+/// A label whose path is a configured column or message field (<c>columns</c> and <c>messageFields</c>) is drawn as
+/// <see cref="SpanStyle.ConfiguredKey"/>. A JSON path matches only a member that <see cref="JsonFieldPath"/> can address: the last of
+/// repeated names, and a name with no dot or bracket. Such a member's subtree never matches, since its paths cannot resolve. A text event's
+/// field matches a column of the same name, and the rendered message label of a JSON event matches a <c>message</c> column.
+/// </para>
 /// </remarks>
 internal sealed partial class DetailBuilder
 {
@@ -49,13 +58,43 @@ internal sealed partial class DetailBuilder
     private readonly List<string> _nodeIds = [];
     private readonly List<string> _foldIds = [];
 
+    /// <summary>
+    /// The canonical forms of the configured JSON paths: the columns' and the message fields' paths that are well formed.
+    /// </summary>
+    private readonly HashSet<string> _configuredPaths = new(StringComparer.Ordinal);
+
+    /// <summary>The configured column paths as written. A text event's field matches one by name.</summary>
+    private readonly HashSet<string> _columnNames = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The number of enclosing members that cannot be addressed by a path: a repeated name, or a name with a dot or bracket. While it is
+    /// positive no label matches a configured path.
+    /// </summary>
+    private int _unaddressable;
+
+    /// <summary>
+    /// The node paths of the last occurrences of repeated names (<c>req#2</c>), each with the path that addresses it (<c>req</c>). Recorded
+    /// already translated, so an alias inside another resolves fully by the longest prefix.
+    /// </summary>
+    private readonly Dictionary<string, string> _aliases = new(StringComparer.Ordinal);
+
     /// <summary>Creates a builder for one loaded event.</summary>
     /// <param name="detail">The loaded event.</param>
-    /// <param name="config">The configuration: the framework prefixes.</param>
+    /// <param name="config">The configuration: the framework prefixes and the configured paths.</param>
     public DetailBuilder(EventDetail.Loaded detail, LogvuConfig config)
     {
         _detail = detail;
         _config = config;
+        foreach (ColumnSpec column in config.Columns)
+        {
+            _columnNames.Add(column.Path);
+            AddConfiguredPath(column.Path);
+        }
+
+        foreach (string path in config.MessageFields)
+        {
+            AddConfiguredPath(path);
+        }
     }
 
     /// <summary>Builds the structured document.</summary>
@@ -119,7 +158,7 @@ internal sealed partial class DetailBuilder
             {
                 EmitTextValue(
                     field.Name + ": ",
-                    LabelSpans(0, field.Name, SpanStyle.JsonKey),
+                    LabelSpans(0, field.Name, TextKeyStyle(field.Name)),
                     field.Value,
                     LineKind.Message,
                     _ => MessageScope,
@@ -132,7 +171,7 @@ internal sealed partial class DetailBuilder
             string head = field.Name + ": ";
             var spans = new List<StyledSpan>
             {
-                new(0, field.Name.Length, SpanStyle.JsonKey),
+                new(0, field.Name.Length, TextKeyStyle(field.Name)),
                 new(field.Name.Length, 2, SpanStyle.Punctuation),
             };
             spans.AddRange(ValueStyling.Field(field.Value).Select(span => span with { Start = span.Start + head.Length }));
@@ -150,7 +189,7 @@ internal sealed partial class DetailBuilder
         {
             EmitTextValue(
                 MessageLabel + ": ",
-                LabelSpans(0, MessageLabel, SpanStyle.FieldName),
+                LabelSpans(0, MessageLabel, _columnNames.Contains(EventFields.MessagePath) ? SpanStyle.ConfiguredKey : SpanStyle.FieldName),
                 e.Message,
                 LineKind.Message,
                 _ => MessageScope,
@@ -167,6 +206,14 @@ internal sealed partial class DetailBuilder
     private bool EmitMembers(JsonElement obj, string basePath, int depth, int pad, Anchor? parent, bool inError, string? skip)
     {
         bool childError = false;
+
+        // A path resolves a repeated name to its last occurrence (see JsonFieldPath), so only that one can match a configured path.
+        var totals = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (JsonProperty property in obj.EnumerateObject())
+        {
+            totals[property.Name] = totals.GetValueOrDefault(property.Name) + 1;
+        }
+
         var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (JsonProperty property in obj.EnumerateObject())
         {
@@ -179,7 +226,22 @@ internal sealed partial class DetailBuilder
             occurrences.TryGetValue(name, out int seen);
             occurrences[name] = seen + 1;
             string segment = seen == 0 ? name : $"{name}#{seen + 1}";
+            bool addressable = seen + 1 == totals[name] && IsAddressable(name);
+            if (!addressable)
+            {
+                _unaddressable++;
+            }
+            else if (seen > 0 && _unaddressable == 0)
+            {
+                // The last of repeated names: its id carries #n, but a configured path names it plainly.
+                _aliases[Join(basePath, segment)] = Join(MatchPath(basePath), name);
+            }
+
             childError |= EmitValue(name, name, Join(basePath, segment), property.Value, depth, pad, parent, inError, SpanStyle.JsonKey);
+            if (!addressable)
+            {
+                _unaddressable--;
+            }
         }
 
         return childError;
@@ -202,6 +264,7 @@ internal sealed partial class DetailBuilder
     {
         bool isError = IsErrorKey(memberName);
         bool error = inError || isError;
+        labelStyle = KeyStyleAt(path, labelStyle);
         switch (value.ValueKind)
         {
             case JsonValueKind.Object:
@@ -317,7 +380,8 @@ internal sealed partial class DetailBuilder
             k => $"{path}[{k}]",
             path,
             new Anchor(path, parent),
-            IndexLabels(frames.Count));
+            IndexLabels(frames.Count),
+            k => KeyStyleAt($"{path}[{k}]", SpanStyle.Muted));
         Finish(index, label, path, pad, parent, expanded: true, labelStyle: labelStyle);
         return true;
     }
@@ -350,6 +414,7 @@ internal sealed partial class DetailBuilder
     /// <paramref name="firstPrefix"/>, which is then only an indent, and the text follows <c>: </c>. The labels must all have the same
     /// length. The fold markers and the frames are indented past the labels.
     /// </param>
+    /// <param name="labelStyleOf">Optional. The style of a line's label, by the line's index. Muted when not given.</param>
     private void EmitStack(
         IReadOnlyList<StackLine> analysis,
         string firstPrefix,
@@ -358,7 +423,8 @@ internal sealed partial class DetailBuilder
         Func<int, string> scopeOf,
         string foldScope,
         Anchor? parent,
-        IReadOnlyList<string>? labels = null)
+        IReadOnlyList<string>? labels = null,
+        Func<int, SpanStyle>? labelStyleOf = null)
     {
         int width = labels is null ? firstPrefix.Length : firstPrefix.Length + labels[0].Length + 2;
         string rest = Pad(width);
@@ -379,7 +445,7 @@ internal sealed partial class DetailBuilder
             else
             {
                 prefix = firstPrefix + labels[k] + ": ";
-                spans.Add(new StyledSpan(firstPrefix.Length, labels[k].Length, SpanStyle.Muted));
+                spans.Add(new StyledSpan(firstPrefix.Length, labels[k].Length, labelStyleOf?.Invoke(k) ?? SpanStyle.Muted));
                 spans.Add(new StyledSpan(firstPrefix.Length + labels[k].Length, 2, SpanStyle.Punctuation));
             }
 
@@ -514,6 +580,103 @@ internal sealed partial class DetailBuilder
     private void Add(DetailLine line, Anchor? parent) => _lines.Add(new ModelLine(line, parent));
 
     private static bool IsErrorKey(string? name) => name is not null && ErrorKeys.Contains(name);
+
+    /// <summary>
+    /// The style of a label at a JSON path: <see cref="SpanStyle.ConfiguredKey"/> when the path is a configured one and no enclosing member
+    /// is unaddressable, otherwise <paramref name="normal"/>.
+    /// </summary>
+    private SpanStyle KeyStyleAt(string path, SpanStyle normal) =>
+        _unaddressable == 0 && _configuredPaths.Contains(MatchPath(path)) ? SpanStyle.ConfiguredKey : normal;
+
+    /// <summary>
+    /// The path a configured path is compared with: the node path with the longest alias prefix replaced (see <see cref="_aliases"/>). The
+    /// node path itself when no repeated name is on it.
+    /// </summary>
+    private string MatchPath(string path)
+    {
+        if (_aliases.Count == 0)
+        {
+            return path;
+        }
+
+        string? bestKey = null;
+        foreach (string key in _aliases.Keys)
+        {
+            bool prefix = path.Length == key.Length
+                ? path == key
+                : path.Length > key.Length && path.StartsWith(key, StringComparison.Ordinal) && path[key.Length] is '.' or '[';
+            if (prefix && (bestKey is null || key.Length > bestKey.Length))
+            {
+                bestKey = key;
+            }
+        }
+
+        return bestKey is null ? path : _aliases[bestKey] + path[bestKey.Length..];
+    }
+
+    /// <summary>The style of a text event's field label: a column's name is <see cref="SpanStyle.ConfiguredKey"/>.</summary>
+    private SpanStyle TextKeyStyle(string name) => _columnNames.Contains(name) ? SpanStyle.ConfiguredKey : SpanStyle.JsonKey;
+
+    /// <summary>
+    /// Adds a configured path's canonical form to the set. A path that is not well formed can never resolve, so it is skipped.
+    /// </summary>
+    private void AddConfiguredPath(string path)
+    {
+        if (CanonicalPath(path) is { } canonical)
+        {
+            _configuredPaths.Add(canonical);
+        }
+    }
+
+    /// <summary>
+    /// Tells whether a member name can be addressed by a path: it is not empty and has no dot or bracket, the characters that
+    /// <see cref="JsonFieldPath"/> reads as separators.
+    /// </summary>
+    private static bool IsAddressable(string name) => name.Length > 0 && name.IndexOfAny(['.', '[']) < 0;
+
+    /// <summary>
+    /// The canonical form of a well-formed path, as the builder's paths are written: named segments joined by dots, and every index in
+    /// decimal without leading zeros (<c>a.b[2]</c>, and <c>[0]</c> written as a segment of its own joins its name with no dot).
+    /// </summary>
+    /// <returns>The canonical form, or <c>null</c> when the path is not well formed.</returns>
+    private static string? CanonicalPath(string path)
+    {
+        if (!JsonFieldPath.IsWellFormed(path))
+        {
+            return null;
+        }
+
+        var text = new StringBuilder();
+        foreach (string segment in path.Split('.'))
+        {
+            int position = segment.IndexOf('[');
+            string name = position < 0 ? segment : segment[..position];
+            if (name.Length > 0)
+            {
+                if (text.Length > 0)
+                {
+                    text.Append('.');
+                }
+
+                text.Append(name);
+            }
+
+            while (position >= 0 && position < segment.Length)
+            {
+                int close = segment.IndexOf(']', position);
+                ReadOnlySpan<char> digits = segment.AsSpan(position + 1, close - position - 1);
+                if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out int index))
+                {
+                    return null;
+                }
+
+                text.Append('[').Append(index).Append(']');
+                position = close + 1;
+            }
+        }
+
+        return text.ToString();
+    }
 
     private static bool IsSingleLineStrings(JsonElement arr)
     {

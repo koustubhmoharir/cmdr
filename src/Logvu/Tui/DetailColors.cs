@@ -47,7 +47,8 @@ internal static class DetailColors
     /// <summary>
     /// The attribute of a structural span. Field names are bold, exception types are bold muted red and their messages muted red,
     /// methods are bold yellow, file locations are cyan, directories and framework frames are dimmed, and JSON members, strings, numbers
-    /// and literals each have a color, and the date and time of a JSON timestamp are cyan and bright yellow. Links are cyan and underlined.
+    /// and literals each have a color, and the date and time of a JSON timestamp are cyan and bright yellow. The keys of values the
+    /// timeline shows as columns or message fields are bright magenta. Links are cyan and underlined.
     /// Fold markers are dim italic and muted text is dim.
     /// Plain text and punctuation keep the normal attribute.
     /// </summary>
@@ -67,6 +68,7 @@ internal static class DetailColors
             SpanStyle.Directory => new Attribute(fg, bg, TextStyle.Faint),
             SpanStyle.Framework => new Attribute(fg, bg, TextStyle.Faint),
             SpanStyle.JsonKey => new Attribute(ColorName16.BrightBlue, bg, TextStyle.None),
+            SpanStyle.ConfiguredKey => new Attribute(ColorName16.BrightMagenta, bg, TextStyle.None),
             SpanStyle.JsonString => new Attribute(ColorName16.Green, bg, TextStyle.None),
             SpanStyle.JsonNumber => new Attribute(ColorName16.Magenta, bg, TextStyle.None),
             SpanStyle.JsonLiteral => new Attribute(ColorName16.Yellow, bg, TextStyle.None),
