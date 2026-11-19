@@ -47,6 +47,24 @@ public sealed class RowLayoutIndentTests
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
+    public void Group_glyph_is_at_its_column_and_matches_the_glyph_of_a_command_one_depth_shallower(int depth)
+    {
+        foreach (bool collapsed in new[] { false, true })
+        {
+            GroupHeaderText header = RowLayout.FormatGroupHeader(60, "grp", GroupMode.Parallel, false, collapsed, string.Empty, depth);
+            string glyph = collapsed ? "▸" : "▾";
+
+            Assert.Equal(RowLayout.GroupGlyphColumn(depth), header.Text.IndexOf(glyph, StringComparison.Ordinal));
+        }
+
+        CommandMainText command = RowLayout.FormatCommandMain(60, marked: false, "↻", "web", depth);
+        Assert.Equal(RowLayout.GroupGlyphColumn(depth + 1), command.GlyphColumn);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
     [InlineData(3)]
     public void Mark_is_at_column_0_at_every_depth_while_glyph_and_name_stay_put(int depth)
     {

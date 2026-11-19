@@ -448,6 +448,28 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
+    /// <summary>
+    /// A plain click on the ▾ or ▸ of a group header (see <see cref="RowLayout.GroupGlyphColumn"/>). Focuses the header and toggles
+    /// its group the way the keys do: Left collapses an expanded header and Right expands a collapsed one. Other rows are left alone.
+    /// </summary>
+    public void OnGroupGlyphClick(int rowIndex)
+    {
+        if (rowIndex < 0 || rowIndex >= _rows.Count || _rows[rowIndex] is not GroupRow header)
+        {
+            return;
+        }
+
+        FocusRowIndex(rowIndex);
+        if (_collapsed.Contains(header.Group))
+        {
+            ExpandHeader(header);
+        }
+        else
+        {
+            CollapseOrFocusHeader(header);
+        }
+    }
+
     /// <summary>Index into the shown rows of the focused row, or -1 when nothing is focused.</summary>
     private int FocusedIndex => _list.SelectedItem is { } line ? _source.Lines.LineToRow(line) : -1;
 

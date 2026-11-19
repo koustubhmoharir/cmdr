@@ -302,6 +302,7 @@ header they do nothing there.
 | Space, Shift+↑/↓, Ctrl+click | Mark commands |
 | Ctrl+A | Mark / unmark all in the group |
 | ← / → | Collapse / expand a group |
+| Click the ▾ / ▸ of a group header | Collapse / expand the group |
 | Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 | Tab / Shift+Tab | Move focus: list → info → output |
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |

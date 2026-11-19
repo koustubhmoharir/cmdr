@@ -1,3 +1,4 @@
+using Cmdr.Core.Session;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -116,6 +117,16 @@ internal sealed class CommandListView : ListView
             return handled;
         }
 
+        int glyphRow = click ? GroupGlyphRowAt(mouse) : -1;
+        if (glyphRow >= 0)
+        {
+            // The toggle is on the press, as a row's selection is not: the controller focuses the header before it toggles the group.
+            bool handled = base.OnMouseEvent(mouse);
+            RevealFocusedBlock();
+            _controller.OnGroupGlyphClick(glyphRow);
+            return handled;
+        }
+
         bool result = base.OnMouseEvent(mouse);
         if (click)
         {
@@ -134,6 +145,23 @@ internal sealed class CommandListView : ListView
         }
 
         return Lines.LineToRow(Viewport.Y + position.Y);
+    }
+
+    /// <summary>The group header row under a mouse position when that position is its ▾ or ▸ cell, or -1.</summary>
+    private int GroupGlyphRowAt(Mouse mouse)
+    {
+        if (mouse.Position is not { } position)
+        {
+            return -1;
+        }
+
+        int row = RowAt(mouse);
+        if (row < 0 || row >= _source.Rows.Count || _source.Rows[row] is not GroupRow group)
+        {
+            return -1;
+        }
+
+        return position.X == RowLayout.GroupGlyphColumn(group.Group.Depth) ? row : -1;
     }
 
     /// <summary>Up, Down, PageUp, PageDown, Home and End over the main lines. Returns true when the key was handled.</summary>

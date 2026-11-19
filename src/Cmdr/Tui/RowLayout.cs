@@ -48,6 +48,12 @@ internal static class RowLayout
     /// <summary>The indentation in columns of an item at the given depth.</summary>
     public static int IndentOf(int depth) => IndentPerDepth * Math.Max(0, depth);
 
+    /// <summary>
+    /// Column of the ▾ or ▸ in a group header at the given depth. The header has no mark column: the glyph follows its indent,
+    /// so it is the same column as the glyph of a command one depth shallower (see <see cref="GlyphColumn"/>).
+    /// </summary>
+    public static int GroupGlyphColumn(int depth) => IndentOf(depth);
+
     /// <summary>Column of the name in a command's detail line, for a command whose group is at <paramref name="depth"/>.</summary>
     public static int CommandDetailIndent(int depth) => NameColumn + IndentOf(depth);
 
