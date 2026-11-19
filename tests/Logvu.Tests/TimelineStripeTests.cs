@@ -111,14 +111,14 @@ public sealed class TimelineStripeTests
     {
         TimelineView view = Timeline(3);
 
-        // A dark terminal: the reply's background is black and its foreground is #AAAAAA, so the shade is #0A0A0A.
+        // A dark terminal: the reply's background is black and its foreground is #AAAAAA, so the shade is #191919.
         var reply = new Attribute(new Color(0xAA, 0xAA, 0xAA), new Color(0x00, 0x00, 0x00));
         List<TerminalScreen> screens = TerminalHarness.Run(view, Width, Height, () => ReportDefaults(view.App!.Driver!, reply));
 
         Color before = RowStripe.For(screens[0].Normal, null);
         Assert.Equal(before, screens[0].Cells[2][1].Attribute.Background);
-        Assert.Equal(new Color(0x0A, 0x0A, 0x0A), screens[1].Cells[2][1].Attribute.Background);
-        Assert.Equal(new Color(0x0A, 0x0A, 0x0A), screens[1].Cells[2][Width - 1].Attribute.Background);
+        Assert.Equal(new Color(0x19, 0x19, 0x19), screens[1].Cells[2][1].Attribute.Background);
+        Assert.Equal(new Color(0x19, 0x19, 0x19), screens[1].Cells[2][Width - 1].Attribute.Background);
     }
 
     private static void ReportDefaults(IDriver driver, Attribute attribute) =>

@@ -23,10 +23,10 @@ namespace Logvu.Tui;
 internal static class RowStripe
 {
     /// <summary>How far the shade is from the background toward the foreground, in percent.</summary>
-    public const int Percent = 6;
+    public const int Percent = 15;
 
     /// <summary>The shade used when neither the terminal's defaults nor explicit normal colors are known.</summary>
-    public static readonly Color FallbackShade = new(0x1A, 0x1C, 0x22);
+    public static readonly Color FallbackShade = new(0x26, 0x2A, 0x33);
 
     /// <summary>
     /// The stripe color for a view whose normal attribute is <paramref name="normal"/>, given the terminal's default attribute, or <c>null</c>
