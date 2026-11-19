@@ -24,17 +24,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
     // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
-    // The c hint sits between the two parts and is left out when c copies nothing (see CopyHint).
-    // While the search bar's find field has the focus, the search keys replace both parts (see SearchHint).
+    // The command keys depend on the focused pane (see CommandKeysOf). The c hint is left out when c copies nothing (see CopyHint).
+    // While the search bar's find field has the focus, the search keys replace all parts (see SearchHint).
     // Each label is a click target that performs its key (see KeyHints).
-    private static readonly Hint HintsBeforeCopy = KeyHints.Concat(
-        KeyHints.Join(
-            KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
-            KeyHints.Bound(Key.F5, "F5 Restart"),
-            KeyHints.Bound(Key.Space, "Space Mark"),
-            KeyHints.Bound(Key.A.WithCtrl, "^A All"),
-            KeyHints.Bound(Key.L, "L Log")),
-        KeyHints.Plain(KeyHints.Separator));
     private static readonly Hint HintsAfterCopy = KeyHints.Join(
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
         KeyHints.Bound((Key)'+', "+ Max"));
@@ -1802,16 +1794,55 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// The target the Enter hint describes: the list's target (the marks, or the focused row) when the list has the focus, and
-    /// the shown command when the info or output pane has it, as <see cref="OnShownCommandKey"/> acts on.
+    /// the shown command when the info or output pane has it, as <see cref="OnShownCommandKey"/> acts on. With no pane focused,
+    /// null: Enter does not reach the list then, so it does nothing that the hint could name.
     /// </summary>
-    private ActionTarget? HintTarget() => _details.HasFocus || _output.HasFocus ? ShownTarget() : TargetOf(FocusedRow);
+    private ActionTarget? HintTarget() => FocusedCopyPane() switch
+    {
+        CopyPane.List => TargetOf(FocusedRow),
+        CopyPane.Details or CopyPane.Output => ShownTarget(),
+        _ => null,
+    };
 
     /// <summary>The text of <see cref="HintLeftHint"/>.</summary>
     private string HintLeft() => HintLeftHint().Text;
 
     /// <summary>
+    /// The command keys that the focused pane acts on, in the order the bar shows them, or null when it acts on none of them.
+    /// The list on a command row acts on all five. The list on a group row acts on Ctrl+C, F5 and Ctrl+A (on the whole group), not
+    /// Space or L, which only a command row takes. The list with no row, and no pane focused, act on none. The info and output panes
+    /// act on Ctrl+C, F5 and L for the shown command alone, when a command is shown, and never Space or Ctrl+A.
+    /// </summary>
+    private static Hint? CommandKeysOf(CopyPane pane, ListRow? focused)
+    {
+        switch (pane)
+        {
+            case CopyPane.List when focused is CommandRow:
+                return KeyHints.Join(
+                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
+                    KeyHints.Bound(Key.F5, "F5 Restart"),
+                    KeyHints.Bound(Key.Space, "Space Mark"),
+                    KeyHints.Bound(Key.A.WithCtrl, "^A All"),
+                    KeyHints.Bound(Key.L, "L Log"));
+            case CopyPane.List when focused is GroupRow:
+                return KeyHints.Join(
+                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
+                    KeyHints.Bound(Key.F5, "F5 Restart"),
+                    KeyHints.Bound(Key.A.WithCtrl, "^A All"));
+            case CopyPane.Details or CopyPane.Output when focused is CommandRow:
+                return KeyHints.Join(
+                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
+                    KeyHints.Bound(Key.F5, "F5 Restart"),
+                    KeyHints.Bound(Key.L, "L Log"));
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// The hint left of "^Q Quit", with its click targets. While the find field has the focus, the search keys (see <see cref="SearchHint"/>).
-    /// Otherwise "Enter Start" / "Enter Kill" for the current targets, when Enter does something, and the keys of the focused pane.
+    /// Otherwise the parts that apply, joined by the separator: "Enter Start" / "Enter Kill" for the current targets, when Enter does
+    /// something; the command keys of the focused pane (see <see cref="CommandKeysOf"/>); the c hint; and "^S Save  + Max".
     /// </summary>
     private Hint HintLeftHint()
     {
@@ -1834,23 +1865,27 @@ internal sealed class MainController : IDisposable, IListSearchHost
         bool sequenceRunning = hintGroup is { Mode: GroupMode.Sequential, IsSequenceRunning: true };
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
-        string? copy = CopyHint.Describe(FocusedCopyPane(), hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
+        CopyPane pane = FocusedCopyPane();
+        string? copy = CopyHint.Describe(pane, hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
+        Hint? commands = CommandKeysOf(pane, FocusedRow);
         var parts = new List<Hint>();
         if (enter is not null)
         {
             parts.Add(KeyHints.Bound(Key.Enter, "Enter " + enter));
-            parts.Add(KeyHints.Plain(KeyHints.Separator));
         }
 
-        parts.Add(HintsBeforeCopy);
+        if (commands is not null)
+        {
+            parts.Add(commands);
+        }
+
         if (copy is not null)
         {
             parts.Add(KeyHints.Bound(Key.C, copy));
-            parts.Add(KeyHints.Plain(KeyHints.Separator));
         }
 
         parts.Add(HintsAfterCopy);
-        return KeyHints.Concat([.. parts]);
+        return KeyHints.Join([.. parts]);
     }
 
     /// <summary>The pane that c acts on: the focused one, or None when neither the list nor the info or output pane has the focus.</summary>

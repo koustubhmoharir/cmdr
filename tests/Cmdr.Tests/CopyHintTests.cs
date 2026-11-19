@@ -164,7 +164,7 @@ public sealed class CopyHintTests
         Field<CommandListView>(controller, "_list").SetFocus();
         string text = HintLeft(controller);
         Assert.DoesNotContain("c Copy", text);
-        Assert.Contains("L Log  ^S Save  + Max", text);
+        Assert.Contains("F5 Restart  ^A All  ^S Save  + Max", text);
     }
 
     private static CommandRow FirstCommandRow(TempSession temp) => temp.Session.BuildRows().OfType<CommandRow>().First();

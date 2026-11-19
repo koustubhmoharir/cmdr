@@ -15,6 +15,18 @@ namespace Cmdr.Tui;
 /// </summary>
 internal sealed class RecentPicker : Window
 {
+    // The bottom row: the keys the picker acts on, each label a click target that performs its key (see KeyHints).
+    // Esc is the window's default Quit, so its label performs Esc; "^Q Quit" is handled by OnKeyDown.
+    private static readonly Hint HintsLeft = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.Delete, "Del Remove"),
+        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Concat(
+            KeyHints.Bound(Key.Esc, "Esc"),
+            KeyHints.Plain("/"),
+            KeyHints.Bound(Key.Q.WithCtrl, "^Q"),
+            KeyHints.Plain(" Quit")));
+
     private readonly IApplication _app;
     private readonly RecentFiles _recent;
     private readonly string? _home;
@@ -52,7 +64,7 @@ internal sealed class RecentPicker : Window
         _frame.Add(_list);
 
         _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        _status.Show("Enter Open  Del Remove  0-9 Select by number  Esc/^Q Quit", message: false);
+        _status.Show(HintsLeft, KeyHints.Plain(string.Empty));
 
         Add(_frame, _status);
         Rebuild(0);

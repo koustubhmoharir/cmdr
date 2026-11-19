@@ -294,7 +294,7 @@ act on everything in the group. Marks are limited to one group. In the info and 
 F5, L, F2 and Del act on the command the panes show (the focused command) alone, ignoring marks; on a group
 header they do nothing there.
 
-The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing.
+The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing. The bottom row shows only the keys that do something in the focused pane: Space and L only on a command row of the list, Ctrl+A only in the list, and the command keys in the info or output pane only when a command is shown there.
 
 | Key | Action |
 |---|---|

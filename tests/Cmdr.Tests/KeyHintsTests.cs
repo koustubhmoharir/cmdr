@@ -92,7 +92,7 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
         string group = Bar(controller);
-        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  Space Mark  ^A All  L Log  ^S Save  + Max", group, StringComparison.Ordinal);
+        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  ^A All  ^S Save  + Max", group, StringComparison.Ordinal);
         Assert.DoesNotContain("c Copy", group, StringComparison.Ordinal);
         AssertLabelsPerformTheirKeys(controller);
     }
