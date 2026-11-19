@@ -75,7 +75,7 @@ public sealed class DetailValueTests
         DetailDocument doc = DetailRig.Build(DetailRig.Loaded(Serilog, BuiltInSchemes.SerilogJson));
 
         Assert.All(doc.FullLines.Where(l => l.Scope == "Exception"), l => Assert.Null(l.Value));
-        Assert.All(doc.FullLines.Where(l => l.Kind is LineKind.Header or LineKind.Message or LineKind.Fold or LineKind.Notice),
+        Assert.All(doc.FullLines.Where(l => l.Kind is LineKind.Message or LineKind.Fold or LineKind.Notice),
             l => Assert.Null(l.Value));
     }
 
@@ -84,7 +84,7 @@ public sealed class DetailValueTests
     {
         DetailDocument doc = DetailRig.Build(DetailRig.Loaded(Log4Net, BuiltInSchemes.Log4NetCore));
 
-        DetailLine thread = Assert.Single(doc.FullLines, l => l.Kind == LineKind.Field);
+        DetailLine thread = Assert.Single(doc.FullLines, l => l.Kind == LineKind.Field && l.Scope == "thread");
         Assert.Equal("thread", thread.Scope);
         Assert.Equal("Worker 3", thread.Value);
     }

@@ -188,6 +188,101 @@ public sealed class FilterControllerTests : IDisposable
     }
 
     [Fact]
+    public void Plus_and_equals_raise_the_minimum_level_one_step_and_the_filter_shows_it_without_a_notice()
+    {
+        Assert.True(Send((Key)'='));
+        _posted.Pump();
+        Assert.Equal(LogLevel.Debug, _controller.Filter!.MinLevel);
+        Assert.Contains("Filter: level ≥ DEBUG", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Min level", _controller.StatusLeft, StringComparison.Ordinal);
+
+        Assert.True(Send((Key)'+'));
+        _posted.Pump();
+        Assert.Equal(LogLevel.Info, _controller.Filter!.MinLevel);
+        Assert.Contains("Filter: level ≥ INFO", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Min level", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Minus_and_underscore_lower_the_minimum_level_and_clear_the_filter_when_nothing_is_left()
+    {
+        _nextEdit = Edit(new FilterSpec(MinLevel: LogLevel.Info));
+        Send((Key)'f');
+        Assert.Equal(LogLevel.Info, _controller.Filter!.MinLevel);
+
+        Assert.True(Send((Key)'_'));
+        _posted.Pump();
+        Assert.Equal(LogLevel.Debug, _controller.Filter!.MinLevel);
+
+        Assert.True(Send((Key)'-'));
+        _posted.Pump();
+        Assert.Null(_controller.Filter);
+        Assert.Contains("Min level: any", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Filter:", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_level_keys_keep_the_other_predicates_of_the_filter()
+    {
+        _nextEdit = Edit(new FilterSpec(MinLevel: LogLevel.Info, Text: new SearchQuery("needle", false, false, false)));
+        Send((Key)'f');
+
+        Send((Key)'=');
+        _posted.Pump();
+
+        EventFilter filter = _controller.Filter!;
+        Assert.Equal(LogLevel.Warn, filter.MinLevel);
+        Assert.Equal("needle", filter.Text!.Value.Text);
+    }
+
+    [Fact]
+    public void At_the_ends_the_filter_is_not_changed_and_no_minimum_still_says_so()
+    {
+        _nextEdit = Edit(new FilterSpec(MinLevel: LogLevel.Fatal));
+        Send((Key)'f');
+        EventFilter fatal = _controller.Filter!;
+
+        Assert.True(Send((Key)'='));
+
+        Assert.Same(fatal, _controller.Filter);
+        Assert.Contains("Filter: level ≥ FATAL", _controller.StatusLeft, StringComparison.Ordinal);
+
+        Send((Key)'F');
+        Assert.Null(_controller.Filter);
+
+        Assert.True(Send((Key)'-'));
+        Assert.Null(_controller.Filter);
+        Assert.Contains("Min level: any", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_level_keys_do_nothing_to_the_filter_while_the_detail_is_open()
+    {
+        _controller.Timeline.HandleKey(Key.Enter);
+        _posted.PumpUntil(() => _controller.Detail?.Document is not null, "the detail");
+
+        Send((Key)'=');
+        Send((Key)'-');
+
+        Assert.NotNull(_controller.Detail);
+        Assert.Null(_controller.Filter);
+        Assert.DoesNotContain("Min level", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_level_keys_typed_in_the_search_bar_are_text_and_do_not_step_the_level()
+    {
+        Send(Key.F.WithCtrl);
+        Assert.True(_controller.Search.Bar.HasFieldFocus);
+
+        Type("=+-_");
+
+        Assert.Empty(_editorInputs);
+        Assert.Null(_controller.Filter);
+        Assert.Equal("=+-_", _controller.Search.Bar.Query.Text);
+    }
+
+    [Fact]
     public void A_filter_with_no_matches_shows_no_matching_events_once_the_scan_completes()
     {
         _nextEdit = Edit(new FilterSpec(Text: new SearchQuery("zzz", false, false, false)));
@@ -302,10 +397,11 @@ public sealed class FilterControllerTests : IDisposable
     }
 
     [Fact]
-    public void f_on_a_header_line_of_the_detail_keeps_the_detail_open_and_says_what_it_filters_on()
+    public void f_on_a_message_line_of_the_detail_keeps_the_detail_open_and_says_what_it_filters_on()
     {
         _controller.Timeline.HandleKey(Key.Enter);
         _posted.PumpUntil(() => _controller.Detail?.Document is not null, "the detail");
+        MoveCursorTo(_controller.Detail!, line => line.Kind == LineKind.Message);
 
         Send((Key)'f');
 
@@ -357,10 +453,10 @@ public sealed class FilterControllerTests : IDisposable
     }
 
     [Fact]
-    public void The_timeline_hints_name_the_filter_key()
+    public void The_timeline_hints_name_the_filter_and_level_keys()
     {
-        Assert.StartsWith("f filter", TimelineController.Hints, StringComparison.Ordinal);
-        Assert.StartsWith("f filter on value", TimelineController.DetailHints, StringComparison.Ordinal);
+        Assert.Equal("f filter  -/+ level  Space pause/follow  End newest  ^Q quit", TimelineController.Hints);
+        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  ←/Esc back", TimelineController.DetailHints);
     }
 
     public void Dispose()

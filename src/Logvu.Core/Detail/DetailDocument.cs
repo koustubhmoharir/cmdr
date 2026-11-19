@@ -5,7 +5,7 @@ using Logvu.Core.Store;
 namespace Logvu.Core.Detail;
 
 /// <summary>
-/// The detail of one event as lines: the structured document (header, fields or summary and tree, stack analysis) or the raw text, with the
+/// The detail of one event as lines: the structured document (fields or summary, the tree, stack analysis) or the raw text, with the
 /// expansion state of <see cref="Options"/> applied. Pure: it has no terminal and no I/O.
 /// </summary>
 /// <remarks>
@@ -84,7 +84,7 @@ public sealed class DetailDocument
     /// Builds the document of an event. The structured model is always built, so the ids exist in raw mode too; raw mode shows the raw lines.
     /// </summary>
     /// <param name="detail">The event's detail.</param>
-    /// <param name="config">The configuration: the time zone, framework prefixes and highlight rules.</param>
+    /// <param name="config">The configuration: the framework prefixes and highlight rules.</param>
     /// <param name="options">The view mode and the expansion state.</param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
     public static DetailDocument Build(EventDetail detail, LogvuConfig config, DetailOptions options)

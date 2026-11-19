@@ -1,4 +1,3 @@
-using System.Text;
 using Logvu.Core.Detail;
 using Logvu.Core.Parsing;
 
@@ -30,33 +29,32 @@ public sealed class TextEventDocumentTests
         DetailRig.Build(DetailRig.Loaded(ErrorEvent(), BuiltInSchemes.Log4NetCore), options: options);
 
     [Fact]
-    public void Header_lists_path_offset_length_time_level_and_source_then_a_blank_line()
+    public void Fields_are_listed_in_their_order_with_their_names_as_scope()
     {
-        DetailDocument doc = Document();
-        string text = ErrorEvent();
+        IReadOnlyList<DetailLine> fields = Document().Lines.Where(l => l.Kind == LineKind.Field).ToList();
 
+        Assert.Equal(["level", "time", "thread", "logger"], fields.Select(f => f.Scope));
         Assert.Equal(
         [
-            "Path: /var/log/SheetKraft1.log",
-            "Offset: 4096 bytes",
-            $"Length: {Encoding.UTF8.GetByteCount(text) + 1} bytes",
-            "Time: 2026-11-18 10:20:31.007 +00:00  (as written: 2026-11-18 10:20:31,007)",
-            "Level: Error",
-            "Source: SheetKraft.Engine.Runner",
-            string.Empty,
-        ], doc.Lines.Take(7).Select(l => l.Text));
-        Assert.All(doc.Lines.Take(7), l => Assert.Equal(LineKind.Header, l.Kind));
+            "level: ERROR",
+            "time: 2026-11-18 10:20:31,007",
+            "thread: Worker 3",
+            "logger: SheetKraft.Engine.Runner",
+        ], fields.Select(f => f.Text));
+        Assert.All(fields, f => Assert.Equal([SpanStyle.FieldName, SpanStyle.Punctuation], f.Spans.Select(s => s.Style)));
     }
 
     [Fact]
-    public void Fields_other_than_time_level_and_logger_follow_the_header_with_their_names_as_scope()
+    public void Time_level_and_logger_are_field_lines_whose_values_are_as_written()
     {
-        // Time, level and logger are in the header (with their original spelling), so they are not repeated as fields.
         IReadOnlyList<DetailLine> fields = Document().Lines.Where(l => l.Kind == LineKind.Field).ToList();
 
-        Assert.Equal(["thread: Worker 3"], fields.Select(f => f.Text));
-        Assert.Equal(["thread"], fields.Select(f => f.Scope));
-        Assert.All(fields, f => Assert.Equal([SpanStyle.FieldName, SpanStyle.Punctuation], f.Spans.Select(s => s.Style)));
+        DetailLine level = fields.Single(f => f.Scope == "level");
+        DetailLine time = fields.Single(f => f.Scope == "time");
+        DetailLine logger = fields.Single(f => f.Scope == "logger");
+        Assert.Equal("ERROR", level.Value);
+        Assert.Equal("2026-11-18 10:20:31,007", time.Value);
+        Assert.Equal("SheetKraft.Engine.Runner", logger.Value);
     }
 
     [Fact]

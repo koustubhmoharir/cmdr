@@ -48,7 +48,9 @@ internal sealed class TimelineView : View
     /// <summary>Raised when the view's height changes, with the model's viewport height for the new height.</summary>
     public event Action<int>? ViewportRowsChanged;
 
-    /// <summary>Raised when Enter is pressed with a row selected, with the selected row's key. The owner opens the event's detail.</summary>
+    /// <summary>
+    /// Raised when Enter, Right or <c>l</c> is pressed with a row selected, with the selected row's key. The owner opens the event's detail.
+    /// </summary>
     public event Action<RowKey>? OpenRequested;
 
     /// <summary>
@@ -100,7 +102,7 @@ internal sealed class TimelineView : View
     /// <param name="key">The key.</param>
     internal bool HandleKey(Key key)
     {
-        if (key == Key.Enter)
+        if (key == Key.Enter || key == Key.CursorRight || key == Key.L)
         {
             if (_model.SelectedRow is { } row)
             {
@@ -166,12 +168,12 @@ internal sealed class TimelineView : View
     /// <param name="key">The key.</param>
     internal static TimelineCommand? CommandFor(Key key)
     {
-        if (key == Key.CursorUp)
+        if (key == Key.CursorUp || key == Key.K)
         {
             return TimelineCommand.Up;
         }
 
-        if (key == Key.CursorDown)
+        if (key == Key.CursorDown || key == Key.J)
         {
             return TimelineCommand.Down;
         }

@@ -60,6 +60,15 @@ public sealed class SerilogDocumentTests
     }
 
     [Fact]
+    public void The_document_starts_with_the_message_and_not_a_header()
+    {
+        DetailLine first = Document().Lines[0];
+
+        Assert.Equal(LineKind.Message, first.Kind);
+        Assert.Equal("Message: Failed to process 42 for {\"Name\":\"Asha\"} {literal}", first.Text);
+    }
+
+    [Fact]
     public void Exception_is_a_multi_line_value_with_stack_styling_and_its_scope()
     {
         IReadOnlyList<DetailLine> lines = Document().Lines;

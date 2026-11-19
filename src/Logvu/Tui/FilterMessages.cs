@@ -20,6 +20,12 @@ internal static class FilterMessages
     /// <summary>The status of paused arrivals that have not been seen yet. The count is not shown.</summary>
     public const string NewEvents = "new events";
 
+    /// <summary>
+    /// The notice after <c>-</c> leaves no minimum level. While there is a minimum, the active filter's description on the status line
+    /// shows it, so a step to a level needs no notice.
+    /// </summary>
+    public const string AnyLevel = "Min level: any";
+
     /// <summary>The notice after <c>f</c> in the detail on a line that is not a field.</summary>
     public const string NotAField = "f filters on a field line";
 

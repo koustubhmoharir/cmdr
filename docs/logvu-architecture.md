@@ -264,21 +264,21 @@ Operations (every manual one pauses Follow first):
 
 ## Detail (M8)
 
-Enter opens the selected event full-screen (the timeline pauses); Esc returns to the same selection and viewport. The detail is
+Enter, → or `l` opens the selected event full-screen (the timeline pauses); Esc, ← or `h` returns to the same selection and
+viewport. In the detail the arrows and `hjkl` only move; Enter/Space toggle nodes and folds. The detail is
 built by a pure `DetailDocument` (Logvu.Core, no Terminal.Gui) from `EventDetail` + config; the `DetailView` renders and
 navigates it.
 
 **Document model.** A list of logical lines, each a sequence of styled spans (`SpanStyle`: none, field-name, punctuation,
 exception-type, exception-message, method, file-location, directory, framework (dim), json-key, json-string, json-number,
 json-literal, highlight:<name>, fold-marker, muted). Lines carry an optional `NodeId` (JSON node or fold) so the view can toggle
-expansion, and a `Kind` (header, field, message, json, raw, fold). Wrapping to the width is the view's job (continuation rows
+expansion, and a `Kind` (field, message, json, raw, fold). Wrapping to the width is the view's job (continuation rows
 indented by 2 under the value column).
 
-**Header.** `Path`, `Offset`, `Length`, then `Time` (normalized in the config zone and, if different, the original spelling),
-`Level` (label + original text), `Source`. Then a blank line.
+There is no header block: the document starts with the content. The status line shows the event's file name.
 
-**Text events.** Named fields (`name: value`) in scheme order (except message, and except time/level/logger, which the
-header shows with their original spelling), then `Message:` and the full multi-line message
+**Text events.** Named fields (`name: value`) in scheme order, time/level/logger included as written (the message excepted),
+then `Message:` and the full multi-line message
 as one value (continuation lines at the value indent).
 
 **JSON events.** First the surfaced summary: the message (`msg` / rendered Serilog message) and an **error summary** when

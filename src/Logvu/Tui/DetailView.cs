@@ -49,7 +49,7 @@ internal sealed class DetailView : View
         CanFocus = true;
     }
 
-    /// <summary>Raised when the user asks to leave the detail (Esc). The owner removes the view.</summary>
+    /// <summary>Raised when the user asks to leave the detail (Esc, Left or <c>h</c>). The owner removes the view.</summary>
     public event Action? CloseRequested;
 
     /// <summary>Raised after the document is rebuilt: a fold or node was toggled, the raw view changed, or a detail was loaded.</summary>
@@ -147,12 +147,14 @@ internal sealed class DetailView : View
     }
 
     /// <summary>
-    /// Handles a detail key. Returns <c>false</c> for a key the detail does not bind, so it reaches the window. Esc always asks to close.
+    /// Handles a detail key. Returns <c>false</c> for a key the detail does not bind, so it reaches the window. Esc, Left and <c>h</c> always
+    /// ask to close. Enter and Space toggle the node under the cursor; the arrow keys and <c>j</c> and <c>k</c> only move the cursor, and Right
+    /// and <c>l</c> are not bound.
     /// </summary>
     /// <param name="key">The key.</param>
     internal bool HandleKey(Key key)
     {
-        if (key == Key.Esc)
+        if (key == Key.Esc || key == Key.CursorLeft || key == Key.H)
         {
             CloseRequested?.Invoke();
             return true;
@@ -163,11 +165,11 @@ internal sealed class DetailView : View
             return false;
         }
 
-        if (key == Key.CursorUp)
+        if (key == Key.CursorUp || key == Key.K)
         {
             MoveCursor(_cursor - 1);
         }
-        else if (key == Key.CursorDown)
+        else if (key == Key.CursorDown || key == Key.J)
         {
             MoveCursor(_cursor + 1);
         }
@@ -190,14 +192,6 @@ internal sealed class DetailView : View
         else if (key == Key.Enter || key == Key.Space)
         {
             ToggleCursorNode();
-        }
-        else if (key == Key.CursorLeft)
-        {
-            CollapseCursorNode();
-        }
-        else if (key == Key.CursorRight)
-        {
-            ExpandCursorNode();
         }
         else if (key == Key.Z)
         {
@@ -564,22 +558,6 @@ internal sealed class DetailView : View
         if (CursorNodeId() is { } id)
         {
             Rebuild(_document!.Toggle(id), resetPosition: false);
-        }
-    }
-
-    private void CollapseCursorNode()
-    {
-        if (CursorNodeId() is { } id && _document!.IsExpanded(id))
-        {
-            Rebuild(_document.Toggle(id), resetPosition: false);
-        }
-    }
-
-    private void ExpandCursorNode()
-    {
-        if (CursorNodeId() is { } id && !_document!.IsExpanded(id))
-        {
-            Rebuild(_document.Toggle(id), resetPosition: false);
         }
     }
 

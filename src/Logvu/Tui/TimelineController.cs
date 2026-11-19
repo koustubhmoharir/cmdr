@@ -2,6 +2,7 @@ using System.IO;
 using Logvu.Core.Config;
 using Logvu.Core.Detail;
 using Logvu.Core.Filter;
+using Logvu.Core.Parsing;
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Shared.Tui;
@@ -25,18 +26,18 @@ namespace Logvu.Tui;
 /// resync). Until then the view shows "Loading…".
 /// </para>
 /// <para>
-/// <b>Detail.</b> Enter opens the selected event: the model pauses, the detail replaces the timeline in the window, and its read starts.
-/// Esc closes it: the read is cancelled, the timeline comes back as it was, and the model is not touched. Store updates go on reaching the
-/// model while the detail is open. A read that completes after the detail was closed is ignored.
+/// <b>Detail.</b> Enter, Right or <c>l</c> opens the selected event: the model pauses, the detail replaces the timeline in the window, and
+/// its read starts. Esc, Left or <c>h</c> closes it: the read is cancelled, the timeline comes back as it was, and the model is not touched.
+/// Store updates go on reaching the model while the detail is open. A read that completes after the detail was closed is ignored.
 /// </para>
 /// </remarks>
 internal sealed class TimelineController : IDisposable, ISearchHost
 {
     /// <summary>The status line's key hints.</summary>
-    internal const string Hints = "f filter  Space pause/follow  End newest  ^Q quit";
+    internal const string Hints = "f filter  -/+ level  Space pause/follow  End newest  ^Q quit";
 
     /// <summary>The status line's key hints while the detail is open.</summary>
-    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  Esc back";
+    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  ←/Esc back";
 
     /// <summary>How long a new retention gap stays on the status line. The gap stays in the store's status.</summary>
     internal static readonly TimeSpan GapShownFor = TimeSpan.FromSeconds(10);
@@ -335,8 +336,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     }
 
     /// <summary>
-    /// The keys the window routes when no focused view took them. In the timeline <c>f</c> opens the filter editor and <c>F</c> clears the
-    /// filter; the search's keys come after them. The detail handles its own <c>f</c>, so only the search's keys reach here while it is open.
+    /// The keys the window routes when no focused view took them. In the timeline <c>f</c> opens the filter editor, <c>F</c> clears the
+    /// filter, <c>=</c> or <c>+</c> raises the minimum level one step and <c>-</c> or <c>_</c> lowers it; the search's keys come after them.
+    /// The detail handles its own <c>f</c>, so only the search's keys reach here while it is open.
     /// </summary>
     private bool HandleShortcut(Key key)
     {
@@ -351,6 +353,18 @@ internal sealed class TimelineController : IDisposable, ISearchHost
             if (IsPlain(key, 'F'))
             {
                 ClearFilter();
+                return true;
+            }
+
+            if (IsPlain(key, '=') || IsPlain(key, '+'))
+            {
+                ChangeMinLevel(direction: 1);
+                return true;
+            }
+
+            if (IsPlain(key, '-') || IsPlain(key, '_'))
+            {
+                ChangeMinLevel(direction: -1);
                 return true;
             }
         }
@@ -409,6 +423,32 @@ internal sealed class TimelineController : IDisposable, ISearchHost
 
         ApplyFilter(null);
         ShowNotice(FilterMessages.Cleared);
+    }
+
+    /// <summary>
+    /// Steps the filter's minimum level one step up (<paramref name="direction"/> above zero) or down, as <see cref="FilterForm.StepMinLevel"/>
+    /// gives it. The other predicates of the filter are kept. At an end the filter is not changed and not applied again. A minimum shows in
+    /// the active filter's description; when no minimum is left, a notice says so.
+    /// </summary>
+    /// <param name="direction">Above zero to raise the minimum level, below zero to lower it.</param>
+    private void ChangeMinLevel(int direction)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        LogLevel? current = _filter?.MinLevel;
+        LogLevel? next = FilterForm.StepMinLevel(current, direction);
+        if (next != current)
+        {
+            ApplyFilter(FilterForm.WithMinLevel(_filter, next));
+        }
+
+        if (next is null)
+        {
+            ShowNotice(FilterMessages.AnyLevel);
+        }
     }
 
     /// <summary>
@@ -501,7 +541,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     void ISearchHost.RefreshStatus() => RefreshStatus();
 
     /// <summary>
-    /// The left part of the status line of the detail: <c>DETAIL</c>, then the file and offset of a loaded event, then <c>raw</c> in the raw
+    /// The left part of the status line of the detail: <c>DETAIL</c>, then the file name of a loaded event, then <c>raw</c> in the raw
     /// view and <c>truncated</c> for a cut event, then a notice of a filter key, and last the search's status. An unavailable event shows only
     /// <c>DETAIL</c>.
     /// </summary>
@@ -510,7 +550,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         var parts = new List<string> { "DETAIL" };
         if (session.Detail is EventDetail.Loaded loaded)
         {
-            parts.Add($"{Path.GetFileName(loaded.Path)}:{loaded.Offset}");
+            parts.Add(Path.GetFileName(loaded.Path));
             if (session.View.Document is { } document && document.Options.Raw)
             {
                 parts.Add("raw");

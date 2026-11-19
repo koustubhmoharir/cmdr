@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
@@ -7,8 +6,8 @@ using Logvu.Core.Store;
 namespace Logvu.Core.Detail;
 
 /// <summary>
-/// Builds the structured document of a loaded event, with every node and fold expanded: the header, then the fields and message of a text
-/// event, or the summary and the JSON tree of a JSON event. Highlights are not applied here.
+/// Builds the structured document of a loaded event, with every node and fold expanded: the fields and message of a text event, or the
+/// summary and the JSON tree of a JSON event. Highlights are not applied here.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -51,7 +50,7 @@ internal sealed class DetailBuilder
 
     /// <summary>Creates a builder for one loaded event.</summary>
     /// <param name="detail">The loaded event.</param>
-    /// <param name="config">The configuration: the time zone, and the framework prefixes.</param>
+    /// <param name="config">The configuration: the framework prefixes.</param>
     public DetailBuilder(EventDetail.Loaded detail, LogvuConfig config)
     {
         _detail = detail;
@@ -61,8 +60,6 @@ internal sealed class DetailBuilder
     /// <summary>Builds the structured document.</summary>
     public DetailModel Build()
     {
-        EmitHeader();
-
         LogEvent e = _detail.Event;
         if (e.Json is JsonElement root && root.ValueKind == JsonValueKind.Object)
         {
@@ -92,73 +89,6 @@ internal sealed class DetailBuilder
     /// <summary>Splits text into its lines, with <c>\r\n</c> and <c>\n</c> as terminators.</summary>
     public static string[] SplitLines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
-    private void EmitHeader()
-    {
-        LogEvent e = _detail.Event;
-        AddHeader("Path", _detail.Path, missing: false);
-        AddHeader("Offset", $"{_detail.Offset} bytes", missing: false);
-        AddHeader("Length", $"{_detail.Length} bytes", missing: false);
-
-        (string time, bool timeMissing) = TimeValue(e);
-        AddHeader("Time", time, timeMissing);
-
-        (string level, bool levelMissing) = LevelValue(e);
-        AddHeader("Level", level, levelMissing);
-
-        AddHeader("Source", e.Source ?? "-", e.Source is null);
-
-        Add(new DetailLine(string.Empty, [], LineKind.Header, 0, null, null), null);
-    }
-
-    private void AddHeader(string label, string value, bool missing)
-    {
-        string head = label + ": ";
-        var spans = new List<StyledSpan>
-        {
-            new(0, label.Length, SpanStyle.Label),
-            new(label.Length, 2, SpanStyle.Punctuation),
-        };
-        if (missing)
-        {
-            spans.Add(new StyledSpan(head.Length, value.Length, SpanStyle.Muted));
-        }
-
-        Add(new DetailLine(head + value, spans, LineKind.Header, head.Length, null, null), null);
-    }
-
-    private (string Text, bool Missing) TimeValue(LogEvent e)
-    {
-        if (e.Time is DateTimeOffset time)
-        {
-            DateTimeOffset local = TimeZoneInfo.ConvertTime(time, _config.TimeZone);
-            // Milliseconds, or as many fraction digits as the instant has beyond them (Serilog writes 7, Go 9 cut to 7).
-            string fraction = local.ToString("fffffff", CultureInfo.InvariantCulture).TrimEnd('0').PadRight(3, '0');
-            string normalized = local.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + "." + fraction
-                + local.ToString(" zzz", CultureInfo.InvariantCulture);
-            return (e.TimeText is null ? normalized : $"{normalized}  (as written: {e.TimeText})", false);
-        }
-
-        if (e.TimeText is not null)
-        {
-            return ($"{e.TimeText}  (not a timestamp)", false);
-        }
-
-        return ("-", true);
-    }
-
-    private static (string Text, bool Missing) LevelValue(LogEvent e)
-    {
-        if (e.LevelText is null)
-        {
-            return ("-", true);
-        }
-
-        string label = e.Level.ToString();
-        return (string.Equals(label, e.LevelText, StringComparison.OrdinalIgnoreCase)
-            ? label
-            : $"{label}  (as written: {e.LevelText})", false);
-    }
-
     private void EmitText(LogEvent e)
     {
         if (e.IsRaw)
@@ -170,12 +100,6 @@ internal sealed class DetailBuilder
 
         foreach (LogField field in e.Fields)
         {
-            // The time, level and logger groups are shown in the header, with their original spelling.
-            if (field.Name is "time" or "level" or "logger")
-            {
-                continue;
-            }
-
             string head = field.Name + ": ";
             var spans = new List<StyledSpan>
             {

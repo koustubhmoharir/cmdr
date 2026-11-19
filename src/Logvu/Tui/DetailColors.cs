@@ -45,7 +45,7 @@ internal static class DetailColors
             : For(span.Style, normal);
 
     /// <summary>
-    /// The attribute of a structural span. Labels and names are bold, exception types and messages are bold red, methods are bold,
+    /// The attribute of a structural span. Field names are bold, exception types and messages are bold red, methods are bold,
     /// file locations are cyan, directories and framework frames are dimmed, and JSON members, strings, numbers and literals each have a
     /// color. Fold markers are dim italic and muted text is dim. Plain text and punctuation keep the normal attribute.
     /// </summary>
@@ -57,7 +57,6 @@ internal static class DetailColors
         Color bg = normal.Background;
         return style switch
         {
-            SpanStyle.Label => new Attribute(fg, bg, TextStyle.Bold),
             SpanStyle.FieldName => new Attribute(fg, bg, TextStyle.Bold),
             SpanStyle.ExceptionType => new Attribute(ColorName16.BrightRed, bg, TextStyle.Bold),
             SpanStyle.ExceptionMessage => new Attribute(ColorName16.Red, bg, TextStyle.Bold),

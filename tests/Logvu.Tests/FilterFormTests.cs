@@ -236,6 +236,121 @@ public sealed class FilterFormTests
     }
 
     [Fact]
+    public void Raising_the_minimum_level_walks_up_from_no_minimum_and_stops_at_fatal()
+    {
+        LogLevel?[] expected = [LogLevel.Debug, LogLevel.Info, LogLevel.Warn, LogLevel.Error, LogLevel.Fatal, LogLevel.Fatal];
+        var steps = new List<LogLevel?>();
+        LogLevel? level = null;
+        foreach (LogLevel? _ in expected)
+        {
+            level = FilterForm.StepMinLevel(level, 1);
+            steps.Add(level);
+        }
+
+        Assert.Equal(expected, steps);
+    }
+
+    [Fact]
+    public void Lowering_the_minimum_level_walks_down_from_fatal_and_ends_at_no_minimum()
+    {
+        LogLevel?[] expected = [LogLevel.Error, LogLevel.Warn, LogLevel.Info, LogLevel.Debug, null, null];
+        var steps = new List<LogLevel?>();
+        LogLevel? level = LogLevel.Fatal;
+        foreach (LogLevel? _ in expected)
+        {
+            level = FilterForm.StepMinLevel(level, -1);
+            steps.Add(level);
+        }
+
+        Assert.Equal(expected, steps);
+    }
+
+    [Theory]
+    [InlineData(null, 1, LogLevel.Debug)]
+    [InlineData(null, -1, null)]
+    [InlineData(LogLevel.Trace, 1, LogLevel.Debug)]
+    [InlineData(LogLevel.Trace, -1, null)]
+    [InlineData(LogLevel.Debug, 1, LogLevel.Info)]
+    [InlineData(LogLevel.Debug, -1, null)]
+    [InlineData(LogLevel.Info, 1, LogLevel.Warn)]
+    [InlineData(LogLevel.Info, -1, LogLevel.Debug)]
+    [InlineData(LogLevel.Warn, 1, LogLevel.Error)]
+    [InlineData(LogLevel.Warn, -1, LogLevel.Info)]
+    [InlineData(LogLevel.Error, 1, LogLevel.Fatal)]
+    [InlineData(LogLevel.Error, -1, LogLevel.Warn)]
+    [InlineData(LogLevel.Fatal, 1, LogLevel.Fatal)]
+    [InlineData(LogLevel.Fatal, -1, LogLevel.Error)]
+    public void A_step_goes_to_the_neighbouring_level_of_the_steps_and_Trace_is_not_a_step(LogLevel? current, int direction, LogLevel? expected)
+    {
+        Assert.Equal(expected, FilterForm.StepMinLevel(current, direction));
+    }
+
+    [Fact]
+    public void A_step_in_no_direction_is_an_error()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => FilterForm.StepMinLevel(LogLevel.Info, 0));
+    }
+
+    [Fact]
+    public void Changing_the_minimum_level_keeps_every_other_predicate_of_the_filter()
+    {
+        var from = new DateTimeOffset(2026, 11, 18, 10, 0, 0, TimeSpan.Zero);
+        var to = new DateTimeOffset(2026, 11, 18, 11, 0, 0, TimeSpan.Zero);
+        var current = new EventFilter(new FilterSpec(
+            MinLevel: LogLevel.Warn,
+            Levels: new HashSet<LogLevel> { LogLevel.Warn },
+            SourceContains: "Engine",
+            FileContains: "app.log",
+            From: from,
+            To: to,
+            Text: new SearchQuery("timeout", false, false, false),
+            Fields: [new FieldPredicate("user", "alice")]));
+
+        EventFilter? changed = FilterForm.WithMinLevel(current, LogLevel.Error);
+
+        Assert.NotNull(changed);
+        Assert.Equal(LogLevel.Error, changed.MinLevel);
+        Assert.Equal(new[] { LogLevel.Warn }, changed.Levels);
+        Assert.Equal("Engine", changed.SourceContains);
+        Assert.Equal("app.log", changed.FileContains);
+        Assert.Equal(from, changed.From);
+        Assert.Equal(to, changed.To);
+        Assert.Equal("timeout", changed.Text!.Value.Text);
+        Assert.Equal(new[] { new FieldPredicate("user", "alice") }, changed.Fields);
+    }
+
+    [Fact]
+    public void A_minimum_level_on_no_filter_gives_a_filter_with_only_that_minimum()
+    {
+        EventFilter? filter = FilterForm.WithMinLevel(null, LogLevel.Info);
+
+        Assert.NotNull(filter);
+        Assert.Equal(LogLevel.Info, filter.MinLevel);
+        Assert.Empty(filter.Fields);
+        Assert.Null(filter.Text);
+    }
+
+    [Fact]
+    public void Removing_the_minimum_level_of_a_filter_with_nothing_else_gives_no_filter()
+    {
+        var current = new EventFilter(new FilterSpec(MinLevel: LogLevel.Warn));
+
+        Assert.Null(FilterForm.WithMinLevel(current, null));
+    }
+
+    [Fact]
+    public void Removing_the_minimum_level_keeps_the_other_predicates()
+    {
+        var current = new EventFilter(new FilterSpec(MinLevel: LogLevel.Warn, SourceContains: "Engine"));
+
+        EventFilter? filter = FilterForm.WithMinLevel(current, null);
+
+        Assert.NotNull(filter);
+        Assert.Null(filter.MinLevel);
+        Assert.Equal("Engine", filter.SourceContains);
+    }
+
+    [Fact]
     public void A_field_line_filters_on_its_name_and_its_value()
     {
         var line = new DetailLine("user: alice", [], LineKind.Field, Indent: 6, NodeId: null, Scope: "user", Value: "alice");
@@ -268,7 +383,6 @@ public sealed class FilterFormTests
     }
 
     [Theory]
-    [InlineData(LineKind.Header)]
     [InlineData(LineKind.Message)]
     [InlineData(LineKind.Json)]
     [InlineData(LineKind.Raw)]

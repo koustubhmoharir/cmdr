@@ -31,14 +31,13 @@ public sealed class RawUnavailableTests
     }
 
     [Fact]
-    public void Raw_view_has_no_header_and_the_structured_view_keeps_its_ids_for_toggling()
+    public void The_raw_view_keeps_the_ids_of_the_structured_view_for_toggling()
     {
         DetailDocument raw = DetailRig.Build(
             DetailRig.Loaded(SerilogDocumentTests.Event(), BuiltInSchemes.SerilogJson),
             options: new DetailOptions { Raw = true });
         DetailDocument structured = DetailRig.Build(DetailRig.Loaded(SerilogDocumentTests.Event(), BuiltInSchemes.SerilogJson));
 
-        Assert.DoesNotContain(raw.Lines, l => l.Kind == LineKind.Header);
         Assert.Equal(structured.NodeIds, raw.NodeIds);
         Assert.Equal(structured.FoldIds, raw.FoldIds);
     }

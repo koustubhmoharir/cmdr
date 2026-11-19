@@ -17,15 +17,14 @@ public sealed class DetailViewTests
     private const int Height = 30;
 
     [Fact]
-    public void The_header_comes_first_and_an_exception_line_is_styled_by_its_parts()
+    public void The_fields_come_first_and_an_exception_line_is_styled_by_its_parts()
     {
         DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
 
         TerminalScreen screen = Draw(view)[0];
 
-        Assert.StartsWith("Path: /var/log/app.log", screen.Text(0));
-        Assert.StartsWith("Offset: 4096 bytes", screen.Text(1));
-        Assert.Equal(string.Empty, screen.Text(6));
+        Assert.StartsWith("level: ERROR", screen.Text(0));
+        Assert.StartsWith("Message: Run failed", screen.Text(4));
 
         Attribute type = screen.At("System.InvalidOperationException");
         Assert.Equal(new Color(ColorName16.BrightRed), type.Foreground);
@@ -81,7 +80,7 @@ public sealed class DetailViewTests
         // Screen 0 is the first draw; screen n is the draw after step n. Moved past the bottom, the cursor line is on the last row.
         Assert.Equal("line 35", screens[2].Text(Height - 1).Trim());
         Assert.Equal("line 34", screens[3].Text(Height - 2).Trim());
-        Assert.StartsWith("Path:", screens[4].Text(0));
+        Assert.StartsWith("level: INFO", screens[4].Text(0));
         Assert.Equal("line 39", screens[5].Text(Height - 1).Trim());
     }
 
@@ -182,30 +181,88 @@ public sealed class DetailViewTests
         Assert.DoesNotContain("RunInternal", string.Join("\n", Rows(screens[1])), StringComparison.Ordinal);
         Assert.Contains("RunInternal", string.Join("\n", Rows(screens[2])), StringComparison.Ordinal);
         Assert.StartsWith("ERROR 2026-11-18 10:20:31,007", screens[3].Text(0));
-        Assert.DoesNotContain("Path:", string.Join("\n", Rows(screens[3])), StringComparison.Ordinal);
-        Assert.StartsWith("Path:", screens[4].Text(0));
+        Assert.StartsWith("level: ERROR", screens[4].Text(0));
     }
 
     [Fact]
-    public void Left_collapses_an_expanded_json_node_and_right_expands_it_again()
+    public void Enter_and_space_toggle_a_json_node_while_the_arrows_only_move_the_cursor()
     {
         DetailView view = Loaded(DetailFixtures.Json(DetailFixtures.JsonEvent), DetailFixtures.Config());
 
         List<TerminalScreen> screens = Draw(
             view,
             v => MoveTo(v, line => line.NodeId == "Properties"),
-            v => Press(v, Key.CursorLeft),
-            v => Press(v, Key.CursorRight),
-            v => Press(v, Key.CursorRight));
+            v =>
+            {
+                Press(v, Key.CursorDown);
+                Press(v, Key.CursorUp);
+            },
+            v => Press(v, Key.Enter),
+            v => Press(v, Key.Space));
 
         // Screen 0 is the first draw; screen n is the draw after step n.
-        Assert.Contains("▾ Properties", string.Join("\n", Rows(screens[0])), StringComparison.Ordinal);
-        Assert.Contains("Scope", string.Join("\n", Rows(screens[0])), StringComparison.Ordinal);
-        Assert.Contains("▸ Properties", string.Join("\n", Rows(screens[2])), StringComparison.Ordinal);
-        Assert.DoesNotContain("Scope", string.Join("\n", Rows(screens[2])), StringComparison.Ordinal);
-        Assert.Contains("▾ Properties", string.Join("\n", Rows(screens[3])), StringComparison.Ordinal);
-        Assert.Contains("Scope", string.Join("\n", Rows(screens[3])), StringComparison.Ordinal);
+        Assert.Contains("▾ Properties", string.Join("\n", Rows(screens[1])), StringComparison.Ordinal);
+        Assert.Contains("Scope", string.Join("\n", Rows(screens[2])), StringComparison.Ordinal);
+        Assert.Contains("▸ Properties", string.Join("\n", Rows(screens[3])), StringComparison.Ordinal);
+        Assert.DoesNotContain("Scope", string.Join("\n", Rows(screens[3])), StringComparison.Ordinal);
+        Assert.Contains("▾ Properties", string.Join("\n", Rows(screens[4])), StringComparison.Ordinal);
         Assert.Contains("Scope", string.Join("\n", Rows(screens[4])), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Right_and_l_are_not_bound_and_leave_the_node_and_the_cursor_as_they_are()
+    {
+        DetailView view = Loaded(DetailFixtures.Json(DetailFixtures.JsonEvent), DetailFixtures.Config());
+        Draw(view, v => MoveTo(v, line => line.NodeId == "Properties"));
+        int lines = view.Document!.Lines.Count;
+        int cursor = view.CursorLine;
+        Assert.True(view.Document.IsExpanded("Properties"));
+
+        Assert.False(view.HandleKey(Key.CursorRight));
+        Assert.False(view.HandleKey(Key.L));
+
+        Assert.True(view.Document.IsExpanded("Properties"));
+        Assert.Equal(lines, view.Document.Lines.Count);
+        Assert.Equal(cursor, view.CursorLine);
+    }
+
+    [Fact]
+    public void Esc_left_and_h_ask_to_close_the_detail_while_it_is_loading_and_once_it_is_loaded()
+    {
+        var loading = new DetailView { Placeholder = "Loading…" };
+        var closes = new List<string>();
+        loading.CloseRequested += () => closes.Add("loading");
+
+        Assert.True(loading.HandleKey(Key.Esc));
+        Assert.True(loading.HandleKey(Key.CursorLeft));
+        Assert.True(loading.HandleKey(Key.H));
+
+        DetailView loaded = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        loaded.CloseRequested += () => closes.Add("loaded");
+
+        Assert.True(loaded.HandleKey(Key.CursorLeft));
+        Assert.True(loaded.HandleKey(Key.H));
+
+        Assert.Equal(new[] { "loading", "loading", "loading", "loaded", "loaded" }, closes);
+    }
+
+    [Fact]
+    public void J_and_k_move_the_cursor_like_down_and_up()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(MessageLines(40)), DetailFixtures.Config());
+
+        Draw(
+            view,
+            v =>
+            {
+                Press(v, Key.J, 2);
+                Assert.Equal(2, v.CursorLine);
+            },
+            v =>
+            {
+                Press(v, Key.K);
+                Assert.Equal(1, v.CursorLine);
+            });
     }
 
     [Fact]

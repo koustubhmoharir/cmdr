@@ -66,6 +66,9 @@ internal static class FilterForm
     private static readonly string[] DatedTimeFormats = ["yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss"];
     private static readonly string[] TimeOnlyFormats = ["HH:mm", "HH:mm:ss"];
 
+    /// <summary>The levels a minimum level steps through, from the lowest. <c>Trace</c> is not one of them.</summary>
+    private static readonly LogLevel[] MinLevelSteps = [LogLevel.Debug, LogLevel.Info, LogLevel.Warn, LogLevel.Error, LogLevel.Fatal];
+
     /// <summary>The minimum-level choices in order: any level first, then the levels from the lowest.</summary>
     public static IReadOnlyList<(string Label, LogLevel? Level)> LevelChoices { get; } =
     [
@@ -261,6 +264,55 @@ internal static class FilterForm
                 filter.Fields);
 
     /// <summary>
+    /// The minimum level one step from <paramref name="current"/>. Raising goes to the first step strictly above it, where no minimum counts as
+    /// below every step. Lowering goes to the last step strictly below it, or to no minimum when there is none. At an end the result is
+    /// <paramref name="current"/> itself: <c>Fatal</c> does not rise, and no minimum does not fall.
+    /// </summary>
+    /// <param name="current">The minimum level now, or <c>null</c> for none.</param>
+    /// <param name="direction">Above zero to raise the minimum, below zero to lower it.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="direction"/> is zero.</exception>
+    public static LogLevel? StepMinLevel(LogLevel? current, int direction)
+    {
+        ArgumentOutOfRangeException.ThrowIfZero(direction);
+        if (direction > 0)
+        {
+            foreach (LogLevel step in MinLevelSteps)
+            {
+                if (current is not { } now || step > now)
+                {
+                    return step;
+                }
+            }
+
+            return current;
+        }
+
+        LogLevel? lower = null;
+        foreach (LogLevel step in MinLevelSteps)
+        {
+            if (current is { } now && step < now)
+            {
+                lower = step;
+            }
+        }
+
+        return lower;
+    }
+
+    /// <summary>
+    /// The filter with its minimum level replaced and every other predicate kept. It is <c>null</c> when that leaves no predicate, so that
+    /// the filter is cleared as an empty editor clears it.
+    /// </summary>
+    /// <param name="current">The active filter, or <c>null</c> for none.</param>
+    /// <param name="minLevel">The new minimum level, or <c>null</c> for any level.</param>
+    public static EventFilter? WithMinLevel(EventFilter? current, LogLevel? minLevel)
+    {
+        FilterSpec spec = SpecOf(current) ?? new FilterSpec();
+        var filter = new EventFilter(spec with { MinLevel = minLevel });
+        return filter.IsEmpty ? null : filter;
+    }
+
+    /// <summary>
     /// The filter with one more field predicate: the predicates of <paramref name="current"/> and <paramref name="predicate"/>, ANDed. A
     /// predicate that is already there is not added twice.
     /// </summary>
@@ -281,7 +333,7 @@ internal static class FilterForm
 
     /// <summary>
     /// The field predicate that a detail line filters on: its scope (the field name or the JSON dotted path) and its value. A line with no
-    /// value, such as a header, a message, a fold, or a line of a multi-line string, filters on nothing.
+    /// value, such as a message, a fold, or a line of a multi-line string, filters on nothing.
     /// </summary>
     /// <param name="line">The line under the cursor.</param>
     public static FieldPredicate? FieldPredicateOf(DetailLine line)

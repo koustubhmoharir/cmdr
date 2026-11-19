@@ -3,9 +3,6 @@ namespace Logvu.Core.Detail;
 /// <summary>The kind of a detail line. The view uses it for layout and for the raw-view toggle.</summary>
 public enum LineKind
 {
-    /// <summary>A line of the event header: path, offset, length, time, level and source, and the blank line after them.</summary>
-    Header,
-
     /// <summary>A named field of a text event.</summary>
     Field,
 

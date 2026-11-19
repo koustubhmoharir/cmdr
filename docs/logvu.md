@@ -64,34 +64,35 @@ while paused, the active filter, search progress and read problems.
 
 | Timeline | |
 |---|---|
-| ↑ / ↓ | Select the previous / next event (the page scrolls at its edges) |
+| ↑ / ↓ or `k` / `j` | Select the previous / next event (the page scrolls at its edges) |
 | Shift+↑ / Shift+↓ | Scroll the page one event, keeping the selection while it stays visible |
 | PgUp / PgDn | Scroll a page, keeping the selection's position on screen |
 | Space | Pause / follow. Following resumes at the newest event |
 | End | Follow the newest event |
-| Enter | Open the selected event in detail |
+| Enter, → or `l` | Open the selected event in detail |
 | `/` or Ctrl+F | Search; Enter searches toward older events |
 | `n` or F3 / `N` or Shift+F3 | Next match toward older / newer events |
 | `f` / `F` | Edit the filter / clear it |
+| `-` or `_` / `=` or `+` | Lower / raise the minimum level (any → Debug → Info → Warn → Error → Fatal), keeping the rest of the filter |
 | Mouse | Wheel scrolls; a click selects (and pauses) |
 | Ctrl+Q | Quit |
 
 Any movement pauses Follow; scrolling back to the bottom stays paused until Space or End.
 
-**Detail.** The header (file, byte offset, length, time, level, source), the fields, and the full message — or, for JSON, the
-message and error summary followed by an expandable tree. .NET exceptions (including inner exceptions) and Go stack traces are
+**Detail.** The fields (time, level and logger as written) and the full message — or, for JSON, the message and error summary
+followed by an expandable tree. The status line shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
 styled: exception types and messages, method names and `file:line` stand out, directories and framework frames are dimmed.
 Runs of framework frames get a `… N framework frames` marker that folds them.
 
 | Detail | |
 |---|---|
-| ↑ / ↓, PgUp / PgDn, Home / End | Move the cursor |
-| Enter / Space | Expand or collapse the node or fold under the cursor (← / → collapse / expand) |
+| ↑ / ↓ or `k` / `j`, PgUp / PgDn, Home / End | Move the cursor |
+| Enter / Space | Expand or collapse the node or fold under the cursor |
 | `z` | Fold or unfold all framework-frame runs |
 | `r` | Raw text of the event |
 | `f` | Filter the timeline to the value of the field under the cursor |
 | `/`, `n`, `N` | Search within the event |
-| Esc | Back to the timeline, at the same position |
+| Esc, ← or `h` | Back to the timeline, at the same position |
 
 **Search** matches the full text of events (all lines, JSON names and values, stack frames, and Serilog's rendered message),
 case-insensitively by default; the bar's toggles switch on case sensitivity, whole words and regular expressions. Only events

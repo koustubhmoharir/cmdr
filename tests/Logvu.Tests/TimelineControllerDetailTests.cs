@@ -50,7 +50,46 @@ public sealed class TimelineControllerDetailTests : IDisposable
 
         read.Complete(DetailFixtures.Text(DetailFixtures.StackEvent));
         _posted.PumpUntil(() => _controller.Detail!.Document is not null, "the detail");
-        Assert.Equal("DETAIL · app.log:4096", _controller.StatusLeft);
+        Assert.Equal("DETAIL · app.log", _controller.StatusLeft);
+    }
+
+    [Fact]
+    public void Right_and_l_open_the_selected_event_like_enter()
+    {
+        Assert.True(_controller.Timeline.HandleKey(Key.CursorRight));
+
+        Assert.Same(_controller.Detail, _controller.Window.Content);
+        Assert.Single(_details.Reads);
+        Assert.Equal(_controller.Model.SelectedRow!.Key, _details.Reads[0].Key);
+
+        Assert.True(_controller.Detail!.HandleKey(Key.Esc));
+        _posted.Pump();
+        Assert.True(_controller.Timeline.HandleKey(Key.L));
+
+        Assert.Same(_controller.Detail, _controller.Window.Content);
+        Assert.Equal(2, _details.Reads.Count);
+    }
+
+    [Fact]
+    public void Left_and_h_close_the_detail_like_escape_while_it_loads()
+    {
+        _controller.Timeline.HandleKey(Key.Enter);
+        HeldDetailSource.HeldRead read = _details.Reads.Single();
+
+        Assert.True(_controller.Detail!.HandleKey(Key.CursorLeft));
+
+        Assert.Null(_controller.Detail);
+        Assert.Same(_controller.Timeline, _controller.Window.Content);
+        Assert.True(read.Token.IsCancellationRequested);
+
+        _controller.Timeline.HandleKey(Key.Enter);
+        HeldDetailSource.HeldRead second = _details.Reads[1];
+
+        Assert.True(_controller.Detail!.HandleKey(Key.H));
+
+        Assert.Null(_controller.Detail);
+        Assert.Same(_controller.Timeline, _controller.Window.Content);
+        Assert.True(second.Token.IsCancellationRequested);
     }
 
     [Fact]

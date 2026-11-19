@@ -223,6 +223,70 @@ public sealed class TimelineViewTests
         Assert.Empty(opened);
     }
 
+    [Fact]
+    public void Right_and_l_open_the_selected_row_like_enter()
+    {
+        TimelineModel model = Model(Store(100));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        Assert.True(view.HandleKey(Key.CursorRight));
+        Assert.True(view.HandleKey(Key.L));
+
+        Assert.Equal(new[] { model.SelectedRow!.Key, model.SelectedRow!.Key }, opened);
+        Assert.Equal(TimelineMode.Follow, model.Mode);
+        Assert.Equal("r99", model.SelectedRow!.Preview);
+    }
+
+    [Fact]
+    public void Right_and_l_with_no_rows_are_consumed_and_open_nothing()
+    {
+        TimelineModel model = Model(Store(0));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        Assert.True(view.HandleKey(Key.CursorRight));
+        Assert.True(view.HandleKey(Key.L));
+
+        Assert.Empty(opened);
+    }
+
+    [Fact]
+    public void J_and_k_move_the_selection_like_down_and_up()
+    {
+        TimelineModel model = Model(Store(100));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+
+        Assert.True(view.HandleKey(Key.K));
+        Assert.Equal("r98", model.SelectedRow!.Preview);
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+
+        Assert.True(view.HandleKey(Key.J));
+        Assert.Equal("r99", model.SelectedRow!.Preview);
+    }
+
+    [Fact]
+    public void Left_and_h_are_not_bound_in_the_timeline()
+    {
+        TimelineModel model = Model(Store(100));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        Assert.False(view.HandleKey(Key.CursorLeft));
+        Assert.False(view.HandleKey(Key.H));
+
+        Assert.Empty(opened);
+        Assert.Equal(TimelineMode.Follow, model.Mode);
+        Assert.Equal("r99", model.SelectedRow!.Preview);
+    }
+
     [Theory]
     [InlineData('f')]
     [InlineData('n')]

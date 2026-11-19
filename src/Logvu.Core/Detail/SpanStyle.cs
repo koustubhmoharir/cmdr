@@ -8,9 +8,6 @@ public enum SpanStyle
     /// <summary>Plain text. Named so that a style can be spelled out; the document never emits a span of this style.</summary>
     None,
 
-    /// <summary>A label of the event header, such as <c>Path</c>.</summary>
-    Label,
-
     /// <summary>The name of a text event's field, or the <c>Message</c> and <c>Error</c> labels of a summary.</summary>
     FieldName,
 
