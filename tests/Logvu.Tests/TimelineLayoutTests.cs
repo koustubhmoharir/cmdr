@@ -258,6 +258,21 @@ public sealed class TimelineLayoutTests
     }
 
     [Fact]
+    public void A_source_floor_keeps_the_column_at_least_that_wide_within_its_cap()
+    {
+        TimelinePage narrow = TimelineLayout.Compose([Row(time: Morning, source: "api")], 100, Utc, sourceFloor: 20);
+        Assert.Equal(20, narrow.Columns.Source);
+
+        // The cap (30% of the width, at most 40) still applies.
+        TimelinePage capped = TimelineLayout.Compose([Row(time: Morning, source: "api")], 100, Utc, sourceFloor: 60);
+        Assert.Equal(30, capped.Columns.Source);
+
+        // A wider source than the floor still widens the column.
+        TimelinePage wider = TimelineLayout.Compose([Row(time: Morning, source: new string('s', 25))], 100, Utc, sourceFloor: 10);
+        Assert.Equal(25, wider.Columns.Source);
+    }
+
+    [Fact]
     public void An_empty_page_has_columns_and_no_lines()
     {
         TimelinePage page = TimelineLayout.Compose([], 80, Utc);

@@ -24,6 +24,10 @@ internal sealed class TimelineView : View
 
     private readonly TimelineModel _model;
     private readonly TimeZoneInfo _zone;
+
+    // The widest source column drawn at the current width (see OnDrawingContent), and that width.
+    private int _sourceFloor;
+    private int _sourceFloorWidth = -1;
     private string? _placeholder;
     private SearchPattern? _search;
     private RowKey? _activeRow;
@@ -233,7 +237,15 @@ internal sealed class TimelineView : View
         var header = new Attribute(normal.Foreground, normal.Background, TextStyle.Bold);
 
         IReadOnlyList<EventRow> visible = _model.VisibleRows;
-        TimelinePage page = TimelineLayout.Compose(visible, width, _zone);
+        // The source column only grows while the width stays the same, so scrolling does not make the columns jump.
+        if (width != _sourceFloorWidth)
+        {
+            _sourceFloorWidth = width;
+            _sourceFloor = 0;
+        }
+
+        TimelinePage page = TimelineLayout.Compose(visible, width, _zone, _sourceFloor);
+        _sourceFloor = Math.Max(_sourceFloor, page.Columns.Source);
         DrawLine(0, TimelineLayout.Header(page.Columns), page.Columns, header, selected: false, active: false);
 
         for (int i = 0; i < page.Lines.Count && i + 1 < height; i++)

@@ -108,8 +108,12 @@ internal static class TimelineLayout
     /// <param name="rows">The visible rows, top first.</param>
     /// <param name="width">The width of the timeline, in columns. A width that is not positive gives no columns and no lines.</param>
     /// <param name="zone">The time zone that times are shown in.</param>
+    /// <param name="sourceFloor">
+    /// The narrowest the source column may be (still within its cap): the view passes the widest source column it has shown at this
+    /// width, so that the columns do not jump as rows with shorter sources scroll into view.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="rows"/> or <paramref name="zone"/> is <c>null</c>.</exception>
-    public static TimelinePage Compose(IReadOnlyList<EventRow> rows, int width, TimeZoneInfo zone)
+    public static TimelinePage Compose(IReadOnlyList<EventRow> rows, int width, TimeZoneInfo zone, int sourceFloor = 0)
     {
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(zone);
@@ -122,7 +126,7 @@ internal static class TimelineLayout
         (bool spansDates, DateOnly? day) = Dates(rows, zone);
         int timeWidth = spansDates ? DateTimeWidth : TimeWidth;
         string timeFormat = spansDates ? DateTimeFormat : TimeFormat;
-        int widestSource = rows.Select(row => row.Source is null ? 0 : TextWidth.Columns(row.Source)).DefaultIfEmpty(0).Max();
+        int widestSource = Math.Max(sourceFloor, rows.Select(row => row.Source is null ? 0 : TextWidth.Columns(row.Source)).DefaultIfEmpty(0).Max());
 
         TimelineColumns columns = ChooseColumns(width, timeWidth, widestSource);
         IReadOnlyList<TimelineLine> lines = rows.Select(row => Line(row, columns, timeFormat, zone)).ToList();
