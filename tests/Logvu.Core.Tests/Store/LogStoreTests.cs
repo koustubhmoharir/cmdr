@@ -617,23 +617,33 @@ public sealed class LogStoreTests
     {
         using var dir = new ConfigTestDirectory();
         dir.Write("SheetKraft.log", Events(T0, "live", 2));
+        using var release = new ManualResetEventSlim();
         await using Harness h = Harness.Create(dir);
         h.Start();
         await h.WaitFor(u => u.Batch.Initial);
 
         int mark = h.Count;
-        h.Store.BeforeRun = FailOnce();
-        StoreUpdate failed = await h.WaitFor(u => u.Resync && u.Batch.IsEmpty, mark);
-        Assert.False(failed.Batch.Initial);
-        Assert.Contains(failed.Status.RecentFailures, failure => failure.Contains("injected run failure", StringComparison.Ordinal));
+        h.Store.BeforeRun = FailOnceThenHold(release);
+        try
+        {
+            StoreUpdate failed = await h.WaitFor(u => u.Resync && u.Batch.IsEmpty, mark);
+            Assert.False(failed.Batch.Initial);
+            Assert.Contains(failed.Status.RecentFailures, failure => failure.Contains("injected run failure", StringComparison.Ordinal));
 
-        AppendText(dir, "SheetKraft.log", Line(T0.AddMinutes(5), "INFO", "after the failure"));
-        StoreUpdate resynced = await h.WaitFor(u => u.Resync && u.Batch.Added.Any(row => row.Preview == "after the failure"), mark);
-        Assert.Contains(resynced.Batch.Updated, row => row.Preview == "live event 1" && !row.Provisional);
+            // The next run is held until the append is written, so the run that recovers from the failure reads it.
+            AppendText(dir, "SheetKraft.log", Line(T0.AddMinutes(5), "INFO", "after the failure"));
+            release.Set();
+            StoreUpdate resynced = await h.WaitFor(u => u.Resync && u.Batch.Added.Any(row => row.Preview == "after the failure"), mark);
+            Assert.Contains(resynced.Batch.Updated, row => row.Preview == "live event 1" && !row.Provisional);
 
-        RowPage newest = await h.Store.ReadNewestAsync(3, null, null, NoCancel);
-        Assert.Equal(new[] { "live event 0", "live event 1", "after the failure" }, newest.Rows.Select(row => row.Preview));
-        Assert.True(newest.Rows[^1].Provisional);
+            RowPage newest = await h.Store.ReadNewestAsync(3, null, null, NoCancel);
+            Assert.Equal(new[] { "live event 0", "live event 1", "after the failure" }, newest.Rows.Select(row => row.Preview));
+            Assert.True(newest.Rows[^1].Provisional);
+        }
+        finally
+        {
+            release.Set();
+        }
     }
 
     [Fact]
@@ -751,6 +761,21 @@ public sealed class LogStoreTests
             {
                 throw new InvalidOperationException("injected run failure");
             }
+        };
+    }
+
+    /// <summary>A run hook that throws once, then holds every later run until <paramref name="release"/> is set or ten seconds pass.</summary>
+    private static Action FailOnceThenHold(ManualResetEventSlim release)
+    {
+        int fired = 0;
+        return () =>
+        {
+            if (Interlocked.Exchange(ref fired, 1) == 0)
+            {
+                throw new InvalidOperationException("injected run failure");
+            }
+
+            release.Wait(TimeSpan.FromSeconds(10));
         };
     }
 
