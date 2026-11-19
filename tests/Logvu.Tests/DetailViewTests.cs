@@ -272,7 +272,16 @@ public sealed class DetailViewTests
         Attribute highlight = screen.At("Deploy finished");
         Assert.Equal(new Color(0x10, 0x20, 0x30), highlight.Foreground);
         Assert.True(highlight.Style.HasFlag(TextStyle.Bold));
-        Assert.Equal(new Color(ColorName16.Green), screen.At("finished").Foreground);
+        Assert.Equal(DetailColors.StringValue, screen.At("finished").Foreground);
+    }
+
+    [Fact]
+    public void String_and_number_values_use_their_fixed_shades()
+    {
+        var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
+
+        Assert.Equal(new Color(0x98, 0xC3, 0x79), DetailColors.For(SpanStyle.JsonString, normal).Foreground);
+        Assert.Equal(new Color(0xC6, 0x78, 0xDD), DetailColors.For(SpanStyle.JsonNumber, normal).Foreground);
     }
 
     [Fact]

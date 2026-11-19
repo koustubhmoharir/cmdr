@@ -11,6 +11,15 @@ namespace Logvu.Tui;
 /// </summary>
 internal static class DetailColors
 {
+    /// <summary>
+    /// The foreground of string values: a soft green with more contrast on a dark background than the theme's named green, and still
+    /// legible on a light one.
+    /// </summary>
+    internal static readonly Color StringValue = new(0x98, 0xC3, 0x79);
+
+    /// <summary>The foreground of number values: a light violet, brighter on a dark background than the theme's named magenta.</summary>
+    internal static readonly Color NumberValue = new(0xC6, 0x78, 0xDD);
+
     // The 16 named ANSI colors by index, as the color names of the terminal theme map them (the same table as the output view's).
     private static readonly ColorName16[] Named16 =
     [
@@ -69,8 +78,8 @@ internal static class DetailColors
             SpanStyle.Framework => new Attribute(fg, bg, TextStyle.Faint),
             SpanStyle.JsonKey => new Attribute(ColorName16.BrightBlue, bg, TextStyle.None),
             SpanStyle.ConfiguredKey => new Attribute(ColorName16.BrightMagenta, bg, TextStyle.None),
-            SpanStyle.JsonString => new Attribute(ColorName16.Green, bg, TextStyle.None),
-            SpanStyle.JsonNumber => new Attribute(ColorName16.Magenta, bg, TextStyle.None),
+            SpanStyle.JsonString => new Attribute(StringValue, bg, TextStyle.None),
+            SpanStyle.JsonNumber => new Attribute(NumberValue, bg, TextStyle.None),
             SpanStyle.JsonLiteral => new Attribute(ColorName16.Yellow, bg, TextStyle.None),
             SpanStyle.Date => new Attribute(ColorName16.Cyan, bg, TextStyle.None),
             SpanStyle.Time => new Attribute(ColorName16.BrightYellow, bg, TextStyle.None),
