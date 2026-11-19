@@ -125,6 +125,41 @@ public sealed class PrecheckTests
     }
 
     [Fact]
+    public void A_literal_spanning_the_join_of_a_slog_message_finds_the_event()
+    {
+        byte[] content = Utf8(
+            "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"WARN\",\"msg\":\"failed to register with CodeKraft\","
+            + "\"error\":{\"message\":\"request cannot be made\"}}\n");
+
+        Assert.NotNull(FindNewest("slog-json", content, Literal("CodeKraft: request")));
+        Assert.NotNull(FindNewest("slog-json", content, Literal(" request")));
+        Assert.Null(FindNewest("slog-json", content, Literal("CodeKraft:  request")));
+    }
+
+    [Fact]
+    public void A_single_word_absent_from_a_slog_line_finds_nothing()
+    {
+        byte[] content = Utf8(
+            "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"WARN\",\"msg\":\"retrying\","
+            + "\"cause\":[{\"message\":\"inner\"},\"connection refused\"]}\n");
+
+        Assert.Null(FindNewest("slog-json", content, Literal("absent")));
+    }
+
+    [Fact]
+    public void A_single_word_present_only_in_a_slog_cause_string_finds_the_event()
+    {
+        byte[] content = Utf8(
+            "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"WARN\",\"msg\":\"retrying\","
+            + "\"err\":{\"message\":\"db down\",\"cause\":[\"connection-refused\"]}}\n");
+
+        EventRow? row = FindNewest("slog-json", content, Literal("refused"));
+
+        Assert.NotNull(row);
+        Assert.Equal(0, row.Key.Offset);
+    }
+
+    [Fact]
     public void Slog_message_check_is_exact_for_random_escape_free_and_escaped_messages()
     {
         var rng = new Random(20261203);

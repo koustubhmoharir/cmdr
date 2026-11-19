@@ -14,9 +14,9 @@ public static class EventFields
 
     /// <summary>
     /// Finds the value of a path in an event. A JSON event is read by its dotted path (<see cref="JsonFieldPath"/>), and when that does not
-    /// resolve and the path is <c>message</c>, the event's <see cref="LogEvent.Message"/> is the value: a slog <c>msg</c> or a rendered
-    /// Serilog message. So a JSON object with its own top-level <c>message</c> member gives that member. A text event's value is its first
-    /// field with the path as its name. A raw event has no values.
+    /// resolve and the path is <c>message</c>, the event's <see cref="LogEvent.Message"/> is the value: a slog message (its <c>msg</c> with
+    /// the error and cause parts) or a rendered Serilog message. So a JSON object with its own top-level <c>message</c> member gives that
+    /// member. A text event's value is its first field with the path as its name. A raw event has no values.
     /// </summary>
     /// <param name="ev">The event.</param>
     /// <param name="path">The field name, or the dotted JSON path.</param>

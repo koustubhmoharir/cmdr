@@ -88,6 +88,10 @@ as their JSON text, objects/arrays as compact JSON. A token whose property is mi
 
 slog: errors appear either as top-level `cause` (array of strings or `{message, attrs}` objects) and `stack` (array of
 `function (file:line)` strings), or as an attribute whose value is an object `{message, attrs?, cause?, stack?}`.
+The message joins with `": "`: `msg`; the first top-level `error`/`err` object's `message`; then its `cause` array (or else the
+top-level one), depth first — a string item itself, an object item its `message` then its own `cause` items. Empty parts are
+skipped. Each part is verbatim in the line when it has no backslash, so the history search's pre-parse text check still rejects a slog
+line for a literal pattern without `:` or space; other patterns parse every line.
 
 ### Detection
 

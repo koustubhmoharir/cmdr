@@ -156,8 +156,14 @@ public sealed class SlogJsonScheme : JsonScheme
     /// <inheritdoc/>
     public override string Name => "slog-json";
 
+    /// <summary>How deep the <c>cause</c> arrays are followed. Deeper causes are left out of the message.</summary>
+    private const int MaxCauseDepth = 32;
+
     /// <inheritdoc/>
-    /// <remarks>Fields are the top-level members, so error values such as <c>cause</c> and <c>stack</c> stay raw.</remarks>
+    /// <remarks>
+    /// The message is <c>msg</c> with the error's text and its causes joined by <c>": "</c> (see <see cref="ComposeMessage"/>). Fields are
+    /// the top-level members, so error values such as <c>cause</c> and <c>stack</c> stay raw.
+    /// </remarks>
     protected override LogEvent Build(JsonElement root, ParseContext context)
     {
         string? timeText = null;
@@ -177,7 +183,7 @@ public sealed class SlogJsonScheme : JsonScheme
             levelText = JsonValues.AsText(level);
         }
 
-        string message = JsonValues.TryGetPresent(root, "msg", out JsonElement msg) ? JsonValues.AsText(msg) : string.Empty;
+        string message = ComposeMessage(root);
 
         return new LogEvent
         {
@@ -189,5 +195,98 @@ public sealed class SlogJsonScheme : JsonScheme
             Fields = TopLevelFields(root),
             Json = root.Clone(),
         };
+    }
+
+    /// <summary>
+    /// The message parts, in order: <c>msg</c>; the first top-level <c>error</c> or <c>err</c> object's <c>message</c>; then the causes. The
+    /// causes are the error object's <c>cause</c> array, or the top-level <c>cause</c> array when the error object has none. A string cause
+    /// is a part; an object cause gives its <c>message</c>, then its own <c>cause</c> array, depth first. Empty parts are skipped.
+    /// </summary>
+    private static string ComposeMessage(JsonElement root)
+    {
+        var parts = new List<string>();
+        if (JsonValues.TryGetPresent(root, "msg", out JsonElement msg))
+        {
+            AddPart(parts, JsonValues.AsText(msg));
+        }
+
+        JsonElement? causes = null;
+        if (FirstErrorObject(root) is { } error)
+        {
+            if (JsonValues.TryGetPresent(error, "message", out JsonElement errorMessage))
+            {
+                AddPart(parts, JsonValues.AsText(errorMessage));
+            }
+
+            if (error.TryGetProperty("cause", out JsonElement errorCause) && errorCause.ValueKind == JsonValueKind.Array)
+            {
+                causes = errorCause;
+            }
+        }
+
+        if (causes is null && root.TryGetProperty("cause", out JsonElement topCause) && topCause.ValueKind == JsonValueKind.Array)
+        {
+            causes = topCause;
+        }
+
+        if (causes is { } list)
+        {
+            AddCauses(parts, list, 1);
+        }
+
+        return string.Join(": ", parts);
+    }
+
+    /// <summary>The value of the first top-level member named <c>error</c> or <c>err</c> (ignoring case) that is an object, if any.</summary>
+    private static JsonElement? FirstErrorObject(JsonElement root)
+    {
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            bool named = string.Equals(property.Name, "error", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(property.Name, "err", StringComparison.OrdinalIgnoreCase);
+            if (named && property.Value.ValueKind == JsonValueKind.Object)
+            {
+                return property.Value;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Adds the parts of a cause array, depth first. The array at <paramref name="depth"/> 1 is the error's or the top-level one.</summary>
+    private static void AddCauses(List<string> parts, JsonElement causes, int depth)
+    {
+        if (depth > MaxCauseDepth)
+        {
+            return;
+        }
+
+        foreach (JsonElement item in causes.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                AddPart(parts, item.GetString()!);
+            }
+            else if (item.ValueKind == JsonValueKind.Object)
+            {
+                if (JsonValues.TryGetPresent(item, "message", out JsonElement message))
+                {
+                    AddPart(parts, JsonValues.AsText(message));
+                }
+
+                if (item.TryGetProperty("cause", out JsonElement nested) && nested.ValueKind == JsonValueKind.Array)
+                {
+                    AddCauses(parts, nested, depth + 1);
+                }
+            }
+        }
+    }
+
+    private static void AddPart(List<string> parts, string text)
+    {
+        if (text.Length > 0)
+        {
+            parts.Add(text);
+        }
     }
 }

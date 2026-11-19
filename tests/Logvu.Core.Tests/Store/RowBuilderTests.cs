@@ -269,7 +269,7 @@ public sealed class RowBuilderTests
 
         EventRow row = RowOf(text, BuiltInSchemes.SlogJson, Columns("message", "err.message", "missing"));
 
-        Assert.Equal(new string?[] { "request failed", "db down", null }, row.Columns);
+        Assert.Equal(new string?[] { "request failed: db down", "db down", null }, row.Columns);
     }
 
     [Fact]
