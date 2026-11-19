@@ -187,14 +187,14 @@ public sealed class TimelineControllerDetailTests : IDisposable
     {
         OpenJsonDetail();
         DetailView detail = _controller.Detail!;
-        Assert.Contains("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy line", _controller.StatusHints, StringComparison.Ordinal);
 
         Assert.True(detail.HandleKey(Key.CursorDown.WithShift));
-        Assert.Contains("c copy selection", _controller.StatusRight, StringComparison.Ordinal);
-        Assert.DoesNotContain("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy selection", _controller.StatusHints, StringComparison.Ordinal);
+        Assert.DoesNotContain("c copy line", _controller.StatusHints, StringComparison.Ordinal);
 
         Assert.True(detail.HandleKey(Key.Esc));
-        Assert.Contains("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy line", _controller.StatusHints, StringComparison.Ordinal);
     }
 
     /// <summary>Opens the detail of the selected row with the Serilog JSON event, and waits until it is loaded.</summary>

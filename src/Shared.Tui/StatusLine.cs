@@ -4,7 +4,7 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Shared.Tui;
 
-/// <summary>The bottom row: key hints, or a transient message in its place. Drawn inverted, like a status bar.</summary>
+/// <summary>A one-row bar: key hints or status text, or a transient message in its place. Drawn inverted, like a status bar.</summary>
 public sealed class StatusLine : View
 {
     private string _text = string.Empty;

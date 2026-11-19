@@ -82,6 +82,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private readonly TimelineModel _model;
     private readonly TimelineView _view;
     private readonly StatusLine _statusLine;
+    private readonly StatusLine _hintsLine;
     private readonly SearchController _search;
     private readonly Func<EventFilter?, FilterEdit?> _editFilter;
     private readonly Func<(PickOutcome Outcome, LogvuConfig? Config)>? _pickSet;
@@ -96,7 +97,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private int _noticeEpoch;
     private int _armedHold;
     private string _statusLeft = "Loading…";
-    private string _statusRight = string.Empty;
+    private string _statusHints = string.Empty;
     private volatile bool _disposed;
 
     /// <summary>Creates the controller and the window. Call <see cref="Start"/> to subscribe to the store and start it.</summary>
@@ -160,9 +161,10 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
         _view = new TimelineView(_model, config.TimeZone, config.Columns) { Placeholder = "Loading…" };
         _statusLine = new StatusLine();
+        _hintsLine = new StatusLine();
         _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
         WriteRaw = sequence => _app.Driver?.WriteRaw(sequence);
-        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, HandleShortcut, _search.CancelScan);
+        Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _hintsLine, _search.Bar, HandleShortcut, _search.CancelScan);
     }
 
     /// <summary>
@@ -182,11 +184,11 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// <summary>The detail view while an event is open, or <c>null</c> when the timeline is shown.</summary>
     internal DetailView? Detail => _detail?.View;
 
-    /// <summary>The left part of the status line as last shown.</summary>
+    /// <summary>The status text on the status bar at the top of the window as last shown.</summary>
     internal string StatusLeft => _statusLeft;
 
-    /// <summary>The right part of the status line as last shown: the key hints, with the hints of an active search first.</summary>
-    internal string StatusRight => _statusRight;
+    /// <summary>The key hints on the last row of the window as last shown: the hints of an active search first, then the keys.</summary>
+    internal string StatusHints => _statusHints;
 
     /// <summary>The search of the timeline and the detail. Its bar is the window's search bar.</summary>
     internal SearchController Search => _search;
@@ -725,7 +727,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     }
 
     /// <summary>
-    /// Refreshes both parts of the status line. The right part names the keys of the matches while a query is active, before the key hints.
+    /// Refreshes both lines: the status bar at the top gets the status text, and the hints on the last row get the keys. The hints name the
+    /// keys of the matches first while a query is active.
     /// </summary>
     private void RefreshStatus()
     {
@@ -735,9 +738,10 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         string keys = _detail is { } open
             ? (open.View.HasSelection ? DetailSelectionHints : DetailHints)
             : (_view.HasSelection ? SelectionHints : Hints);
-        string right = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
-        _statusRight = right;
-        _statusLine.Show(_statusLeft, message: false, right: right);
+        string hints = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
+        _statusHints = hints;
+        _statusLine.Show(_statusLeft, message: false);
+        _hintsLine.Show(hints, message: false);
     }
 
     DetailView? ISearchHost.Detail => _detail?.View;

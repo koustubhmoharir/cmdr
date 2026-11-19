@@ -6,9 +6,9 @@ using Terminal.Gui.Views;
 namespace Logvu.Tui;
 
 /// <summary>
-/// The borderless main window: the content view above the search bar's row and the status line. The content is the timeline, or the detail
-/// of an event while one is open. The search bar's row is shown while a search is open. The window gives the application-wide keys a last
-/// chance when no focused view handled them: first the search's shortcuts, then Esc.
+/// The borderless main window: the status bar on the first row, the content view below it, the search bar's row while a search is open, and
+/// the key hints on the last row. The content is the timeline, or the detail of an event while one is open. The window gives the
+/// application-wide keys a last chance when no focused view handled them: first the search's shortcuts, then Esc.
 /// </summary>
 internal sealed class MainWindow : Window
 {
@@ -19,21 +19,26 @@ internal sealed class MainWindow : Window
     private View? _content;
     private int _bottomRows = 1;
 
+    /// <summary>The first row of the content, below the status bar.</summary>
+    private const int TopRows = 1;
+
     /// <summary>Creates the window and adds its views. The timeline is the first content, and the search bar's row is hidden.</summary>
     /// <param name="quit">Quits the application. Called for Ctrl+Q.</param>
     /// <param name="timeline">The timeline, the first content.</param>
-    /// <param name="status">The status line on the last row.</param>
-    /// <param name="searchBar">The search bar, on the row above the status line while it is shown.</param>
+    /// <param name="status">The status bar on the first row: the status text, inverted.</param>
+    /// <param name="hints">The key hints on the last row.</param>
+    /// <param name="searchBar">The search bar, on the row above the hints while it is shown.</param>
     /// <param name="shortcuts">
     /// Handles a key that no focused view took. Returns <c>true</c> when it handled the key. Called before Esc is looked at.
     /// </param>
     /// <param name="escape">Called for Esc when no focused view took it.</param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
-    public MainWindow(Action quit, View timeline, View status, View searchBar, Func<Key, bool> shortcuts, Action escape)
+    public MainWindow(Action quit, View timeline, View status, View hints, View searchBar, Func<Key, bool> shortcuts, Action escape)
     {
         ArgumentNullException.ThrowIfNull(quit);
         ArgumentNullException.ThrowIfNull(timeline);
         ArgumentNullException.ThrowIfNull(status);
+        ArgumentNullException.ThrowIfNull(hints);
         ArgumentNullException.ThrowIfNull(searchBar);
         ArgumentNullException.ThrowIfNull(shortcuts);
         ArgumentNullException.ThrowIfNull(escape);
@@ -43,14 +48,20 @@ internal sealed class MainWindow : Window
         _escape = escape;
         _searchBar = searchBar;
 
-        // No outer frame: the content is the whole window above the status line.
+        // No outer frame: the status bar, the content and the hints fill the whole window.
         BorderStyle = LineStyle.None;
 
         status.X = 0;
-        status.Y = Pos.AnchorEnd(1);
+        status.Y = 0;
         status.Width = Dim.Fill();
         status.Height = 1;
         Add(status);
+
+        hints.X = 0;
+        hints.Y = Pos.AnchorEnd(1);
+        hints.Width = Dim.Fill();
+        hints.Height = 1;
+        Add(hints);
 
         searchBar.X = 0;
         searchBar.Y = Pos.AnchorEnd(2);
@@ -62,12 +73,12 @@ internal sealed class MainWindow : Window
         SetContent(timeline);
     }
 
-    /// <summary>The view that fills the rows above the status line.</summary>
+    /// <summary>The view that fills the rows between the status bar and the hints (and the search bar while it is shown).</summary>
     public View? Content => _content;
 
     /// <summary>
-    /// Shows a view in the rows above the status line in place of the current content, and gives it the focus. The status line and the search
-    /// bar's row stay. The view it replaces is removed, not disposed: its owner disposes it when it is done with it.
+    /// Shows a view in the rows between the status bar and the hints in place of the current content, and gives it the focus. The status bar,
+    /// the hints and the search bar's row stay. The view it replaces is removed, not disposed: its owner disposes it when it is done with it.
     /// </summary>
     /// <param name="content">The view to show.</param>
     /// <exception cref="ArgumentNullException"><paramref name="content"/> is <c>null</c>.</exception>
@@ -85,7 +96,7 @@ internal sealed class MainWindow : Window
         }
 
         content.X = 0;
-        content.Y = 0;
+        content.Y = TopRows;
         content.Width = Dim.Fill();
         content.Height = Dim.Fill(_bottomRows);
         Add(content);

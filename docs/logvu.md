@@ -63,8 +63,11 @@ Unknown settings are errors, so typos are reported.
 
 The timeline shows one row per event — **Time, Level**, the configured `columns` (for example the logger), **Message** (its
 first line) — oldest at the top.
-When a page spans more than one day every row shows the date. The status line shows Follow or Paused, the number of new events
-while paused, the active filter, search progress and read problems.
+When a page spans more than one day every row shows the date.
+
+The status bar on the first row shows Follow or Paused, the number of new events while paused, the active filter, search progress,
+read problems and notices such as a copy. The last row lists the keys that work where the cursor is, with the keys of an active
+search first. While the search bar is open it sits on the row above those keys.
 
 | Timeline | |
 |---|---|
@@ -91,7 +94,7 @@ Any movement pauses Follow; scrolling back to the bottom stays paused until Spac
 
 **Detail.** The fields of a text event as written, in pattern order, `message` as a multi-line value — or, for JSON, the expandable tree of the
 event (preceded by the message only when logvu rendered it from a Serilog template, since it appears nowhere else). The status
-line shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
+bar shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
 styled: exception types and messages, method names and `file:line` stand out, directories and framework frames are dimmed.
 Runs of framework frames get a `… N framework frames` marker that folds them. Timestamps in JSON values show the date and time in colour, with fractions and offsets dimmed.
 
@@ -111,12 +114,12 @@ Runs of framework frames get a `… N framework frames` marker that folds them. 
 
 **Search** matches the full text of events (all lines, JSON names and values, stack frames, and Serilog's rendered message),
 case-insensitively by default; the bar's toggles switch on case sensitivity, whole words and regular expressions. Only events
-passing the filter are searched. A search does not wrap: the status line says when there are no more matches.
+passing the filter are searched. A search does not wrap: the status bar says when there are no more matches.
 
 **Filter** starts at the configured `minLevel` (Info by default) and combines a minimum level, a file name substring, text, a time range and field conditions, one per line as
 `path operator value` with the operator `equals`, `prefix`, `suffix` or `contains` (ignoring case), e.g. `logger contains Engine`,
 `message prefix Timeout`. Paths are those of `columns`.
-(all must match). Incoming events go through the same filter. The status line distinguishes a scan in progress from a scan that
+(all must match). Incoming events go through the same filter. The status bar distinguishes a scan in progress from a scan that
 found nothing.
 
 ## Rotation and live files

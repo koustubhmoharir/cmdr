@@ -23,10 +23,6 @@ internal static class TerminalHarness
     /// <param name="steps">The steps, run in order.</param>
     public static List<TerminalScreen> Run(View content, int width, int height, params Action[] steps)
     {
-        using IApplication app = Application.Create();
-        app.Init("ansi");
-        app.Driver!.SetScreenSize(width, height);
-
         content.X = 0;
         content.Y = 0;
         content.Width = Dim.Fill();
@@ -34,6 +30,32 @@ internal static class TerminalHarness
         var window = new Window { X = 0, Y = 0, Width = width, Height = height, BorderStyle = LineStyle.None };
         window.Add(content);
 
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        app.Driver!.SetScreenSize(width, height);
+        return Drive(app, window, content, width, height, steps);
+    }
+
+    /// <summary>
+    /// Runs a main window at a size, as the application does, and captures the screens like <see cref="Run"/>. The application must be
+    /// initialised with the ANSI driver at the same size, and it is not disposed here: a controller built on it is run in it.
+    /// </summary>
+    /// <param name="app">The initialised application the window runs in.</param>
+    /// <param name="window">The main window. It is sized to the screen.</param>
+    /// <param name="width">The screen width in columns.</param>
+    /// <param name="height">The screen height in rows.</param>
+    /// <param name="steps">The steps, run in order.</param>
+    public static List<TerminalScreen> RunWindow(IApplication app, Window window, int width, int height, params Action[] steps)
+    {
+        window.X = 0;
+        window.Y = 0;
+        window.Width = width;
+        window.Height = height;
+        return Drive(app, window, window, width, height, steps);
+    }
+
+    private static List<TerminalScreen> Drive(IApplication app, Window window, View captured, int width, int height, Action[] steps)
+    {
         var screens = new List<TerminalScreen>();
         Exception? failure = null;
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
@@ -41,12 +63,12 @@ internal static class TerminalHarness
             try
             {
                 app.LayoutAndDraw();
-                screens.Add(Capture(app, content, width, height));
+                screens.Add(Capture(app, captured, width, height));
                 foreach (Action step in steps)
                 {
                     step();
                     app.LayoutAndDraw();
-                    screens.Add(Capture(app, content, width, height));
+                    screens.Add(Capture(app, captured, width, height));
                 }
             }
             catch (Exception ex)

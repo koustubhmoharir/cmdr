@@ -106,14 +106,14 @@ public sealed class TimelineControllerCopyTests : IDisposable
     [Fact]
     public void The_hints_name_the_copy_that_c_makes_and_switch_with_the_selection()
     {
-        Assert.Contains("c copy event", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy event", _controller.StatusHints, StringComparison.Ordinal);
 
         Select(fromX: 1, toX: 6, y: 3);
-        Assert.Contains("c copy selection", _controller.StatusRight, StringComparison.Ordinal);
-        Assert.DoesNotContain("c copy event", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy selection", _controller.StatusHints, StringComparison.Ordinal);
+        Assert.DoesNotContain("c copy event", _controller.StatusHints, StringComparison.Ordinal);
 
         Assert.True(_controller.Timeline.HandleKey(Key.Esc));
-        Assert.Contains("c copy event", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.Contains("c copy event", _controller.StatusHints, StringComparison.Ordinal);
     }
 
     /// <summary>A press at <paramref name="fromX"/> on the screen row <paramref name="y"/>, a drag to <paramref name="toX"/> and a release.</summary>

@@ -134,7 +134,7 @@ public sealed class SearchControllerTests : IDisposable
         Assert.False(_controller.Search.IsOpen);
         Assert.Null(_controller.Timeline.Search);
         Assert.True(_controller.Timeline.HasFocus);
-        Assert.DoesNotContain("n older", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.DoesNotContain("n older", _controller.StatusHints, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public sealed class SearchControllerTests : IDisposable
         Send((Key)'/');
         Type("needle");
 
-        Assert.StartsWith("n older  N newer  ", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.StartsWith("n older  N newer  ", _controller.StatusHints, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -496,7 +496,7 @@ public sealed class SearchControllerTests : IDisposable
         Assert.True(Bar.Visible);
         Assert.True(_controller.Search.IsOpen);
         Assert.NotNull(_controller.Timeline.Search);
-        Assert.StartsWith("n older  N newer  ", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.StartsWith("n older  N newer  ", _controller.StatusHints, StringComparison.Ordinal);
     }
 
     [Fact]
