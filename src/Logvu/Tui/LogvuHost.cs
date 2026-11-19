@@ -3,6 +3,7 @@ using Logvu.Core.Store;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
+using Terminal.Gui.Input;
 
 namespace Logvu.Tui;
 
@@ -13,11 +14,26 @@ namespace Logvu.Tui;
 /// </summary>
 internal static class LogvuHost
 {
+    // The Open file hint of both pickers: o and Ctrl+O open a config through a file dialog.
+    private static readonly Hint OpenFileHint = KeyHints.Concat(
+        KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file"));
+
     // The key hints of the picker. Open file is listed because it is enabled.
-    private const string PickerHints = "Enter Open  Del Remove  o/^O Open file  0-9 Select by number  Esc/^Q Quit";
+    internal static readonly Hint PickerHints = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.Delete, "Del Remove"),
+        OpenFileHint,
+        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Concat(KeyHints.Bound(Key.Esc, "Esc"), KeyHints.Plain("/"), KeyHints.Bound(Key.Q.WithCtrl, "^Q"), KeyHints.Plain(" Quit")));
 
     // The key hints of the picker opened from the main window: Esc goes back to the set, Ctrl+Q quits logvu.
-    internal const string SetPickerHints = "Enter Open  Del Remove  o/^O Open file  0-9 Select by number  Esc back  ^Q quit";
+    internal static readonly Hint SetPickerHints = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.Delete, "Del Remove"),
+        OpenFileHint,
+        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Bound(Key.Esc, "Esc back"),
+        KeyHints.Bound(Key.Q.WithCtrl, "^Q quit"));
 
     /// <summary>
     /// Runs the main window of a set until the user quits. Ctrl+O can switch to another set from <paramref name="recent"/>. The

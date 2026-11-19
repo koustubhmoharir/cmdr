@@ -1,6 +1,7 @@
 using Shared.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
+using Terminal.Gui.Testing;
 using Terminal.Gui.Views;
 
 namespace Shared.Tui.Tests;
@@ -12,6 +13,14 @@ namespace Shared.Tui.Tests;
 [Collection("Terminal GUI")]
 public sealed class RecentPickerTests
 {
+    // The picker's hints as the logvu picker shows them: the labels of the keys it performs are clickable, the rest is text.
+    private static readonly Hint PickerHint = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.Delete, "Del Remove"),
+        KeyHints.Concat(KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file")),
+        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Concat(KeyHints.Bound(Key.Esc, "Esc"), KeyHints.Plain("/"), KeyHints.Bound(Key.Q.WithCtrl, "^Q"), KeyHints.Plain(" Quit")));
+
     [Fact]
     public void Enter_on_a_numbered_row_opens_that_config_and_moves_it_to_the_front_of_the_saved_list()
     {
@@ -289,6 +298,183 @@ public sealed class RecentPickerTests
         Assert.Null(f.Picker.Opened);
     }
 
+    [Fact]
+    public void The_hint_row_shows_the_hint_text_and_the_bottom_row_draws_it()
+    {
+        using var f = new Fixture("a.json");
+
+        Assert.Equal(PickerHint.Text, f.Picker.HintsRow.Shown.Text);
+
+        string? row = null;
+        RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 2)
+            {
+                row = ReadRow(f.App, Fixture.ScreenHeight - 1);
+                f.App.RequestStop(f.Picker);
+            }
+        });
+
+        Assert.Equal(PickerHint.Text, row);
+    }
+
+    [Fact]
+    public void Clicking_Enter_Open_opens_the_selected_row()
+    {
+        using var f = new Fixture("a.json", "b.json", "c.json");
+        f.Picker.NewKeyDownEvent('2');
+        int column = ColumnOf(f, "Enter Open");
+
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+        });
+
+        Assert.True(stoppedItself);
+        Assert.Equal(f.Path("b.json"), f.Picker.OpenedPath);
+        Assert.Equal(new[] { f.Path("b.json"), f.Path("a.json"), f.Path("c.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void Clicking_Del_Remove_removes_the_selected_row()
+    {
+        using var f = new Fixture("a.json", "b.json", "c.json");
+        f.Picker.NewKeyDownEvent('2');
+        int column = ColumnOf(f, "Del Remove");
+        bool running = false;
+
+        RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+
+            if (iteration == 2)
+            {
+                running = f.Picker.IsRunning;
+                f.App.RequestStop(f.Picker);
+            }
+        });
+
+        Assert.True(running);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("c.json") }, f.Saved());
+        Assert.Null(f.Picker.Opened);
+    }
+
+    [Fact]
+    public void Clicking_Esc_quits_with_nothing_opened_and_leaves_QuitRequested_false()
+    {
+        using var f = new Fixture("a.json");
+        int column = ColumnOf(f, "Esc");
+
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+        });
+
+        Assert.True(stoppedItself);
+        Assert.False(f.Picker.QuitRequested);
+        Assert.Null(f.Picker.Opened);
+        Assert.Equal(new[] { f.Path("a.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void Clicking_Ctrl_Q_quits_with_nothing_opened_and_sets_QuitRequested()
+    {
+        using var f = new Fixture("a.json");
+        int column = ColumnOf(f, "^Q");
+
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+        });
+
+        Assert.True(stoppedItself);
+        Assert.True(f.Picker.QuitRequested);
+        Assert.Null(f.Picker.Opened);
+    }
+
+    [Fact]
+    public void Clicking_o_opens_the_file_dialog_and_opens_the_chosen_config()
+    {
+        using var f = new Fixture(openFile: true, "a.json");
+        f.NextDialogAnswer = f.Path("chosen.json");
+        int column = ColumnOf(f, "o/^O");
+
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+        });
+
+        Assert.True(stoppedItself);
+        Assert.Equal(1, f.Dialogs);
+        Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
+        Assert.Equal(new[] { f.Path("chosen.json"), f.Path("a.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void Clicking_Ctrl_O_opens_the_file_dialog_too()
+    {
+        using var f = new Fixture(openFile: true);
+        f.NextDialogAnswer = f.Path("chosen.json");
+        int column = ColumnOf(f, "^O");
+
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+        });
+
+        Assert.True(stoppedItself);
+        Assert.Equal(1, f.Dialogs);
+        Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
+    }
+
+    [Fact]
+    public void Clicking_0_9_Select_by_number_does_nothing()
+    {
+        using var f = new Fixture("a.json", "b.json");
+        f.Picker.NewKeyDownEvent('2');
+        int column = ColumnOf(f, "0-9 Select");
+        bool running = false;
+
+        RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                ClickAt(f, column);
+            }
+
+            if (iteration == 2)
+            {
+                running = f.Picker.IsRunning;
+                f.App.RequestStop(f.Picker);
+            }
+        });
+
+        Assert.True(running);
+        Assert.Equal(1, f.Picker.Rows.SelectedItem);
+        Assert.Equal(0, f.Dialogs);
+        Assert.Null(f.Picker.Opened);
+        Assert.False(f.Picker.QuitRequested);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("b.json") }, f.Saved());
+    }
+
     // Sends a key on the picker's first loop iteration and runs the loop. True when the picker stopped by itself.
     private static bool Press(Fixture f, Key key) => RunPickerLoop(f, iteration =>
     {
@@ -297,6 +483,31 @@ public sealed class RecentPickerTests
             f.Picker.NewKeyDownEvent(key);
         }
     });
+
+    // The column of the first character of the label in the hint row. The row is drawn from column 0, one column per ASCII character.
+    private static int ColumnOf(Fixture f, string label)
+    {
+        int column = f.Picker.HintsRow.Shown.Text.IndexOf(label, StringComparison.Ordinal);
+        Assert.True(column >= 0, $"'{label}' is not in '{f.Picker.HintsRow.Shown.Text}'");
+        return column;
+    }
+
+    // A left press and release on the hint row, through the application's input pipeline.
+    private static void ClickAt(Fixture f, int column) =>
+        f.App.InjectSequence(InputInjectionExtensions.LeftButtonClick(new(column, Fixture.ScreenHeight - 1)));
+
+    // The text of a row of the screen as drawn, with trailing spaces trimmed.
+    private static string ReadRow(IApplication app, int row)
+    {
+        var driver = app.Driver!;
+        var text = new System.Text.StringBuilder();
+        for (int column = 0; column < Fixture.ScreenWidth; column++)
+        {
+            text.Append(driver.Contents![row, column].Grapheme);
+        }
+
+        return text.ToString().TrimEnd();
+    }
 
     // Runs the picker in the application's own run loop, so that its stop request and the dialogs it shows behave as they do
     // in the application. The action runs on every iteration. The loop is stopped after a bound of iterations; the result
@@ -329,6 +540,10 @@ public sealed class RecentPickerTests
     /// <summary>A picker over a temporary store, with fake loading and fake dialogs.</summary>
     private sealed class Fixture : IDisposable
     {
+        // The screen the picker is drawn on: the hint row is its last row.
+        public const int ScreenWidth = 120;
+        public const int ScreenHeight = 10;
+
         private readonly IApplication _app;
         private readonly string _directory;
         private readonly bool _store;
@@ -355,12 +570,13 @@ public sealed class RecentPickerTests
 
             _app = Application.Create();
             _app.Init("ansi");
+            _app.Driver!.SetScreenSize(ScreenWidth, ScreenHeight);
             Picker = new RecentPicker<FakeConfig>(
                 _app,
                 store ? RecentFiles.Load(StorePath) : null,
                 TryOpen,
                 "Recent configs",
-                "hint",
+                PickerHint,
                 openFile,
                 showError: message => Errors.Add(message),
                 pickFile: () =>
@@ -378,7 +594,7 @@ public sealed class RecentPickerTests
         public void UseRealDialog()
         {
             Picker.Dispose();
-            Picker = new RecentPicker<FakeConfig>(_app, RecentFiles.Load(StorePath), TryOpen, "Recent configs", "hint", openFile: true);
+            Picker = new RecentPicker<FakeConfig>(_app, RecentFiles.Load(StorePath), TryOpen, "Recent configs", PickerHint, openFile: true);
         }
 
         public string StorePath => System.IO.Path.Combine(_directory, "recent.json");

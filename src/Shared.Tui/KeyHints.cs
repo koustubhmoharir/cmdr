@@ -1,7 +1,7 @@
 using System.Text;
 using Terminal.Gui.Input;
 
-namespace Logvu.Tui;
+namespace Shared.Tui;
 
 /// <summary>
 /// A span of a hint's text that a click performs a key for: the span in characters of the text, and the key.
@@ -9,7 +9,7 @@ namespace Logvu.Tui;
 /// <param name="Start">The index of the span's first character in the hint's text.</param>
 /// <param name="Length">The number of characters in the span.</param>
 /// <param name="Key">The key that a click on the span performs.</param>
-internal readonly record struct HintTarget(int Start, int Length, Key Key);
+public readonly record struct HintTarget(int Start, int Length, Key Key);
 
 /// <summary>
 /// A key hint: its text, as the bottom row shows it, and the spans of the text that a click performs a key for. Text outside the spans
@@ -17,28 +17,15 @@ internal readonly record struct HintTarget(int Start, int Length, Key Key);
 /// </summary>
 /// <param name="Text">The text of the hint.</param>
 /// <param name="Targets">The spans of the text, in order and not overlapping.</param>
-internal sealed record Hint(string Text, IReadOnlyList<HintTarget> Targets);
+public sealed record Hint(string Text, IReadOnlyList<HintTarget> Targets);
 
 /// <summary>
-/// The key hints of the timeline and the detail, as data: the text each shows, and the keys its labels perform when clicked. The texts are
-/// the ones the status line has always shown; a hint's text is built from its parts, so the data and the text cannot differ. Pure.
+/// Builders of key hints: each hint's text is built from its parts, so the text and the click targets cannot differ. Pure.
 /// </summary>
-internal static class KeyHints
+public static class KeyHints
 {
     /// <summary>The separator between the hints on the row.</summary>
     public const string Separator = "  ";
-
-    /// <summary>The key hints of the timeline with no selection.</summary>
-    public static Hint Timeline { get; } = TimelineWith("c copy event");
-
-    /// <summary>The key hints of the timeline while its selected row has a selection, which <c>c</c> copies.</summary>
-    public static Hint TimelineSelection { get; } = TimelineWith("c copy selection");
-
-    /// <summary>The key hints of the detail with no selection.</summary>
-    public static Hint Detail { get; } = DetailWith("c copy line");
-
-    /// <summary>The key hints of the detail while it has a selection, which <c>c</c> copies.</summary>
-    public static Hint DetailSelection { get; } = DetailWith("c copy selection");
 
     /// <summary>A hint whose whole text performs <paramref name="key"/>: a key and its label, such as <c>f filter</c>.</summary>
     /// <param name="key">The key the text performs.</param>
@@ -74,7 +61,7 @@ internal static class KeyHints
     /// <param name="hints">The hints, in order.</param>
     public static Hint Join(params Hint[] hints)
     {
-        var parts = new List<Hint>(hints.Length * 2 - 1);
+        var parts = new List<Hint>(Math.Max(0, hints.Length * 2 - 1));
         for (int i = 0; i < hints.Length; i++)
         {
             if (i > 0)
@@ -87,21 +74,4 @@ internal static class KeyHints
 
         return Concat([.. parts]);
     }
-
-    private static Hint TimelineWith(string copy) => Join(
-        Bound('f', "f filter"),
-        Concat(Bound('-', "-"), Plain("/"), Bound('+', "+"), Plain(" level")),
-        Bound(Key.Space, "Space pause/follow"),
-        Bound('c', copy),
-        Bound(Key.End, "End newest"),
-        Bound(Key.O.WithCtrl, "^O open"),
-        Bound(Key.Q.WithCtrl, "^Q quit"));
-
-    private static Hint DetailWith(string copy) => Join(
-        Bound('f', "f filter on value"),
-        Bound(Key.Enter, "Enter toggle"),
-        Bound('z', "z folds"),
-        Bound('r', "r raw"),
-        Bound('c', copy),
-        Bound(Key.Esc, "←/Esc back"));
 }

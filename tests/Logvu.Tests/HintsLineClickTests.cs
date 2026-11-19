@@ -4,98 +4,11 @@ using Logvu.Core.Timeline;
 using Logvu.Tui;
 using Shared.Tui;
 using Terminal.Gui.App;
-
-using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.Testing;
 using Terminal.Gui.ViewBase;
-using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Logvu.Tests;
-
-/// <summary>
-/// The hints line as drawn and as clicked: a left press performs the key under it, through the application's keyboard, and the view takes
-/// no focus. A press on text with no target does nothing.
-/// </summary>
-public sealed class HintsLineTests
-{
-    [Fact]
-    public void The_line_cannot_take_the_focus()
-    {
-        Assert.False(new HintsLine().CanFocus);
-    }
-
-    [Fact]
-    public void Columns_are_display_columns_so_a_wide_glyph_takes_the_columns_it_is_drawn_in()
-    {
-        // Two wide characters take four columns, so the plain space is column 4 and the key after it is column 5.
-        Assert.Equal(4, TextWidth.Columns("文件"));
-        var line = new HintsLine();
-        line.Show(KeyHints.Concat(KeyHints.Bound('f', "文件"), KeyHints.Plain(" "), KeyHints.Bound('x', "x")));
-
-        Assert.Equal((Key)'f', line.KeyAt(0));
-        Assert.Equal((Key)'f', line.KeyAt(3));
-        Assert.Null(line.KeyAt(4));
-        Assert.Equal((Key)'x', line.KeyAt(5));
-        Assert.Null(line.KeyAt(6));
-    }
-
-    [Fact]
-    public void A_left_press_on_text_without_a_target_is_consumed_and_performs_nothing()
-    {
-        var line = new HintsLine();
-        line.Show(KeyHints.Timeline);
-
-        // "level" is at index 12 of the timeline's text: no target, no key.
-        Assert.True(line.HandleMouse(Press(KeyHints.Timeline.Text.IndexOf("level", StringComparison.Ordinal))));
-        Assert.Null(line.KeyAt(KeyHints.Timeline.Text.IndexOf("level", StringComparison.Ordinal)));
-    }
-
-    [Fact]
-    public void A_press_past_the_text_and_a_release_are_not_key_presses()
-    {
-        var line = new HintsLine();
-        line.Show(KeyHints.Timeline);
-
-        Assert.True(line.HandleMouse(Press(200)));
-        Assert.False(line.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonReleased, Position = new(0, 0) }));
-    }
-
-    [Fact]
-    public void The_target_cells_are_drawn_as_buttons_and_the_rest_of_the_row_on_the_bar_colours()
-    {
-        var line = new HintsLine();
-        line.Show(KeyHints.Timeline);
-
-        TerminalScreen screen = TerminalHarness.Run(line, 120, 1)[0];
-        string text = KeyHints.Timeline.Text;
-
-        Assert.Equal(text, screen.Text(0));
-        AssertButton(screen, 0, "f filter");
-        AssertButton(screen, text.IndexOf("-", StringComparison.Ordinal), "-");
-        AssertButton(screen, text.IndexOf("+", StringComparison.Ordinal), "+");
-        AssertBar(screen, text.IndexOf("level", StringComparison.Ordinal), "level");
-        AssertBar(screen, text.IndexOf("/", StringComparison.Ordinal), "/");
-        AssertBar(screen, text.IndexOf("  ", StringComparison.Ordinal), "separator");
-        AssertBar(screen, 119, "the empty end of the row");
-    }
-
-    private static Mouse Press(int x) => new() { Flags = MouseFlags.LeftButtonPressed, Position = new(x, 0) };
-
-    private static void AssertButton(TerminalScreen screen, int column, string what)
-    {
-        Attribute cell = screen.Cells[0][column].Attribute;
-        Assert.True(cell.Background.Equals(BarColors.TargetBackground), $"{what} background");
-        Assert.True(cell.Foreground.Equals(BarColors.TargetText), $"{what} text");
-    }
-
-    private static void AssertBar(TerminalScreen screen, int column, string what)
-    {
-        Attribute cell = screen.Cells[0][column].Attribute;
-        Assert.True(cell.Background.Equals(BarColors.Background), $"{what} background");
-        Assert.True(cell.Foreground.Equals(BarColors.Text), $"{what} text");
-    }
-}
 
 /// <summary>
 /// The hints of a real controller, clicked through the window with injected mouse events: each label performs its key in the focused view
@@ -380,24 +293,5 @@ public sealed class HintsLineDetailClickTests : IDisposable
         _store.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _app.Dispose();
         _set.Dispose();
-    }
-}
-
-/// <summary>The top bar: the bar colours, and a message in bold.</summary>
-public sealed class StatusBarTests
-{
-    [Fact]
-    public void The_text_is_drawn_on_the_bar_colours_and_a_message_is_bold()
-    {
-        var bar = new StatusBar();
-
-        List<TerminalScreen> screens = TerminalHarness.Run(bar, 40, 1, () => bar.Show("Copied", message: true));
-
-        Assert.Equal(TextStyle.None, screens[0].Cells[0][0].Attribute.Style);
-        Assert.Equal(TextStyle.Bold, screens[1].Cells[0][0].Attribute.Style);
-        Assert.Equal("Copied", screens[1].Text(0));
-        Assert.Equal(BarColors.Background, screens[1].Cells[0][0].Attribute.Background);
-        Assert.Equal(BarColors.Text, screens[1].Cells[0][0].Attribute.Foreground);
-        Assert.Equal(BarColors.Background, screens[1].Cells[0][39].Attribute.Background);
     }
 }

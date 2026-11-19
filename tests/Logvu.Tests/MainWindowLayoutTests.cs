@@ -1,5 +1,6 @@
 using Logvu.Core.Store;
 using Logvu.Tui;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 

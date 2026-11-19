@@ -1,5 +1,6 @@
 using System.Globalization;
 using Logvu.Core.Store;
+using Shared.Tui;
 
 namespace Logvu.Tui;
 

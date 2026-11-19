@@ -5,18 +5,18 @@ using Terminal.Gui.Input;
 namespace Logvu.Tests;
 
 /// <summary>
-/// The key hints as data: the texts are the ones the status line has always shown, each label's span performs its key, and the spans
-/// stay inside the text.
+/// The key hints of logvu as data: the texts are the ones the status line has always shown, each label's span performs its key, and the
+/// spans stay inside the text. The builders are tested with the shared hints (in Shared.Tui.Tests).
 /// </summary>
-public sealed class KeyHintsTests
+public sealed class LogvuHintsTests
 {
     [Fact]
     public void The_texts_are_the_hints_the_status_line_has_always_shown()
     {
-        Assert.Equal("f filter  -/+ level  Space pause/follow  c copy event  End newest  ^O open  ^Q quit", KeyHints.Timeline.Text);
-        Assert.Equal("f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^O open  ^Q quit", KeyHints.TimelineSelection.Text);
-        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back", KeyHints.Detail.Text);
-        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy selection  ←/Esc back", KeyHints.DetailSelection.Text);
+        Assert.Equal("f filter  -/+ level  Space pause/follow  c copy event  End newest  ^O open  ^Q quit", LogvuHints.Timeline.Text);
+        Assert.Equal("f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^O open  ^Q quit", LogvuHints.TimelineSelection.Text);
+        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back", LogvuHints.Detail.Text);
+        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy selection  ←/Esc back", LogvuHints.DetailSelection.Text);
         Assert.Equal("n older  N newer", SearchMessages.TimelineKeys.Text);
         Assert.Equal("n next  N prev", SearchMessages.DetailKeys.Text);
     }
@@ -24,16 +24,16 @@ public sealed class KeyHintsTests
     [Fact]
     public void The_controller_strings_are_the_texts_of_the_data()
     {
-        Assert.Equal(KeyHints.Timeline.Text, TimelineController.Hints);
-        Assert.Equal(KeyHints.TimelineSelection.Text, TimelineController.SelectionHints);
-        Assert.Equal(KeyHints.Detail.Text, TimelineController.DetailHints);
-        Assert.Equal(KeyHints.DetailSelection.Text, TimelineController.DetailSelectionHints);
+        Assert.Equal(LogvuHints.Timeline.Text, TimelineController.Hints);
+        Assert.Equal(LogvuHints.TimelineSelection.Text, TimelineController.SelectionHints);
+        Assert.Equal(LogvuHints.Detail.Text, TimelineController.DetailHints);
+        Assert.Equal(LogvuHints.DetailSelection.Text, TimelineController.DetailSelectionHints);
     }
 
     [Fact]
     public void Minus_and_plus_are_clickable_and_the_level_word_and_the_slash_are_not()
     {
-        Hint hint = KeyHints.Timeline;
+        Hint hint = LogvuHints.Timeline;
 
         Assert.Equal((Key)'-', KeyAt(hint, "-/+"));
         Assert.Equal((Key)'+', KeyAt(hint, "+ level"));
@@ -59,13 +59,13 @@ public sealed class KeyHintsTests
             _ => (Key)key[0],
         };
 
-        Assert.Equal(expected, KeyAt(KeyHints.Timeline, label));
+        Assert.Equal(expected, KeyAt(LogvuHints.Timeline, label));
     }
 
     [Fact]
     public void The_whole_label_of_a_detail_hint_performs_its_key_and_the_escape_hint_is_esc()
     {
-        Hint hint = KeyHints.Detail;
+        Hint hint = LogvuHints.Detail;
 
         Assert.Equal((Key)'f', KeyAt(hint, "f filter on value"));
         Assert.Equal(Key.Enter, KeyAt(hint, "Enter toggle"));
@@ -86,29 +86,20 @@ public sealed class KeyHintsTests
     }
 
     [Fact]
-    public void Joined_hints_keep_their_targets_at_their_places_in_the_joined_text()
+    public void Joined_search_and_timeline_hints_keep_their_targets_at_their_places_in_the_joined_text()
     {
-        Hint joined = KeyHints.Join(SearchMessages.TimelineKeys, KeyHints.Timeline);
+        Hint joined = KeyHints.Join(SearchMessages.TimelineKeys, LogvuHints.Timeline);
 
-        Assert.Equal("n older  N newer  " + KeyHints.Timeline.Text, joined.Text);
+        Assert.Equal("n older  N newer  " + LogvuHints.Timeline.Text, joined.Text);
         Assert.Equal((Key)'n', KeyAt(joined, "n older"));
         Assert.Equal((Key)'f', KeyAt(joined, "f filter"));
         Assert.Equal(Key.Q.WithCtrl, KeyAt(joined, "^Q quit"));
     }
 
     [Fact]
-    public void Concat_moves_each_part_s_targets_past_the_text_before_it()
-    {
-        Hint hint = KeyHints.Concat(KeyHints.Bound('a', "ab"), KeyHints.Plain("c"), KeyHints.Bound('d', "d"));
-
-        Assert.Equal("abcd", hint.Text);
-        Assert.Equal(new[] { new HintTarget(0, 2, (Key)'a'), new HintTarget(3, 1, (Key)'d') }, hint.Targets);
-    }
-
-    [Fact]
     public void Every_hint_has_its_targets_inside_its_text_and_not_overlapping()
     {
-        Hint[] all = [KeyHints.Timeline, KeyHints.TimelineSelection, KeyHints.Detail, KeyHints.DetailSelection, SearchMessages.TimelineKeys, SearchMessages.DetailKeys];
+        Hint[] all = [LogvuHints.Timeline, LogvuHints.TimelineSelection, LogvuHints.Detail, LogvuHints.DetailSelection, SearchMessages.TimelineKeys, SearchMessages.DetailKeys];
 
         foreach (Hint hint in all)
         {

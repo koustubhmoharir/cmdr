@@ -29,7 +29,7 @@ public sealed class RecentPicker<T> : Window
     private readonly FrameView _frame;
     private readonly RecentList _list;
     private readonly Label _empty;
-    private readonly StatusLine _status;
+    private readonly HintsLine _hints;
 
     /// <summary>
     /// Creates the picker over the recent list. Opened files and removals are saved to the list's store. A null
@@ -42,14 +42,17 @@ public sealed class RecentPicker<T> : Window
     /// message to show when it did not. The value is kept as <see cref="Opened"/>, so it is not loaded twice.
     /// </param>
     /// <param name="title">The title of the frame around the list.</param>
-    /// <param name="hint">The key hints on the status line. Lists the Open file keys when <paramref name="openFile"/> is set.</param>
+    /// <param name="hint">
+    /// The key hints on the bottom row. A click on a key's label performs the key, as typing it does. Lists the Open file keys when
+    /// <paramref name="openFile"/> is set.
+    /// </param>
     /// <param name="openFile">Whether the Open file action is enabled: <c>o</c> and Ctrl+O show a file dialog for a <c>.json</c> file.</param>
     public RecentPicker(
         IApplication app,
         RecentFiles? recent,
         Func<string, (T? Value, string? Error)> tryOpen,
         string title,
-        string hint,
+        Hint hint,
         bool openFile)
         : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null)
     {
@@ -66,7 +69,7 @@ public sealed class RecentPicker<T> : Window
         RecentFiles? recent,
         Func<string, (T? Value, string? Error)> tryOpen,
         string title,
-        string hint,
+        Hint hint,
         bool openFile,
         Action<string>? showError,
         Func<string?>? pickFile)
@@ -115,10 +118,10 @@ public sealed class RecentPicker<T> : Window
         _frame = new FrameView { Title = title, X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1) };
         _frame.Add(_list, _empty);
 
-        _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        _status.Show(hint, message: false);
+        _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
+        _hints.Show(hint);
 
-        Add(_frame, _status);
+        Add(_frame, _hints);
         Rebuild(0);
         _list.SetFocus();
     }
@@ -139,6 +142,8 @@ public sealed class RecentPicker<T> : Window
     internal ListView Rows => _list;
 
     internal Label EmptyLine => _empty;
+
+    internal HintsLine HintsRow => _hints;
 
     /// <summary>Esc keeps its default Quit binding; Ctrl+Q quits too.</summary>
     protected override bool OnKeyDown(Key key)

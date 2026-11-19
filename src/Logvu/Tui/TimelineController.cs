@@ -50,17 +50,17 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         Quit,
     }
 
-    /// <summary>The text of the key hints with no selection in the timeline. The data is <see cref="KeyHints.Timeline"/>.</summary>
-    internal static string Hints => KeyHints.Timeline.Text;
+    /// <summary>The text of the key hints with no selection in the timeline. The data is <see cref="LogvuHints.Timeline"/>.</summary>
+    internal static string Hints => LogvuHints.Timeline.Text;
 
     /// <summary>The text of the key hints while the timeline's selected row has a selection, which <c>c</c> copies.</summary>
-    internal static string SelectionHints => KeyHints.TimelineSelection.Text;
+    internal static string SelectionHints => LogvuHints.TimelineSelection.Text;
 
     /// <summary>The text of the key hints while the detail is open and has no selection.</summary>
-    internal static string DetailHints => KeyHints.Detail.Text;
+    internal static string DetailHints => LogvuHints.Detail.Text;
 
     /// <summary>The text of the key hints while the detail is open and has a selection, which <c>c</c> copies.</summary>
-    internal static string DetailSelectionHints => KeyHints.DetailSelection.Text;
+    internal static string DetailSelectionHints => LogvuHints.DetailSelection.Text;
 
     /// <summary>How long a new retention gap stays on the status line. The gap stays in the store's status.</summary>
     internal static readonly TimeSpan GapShownFor = TimeSpan.FromSeconds(10);
@@ -736,8 +736,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _view.Placeholder = BodyText();
         _statusLeft = _detail is { } session ? DetailLeft(session, _notice, _search.Status) : LeftText();
         Hint keys = _detail is { } open
-            ? (open.View.HasSelection ? KeyHints.DetailSelection : KeyHints.Detail)
-            : (_view.HasSelection ? KeyHints.TimelineSelection : KeyHints.Timeline);
+            ? (open.View.HasSelection ? LogvuHints.DetailSelection : LogvuHints.Detail)
+            : (_view.HasSelection ? LogvuHints.TimelineSelection : LogvuHints.Timeline);
         Hint hints = _search.KeyHint(inDetail) is { } search ? KeyHints.Join(search, keys) : keys;
         _statusHints = hints.Text;
         _statusLine.Show(_statusLeft, message: false);

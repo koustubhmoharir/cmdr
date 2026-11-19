@@ -1,11 +1,10 @@
 using System.Text;
-using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
-namespace Logvu.Tui;
+namespace Shared.Tui;
 
 /// <summary>
 /// The key hints on the window's last row. The row is drawn on the bar colours (<see cref="BarColors"/>), left-aligned and cut at the right
@@ -13,8 +12,7 @@ namespace Logvu.Tui;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Clicks.</b> A left button press on a target performs its key. The press is handled, not the release, as the timeline and the detail
-/// handle theirs. The key is raised through the application's keyboard (<see cref="Terminal.Gui.App.IKeyboard.RaiseKeyDownEvent(Terminal.Gui.Input.Key)"/>), as a key press from the
+/// <b>Clicks.</b> A left button press on a target performs its key. The press is handled, not the release. The key is raised through the application's keyboard (<see cref="Terminal.Gui.App.IKeyboard.RaiseKeyDownEvent(Terminal.Gui.Input.Key)"/>), as a key press from the
 /// terminal is: the focused view takes it first, then the window. A press on text with no target, or past the text, does nothing.
 /// </para>
 /// <para>
@@ -22,7 +20,7 @@ namespace Logvu.Tui;
 /// is by display columns, measured with <see cref="TextWidth.Columns"/>, so a wide glyph such as <c>←</c> takes the columns it is drawn in.
 /// </para>
 /// </remarks>
-internal sealed class HintsLine : View
+public sealed class HintsLine : View
 {
     private Hint _shown = KeyHints.Plain(string.Empty);
 
