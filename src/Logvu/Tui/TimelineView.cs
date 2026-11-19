@@ -3,7 +3,9 @@ using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Shared.Core;
 using Shared.Tui;
+using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
@@ -28,6 +30,12 @@ namespace Logvu.Tui;
 /// or the selected event without one, and Esc clears a selection before anything else. A selection is forgotten when its row stops being the
 /// selected one or stops being shown.
 /// </para>
+/// <para>
+/// Every other row is striped, by its position in the viewport: the event rows are numbered from 0 at the first row below the header, and the
+/// odd-numbered ones (screen rows 2, 4, …) get the background of <see cref="RowStripe"/>. A striped row is drawn in full, its gutter and the
+/// padding to the right edge included, and the stripe moves with the screen position rather than with the content when the page scrolls. The
+/// header is not striped. The shade is redrawn when the terminal reports its default colors (see <see cref="Subscribe"/>).
+/// </para>
 /// </remarks>
 internal sealed class TimelineView : View
 {
@@ -50,6 +58,7 @@ internal sealed class TimelineView : View
     private bool _dimHeld;
     private SelectionState? _selection;
     private bool _dragging;
+    private IDriver? _subscribedDriver;
 
     /// <summary>Creates the view. It draws nothing but its header until a placeholder or rows are shown.</summary>
     /// <param name="model">The model the view draws and drives.</param>
@@ -64,6 +73,9 @@ internal sealed class TimelineView : View
         _zone = zone;
         _columns = columns ?? Array.Empty<ColumnSpec>();
         CanFocus = true;
+
+        // The driver, and so the terminal's default colors, is known once the view is initialized in the application.
+        Initialized += (_, _) => Subscribe();
     }
 
     /// <summary>Raised when the view's height changes, with the model's viewport height for the new height.</summary>
@@ -321,6 +333,45 @@ internal sealed class TimelineView : View
     }
 
     /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            Unsubscribe();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    /// <summary>
+    /// Redraws when the driver's default attribute changes. The terminal reports its default colors a moment after startup, so the stripe
+    /// starts from the fallback shade and switches to the terminal's shade when the reply arrives.
+    /// </summary>
+    private void Subscribe()
+    {
+        IDriver? driver = App?.Driver;
+        if (driver is null || ReferenceEquals(driver, _subscribedDriver))
+        {
+            return;
+        }
+
+        Unsubscribe();
+        driver.DefaultAttributeChanged += OnDefaultAttributeChanged;
+        _subscribedDriver = driver;
+    }
+
+    private void Unsubscribe()
+    {
+        if (_subscribedDriver is { } driver)
+        {
+            driver.DefaultAttributeChanged -= OnDefaultAttributeChanged;
+            _subscribedDriver = null;
+        }
+    }
+
+    private void OnDefaultAttributeChanged(object? sender, ValueChangedEventArgs<Attribute?> e) => SetNeedsDraw();
+
+    /// <inheritdoc/>
     protected override bool OnKeyDown(Key key) => HandleKey(key) || base.OnKeyDown(key);
 
     /// <inheritdoc/>
@@ -338,23 +389,34 @@ internal sealed class TimelineView : View
 
         Attribute normal = GetAttributeForRole(VisualRole.Normal);
         var header = new Attribute(normal.Foreground, normal.Background, TextStyle.Bold);
+        var shade = new RowShade(normal.Background, RowStripe.For(normal, App?.Driver?.DefaultAttribute));
 
         IReadOnlyList<EventRow> visible = _model.ShownRows;
         bool faint = _dimHeld && _model.IsHolding;
         TimelinePage page = ComposePage(visible);
         ShownSelection? selection = Current(visible, page);
 
-        DrawGutter(0, normal, cursor: false);
-        DrawLine(0, TimelineLayout.Header(page.Columns, _columns), page.Columns, header, active: false, faint: false, highlight: (0, 0));
+        DrawGutter(0, normal, cursor: false, stripe: null);
+        DrawLine(0, TimelineLayout.Header(page.Columns, _columns), page.Columns, header, active: false, faint: false, highlight: (0, 0), stripe: null);
 
         for (int i = 0; i < page.Lines.Count && i + 1 < height; i++)
         {
-            DrawGutter(i + 1, normal, cursor: i == _model.ShownSelectedScreenRow);
+            // The event rows are numbered from 0 in the viewport, so the odd ones are striped; the screen row is one more.
+            int row = i + 1;
+            RowShade? stripe = i % 2 == 1 ? shade : null;
+            if (stripe is { } striped)
+            {
+                Move(0, row);
+                SetAttribute(RowStripe.Apply(normal, striped.Normal, striped.Stripe));
+                AddStr(new string(' ', width));
+            }
+
+            DrawGutter(row, normal, cursor: i == _model.ShownSelectedScreenRow, stripe);
             bool active = _activeRow is { } key && key == visible[i].Key;
             (int From, int To) highlight = selection is { Range.IsEmpty: false } s && s.Index == i
                 ? (s.Range.Start.Offset, s.Range.End.Offset)
                 : (0, 0);
-            DrawLine(i + 1, page.Lines[i], page.Columns, normal, active, faint, highlight);
+            DrawLine(row, page.Lines[i], page.Columns, normal, active, faint, highlight, stripe);
         }
 
         if (visible.Count == 0 && _placeholder is { } text && height > 1)
@@ -573,7 +635,7 @@ internal sealed class TimelineView : View
     /// <summary>
     /// Draws one line: each column at its offset, with the attribute of its cell. The extra columns and the message are searched; the
     /// time and the level are not. A faint line is drawn with the faint style on every cell. The <paramref name="highlight"/> is the
-    /// selected range of the row's text, drawn in reverse video.
+    /// selected range of the row's text, drawn in reverse video. A <paramref name="stripe"/> is the row's shade, when it is striped.
     /// </summary>
     private void DrawLine(
         int row,
@@ -582,7 +644,8 @@ internal sealed class TimelineView : View
         Attribute baseline,
         bool active,
         bool faint,
-        (int From, int To) highlight)
+        (int From, int To) highlight,
+        RowShade? stripe)
     {
         int x = Gutter;
         int origin = 0;
@@ -595,7 +658,7 @@ internal sealed class TimelineView : View
                 return;
             }
 
-            DrawCell(x, row, width, text, attribute, searched, active, faint, origin, highlight);
+            DrawCell(x, row, width, text, attribute, searched, active, faint, origin, highlight, stripe);
             x += width + 1;
             origin += text.Length + 1;
         }
@@ -614,7 +677,8 @@ internal sealed class TimelineView : View
     /// Draws one cell. A searched cell is drawn in runs: its matches in the match colors, or the active colors on the active row, and
     /// the rest in <paramref name="attribute"/>. The matches are those of the cell's text as drawn. A faint cell adds the faint style to
     /// each run's attribute, and the selected characters are drawn in reverse video. <paramref name="origin"/> is the cell's offset in the
-    /// row's text, which <paramref name="highlight"/> is in.
+    /// row's text, which <paramref name="highlight"/> is in. On a striped row, the pieces on the normal background take the stripe; the
+    /// selected pieces keep their reverse video, and the matches and labels keep their own backgrounds.
     /// </summary>
     private void DrawCell(
         int x,
@@ -626,7 +690,8 @@ internal sealed class TimelineView : View
         bool active,
         bool faint,
         int origin,
-        (int From, int To) highlight)
+        (int From, int To) highlight,
+        RowShade? stripe)
     {
         if (width <= 0)
         {
@@ -648,7 +713,9 @@ internal sealed class TimelineView : View
                     : run.End;
                 Attribute painted = SearchHighlight.Paint(attribute, run.Kind);
                 painted = faint ? Faint(painted) : painted;
-                painted = selected ? SelectionColors.Invert(painted) : painted;
+                painted = selected ? SelectionColors.Invert(painted)
+                    : stripe is { } shade ? RowStripe.Apply(painted, shade.Normal, shade.Stripe)
+                    : painted;
                 Move(x + TextWidth.Columns(text[..at]), row);
                 SetAttribute(painted);
                 AddStr(text[at..next]);
@@ -657,18 +724,23 @@ internal sealed class TimelineView : View
         }
     }
 
-    /// <summary>Draws the gutter cell of a row: the cursor glyph in bold on the selected row, a blank otherwise.</summary>
-    private void DrawGutter(int row, Attribute normal, bool cursor)
+    /// <summary>
+    /// Draws the gutter cell of a row: the cursor glyph in bold on the selected row, a blank otherwise. On a striped row the cell takes the
+    /// stripe.
+    /// </summary>
+    private void DrawGutter(int row, Attribute normal, bool cursor, RowShade? stripe)
     {
+        Attribute Painted(Attribute attribute) => stripe is { } shade ? RowStripe.Apply(attribute, shade.Normal, shade.Stripe) : attribute;
+
         Move(0, row);
         if (cursor)
         {
-            SetAttribute(new Attribute(normal.Foreground, normal.Background, TextStyle.Bold));
+            SetAttribute(Painted(new Attribute(normal.Foreground, normal.Background, TextStyle.Bold)));
             AddStr(">");
         }
         else
         {
-            SetAttribute(normal);
+            SetAttribute(Painted(normal));
             AddStr(" ");
         }
     }
@@ -685,4 +757,7 @@ internal sealed class TimelineView : View
 
     /// <summary>A selection in the shown rows: the index of its row, the row's text and the selected range in it.</summary>
     private readonly record struct ShownSelection(int Index, string Text, LogicalRange Range);
+
+    /// <summary>The shade of a striped row: the normal background it replaces, and the stripe that replaces it.</summary>
+    private readonly record struct RowShade(Color Normal, Color Stripe);
 }

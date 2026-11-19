@@ -90,6 +90,10 @@ search first; each key's label is drawn as a button, and a click on it performs 
 The `>` in the left column marks the selected event. A text selection stays in the row it was made in, and is cleared when that
 row is no longer the selected one or scrolls out of view.
 
+Alternate rows have a subtle background: every other event row, counted from the top of the page (the second, fourth, … row on screen),
+is drawn in a shade a little toward the foreground from the background. The shade follows the terminal's own colours when the terminal reports
+them, and otherwise a fixed dark shade. Cells with their own background, such as search matches, levels and a selection, keep it.
+
 Any movement pauses Follow; scrolling back to the bottom stays paused until Space or End.
 
 **Detail.** The fields of a text event as written, in pattern order, `message` as a multi-line value — or, for JSON, the expandable tree of the

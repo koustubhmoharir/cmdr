@@ -58,7 +58,8 @@ public sealed class TimelineSelectionTests
         Attribute warn = screen.At("WARN");
         Assert.Equal(">", screen.Cells[2][0].Grapheme);
         Assert.Equal(LevelColors.Warn, warn.Foreground);
-        Assert.Equal(screen.Normal.Background, warn.Background);
+        // The row is the second event, so it is striped: its label keeps the level color and takes the stripe as its background.
+        Assert.Equal(RowStripe.For(screen.Normal, null), warn.Background);
         Assert.False(warn.Style.HasFlag(TextStyle.Reverse));
     }
 
