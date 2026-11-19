@@ -81,7 +81,7 @@ search first. While the search bar is open it sits on the row above those keys.
 | `n` or F3 / `N` or Shift+F3 | Next match toward older / newer events |
 | `f` / `F` | Edit the filter / clear it |
 | `-` or `_` / `=` or `+` | Lower / raise the minimum level (any → Debug → Info → Warn → Error → Fatal), keeping the rest of the filter |
-| Mouse | Wheel scrolls; a click selects (and pauses); dragging selects text within that row |
+| Mouse | Wheel scrolls; a click selects (and pauses); dragging selects text within that row; a double-click opens the event's detail |
 | `c` | Copy the selected text, or without a selection the whole event as its detail shows it with everything expanded, with the indentation the lines share removed |
 | Ctrl+O | Open another log set from the recent configs (Esc returns, ^Q quits) |
 | Esc | Clears a selection; without one, cancels a running scan |
@@ -102,7 +102,7 @@ Runs of framework frames get a `… N framework frames` marker that folds them. 
 |---|---|
 | ↑ / ↓ or `k` / `j`, PgUp / PgDn, Home / End | Move the cursor (the `>` in the left column marks its line) |
 | Shift+↑ / Shift+↓, Shift+PgUp / Shift+PgDn | Select whole lines from the cursor |
-| Mouse | A click moves the cursor; dragging selects text, and dragging past the top or bottom scrolls |
+| Mouse | A click moves the cursor; dragging selects text, and dragging past the top or bottom scrolls; a click on the ▾ or ▸ of a node, or on a `… N framework frames` marker, toggles it |
 | `c` | Copy the selection, or the cursor line without one, with the indentation the lines share removed |
 | Enter / Space | Expand or collapse the node or fold under the cursor |
 | `z` | Fold or unfold all framework-frame runs |

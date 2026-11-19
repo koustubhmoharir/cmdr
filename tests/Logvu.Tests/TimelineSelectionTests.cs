@@ -4,9 +4,12 @@ using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Logvu.Tui;
 using Shared.Tui;
+using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
+using Terminal.Gui.Testing;
 using Terminal.Gui.ViewBase;
+using Terminal.Gui.Views;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Logvu.Tests;
@@ -66,7 +69,9 @@ public sealed class TimelineSelectionTests
         model.Start(3);
         var view = new TimelineView(model, TimeZoneInfo.Utc);
         var copied = new List<string>();
+        var opened = new List<RowKey>();
         view.CopyRequested += copied.Add;
+        view.OpenRequested += opened.Add;
 
         List<TerminalScreen> screens = TerminalHarness.Run(
             view,
@@ -80,6 +85,7 @@ public sealed class TimelineSelectionTests
         Assert.Equal(TimelineMode.Paused, model.Mode);
         Assert.Equal("r0", model.SelectedRow!.Preview);
         Assert.Equal(new[] { "00." }, copied);
+        Assert.Empty(opened);
     }
 
     [Fact]
@@ -352,7 +358,154 @@ public sealed class TimelineSelectionTests
         Assert.Equal(new SearchSeed("10:00:", 0, 0), seed);
     }
 
+    [Fact]
+    public void A_double_click_on_a_row_opens_it_once_through_the_real_input_pipeline()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        app.Driver!.SetScreenSize(Width, Height);
+
+        // Screen row 2 is the second event, r1: the header is row 0.
+        TerminalHarness.RunWindow(
+            app,
+            Hosting(view),
+            Width,
+            Height,
+            () => app.InjectSequence(InputInjectionExtensions.LeftButtonDoubleClick(new(8, 2))),
+            () =>
+            {
+                Assert.Equal(new[] { Row(1, LogLevel.Unknown).Key }, opened);
+                Assert.False(view.HasSelection);
+                Assert.Equal("r1", model.SelectedRow!.Preview);
+            });
+    }
+
+    [Fact]
+    public void A_double_click_sent_as_its_flags_opens_the_row_and_leaves_no_selection()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 8, y: 2)),
+            () => view.HandleMouse(Release(x: 8, y: 2)),
+            () => view.HandleMouse(Clicked(x: 8, y: 2)),
+            () => view.HandleMouse(Press(x: 8, y: 2)),
+            () => view.HandleMouse(Release(x: 8, y: 2)),
+            () => Assert.True(view.HandleMouse(DoubleClicked(x: 8, y: 2))),
+            () =>
+            {
+                Assert.Equal(new[] { Row(1, LogLevel.Unknown).Key }, opened);
+                Assert.False(view.HasSelection);
+                Assert.Equal("r1", model.SelectedRow!.Preview);
+            });
+    }
+
+    [Fact]
+    public void A_double_click_on_the_header_opens_nothing_and_selects_nothing()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 8, y: 0)),
+            () => view.HandleMouse(Release(x: 8, y: 0)),
+            () => view.HandleMouse(Clicked(x: 8, y: 0)),
+            () => view.HandleMouse(Press(x: 8, y: 0)),
+            () => view.HandleMouse(Release(x: 8, y: 0)),
+            () =>
+            {
+                Assert.False(view.HandleMouse(DoubleClicked(x: 8, y: 0)));
+                Assert.Empty(opened);
+                Assert.False(view.HasSelection);
+            });
+    }
+
+    [Fact]
+    public void A_double_click_on_the_empty_row_below_the_last_row_opens_nothing()
+    {
+        // Two rows in a view of three: the third row of the viewport, at screen row 3, is empty.
+        TimelineModel model = Model(Store(2));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 8, y: 3)),
+            () => view.HandleMouse(Release(x: 8, y: 3)),
+            () => view.HandleMouse(Clicked(x: 8, y: 3)),
+            () => view.HandleMouse(Press(x: 8, y: 3)),
+            () => view.HandleMouse(Release(x: 8, y: 3)),
+            () =>
+            {
+                Assert.False(view.HandleMouse(DoubleClicked(x: 8, y: 3)));
+                Assert.Empty(opened);
+                Assert.False(view.HasSelection);
+            });
+    }
+
+    [Fact]
+    public void A_single_click_selects_the_row_without_opening_it()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var opened = new List<RowKey>();
+        view.OpenRequested += opened.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 8, y: 2)),
+            () => view.HandleMouse(Release(x: 8, y: 2)),
+            () => view.HandleMouse(Clicked(x: 8, y: 2)),
+            () =>
+            {
+                Assert.Empty(opened);
+                Assert.False(view.HasSelection);
+                Assert.Equal("r1", model.SelectedRow!.Preview);
+            });
+    }
+
     private static Mouse Press(int x, int y) => new() { Flags = MouseFlags.LeftButtonPressed, Position = new(x, y) };
+
+    private static Mouse Clicked(int x, int y) => new() { Flags = MouseFlags.LeftButtonClicked, Position = new(x, y) };
+
+    private static Mouse DoubleClicked(int x, int y) => new() { Flags = MouseFlags.LeftButtonDoubleClicked, Position = new(x, y) };
+
+    /// <summary>A window that fills the test size with the view, and has no border, as <see cref="TerminalHarness.Run"/> lays it out.</summary>
+    private static Window Hosting(View content)
+    {
+        content.X = 0;
+        content.Y = 0;
+        content.Width = Dim.Fill();
+        content.Height = Dim.Fill();
+        var window = new Window { BorderStyle = LineStyle.None };
+        window.Add(content);
+        return window;
+    }
 
     private static Mouse Drag(int x, int y) => new() { Flags = MouseFlags.PositionReport, Position = new(x, y) };
 

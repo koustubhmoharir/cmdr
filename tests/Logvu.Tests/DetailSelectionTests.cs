@@ -416,6 +416,146 @@ public sealed class DetailSelectionTests
         Assert.Null(seed);
     }
 
+    [Fact]
+    public void A_press_on_the_marker_of_an_expanded_node_collapses_it_and_on_a_collapsed_one_expands_it()
+    {
+        DetailView view = Loaded(DetailFixtures.Json(DetailFixtures.JsonEvent), DetailFixtures.Config());
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v => PressMarker(v, LineIndex(v, line => line.NodeId == "Properties")),
+            v => PressMarker(v, LineIndex(v, line => line.NodeId == "Properties")));
+
+        // Screen 0 is the first draw; screen n is the draw after step n.
+        Assert.Contains("▾ Properties", Screen(screens[0]), StringComparison.Ordinal);
+        Assert.Contains("Scope", Screen(screens[0]), StringComparison.Ordinal);
+        Assert.Contains("▸ Properties", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.DoesNotContain("Scope", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.Contains("▾ Properties", Screen(screens[2]), StringComparison.Ordinal);
+        Assert.Contains("Scope", Screen(screens[2]), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_press_on_the_text_of_a_fold_marker_toggles_the_fold()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        int fold = LineIndex(view, line => line.Kind == LineKind.Fold);
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v => PressMarker(v, fold),
+            v => PressMarker(v, fold));
+
+        // The fold starts expanded, so its frames are drawn; the first press folds them away and the second unfolds them again.
+        Assert.Contains("System.Threading.Tasks.Task.Execute", Screen(screens[0]), StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Threading.Tasks.Task.Execute", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.Contains("System.Threading.Tasks.Task.Execute", Screen(screens[2]), StringComparison.Ordinal);
+        Assert.Equal(LineKind.Fold, view.Document!.Lines[view.CursorLine].Kind);
+    }
+
+    [Fact]
+    public void A_press_on_the_label_of_a_node_moves_the_cursor_and_selects_without_toggling_it()
+    {
+        DetailView view = Loaded(DetailFixtures.Json(DetailFixtures.JsonEvent), DetailFixtures.Config());
+        int line = LineIndex(view, l => l.NodeId == "Properties");
+        int marker = MarkerColumn(view.Document!.Lines[line]);
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v =>
+            {
+                SelectInRow(v, line, marker + 2, marker + 6);
+                Assert.True(v.HasSelection);
+                Assert.Equal(line, v.CursorLine);
+            });
+
+        Assert.Contains("Scope", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.Contains("▾ Properties", Screen(screens[1]), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_press_at_the_marker_column_of_a_continuation_row_of_a_wrapped_node_does_not_toggle_it()
+    {
+        // The child's label is 120 characters, so its line wraps at the width of 100 less the gutter and the pad.
+        string key = new('k', 120);
+        string json = "{\"Timestamp\":\"2026-11-18T10:20:31.007Z\",\"Level\":\"Error\",\"RenderedMessage\":\"Failed\","
+            + "\"Properties\":{\"" + key + "\":{\"Id\":7}}}";
+        DetailView view = Loaded(DetailFixtures.Json(json), DetailFixtures.Config());
+        int line = LineIndex(view, l => l.NodeId is not null && l.Text.Contains("kkkk", StringComparison.Ordinal));
+        Assert.True(new DetailWrap(view.Document!.Lines[line], Width - DetailView.Gutter).RowCount >= 2, "expected the label to wrap");
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v =>
+            {
+                // The continuation row: the first row is RowOf(line), so this is the next one, at the marker's column.
+                int marker = MarkerColumn(v.Document!.Lines[line]);
+                Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(DetailView.Gutter + marker, RowOf(v, line) + 1) }));
+                Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonReleased, Position = new(DetailView.Gutter + marker, RowOf(v, line) + 1) }));
+            },
+            v => PressMarker(v, line));
+
+        Assert.Contains("Id: 7", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.DoesNotContain("Id: 7", Screen(screens[2]), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_press_on_a_node_marker_moves_the_cursor_to_the_node_without_a_selection_and_keeps_the_viewport_top()
+    {
+        // Fifteen fields, then a node, then forty-eight more fields: the node is on line 19 of the document, and three wheel events scroll
+        // the viewport by nine rows, so it is drawn on screen row 10 and the viewport is not at the bottom.
+        string before = string.Concat(Enumerable.Range(0, 15).Select(i => $"\"f{i:00}\":{i},"));
+        string after = string.Concat(Enumerable.Range(15, 49).Select(i => $",\"f{i:00}\":{i}"));
+        string json = "{\"Timestamp\":\"2026-11-18T10:20:31.007Z\",\"Level\":\"Error\",\"RenderedMessage\":\"Failed\","
+            + "\"Properties\":{" + before + "\"Nested\":{\"Id\":7}" + after + "}}";
+        DetailView view = Loaded(DetailFixtures.Json(json), DetailFixtures.Config());
+        int line = LineIndex(view, l => l.NodeId is not null && l.Text.Contains("Nested", StringComparison.Ordinal));
+        int marker = MarkerColumn(view.Document!.Lines[line]);
+        Assert.Equal(19, line);
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v =>
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.WheeledDown }));
+                }
+            },
+            v =>
+            {
+                // A press on a marker toggles the node and takes no grab, so there is no release to handle.
+                Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(DetailView.Gutter + marker, line - 9) }));
+                Assert.False(v.HasSelection);
+                Assert.Equal(line, v.CursorLine);
+            });
+
+        Assert.Contains("Id: 7", Screen(screens[1]), StringComparison.Ordinal);
+        Assert.Equal(10, screens[1].RowOf("Nested"));
+        Assert.Equal(screens[1].Text(0), screens[2].Text(0));
+        Assert.DoesNotContain("Id: 7", Screen(screens[2]), StringComparison.Ordinal);
+    }
+
+    /// <summary>A press on the marker of a line: the first non-space character of its text, on its first row.</summary>
+    private static void PressMarker(DetailView view, int line)
+    {
+        int marker = MarkerColumn(view.Document!.Lines[line]);
+        Assert.True(view.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(DetailView.Gutter + marker, RowOf(view, line)) }));
+    }
+
+    /// <summary>The column of the first character that is not a space: where the marker of a line starts, after its pad.</summary>
+    private static int MarkerColumn(DetailLine line) => line.Text.Length - line.Text.TrimStart(' ').Length;
+
+    private static int LineIndex(DetailView view, Func<DetailLine, bool> match)
+    {
+        int index = view.Document!.Lines.ToList().FindIndex(line => match(line));
+        Assert.True(index >= 0, "no line matches");
+        return index;
+    }
+
+    /// <summary>The text of a whole screen, one row per line.</summary>
+    private static string Screen(TerminalScreen screen) => string.Join("\n", Enumerable.Range(0, Height).Select(screen.Text));
+
     private static DetailView Loaded(EventDetail detail, LogvuConfig config)
     {
         var view = new DetailView();

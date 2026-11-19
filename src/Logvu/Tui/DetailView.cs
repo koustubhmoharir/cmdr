@@ -26,7 +26,8 @@ namespace Logvu.Tui;
 /// The cursor is always on a logical line. Its first row shows a <c>&gt;</c> in the gutter, the column left of the text; the text starts
 /// at the column after it and wraps to the width less the gutter. The cursor's first row is kept in view when the cursor
 /// moves; a line taller than the view shows from its first row. A click moves the cursor to the line of the row it is on, without moving
-/// the viewport, and starts a character selection that a drag extends. Shift with the arrows, Page Up and Page Down select whole lines
+/// the viewport, and starts a character selection that a drag extends. A click on the ▾ or ▸ of a node, or on the text of a fold's
+/// marker, toggles it instead and starts no selection. Shift with the arrows, Page Up and Page Down select whole lines
 /// from the cursor. <c>c</c> copies the selection, or the cursor line without one, with the indentation the lines share removed. Esc clears
 /// a selection before it closes the view.
 /// </para>
@@ -299,9 +300,10 @@ internal sealed class DetailView : View
     }
 
     /// <summary>
-    /// Handles a mouse event. A wheel event moves the viewport by <see cref="WheelRows"/> rows. A left press moves the cursor to the line of
-    /// the row it is on, without moving the viewport, and starts a character selection there. A drag extends it, and a release without a
-    /// drag leaves no selection. The mouse is grabbed from the press to the release.
+    /// Handles a mouse event. A wheel event moves the viewport by <see cref="WheelRows"/> rows. A left press on the marker of a node (its
+    /// ▾ or ▸, on the node's first row) or on the text of a fold's marker toggles it, and starts no selection. Any other left press moves the
+    /// cursor to the line of the row it is on, without moving the viewport, and starts a character selection there. A drag extends it, and a
+    /// release without a drag leaves no selection. The mouse is grabbed from the press to the release.
     /// </summary>
     /// <param name="mouse">The mouse event.</param>
     /// <returns><c>true</c> when the event was a wheel or press event over the document, or part of a drag.</returns>
@@ -341,6 +343,11 @@ internal sealed class DetailView : View
 
         if (mouse.Flags.HasFlag(MouseFlags.LeftButtonPressed))
         {
+            if (ToggleAtMarker(mouse))
+            {
+                return true;
+            }
+
             BeginDrag(mouse);
             return true;
         }
@@ -769,6 +776,49 @@ internal sealed class DetailView : View
         ScreenRows(height)
             .Select(row => new SelectionRow(row.Line, row.Row.Start, row.Row.Start + row.Row.Length, Gutter + row.Row.Indent))
             .ToList();
+
+    /// <summary>
+    /// Left press on a marker: toggles the node or fold whose marker the pointer is on, and moves the cursor to its line. The marker of a
+    /// node is its ▾ or ▸, on the node's first row; the marker of a fold is its text, from the marker to the end of the line. Returns
+    /// <c>false</c> for any other press, which then starts a selection as before.
+    /// </summary>
+    private bool ToggleAtMarker(Mouse mouse)
+    {
+        List<ScreenRow> rows = ScreenRows(ViewportRows);
+        int y = mouse.Position?.Y ?? 0;
+        if (y < 0 || y >= rows.Count)
+        {
+            return false;
+        }
+
+        ScreenRow screen = rows[y];
+        if (screen.Index != 0)
+        {
+            return false;
+        }
+
+        DetailLine line = _document!.Lines[screen.Line];
+        if (line.NodeId is null)
+        {
+            return false;
+        }
+
+        // The marker starts at the first character that is not a space, after the pad of the line.
+        int marker = line.Text.Length - line.Text.TrimStart(' ').Length;
+        int column = (mouse.Position?.X ?? 0) - Gutter;
+        bool hit = line.Kind == LineKind.Fold
+            ? column >= marker && column < line.Text.Length
+            : column == marker && marker < line.Text.Length && (line.Text[marker] is '▾' or '▸');
+        if (!hit)
+        {
+            return false;
+        }
+
+        SetFocus();
+        _cursor = screen.Line;
+        ToggleCursorNode();
+        return true;
+    }
 
     /// <summary>
     /// Left press: moves the cursor to the line under the pointer and starts a character selection there. The mouse is grabbed, so the

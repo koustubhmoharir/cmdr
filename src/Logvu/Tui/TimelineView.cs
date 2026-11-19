@@ -23,7 +23,8 @@ namespace Logvu.Tui;
 /// <para>
 /// Column 0 is a gutter: the selected row shows <c>&gt;</c> there, and the header and the other rows are blank. The text starts at
 /// <see cref="Gutter"/>. A click selects the row under the pointer and starts a character selection on that row's text (see
-/// <see cref="TimelineLayout.Text"/>); a drag extends it within the row, and only the pointer's column counts. <c>c</c> copies the selection,
+/// <see cref="TimelineLayout.Text"/>); a drag extends it within the row, and only the pointer's column counts. A double-click on a row opens
+/// its event's detail, as Enter does, and leaves no selection. <c>c</c> copies the selection,
 /// or the selected event without one, and Esc clears a selection before anything else. A selection is forgotten when its row stops being the
 /// selected one or stops being shown.
 /// </para>
@@ -214,11 +215,15 @@ internal sealed class TimelineView : View
     /// <summary>
     /// Handles a mouse event. A left press on a row selects that row and pauses, without moving the viewport, and starts a character
     /// selection on its text; a press elsewhere clears the selection. A drag extends the selection within the row, and a release without a
-    /// drag leaves none. The mouse is grabbed from the press to the release. A wheel event moves the viewport by <see cref="WheelRows"/>
+    /// drag leaves none. The mouse is grabbed from the press to the release. A double-click on a row opens it, as Enter does, and leaves no
+    /// selection; a double-click on the header or below the rows does nothing. A wheel event moves the viewport by <see cref="WheelRows"/>
     /// rows per event: up toward older rows and down toward newer ones.
     /// </summary>
     /// <param name="mouse">The mouse event.</param>
-    /// <returns><c>true</c> when the event was a press or a wheel event, or part of a drag.</returns>
+    /// <returns>
+    /// <c>true</c> when the event was a press, a double-click on a row, a wheel event or part of a drag. <c>false</c> for a double-click that
+    /// is not on a row.
+    /// </returns>
     internal bool HandleMouse(Mouse mouse)
     {
         if (mouse.Flags.HasFlag(MouseFlags.WheeledUp) || mouse.Flags.HasFlag(MouseFlags.WheeledDown))
@@ -230,6 +235,11 @@ internal sealed class TimelineView : View
             }
 
             return true;
+        }
+
+        if (mouse.Flags.HasFlag(MouseFlags.LeftButtonDoubleClicked))
+        {
+            return OpenAt(mouse);
         }
 
         if (_dragging)
@@ -465,6 +475,30 @@ internal sealed class TimelineView : View
         SetSelection(new SelectionState(shown[index].Key, offsets, offsets, Dragged: false));
         _dragging = true;
         App?.Mouse.GrabMouse(this);
+    }
+
+    /// <summary>
+    /// Double-click: opens the row under the pointer, as Enter does, and clears the selection first. A double-click on the header or below
+    /// the rows opens nothing. Returns <c>false</c> when no row is opened.
+    /// </summary>
+    private bool OpenAt(Mouse mouse)
+    {
+        StopDrag();
+        int index = (mouse.Position?.Y ?? 0) - 1;
+        if (index < 0 || index >= ComposePage(_model.ShownRows).Lines.Count)
+        {
+            return false;
+        }
+
+        _model.SelectVisibleRow(index);
+        if (_model.ShownSelectedScreenRow != index || _model.SelectedRow is not { } row)
+        {
+            return false;
+        }
+
+        SetSelection(null);
+        OpenRequested?.Invoke(row.Key);
+        return true;
     }
 
     /// <summary>
