@@ -272,7 +272,7 @@ public sealed class DetailViewTests
         Attribute highlight = screen.At("Deploy finished");
         Assert.Equal(new Color(0x10, 0x20, 0x30), highlight.Foreground);
         Assert.True(highlight.Style.HasFlag(TextStyle.Bold));
-        Assert.Equal(screen.Normal.Foreground, screen.At("finished").Foreground);
+        Assert.Equal(new Color(ColorName16.Green), screen.At("finished").Foreground);
     }
 
     [Fact]
@@ -310,6 +310,31 @@ public sealed class DetailViewTests
 
         Assert.Equal(new Color(expected), attribute.Foreground);
         Assert.Equal(TextStyle.None, attribute.Style);
+    }
+
+    [Fact]
+    public void A_link_in_a_message_is_drawn_underlined_and_the_text_around_it_is_not()
+    {
+        DetailView view = Loaded(DetailFixtures.Text("ERROR 2026-11-18 10:20:31,007 [Worker 3] Engine - See https://example.com/a for info"), DetailFixtures.Config());
+
+        TerminalScreen screen = Draw(view)[0];
+
+        Attribute link = screen.At("https://example.com/a");
+        Assert.Equal(new Color(ColorName16.Cyan), link.Foreground);
+        Assert.True(link.Style.HasFlag(TextStyle.Underline));
+        Assert.False(screen.At("See ").Style.HasFlag(TextStyle.Underline));
+    }
+
+    [Theory]
+    [InlineData(SpanStyle.Link, ColorName16.Cyan)]
+    public void Links_are_cyan_and_underlined(SpanStyle style, ColorName16 expected)
+    {
+        var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
+
+        Attribute attribute = DetailColors.For(style, normal);
+
+        Assert.Equal(new Color(expected), attribute.Foreground);
+        Assert.Equal(TextStyle.Underline, attribute.Style);
     }
 
     private static DetailView Loaded(EventDetail detail, LogvuConfig config)

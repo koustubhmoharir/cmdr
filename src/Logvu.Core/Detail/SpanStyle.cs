@@ -8,7 +8,7 @@ public enum SpanStyle
     /// <summary>Plain text. Named so that a style can be spelled out; the document never emits a span of this style.</summary>
     None,
 
-    /// <summary>The name of a text event's field, or the <c>Message</c> and <c>Error</c> labels of a summary.</summary>
+    /// <summary>The <c>Message</c> label of a JSON event whose message logvu rendered from a Serilog template.</summary>
     FieldName,
 
     /// <summary>Structure: the colon after a name, braces, brackets, parentheses and expansion markers.</summary>
@@ -43,6 +43,9 @@ public enum SpanStyle
 
     /// <summary>A JSON <c>true</c>, <c>false</c> or <c>null</c>.</summary>
     JsonLiteral,
+
+    /// <summary>A path or URL in a value or message line: the displayed text of the link. Never in a stack trace line.</summary>
+    Link,
 
     /// <summary>The date of a JSON string value that is a timestamp: <c>YYYY-MM-DD</c>.</summary>
     Date,

@@ -41,7 +41,11 @@ public sealed class TextEventDocumentTests
             "thread: Worker 3",
             "logger: SheetKraft.Engine.Runner",
         ], fields.Select(f => f.Text));
-        Assert.All(fields, f => Assert.Equal([SpanStyle.FieldName, SpanStyle.Punctuation], f.Spans.Select(s => s.Style)));
+        Assert.All(fields.Where(f => f.Scope != "time"), f => Assert.Equal(
+            [SpanStyle.JsonKey, SpanStyle.Punctuation, SpanStyle.JsonString], f.Spans.Select(s => s.Style)));
+        Assert.Equal(
+            [SpanStyle.JsonKey, SpanStyle.Punctuation, SpanStyle.Date, SpanStyle.Muted, SpanStyle.Time, SpanStyle.Muted],
+            fields.Single(f => f.Scope == "time").Spans.Select(s => s.Style));
     }
 
     [Fact]

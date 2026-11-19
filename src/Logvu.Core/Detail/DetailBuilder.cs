@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Store;
@@ -40,15 +39,6 @@ internal sealed partial class DetailBuilder
     {
         "err", "error", "exception", "exceptiondetail", "stack", "cause",
     };
-
-    /// <summary>
-    /// An ISO 8601 or RFC 3339 timestamp, anchored to the whole value: a date, a <c>T</c> or space, a time to the minute or second, an
-    /// optional fraction with a dot or comma, and an optional offset.
-    /// </summary>
-    [GeneratedRegex(
-        @"^(?<date>[0-9]{4}-[0-9]{2}-[0-9]{2})(?<sep>[T ])(?<time>[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)(?<fraction>[.,][0-9]+)?(?<offset>[Zz]|[+-][0-9]{2}(?::?[0-9]{2})?)?$",
-        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
-    private static partial Regex TimestampPattern();
 
     private static readonly ModelLine Placeholder = new(new DetailLine(string.Empty, [], LineKind.Json, 0, null, null), null);
 
@@ -113,12 +103,13 @@ internal sealed partial class DetailBuilder
                 : $"Not a parsed record: {e.ParseError}").Line, null);
             EmitTextValue(
                 MessageLabel + ": ",
-                LabelSpans(0, MessageLabel, SpanStyle.FieldName),
+                LabelSpans(0, MessageLabel, SpanStyle.JsonKey),
                 e.Message,
                 LineKind.Message,
                 _ => MessageScope,
                 MessageScope,
-                null);
+                null,
+                textEvent: true);
             return;
         }
 
@@ -128,21 +119,23 @@ internal sealed partial class DetailBuilder
             {
                 EmitTextValue(
                     field.Name + ": ",
-                    LabelSpans(0, field.Name, SpanStyle.FieldName),
+                    LabelSpans(0, field.Name, SpanStyle.JsonKey),
                     field.Value,
                     LineKind.Message,
                     _ => MessageScope,
                     MessageScope,
-                    null);
+                    null,
+                    textEvent: true);
                 continue;
             }
 
             string head = field.Name + ": ";
             var spans = new List<StyledSpan>
             {
-                new(0, field.Name.Length, SpanStyle.FieldName),
+                new(0, field.Name.Length, SpanStyle.JsonKey),
                 new(field.Name.Length, 2, SpanStyle.Punctuation),
             };
+            spans.AddRange(ValueStyling.Field(field.Value).Select(span => span with { Start = span.Start + head.Length }));
             Add(new DetailLine(head + field.Value, spans, LineKind.Field, head.Length, null, field.Name, field.Value), null);
         }
     }
@@ -162,7 +155,8 @@ internal sealed partial class DetailBuilder
                 LineKind.Message,
                 _ => MessageScope,
                 MessageScope,
-                null);
+                null,
+                textEvent: false);
             Add(new DetailLine(string.Empty, [], LineKind.Json, 0, null, null), null);
         }
 
@@ -227,24 +221,25 @@ internal sealed partial class DetailBuilder
                         LineKind.Json,
                         _ => path,
                         path,
-                        parent);
+                        parent,
+                        textEvent: false);
                 }
                 else
                 {
                     string raw = value.GetRawText();
-                    AddScalar(pad, label, path, raw, text, SpanStyle.JsonString, parent, labelStyle, TimestampSpans(text, raw));
+                    AddScalar(pad, label, path, raw, text, parent, labelStyle, ValueStyling.JsonString(raw, text));
                 }
 
                 return isError;
 
             case JsonValueKind.Number:
-                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonNumber, parent, labelStyle);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), parent, labelStyle, SpanStyle.JsonNumber);
                 return isError;
 
             case JsonValueKind.True:
             case JsonValueKind.False:
             case JsonValueKind.Null:
-                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonLiteral, parent, labelStyle);
+                AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), parent, labelStyle, SpanStyle.JsonLiteral);
                 return isError;
 
             default:
@@ -327,6 +322,11 @@ internal sealed partial class DetailBuilder
         return true;
     }
 
+    /// <summary>
+    /// Emits a multi-line value as a stack trace. Its lines the analysis leaves plain are styled as message text: a text event's (or raw
+    /// event's) message is a JSON string with its exception type names, and every such line takes its links.
+    /// </summary>
+    /// <param name="textEvent">Whether the value is the message of a text event or a raw event.</param>
     private void EmitTextValue(
         string firstPrefix,
         IReadOnlyList<StyledSpan> firstPrefixSpans,
@@ -334,10 +334,11 @@ internal sealed partial class DetailBuilder
         LineKind kind,
         Func<int, string> scopeOf,
         string foldScope,
-        Anchor? parent)
+        Anchor? parent,
+        bool textEvent)
     {
         IReadOnlyList<StackLine> analysis = StackTraceAnalyzer.Analyze(SplitLines(value), _config.FrameworkPrefixes);
-        EmitStack(analysis, firstPrefix, firstPrefixSpans, kind, scopeOf, foldScope, parent);
+        EmitStack(ValueStyling.StyleOtherLines(analysis, textEvent), firstPrefix, firstPrefixSpans, kind, scopeOf, foldScope, parent);
     }
 
     /// <summary>
@@ -432,47 +433,8 @@ internal sealed partial class DetailBuilder
     }
 
     /// <summary>
-    /// The spans of a JSON string value that is a complete timestamp, relative to the start of its raw text: the date and time in color,
-    /// the separator, fraction and offset dimmed, and the quotes as punctuation. Null when the value is not a timestamp, or its raw text
-    /// has an escape, so that its spans would not line up with its text.
-    /// </summary>
-    /// <param name="text">The decoded text of the value.</param>
-    /// <param name="rawText">The value's text as written, quotes included.</param>
-    private static List<StyledSpan>? TimestampSpans(string text, string rawText)
-    {
-        if (rawText != "\"" + text + "\"")
-        {
-            return null;
-        }
-
-        Match match = TimestampPattern().Match(text);
-        if (!match.Success)
-        {
-            return null;
-        }
-
-        var spans = new List<StyledSpan> { new(0, 1, SpanStyle.Punctuation) };
-        Add(match.Groups["date"], SpanStyle.Date);
-        Add(match.Groups["sep"], SpanStyle.Muted);
-        Add(match.Groups["time"], SpanStyle.Time);
-        Add(match.Groups["fraction"], SpanStyle.Muted);
-        Add(match.Groups["offset"], SpanStyle.Muted);
-        spans.Add(new StyledSpan(rawText.Length - 1, 1, SpanStyle.Punctuation));
-        return spans;
-
-        // A group sits after the opening quote, so its index in the raw text is one more than in the decoded text.
-        void Add(Group group, SpanStyle style)
-        {
-            if (group.Success)
-            {
-                spans.Add(new StyledSpan(group.Index + 1, group.Length, style));
-            }
-        }
-    }
-
-    /// <summary>
-    /// Adds a labelled scalar line. The value is drawn in <paramref name="style"/>, or in <paramref name="valueSpans"/> when given, whose
-    /// starts are relative to the value's text.
+    /// Adds a labelled scalar line. The value's spans are relative to its text: they are given as <paramref name="valueSpans"/>, or else the
+    /// whole value is drawn in <paramref name="style"/>.
     /// </summary>
     private void AddScalar(
         int pad,
@@ -480,10 +442,23 @@ internal sealed partial class DetailBuilder
         string path,
         string valueText,
         string value,
-        SpanStyle style,
         Anchor? parent,
         SpanStyle labelStyle,
-        List<StyledSpan>? valueSpans = null)
+        SpanStyle style,
+        IReadOnlyList<StyledSpan>? valueSpans = null)
+    {
+        AddScalar(pad, label, path, valueText, value, parent, labelStyle, valueSpans ?? ValueStyling.Whole(valueText, style));
+    }
+
+    private void AddScalar(
+        int pad,
+        string label,
+        string path,
+        string valueText,
+        string value,
+        Anchor? parent,
+        SpanStyle labelStyle,
+        IReadOnlyList<StyledSpan> valueSpans)
     {
         string head = Head(pad, label);
         var spans = new List<StyledSpan>
@@ -491,19 +466,9 @@ internal sealed partial class DetailBuilder
             new(pad + Step, label.Length, labelStyle),
             new(head.Length - 2, 2, SpanStyle.Punctuation),
         };
-        if (valueText.Length > 0)
+        foreach (StyledSpan span in valueSpans)
         {
-            if (valueSpans is null)
-            {
-                spans.Add(new StyledSpan(head.Length, valueText.Length, style));
-            }
-            else
-            {
-                foreach (StyledSpan span in valueSpans)
-                {
-                    spans.Add(span with { Start = head.Length + span.Start });
-                }
-            }
+            spans.Add(span with { Start = head.Length + span.Start });
         }
 
         Add(new DetailLine(head + valueText, spans, LineKind.Json, head.Length, null, path, value), parent);

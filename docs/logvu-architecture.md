@@ -281,14 +281,17 @@ navigates it.
 
 **Document model.** A list of logical lines, each a sequence of styled spans (`SpanStyle`: none, field-name, punctuation,
 exception-type, exception-message, method, file-location, directory, framework (dim), json-key, json-string, json-number,
-json-literal, highlight:<name>, fold-marker, muted). Lines carry an optional `NodeId` (JSON node or fold) so the view can toggle
+json-literal, link, date, time, highlight:<name>, fold-marker, muted). Lines carry an optional `NodeId` (JSON node or fold) so the view can toggle
 expansion, and a `Kind` (field, message, json, raw, fold). Wrapping to the width is the view's job (continuation rows
 indented by 2 under the value column).
 
 There is no header block: the document starts with the content. The status line shows the event's file name.
 
 **Text events.** Named fields (`name: value`) in pattern order, as written. The `message` field is the full multi-line
-message as one value (stack analysis, continuation lines at the value indent).
+message as one value (stack analysis, continuation lines at the value indent). Names are JSON keys; values are styled as JSON
+values (a complete timestamp in parts, a number as a number, otherwise a string); message lines the analysis leaves plain are
+JSON strings with exception type names inline. `ValueStyling` builds these spans, and `ValueStyling.JsonString` the JSON ones.
+Links: paths and URLs in values and message lines (never stack lines) get `link`.
 
 **JSON events.** The tree only: the message and error are already values in it. The one exception is a Serilog message
 logvu rendered from `MessageTemplate` + `Properties` (`LogEvent.MessageRendered`), which is shown first as `Message:` since it
@@ -308,7 +311,7 @@ stack-trace treatment.
   are ordinary arrays.
 - Styles: exception type and message emphasized; the method name (the last `.` segment of the frame's name, splitting outside
   `()`, `[]` and `<>`; `.ctor`/`.cctor` whole) in its own colour, the qualifier before it plain, a Go package path up to the last `/`
-  dimmed; `file:line` emphasized; the directory part of paths dimmed; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
+  dimmed; `file:line` emphasized; the directory part of paths dimmed; links (paths and URLs in values and message lines, not stack lines) underlined; a frame whose method starts with a configured `frameworkPrefixes` entry is a framework frame (whole line dimmed).
 - Folding: every run of ≥ 2 consecutive framework frames gets a fold marker line `… N framework frames` above it; folds start
   expanded ("keep all frames visible by default"); Enter/Space on a marker toggles it; `z` toggles all folds of the event.
   Navigating to a search hit inside a folded run expands it.

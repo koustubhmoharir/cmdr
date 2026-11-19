@@ -81,7 +81,7 @@ public sealed class DetailSelectionTests
         TerminalScreen screen = Draw(view)[0];
 
         Attribute field = screen.At("level");
-        Assert.True(field.Style.HasFlag(TextStyle.Bold));
+        Assert.Equal(new Color(ColorName16.BrightBlue), field.Foreground);
         Assert.Equal(screen.Normal.Background, field.Background);
         Assert.Equal(screen.Normal.Background, screen.At("ERROR").Background);
     }
