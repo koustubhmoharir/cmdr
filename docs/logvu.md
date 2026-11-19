@@ -97,7 +97,7 @@ event (preceded by the message only when logvu rendered it from a Serilog templa
 bar shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
 styled: exception types and messages, method names and `file:line` stand out, directories and framework frames are dimmed.
 Runs of framework frames get a `… N framework frames` marker that folds them. Timestamps in JSON values show the date and time in colour, with fractions and offsets dimmed.
-Text events use the same colours as JSON: field names as keys, values as strings, numbers or timestamps. Exception type names in text messages are red, and file paths and URLs are underlined. The keys of values shown as `columns` or `messageFields` are drawn in bright magenta.
+Text events use the same colours as JSON: field names as keys, values as strings, numbers or timestamps. Exception type names in text messages are red, and file paths and URLs are underlined. The keys of values shown as `columns` or `messageFields` are drawn in bright pink.
 
 | Detail | |
 |---|---|

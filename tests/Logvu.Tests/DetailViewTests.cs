@@ -322,13 +322,13 @@ public sealed class DetailViewTests
     }
 
     [Fact]
-    public void The_keys_of_configured_columns_and_message_fields_are_bright_magenta_without_a_style()
+    public void The_keys_of_configured_columns_and_message_fields_are_bright_pink_without_a_style()
     {
         var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
 
         Attribute attribute = DetailColors.For(SpanStyle.ConfiguredKey, normal);
 
-        Assert.Equal(new Color(ColorName16.BrightMagenta), attribute.Foreground);
+        Assert.Equal(new Color(0xFF, 0x79, 0xC6), attribute.Foreground);
         Assert.Equal(normal.Background, attribute.Background);
         Assert.Equal(TextStyle.None, attribute.Style);
     }

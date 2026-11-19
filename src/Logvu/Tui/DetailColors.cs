@@ -20,6 +20,12 @@ internal static class DetailColors
     /// <summary>The foreground of number values: a light violet, brighter on a dark background than the theme's named magenta.</summary>
     internal static readonly Color NumberValue = new(0xC6, 0x78, 0xDD);
 
+    /// <summary>
+    /// The foreground of the keys of values the timeline shows (columns and message fields): a bright pink, set apart from the blue of
+    /// other keys and from the violet of numbers, and brighter on a dark background than the theme's named bright magenta.
+    /// </summary>
+    internal static readonly Color ConfiguredKey = new(0xFF, 0x79, 0xC6);
+
     // The 16 named ANSI colors by index, as the color names of the terminal theme map them (the same table as the output view's).
     private static readonly ColorName16[] Named16 =
     [
@@ -57,7 +63,7 @@ internal static class DetailColors
     /// The attribute of a structural span. Field names are bold, exception types are bold muted red and their messages muted red,
     /// methods are bold yellow, file locations are cyan, directories and framework frames are dimmed, and JSON members, strings, numbers
     /// and literals each have a color, and the date and time of a JSON timestamp are cyan and bright yellow. The keys of values the
-    /// timeline shows as columns or message fields are bright magenta. Links are cyan and underlined.
+    /// timeline shows as columns or message fields are bright pink. Links are cyan and underlined.
     /// Fold markers are dim italic and muted text is dim.
     /// Plain text and punctuation keep the normal attribute.
     /// </summary>
@@ -77,7 +83,7 @@ internal static class DetailColors
             SpanStyle.Directory => new Attribute(fg, bg, TextStyle.Faint),
             SpanStyle.Framework => new Attribute(fg, bg, TextStyle.Faint),
             SpanStyle.JsonKey => new Attribute(ColorName16.BrightBlue, bg, TextStyle.None),
-            SpanStyle.ConfiguredKey => new Attribute(ColorName16.BrightMagenta, bg, TextStyle.None),
+            SpanStyle.ConfiguredKey => new Attribute(ConfiguredKey, bg, TextStyle.None),
             SpanStyle.JsonString => new Attribute(StringValue, bg, TextStyle.None),
             SpanStyle.JsonNumber => new Attribute(NumberValue, bg, TextStyle.None),
             SpanStyle.JsonLiteral => new Attribute(ColorName16.Yellow, bg, TextStyle.None),
