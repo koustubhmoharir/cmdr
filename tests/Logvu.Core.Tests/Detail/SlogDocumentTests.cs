@@ -189,4 +189,99 @@ public sealed class SlogDocumentTests
         Assert.Equal(text, lines.Single(l => l.Kind == LineKind.Message && l.Text.StartsWith("Message: ", StringComparison.Ordinal))
             .Text.Substring("Message: ".Length));
     }
+
+    /// <summary>The spans of a value line of a slog event whose <c>time</c> is <paramref name="json"/>, after the label and its colon.</summary>
+    private static List<(SpanStyle Style, string Text)> TimeValueSpans(string json)
+    {
+        string text = "{\"time\":" + json + ",\"level\":\"INFO\",\"msg\":\"m\"}";
+        DetailLine line = Document(text).Lines.Single(l => l.Text.StartsWith("  time: ", StringComparison.Ordinal));
+        return DetailRig.SpansOf(line).Skip(2).ToList();
+    }
+
+    [Fact]
+    public void A_timestamp_value_is_drawn_in_parts_with_the_date_and_time_in_color()
+    {
+        Assert.Equal<(SpanStyle, string)>(
+            [
+                (SpanStyle.Punctuation, "\""),
+                (SpanStyle.Date, "2026-10-20"),
+                (SpanStyle.Muted, "T"),
+                (SpanStyle.Time, "15:50:23"),
+                (SpanStyle.Muted, ".376842073"),
+                (SpanStyle.Muted, "+05:30"),
+                (SpanStyle.Punctuation, "\""),
+            ],
+            TimeValueSpans("\"2026-10-20T15:50:23.376842073+05:30\""));
+    }
+
+    [Theory]
+    [InlineData("\"2026-10-20T15:50:23Z\"", "Z")]
+    [InlineData("\"2026-10-20T15:50:23z\"", "z")]
+    [InlineData("\"2026-10-20T15:50:23-0800\"", "-0800")]
+    [InlineData("\"2026-10-20T15:50:23+05\"", "+05")]
+    public void Offsets_in_every_form_are_dimmed(string json, string offset)
+    {
+        Assert.Contains((SpanStyle.Muted, offset), TimeValueSpans(json));
+        Assert.Equal(SpanStyle.Punctuation, TimeValueSpans(json)[^1].Style);
+    }
+
+    [Fact]
+    public void A_timestamp_without_fraction_or_offset_has_only_the_date_separator_and_time()
+    {
+        Assert.Equal<(SpanStyle, string)>(
+            [
+                (SpanStyle.Punctuation, "\""),
+                (SpanStyle.Date, "2026-10-20"),
+                (SpanStyle.Muted, "T"),
+                (SpanStyle.Time, "15:50:23"),
+                (SpanStyle.Punctuation, "\""),
+            ],
+            TimeValueSpans("\"2026-10-20T15:50:23\""));
+    }
+
+    [Fact]
+    public void A_space_separator_and_a_minute_precision_time_are_timestamps()
+    {
+        Assert.Equal<(SpanStyle, string)>(
+            [
+                (SpanStyle.Punctuation, "\""),
+                (SpanStyle.Date, "2026-10-20"),
+                (SpanStyle.Muted, " "),
+                (SpanStyle.Time, "15:50"),
+                (SpanStyle.Muted, ",5"),
+                (SpanStyle.Punctuation, "\""),
+            ],
+            TimeValueSpans("\"2026-10-20 15:50,5\""));
+    }
+
+    [Theory]
+    [InlineData("\"2026-10-20\"")]
+    [InlineData("\"2026-10-20T15:50:23 extra\"")]
+    [InlineData("\"not a date\"")]
+    [InlineData("\"2026-10-20T15:50:23+5:30\"")]
+    public void Values_that_are_not_complete_timestamps_stay_one_json_string_span(string json)
+    {
+        List<(SpanStyle Style, string Text)> spans = TimeValueSpans(json);
+
+        Assert.Equal<(SpanStyle, string)>([(SpanStyle.JsonString, json)], spans);
+    }
+
+    [Fact]
+    public void A_timestamp_with_an_escape_in_its_raw_text_falls_back_to_one_json_string_span()
+    {
+        const string json = "\"2026-10-20T15:50:23\\u002B05:30\"";
+
+        Assert.Equal<(SpanStyle, string)>([(SpanStyle.JsonString, json)], TimeValueSpans(json));
+    }
+
+    [Fact]
+    public void Numbers_keep_their_style_and_timestamps_under_other_keys_are_drawn_in_parts()
+    {
+        Assert.Equal<(SpanStyle, string)>([(SpanStyle.JsonNumber, "42")], TimeValueSpans("42"));
+
+        string text = "{\"level\":\"INFO\",\"msg\":\"m\",\"started\":\"2026-10-20T15:50:23Z\"}";
+        DetailLine line = Document(text).Lines.Single(l => l.Text.StartsWith("  started: ", StringComparison.Ordinal));
+        Assert.Contains((SpanStyle.Date, "2026-10-20"), DetailRig.SpansOf(line));
+        Assert.Contains((SpanStyle.Time, "15:50:23"), DetailRig.SpansOf(line));
+    }
 }

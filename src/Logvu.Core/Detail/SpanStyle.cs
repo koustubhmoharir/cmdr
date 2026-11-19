@@ -44,6 +44,12 @@ public enum SpanStyle
     /// <summary>A JSON <c>true</c>, <c>false</c> or <c>null</c>.</summary>
     JsonLiteral,
 
+    /// <summary>The date of a JSON string value that is a timestamp: <c>YYYY-MM-DD</c>.</summary>
+    Date,
+
+    /// <summary>The time of a JSON string value that is a timestamp: <c>hh:mm:ss</c> or <c>hh:mm</c>.</summary>
+    Time,
+
     /// <summary>Text matched by a highlight rule. The rule's style name is in <see cref="StyledSpan.HighlightStyle"/>.</summary>
     Highlight,
 

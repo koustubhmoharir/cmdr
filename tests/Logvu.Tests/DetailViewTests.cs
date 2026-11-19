@@ -312,6 +312,19 @@ public sealed class DetailViewTests
         Assert.Equal(normal.Background, attribute.Background);
     }
 
+    [Theory]
+    [InlineData(SpanStyle.Date, ColorName16.Cyan)]
+    [InlineData(SpanStyle.Time, ColorName16.BrightYellow)]
+    public void Timestamp_date_and_time_spans_are_cyan_and_bright_yellow(SpanStyle style, ColorName16 expected)
+    {
+        var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
+
+        Attribute attribute = DetailColors.For(style, normal);
+
+        Assert.Equal(new Color(expected), attribute.Foreground);
+        Assert.Equal(TextStyle.None, attribute.Style);
+    }
+
     private static DetailView Loaded(EventDetail detail, LogvuConfig config)
     {
         var view = new DetailView();

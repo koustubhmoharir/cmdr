@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Store;
@@ -26,7 +27,7 @@ namespace Logvu.Core.Detail;
 /// frame's position in the scope's lines.
 /// </para>
 /// </remarks>
-internal sealed class DetailBuilder
+internal sealed partial class DetailBuilder
 {
     private const int Step = 2;
     private const char ExpandedMarker = '▾';
@@ -39,6 +40,15 @@ internal sealed class DetailBuilder
     {
         "err", "error", "exception", "exceptiondetail", "stack", "cause",
     };
+
+    /// <summary>
+    /// An ISO 8601 or RFC 3339 timestamp, anchored to the whole value: a date, a <c>T</c> or space, a time to the minute or second, an
+    /// optional fraction with a dot or comma, and an optional offset.
+    /// </summary>
+    [GeneratedRegex(
+        @"^(?<date>[0-9]{4}-[0-9]{2}-[0-9]{2})(?<sep>[T ])(?<time>[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)(?<fraction>[.,][0-9]+)?(?<offset>[Zz]|[+-][0-9]{2}(?::?[0-9]{2})?)?$",
+        RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 250)]
+    private static partial Regex TimestampPattern();
 
     private static readonly ModelLine Placeholder = new(new DetailLine(string.Empty, [], LineKind.Json, 0, null, null), null);
 
@@ -221,7 +231,8 @@ internal sealed class DetailBuilder
                 }
                 else
                 {
-                    AddScalar(pad, label, path, value.GetRawText(), JsonValues.AsText(value), SpanStyle.JsonString, parent, labelStyle);
+                    string raw = value.GetRawText();
+                    AddScalar(pad, label, path, raw, text, SpanStyle.JsonString, parent, labelStyle, TimestampSpans(text, raw));
                 }
 
                 return isError;
@@ -420,6 +431,49 @@ internal sealed class DetailBuilder
         }
     }
 
+    /// <summary>
+    /// The spans of a JSON string value that is a complete timestamp, relative to the start of its raw text: the date and time in color,
+    /// the separator, fraction and offset dimmed, and the quotes as punctuation. Null when the value is not a timestamp, or its raw text
+    /// has an escape, so that its spans would not line up with its text.
+    /// </summary>
+    /// <param name="text">The decoded text of the value.</param>
+    /// <param name="rawText">The value's text as written, quotes included.</param>
+    private static List<StyledSpan>? TimestampSpans(string text, string rawText)
+    {
+        if (rawText != "\"" + text + "\"")
+        {
+            return null;
+        }
+
+        Match match = TimestampPattern().Match(text);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var spans = new List<StyledSpan> { new(0, 1, SpanStyle.Punctuation) };
+        Add(match.Groups["date"], SpanStyle.Date);
+        Add(match.Groups["sep"], SpanStyle.Muted);
+        Add(match.Groups["time"], SpanStyle.Time);
+        Add(match.Groups["fraction"], SpanStyle.Muted);
+        Add(match.Groups["offset"], SpanStyle.Muted);
+        spans.Add(new StyledSpan(rawText.Length - 1, 1, SpanStyle.Punctuation));
+        return spans;
+
+        // A group sits after the opening quote, so its index in the raw text is one more than in the decoded text.
+        void Add(Group group, SpanStyle style)
+        {
+            if (group.Success)
+            {
+                spans.Add(new StyledSpan(group.Index + 1, group.Length, style));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds a labelled scalar line. The value is drawn in <paramref name="style"/>, or in <paramref name="valueSpans"/> when given, whose
+    /// starts are relative to the value's text.
+    /// </summary>
     private void AddScalar(
         int pad,
         string label,
@@ -428,7 +482,8 @@ internal sealed class DetailBuilder
         string value,
         SpanStyle style,
         Anchor? parent,
-        SpanStyle labelStyle)
+        SpanStyle labelStyle,
+        List<StyledSpan>? valueSpans = null)
     {
         string head = Head(pad, label);
         var spans = new List<StyledSpan>
@@ -438,7 +493,17 @@ internal sealed class DetailBuilder
         };
         if (valueText.Length > 0)
         {
-            spans.Add(new StyledSpan(head.Length, valueText.Length, style));
+            if (valueSpans is null)
+            {
+                spans.Add(new StyledSpan(head.Length, valueText.Length, style));
+            }
+            else
+            {
+                foreach (StyledSpan span in valueSpans)
+                {
+                    spans.Add(span with { Start = head.Length + span.Start });
+                }
+            }
         }
 
         Add(new DetailLine(head + valueText, spans, LineKind.Json, head.Length, null, path, value), parent);

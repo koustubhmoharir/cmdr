@@ -87,7 +87,7 @@ Any movement pauses Follow; scrolling back to the bottom stays paused until Spac
 event (preceded by the message only when logvu rendered it from a Serilog template, since it appears nowhere else). The status
 line shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
 styled: exception types and messages, method names and `file:line` stand out, directories and framework frames are dimmed.
-Runs of framework frames get a `… N framework frames` marker that folds them.
+Runs of framework frames get a `… N framework frames` marker that folds them. Timestamps in JSON values show the date and time in colour, with fractions and offsets dimmed.
 
 | Detail | |
 |---|---|

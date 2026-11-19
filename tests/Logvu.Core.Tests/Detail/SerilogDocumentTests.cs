@@ -216,4 +216,26 @@ public sealed class SerilogDocumentTests
         Assert.Contains(lines, l => l.Text == "  ▾ ExceptionDetail");
     }
 
+    [Fact]
+    public void A_serilog_timestamp_is_drawn_in_parts()
+    {
+        const string text =
+            """{"Timestamp":"2026-11-18T10:20:31.0070000+05:30","Level":"Information","MessageTemplate":"Server started","Properties":{}}""";
+
+        DetailLine line = Of(text).Lines.Single(l => l.Text.StartsWith("  Timestamp: ", StringComparison.Ordinal));
+
+        Assert.Equal<(SpanStyle, string)>(
+            [
+                (SpanStyle.JsonKey, "Timestamp"),
+                (SpanStyle.Punctuation, ": "),
+                (SpanStyle.Punctuation, "\""),
+                (SpanStyle.Date, "2026-11-18"),
+                (SpanStyle.Muted, "T"),
+                (SpanStyle.Time, "10:20:31"),
+                (SpanStyle.Muted, ".0070000"),
+                (SpanStyle.Muted, "+05:30"),
+                (SpanStyle.Punctuation, "\""),
+            ],
+            DetailRig.SpansOf(line));
+    }
 }
