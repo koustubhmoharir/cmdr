@@ -105,9 +105,10 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M11. Acceptance and docs
 
-- [ ] Perf: row-level filter predicates run after RowBuilder has read and parsed the event; consider building rows lazily (header line first) so level/source/time rejections skip the full read.
+- [x] Perf: row-level predicates are pre-checked on the header line before the event is parsed.
 - [x] Startup: Release build shows rows in 0.8–1.0 s (cmdr 0.6–0.8 s); 253 MB set: rows within 1.5 s, RSS 67–83 MB while paging and searching.
-- [ ] Scan throughput: full-history search ran at ~12 MB/s on the 253 MB set; target ≥ 100 MB/s (perf task running).
+- [x] Scan throughput: literal search 18 → 112 MB/s (log4net), 21 → 209 MB/s (slog); exact pre-checks, span framing, larger batches.
+- [ ] Level-only filter scans ≈ 30 MB/s (two compiled-regex calls per event). Option: a hand-written header matcher for the built-in schemes, verified against the regex by randomized equivalence tests.
 
 - [ ] Run the design's acceptance list end to end (pty driver for TUI checks).
 - [x] User guide (docs/logvu.md), README pointer, publish script entry.

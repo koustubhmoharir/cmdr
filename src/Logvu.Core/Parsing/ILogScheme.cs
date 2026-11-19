@@ -16,6 +16,13 @@ public interface ILogScheme
     /// <param name="line">One line, without its line terminator.</param>
     bool IsHeader(string line);
 
+    /// <summary>
+    /// The same test as <see cref="IsHeader(string)"/>, on a line's text without copying it. The default converts the line to a string;
+    /// the built-in schemes test the span directly.
+    /// </summary>
+    /// <param name="line">One line, without its line terminator.</param>
+    bool IsHeader(ReadOnlySpan<char> line) => IsHeader(line.ToString());
+
     /// <summary>Parses one event.</summary>
     /// <param name="eventText">The event's lines joined by <c>\n</c>, without a trailing newline.</param>
     /// <param name="context">The parse settings.</param>

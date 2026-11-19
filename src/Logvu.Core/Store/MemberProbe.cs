@@ -51,7 +51,7 @@ public static class MemberProbe
         long length = stream.Length;
         var reader = new LineReader(stream);
         long contentStart = LineReader.ContentStart(stream);
-        long dataEnd = EventFramer.DataEnd(stream, reader, live);
+        long dataEnd = EventFramer.DataEnd(stream, live);
         ILogScheme? scheme = config.Format ?? SchemeSniffer.Sniff(stream, config.Schemes, live);
 
         if (dataEnd <= contentStart)

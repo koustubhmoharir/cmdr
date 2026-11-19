@@ -35,8 +35,8 @@ namespace Logvu.Core.Store;
 /// </remarks>
 public sealed class HistoryReader
 {
-    private const int DefaultBatchEvents = 256;
-    private const long DefaultBatchBytes = 4L * 1024 * 1024;
+    private const int DefaultBatchEvents = 4096;
+    private const long DefaultBatchBytes = 16L * 1024 * 1024;
 
     private readonly ParseContext _context;
     private int _batchEvents = DefaultBatchEvents;
@@ -276,8 +276,8 @@ public sealed class HistoryReader
         /// <summary>Reads one member backward from <paramref name="before"/>, batch by batch, until it is exhausted or the page is filled.</summary>
         private Step ScanBackward(MemberInfo member, long before)
         {
-            long cursor = member.ReadCursor;
-            before = Math.Min(before, cursor);
+            long readEnd = member.ReadCursor;
+            before = Math.Min(before, readEnd);
             while (true)
             {
                 _ct.ThrowIfCancellationRequested();
@@ -294,26 +294,26 @@ public sealed class HistoryReader
 
                 try
                 {
-                    var window = new ReadWindow(file, cursor);
+                    var window = new ReadWindow(file, readEnd);
                     if (before <= LineReader.ContentStart(window))
                     {
                         return Step.Exhausted;
                     }
 
-                    var framer = new EventFramer(window, member.Scheme, live: false);
+                    EventCursor events = new EventFramer(window, member.Scheme, live: false).Backward(before);
                     Step step = Step.Exhausted;
-                    int events = 0;
+                    int count = 0;
                     long bytes = 0;
-                    foreach (EventExtent extent in framer.ReadBackward(before))
+                    while (events.MoveNext(out EventExtent extent))
                     {
                         _ct.ThrowIfCancellationRequested();
                         long length = extent.End - extent.Start;
-                        events++;
+                        count++;
                         bytes += length;
                         _scanned += length;
                         before = extent.Start;
 
-                        bool filled = Accept(member, window, extent);
+                        bool filled = Accept(member, events, extent);
                         if (_abandoned)
                         {
                             step = Step.Exhausted;
@@ -326,7 +326,7 @@ public sealed class HistoryReader
                             break;
                         }
 
-                        if (events >= _reader._batchEvents || bytes >= _reader._batchBytes)
+                        if (count >= _reader._batchEvents || bytes >= _reader._batchBytes)
                         {
                             step = Step.NextBatch;
                             break;
@@ -352,11 +352,11 @@ public sealed class HistoryReader
         /// </summary>
         private Step ScanForward(MemberInfo member, long from, long? skipUpTo)
         {
-            long cursor = member.ReadCursor;
+            long readEnd = member.ReadCursor;
             while (true)
             {
                 _ct.ThrowIfCancellationRequested();
-                if (from >= cursor)
+                if (from >= readEnd)
                 {
                     return Step.Exhausted;
                 }
@@ -369,22 +369,22 @@ public sealed class HistoryReader
 
                 try
                 {
-                    var window = new ReadWindow(file, cursor);
-                    var framer = new EventFramer(window, member.Scheme, live: false);
+                    var window = new ReadWindow(file, readEnd);
+                    EventCursor events = new EventFramer(window, member.Scheme, live: false).Forward(from);
                     Step step = Step.Exhausted;
-                    int events = 0;
+                    int count = 0;
                     long bytes = 0;
-                    foreach (EventExtent extent in framer.ReadForward(from))
+                    while (events.MoveNext(out EventExtent extent))
                     {
                         _ct.ThrowIfCancellationRequested();
                         long length = extent.End - extent.Start;
-                        events++;
+                        count++;
                         bytes += length;
                         _scanned += length;
                         from = extent.End;
 
                         bool skipped = skipUpTo is { } skip && extent.Start <= skip;
-                        bool filled = !skipped && Accept(member, window, extent);
+                        bool filled = !skipped && Accept(member, events, extent);
                         if (_abandoned)
                         {
                             step = Step.Exhausted;
@@ -397,7 +397,7 @@ public sealed class HistoryReader
                             break;
                         }
 
-                        if (events >= _reader._batchEvents || bytes >= _reader._batchBytes)
+                        if (count >= _reader._batchEvents || bytes >= _reader._batchBytes)
                         {
                             step = Step.NextBatch;
                             break;
@@ -442,23 +442,54 @@ public sealed class HistoryReader
         }
 
         /// <summary>
-        /// Builds the row of an event, keeps it if it matches, and tells whether the page is now full. When the filter is abandoned after
-        /// the match, the walk stops: the page holds what was found, and <see cref="RowPage.Abandoned"/> is set.
+        /// Keeps the event if it matches, and tells whether the page is now full. The event's text is read from the walk's own blocks. A filter
+        /// with a header or text pre-check rejects most events before they are parsed; a rejected event is one that the full test would reject
+        /// too, so the rows are the same. When the filter is abandoned after the match, the walk stops: the page holds what was found, and
+        /// <see cref="RowPage.Abandoned"/> is set.
         /// </summary>
-        private bool Accept(MemberInfo member, Stream window, EventExtent extent)
+        private bool Accept(MemberInfo member, EventCursor events, EventExtent extent)
         {
-            (EventRow row, LogEvent ev, string text) = RowBuilder.Build(window, member.Scheme, member.Generation, extent, _reader._context);
-            if (_filter is null || _filter.Matches(row, ev, text))
+            string text = events.ReadText(extent, RowBuilder.TextCap);
+            if (_filter is null)
             {
-                _rows.Add(row);
+                _rows.Add(RowBuilder.BuildFromText(text, member.Scheme, member.Generation, extent, _reader._context).Row);
             }
-
-            if (_filter is not null && _filter.Abandoned)
+            else
             {
-                _abandoned = true;
+                if (!Rejected(member, text, extent))
+                {
+                    (EventRow row, LogEvent ev) = RowBuilder.BuildFromText(text, member.Scheme, member.Generation, extent, _reader._context);
+                    if (_filter.Matches(row, ev, text))
+                    {
+                        _rows.Add(row);
+                    }
+                }
+
+                if (_filter.Abandoned)
+                {
+                    _abandoned = true;
+                }
             }
 
             return _rows.Count >= _count;
+        }
+
+        /// <summary>
+        /// Tells whether the filter's header and text pre-checks reject an event, so that it need not be parsed. The header is checked first,
+        /// as the filter checks its row predicates before its text predicate.
+        /// </summary>
+        private bool Rejected(MemberInfo member, string text, EventExtent extent)
+        {
+            IRowFilter filter = _filter!;
+            ILogScheme scheme = RowBuilder.SchemeOf(member.Scheme, member.Generation);
+            if (filter.ChecksHead
+                && RowBuilder.BuildHead(text, scheme, member.Generation, extent, _reader._context, filter.ChecksHeadTime) is { } head
+                && !filter.MayMatchHead(head))
+            {
+                return true;
+            }
+
+            return filter.ChecksText && !filter.MayMatchText(text, scheme);
         }
 
         /// <summary>How a batch or a member ended.</summary>

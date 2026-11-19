@@ -57,7 +57,7 @@ public static class LogLevels
     /// <summary>Removes a trailing <c>+digits</c> or <c>-digits</c> offset, if present.</summary>
     private static string StripOffset(string text)
     {
-        int sign = text.LastIndexOfAny(['+', '-']);
+        int sign = Math.Max(text.LastIndexOf('+'), text.LastIndexOf('-'));
         if (sign <= 0 || sign == text.Length - 1)
         {
             return text;

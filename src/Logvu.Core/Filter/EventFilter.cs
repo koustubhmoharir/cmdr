@@ -178,6 +178,41 @@ public sealed class EventFilter : IBindableRowFilter
         return _pattern is null || EventSearch.Matches(_pattern, ev, text);
     }
 
+    /// <inheritdoc/>
+    /// <remarks>True when a level, source, file name or time predicate is set: those are on the header line.</remarks>
+    public bool ChecksHead =>
+        _minLevel is not null
+        || _levels is not null
+        || _sourceContains is not null
+        || _fileContains is not null
+        || _from is not null
+        || _to is not null;
+
+    /// <inheritdoc/>
+    /// <remarks>True when a time bound is set: the time is the only header field that is parsed with a format.</remarks>
+    public bool ChecksHeadTime => _from is not null || _to is not null;
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// True when a text pattern is set and no field predicate is: <see cref="Matches"/> checks the pattern last, after the row and the
+    /// fields, so with no fields the pattern is decided by the text alone.
+    /// </remarks>
+    public bool ChecksText => _pattern is not null && _fields.Count == 0;
+
+    /// <inheritdoc/>
+    public bool MayMatchHead(EventRow head)
+    {
+        ArgumentNullException.ThrowIfNull(head);
+        return MatchesRow(head);
+    }
+
+    /// <inheritdoc/>
+    public bool MayMatchText(string text, ILogScheme scheme)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return !ChecksText || EventSearch.MayMatch(_pattern!, text, scheme);
+    }
+
     /// <summary>Checks the level, source, file name and time, which are all on the row.</summary>
     private bool MatchesRow(EventRow row)
     {

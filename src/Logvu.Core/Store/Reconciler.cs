@@ -531,7 +531,7 @@ public sealed class Reconciler
     /// </summary>
     private static long DiscoveryCursor(Stream stream, ILogScheme scheme)
     {
-        long dataEnd = EventFramer.DataEnd(stream, new LineReader(stream), live: true);
+        long dataEnd = EventFramer.DataEnd(stream, live: true);
         foreach (EventExtent last in new EventFramer(stream, scheme, live: true).ReadBackward(dataEnd))
         {
             return last.Provisional ? last.Start : dataEnd;
@@ -597,7 +597,7 @@ public sealed class Reconciler
             return;
         }
 
-        long end = drain ? opened.Length : EventFramer.DataEnd(opened, new LineReader(opened), live: true);
+        long end = drain ? opened.Length : EventFramer.DataEnd(opened, live: true);
         if (end <= readThrough && !(drain && tracking.Provisional is not null))
         {
             return;

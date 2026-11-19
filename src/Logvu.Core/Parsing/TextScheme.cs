@@ -26,6 +26,11 @@ public sealed class TextScheme : ILogScheme
     private readonly Regex _header;
     private readonly string[] _timeFormats;
     private readonly string[] _fieldNames;
+    private readonly int[] _fieldGroups;
+    private readonly int _messageGroup;
+    private readonly int _timeGroup;
+    private readonly int _levelGroup;
+    private readonly int _loggerGroup;
 
     /// <summary>Creates a text scheme.</summary>
     /// <param name="name">The scheme name.</param>
@@ -67,6 +72,13 @@ public sealed class TextScheme : ILogScheme
             .OrderBy(group => raw.GroupNumberFromName(group))
             .ToArray();
 
+        // The wrapper adds no capture, so the group numbers of the compiled header are those of the pattern.
+        _fieldGroups = _fieldNames.Select(name => _header.GroupNumberFromName(name)).ToArray();
+        _messageGroup = _header.GroupNumberFromName("message");
+        _timeGroup = _header.GroupNumberFromName("time");
+        _levelGroup = _header.GroupNumberFromName("level");
+        _loggerGroup = _header.GroupNumberFromName("logger");
+
         var formats = new string[timeFormats.Count];
         for (int i = 0; i < formats.Length; i++)
         {
@@ -91,6 +103,12 @@ public sealed class TextScheme : ILogScheme
     public bool IsHeader(string line)
     {
         ArgumentNullException.ThrowIfNull(line);
+        return IsHeader(line.AsSpan());
+    }
+
+    /// <inheritdoc/>
+    public bool IsHeader(ReadOnlySpan<char> line)
+    {
         try
         {
             return _header.IsMatch(line);
@@ -112,43 +130,66 @@ public sealed class TextScheme : ILogScheme
         ArgumentNullException.ThrowIfNull(context);
 
         int newline = eventText.IndexOf('\n');
-        string firstLine = newline < 0 ? eventText : eventText[..newline];
+        int firstLength = newline < 0 ? eventText.Length : newline;
 
+        // eventText[newline..] is "\n" plus every continuation line, blank ones included.
+        string continuation = newline < 0 ? string.Empty : eventText[newline..];
+        return Read(eventText, firstLength, continuation, eventText, context, full: true, withTime: true);
+    }
+
+    /// <summary>
+    /// Parses the header of an event: its first line alone. The result has the header's level and source as <see cref="Parse"/> gives them
+    /// for the same event, its time too when <paramref name="withTime"/> is set, and no message and no fields. Used to decide on the header
+    /// before the rest of the event is read.
+    /// </summary>
+    /// <param name="eventText">The event's text, or any text that begins with its first line.</param>
+    /// <param name="context">The parse settings.</param>
+    /// <param name="withTime">Whether the time is parsed. It is the one header field that costs a format parse.</param>
+    internal LogEvent ParseHeader(string eventText, ParseContext context, bool withTime)
+    {
+        int newline = eventText.IndexOf('\n');
+        int firstLength = newline < 0 ? eventText.Length : newline;
+        return Read(eventText, firstLength, string.Empty, eventText, context, full: false, withTime);
+    }
+
+    /// <summary>
+    /// Reads an event from the first <paramref name="firstLength"/> characters of <paramref name="input"/>, which is its first line, and the
+    /// continuation that follows it. <paramref name="whole"/> is the text of a raw result.
+    /// </summary>
+    /// <param name="full">Whether the message and the fields are built. A header-only read leaves them empty.</param>
+    /// <param name="withTime">Whether the time is parsed.</param>
+    private LogEvent Read(string input, int firstLength, string continuation, string whole, ParseContext context, bool full, bool withTime)
+    {
+        // The header is matched within its own line, so the anchors and the end of the match are the line's, as for a copy of the line.
         Match match;
         try
         {
-            match = _header.Match(firstLine);
+            match = _header.Match(input, 0, firstLength);
         }
         catch (RegexMatchTimeoutException)
         {
-            return LogEvent.Raw(eventText, "header pattern timed out");
+            return LogEvent.Raw(whole, "header pattern timed out");
         }
 
         if (!match.Success)
         {
-            return LogEvent.Raw(eventText, null);
+            return LogEvent.Raw(whole, null);
         }
 
-        // eventText[newline..] is "\n" plus every continuation line, blank ones included.
-        string message = match.Groups["message"].Value + (newline < 0 ? string.Empty : eventText[newline..]);
-
-        Group timeGroup = match.Groups["time"];
-        string? timeText = timeGroup.Success ? timeGroup.Value : null;
+        string? timeText = withTime ? Captured(match, _timeGroup) : null;
         DateTimeOffset? time = null;
         if (timeText is not null && DateTime.TryParseExact(timeText, _timeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime local))
         {
             time = TimeParsing.InZone(local, context);
         }
 
-        Group levelGroup = match.Groups["level"];
-        string? levelText = levelGroup.Success ? levelGroup.Value : null;
+        string? levelText = Captured(match, _levelGroup);
+        string message = full ? match.Groups[_messageGroup].Value + continuation : string.Empty;
 
-        Group loggerGroup = match.Groups["logger"];
-
-        var fields = new LogField[_fieldNames.Length];
+        var fields = full ? new LogField[_fieldNames.Length] : [];
         for (int i = 0; i < fields.Length; i++)
         {
-            Group group = match.Groups[_fieldNames[i]];
+            Group group = match.Groups[_fieldGroups[i]];
             fields[i] = new LogField(_fieldNames[i], group.Success ? group.Value : string.Empty);
         }
 
@@ -158,9 +199,12 @@ public sealed class TextScheme : ILogScheme
             TimeText = timeText,
             Level = LogLevels.Normalize(levelText),
             LevelText = levelText,
-            Source = loggerGroup.Success ? loggerGroup.Value : null,
+            Source = Captured(match, _loggerGroup),
             Message = message,
             Fields = fields,
         };
     }
+
+    /// <summary>The value of a group, or <c>null</c> when the pattern has no such group or it did not participate in the match.</summary>
+    private static string? Captured(Match match, int group) => group >= 0 && match.Groups[group] is { Success: true } captured ? captured.Value : null;
 }

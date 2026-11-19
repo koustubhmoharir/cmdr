@@ -70,6 +70,53 @@ public static class RowBuilder
         return (row, ev);
     }
 
+    /// <summary>
+    /// Builds the row of an event of a text scheme from its header line alone, for a filter to decide on before the event is parsed. The
+    /// row has the same key, extent, time, level and source as <see cref="BuildFromText"/> gives, and an empty preview.
+    /// </summary>
+    /// <param name="text">The event's text, as <see cref="EventText.Read"/> gives it. Only its first line is parsed.</param>
+    /// <param name="scheme">The scheme of the event's member.</param>
+    /// <param name="generation">The generation of the event's member, which the row's key carries.</param>
+    /// <param name="extent">The event's bytes within its file.</param>
+    /// <param name="context">The parse settings.</param>
+    /// <param name="withTime">Whether the row carries the header's time. Without it, the row's time and time text are <c>null</c>.</param>
+    /// <returns>The header row, or <c>null</c> for a JSON scheme, whose header is the whole event.</returns>
+    /// <exception cref="ArgumentNullException">A required argument is <c>null</c>.</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="scheme"/> is <c>null</c>: the member has no scheme.</exception>
+    public static EventRow? BuildHead(string text, ILogScheme? scheme, int generation, EventExtent extent, ParseContext context, bool withTime = true)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(context);
+        RequireScheme(scheme, generation);
+
+        if (scheme is not TextScheme textScheme)
+        {
+            return null;
+        }
+
+        LogEvent ev = textScheme.ParseHeader(text, context, withTime);
+        return new EventRow(
+            new RowKey(generation, extent.Start),
+            extent,
+            ev.Time,
+            ev.TimeText,
+            ev.Level,
+            ev.LevelText,
+            ev.Source,
+            string.Empty,
+            ev.IsRaw,
+            extent.Orphan,
+            extent.Provisional);
+    }
+
+    /// <summary>The scheme of a member, which every readable member has.</summary>
+    /// <exception cref="InvalidOperationException"><paramref name="scheme"/> is <c>null</c>.</exception>
+    internal static ILogScheme SchemeOf(ILogScheme? scheme, int generation)
+    {
+        RequireScheme(scheme, generation);
+        return scheme!;
+    }
+
     private static void RequireScheme(ILogScheme? scheme, int generation)
     {
         if (scheme is null)

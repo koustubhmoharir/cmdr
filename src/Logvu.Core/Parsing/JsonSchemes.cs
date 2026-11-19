@@ -22,6 +22,9 @@ public abstract class JsonScheme : ILogScheme
     }
 
     /// <inheritdoc/>
+    public bool IsHeader(ReadOnlySpan<char> line) => !line.IsWhiteSpace();
+
+    /// <inheritdoc/>
     public LogEvent Parse(string eventText, ParseContext context)
     {
         ArgumentNullException.ThrowIfNull(eventText);

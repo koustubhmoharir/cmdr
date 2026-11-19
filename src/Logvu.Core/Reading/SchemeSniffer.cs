@@ -25,7 +25,7 @@ public static class SchemeSniffer
         ArgumentNullException.ThrowIfNull(candidates);
 
         var reader = new LineReader(stream);
-        long dataEnd = EventFramer.DataEnd(stream, reader, live);
+        long dataEnd = EventFramer.DataEnd(stream, live);
         var sample = new List<string>(SchemeDetector.SampleSize);
         foreach (RawLine line in reader.ReadForward(LineReader.ContentStart(stream), dataEnd))
         {

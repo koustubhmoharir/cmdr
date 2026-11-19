@@ -4,8 +4,8 @@ namespace Logvu.Core.Reading;
 
 /// <summary>
 /// Groups the lines of a stream into events, by byte extent. Forward and backward framing produce the same extents for
-/// the same data. The framer reads through its own <see cref="LineReader"/> and holds no per-enumeration state, so
-/// several enumerations may run over one framer.
+/// the same data. The framer reads through its own line scanner and holds no per-enumeration state, so several
+/// enumerations may run over one framer.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -21,30 +21,37 @@ namespace Logvu.Core.Reading;
 /// </remarks>
 public sealed class EventFramer
 {
+    /// <summary>The block size used when the caller does not give one.</summary>
+    private const int DefaultBlockSize = 64 * 1024;
+
     private readonly Stream _stream;
     private readonly ILogScheme _scheme;
     private readonly bool _live;
-    private readonly LineReader _reader;
+    private readonly int _blockSize;
+    private readonly int _textCap;
 
     /// <summary>Creates a framer over a stream.</summary>
     /// <param name="stream">A seekable stream. It is read, never disposed; it may grow while framing when <paramref name="live"/> is set.</param>
     /// <param name="scheme">The scheme whose headers delimit events.</param>
     /// <param name="live">Whether the stream is still being written. Then an unterminated last line is held back, and the last event of a text file is provisional.</param>
-    /// <param name="blockSize">The block size of the underlying <see cref="LineReader"/>.</param>
+    /// <param name="blockSize">The block size of the underlying line scanner.</param>
     /// <param name="textCap">
     /// The most bytes of a line that are decoded for header matching. A text scheme's header must lie within it, and a
     /// JSON line is a header whether or not it is cut.
     /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="stream"/> or <paramref name="scheme"/> is <c>null</c>.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="blockSize"/> or <paramref name="textCap"/> is below 1.</exception>
-    public EventFramer(Stream stream, ILogScheme scheme, bool live, int blockSize = 64 * 1024, int textCap = LineReader.TextCap)
+    public EventFramer(Stream stream, ILogScheme scheme, bool live, int blockSize = DefaultBlockSize, int textCap = LineReader.TextCap)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(scheme);
+        ArgumentOutOfRangeException.ThrowIfLessThan(blockSize, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(textCap, 1);
         _stream = stream;
         _scheme = scheme;
         _live = live;
-        _reader = new LineReader(stream, blockSize, textCap);
+        _blockSize = blockSize;
+        _textCap = textCap;
     }
 
     /// <summary>
@@ -56,7 +63,7 @@ public sealed class EventFramer
     {
         ArgumentOutOfRangeException.ThrowIfNegative(from);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(from, _stream.Length, nameof(from));
-        return Forward(from);
+        return Enumerate(Forward(from));
     }
 
     /// <summary>
@@ -68,8 +75,17 @@ public sealed class EventFramer
     public IEnumerable<EventExtent> ReadBackward(long before)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(before);
-        return Backward(before);
+        return Enumerate(Backward(before));
     }
+
+    /// <summary>The events of a cursor, as a sequence. The cursor is made when the enumeration starts.</summary>
+    internal EventCursor Forward(long from) => EventCursor.Forward(_stream, _scheme, _live, _blockSize, _textCap, from);
+
+    /// <summary>
+    /// A cursor over the events before <paramref name="before"/>, which is clamped to the data end. The cursor reads the data end when it
+    /// is made.
+    /// </summary>
+    internal EventCursor Backward(long before) => EventCursor.Backward(_stream, _scheme, _live, _blockSize, _textCap, before);
 
     /// <summary>The start of the event that contains the line starting at <paramref name="lineStart"/>.</summary>
     /// <remarks>
@@ -82,120 +98,70 @@ public sealed class EventFramer
     /// </exception>
     public long FindEventStart(long lineStart)
     {
-        long contentStart = LineReader.ContentStart(_stream);
-        long dataEnd = DataEnd(_stream, _reader, _live);
+        var scanner = new LineScanner(_stream, _blockSize, _textCap);
+        long contentStart = scanner.ContentStart;
+        long dataEnd = DataEnd(_stream, scanner, _live);
         ArgumentOutOfRangeException.ThrowIfLessThan(lineStart, contentStart, nameof(lineStart));
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(lineStart, dataEnd, nameof(lineStart));
 
-        RawLine line = _reader.ReadForward(lineStart, dataEnd).First();
-        if (IsHeader(line))
+        LineView line = scanner.Forward(lineStart, dataEnd);
+        if (IsHeader(scanner, line))
         {
             return lineStart;
         }
 
-        foreach (RawLine previous in _reader.ReadBackward(lineStart))
+        // The header search walks back from the line: each step reads the line that ends where the previous one started.
+        for (long end = lineStart; end > contentStart;)
         {
-            if (IsHeader(previous))
+            LineView previous = scanner.Backward(end, contentStart);
+            if (IsHeader(scanner, previous))
             {
                 return previous.Start;
             }
+
+            end = previous.Start;
         }
 
         return contentStart;
     }
 
     /// <summary>
+    /// The offset where the readable data ends: the stream's length when it is closed, else the end of its last terminated line.
+    /// </summary>
+    /// <param name="stream">A seekable stream.</param>
+    /// <param name="live">Whether the stream is still being written.</param>
+    internal static long DataEnd(Stream stream, bool live) =>
+        DataEnd(stream, new LineScanner(stream, DefaultBlockSize, LineReader.TextCap), live);
+
+    /// <summary>
     /// The offset where the readable data ends. A closed stream ends at its length. A live stream ends after its last
     /// terminated line, so an unterminated tail is held back.
     /// </summary>
-    internal static long DataEnd(Stream stream, LineReader reader, bool live)
+    internal static long DataEnd(Stream stream, LineScanner scanner, bool live)
     {
         if (!live)
         {
             return stream.Length;
         }
 
-        using IEnumerator<RawLine> last = reader.ReadBackward(stream.Length).GetEnumerator();
-        if (!last.MoveNext())
+        long length = scanner.Length;
+        if (length <= scanner.ContentStart)
         {
-            return stream.Length;
+            return length;
         }
 
-        return last.Current.Terminated ? last.Current.End : last.Current.Start;
+        LineView last = scanner.Backward(length, scanner.ContentStart);
+        return last.Terminated ? last.End : last.Start;
     }
 
-    private IEnumerable<EventExtent> Forward(long from)
+    /// <summary>Whether a line starts an event. See <see cref="EventCursor"/>, which applies the same rule.</summary>
+    private bool IsHeader(LineScanner scanner, in LineView line) => (_scheme.IsJson && line.Truncated) || _scheme.IsHeader(scanner.Decode(line));
+
+    private static IEnumerable<EventExtent> Enumerate(EventCursor cursor)
     {
-        long dataEnd = DataEnd(_stream, _reader, _live);
-        long start = Math.Max(from, LineReader.ContentStart(_stream));
-        if (start >= dataEnd)
+        while (cursor.MoveNext(out EventExtent extent))
         {
-            yield break;
-        }
-
-        bool open = false;
-        long eventStart = 0;
-        long headerEnd = 0;
-        bool orphan = false;
-        foreach (RawLine line in _reader.ReadForward(start, dataEnd))
-        {
-            bool header = IsHeader(line);
-            if (open && header)
-            {
-                yield return Extent(eventStart, line.Start, headerEnd, orphan, dataEnd);
-                open = false;
-            }
-
-            if (!open)
-            {
-                open = true;
-                eventStart = line.Start;
-                headerEnd = line.End;
-                orphan = !header;
-            }
-        }
-
-        if (open)
-        {
-            yield return Extent(eventStart, dataEnd, headerEnd, orphan, dataEnd);
+            yield return extent;
         }
     }
-
-    private IEnumerable<EventExtent> Backward(long before)
-    {
-        long dataEnd = DataEnd(_stream, _reader, _live);
-        long contentStart = LineReader.ContentStart(_stream);
-        long eventEnd = Math.Min(before, dataEnd);
-        if (eventEnd <= contentStart)
-        {
-            yield break;
-        }
-
-        // Lines arrive last first. Each header closes the event that runs from it to the end of the group above it.
-        RawLine first = default;
-        foreach (RawLine line in _reader.ReadBackward(eventEnd))
-        {
-            first = line;
-            if (IsHeader(line))
-            {
-                yield return Extent(line.Start, eventEnd, line.End, false, dataEnd);
-                eventEnd = line.Start;
-            }
-        }
-
-        // No header above the rest: they are the orphan run, which starts at the content start.
-        if (eventEnd > contentStart)
-        {
-            yield return Extent(contentStart, eventEnd, first.End, true, dataEnd);
-        }
-    }
-
-    private EventExtent Extent(long start, long end, long headerEnd, bool orphan, long dataEnd) =>
-        new(start, end, headerEnd, _live && !_scheme.IsJson && end == dataEnd, orphan);
-
-    /// <summary>
-    /// Whether a line starts an event. A JSON line that is cut at the text cap is a header whatever its prefix: its
-    /// blankness cannot be seen from the prefix, and a line with content must not be folded into the previous event.
-    /// </summary>
-    private bool IsHeader(RawLine line) => (_scheme.IsJson && line.Truncated) || _scheme.IsHeader(line.Text);
 }

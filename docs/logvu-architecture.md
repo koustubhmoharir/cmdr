@@ -350,3 +350,15 @@ field predicates `path = value` (text-scheme field name or JSON dotted path; exa
   to the timeline.
 - **Status**: `Filter: level ≥ WARN · text ~ timeout`; while a filtered load scans: `Scanning… 34 MB`; when a completed scan found
   nothing: `No matching events`.
+
+## Scan performance
+
+History scans frame events with an allocation-free span scanner shared by `LineReader` and `EventFramer`, and take each event's
+text from the framer's cached blocks (no second read). Filters may opt into two pre-checks before an event is parsed:
+`MayMatchHead` (the header line: level, source, time for text schemes) and `MayMatchText` (the raw text). Pre-checks must be
+exact — they may only reject events the full `Matches` would reject. The raw-text pre-check for search is exact for text schemes,
+and for slog only with a literal, non-whole-word pattern and a line without backslashes (escapes make the decoded message differ
+from the raw line); Serilog is never pre-checked (messages are rendered from templates). Batches hold a handle for up to 4096
+events / 16 MiB. Measured (Release, opt-in `LOGVU_PERF=1` benchmark in `tests/Logvu.Core.Tests/Perf`): literal search ≈ 110 MB/s
+on log4net text, ≈ 210 MB/s on slog JSON; a level-only filter ≈ 30 MB/s, bounded by the two compiled-regex calls per event
+(framing + header parse).

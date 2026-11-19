@@ -8,9 +8,6 @@ public static class EventText
     /// <summary>The default cap on the bytes of an event read as text: 4 MiB.</summary>
     public const int DefaultCap = 4 * 1024 * 1024;
 
-    /// <summary>The size of the chunks the event bytes are read in.</summary>
-    private const int ChunkSize = 64 * 1024;
-
     private const byte CarriageReturn = (byte)'\r';
     private const byte LineFeed = (byte)'\n';
 
@@ -27,7 +24,7 @@ public static class EventText
     /// character behind. Only bytes of invalid UTF-8 can make the text's UTF-8 length exceed <paramref name="maxBytes"/>.
     /// </para>
     /// <para>
-    /// Memory is bounded by <paramref name="maxBytes"/> plus one chunk, whatever the length of the event.
+    /// Memory is bounded by <paramref name="maxBytes"/>, whatever the length of the event.
     /// </para>
     /// </remarks>
     /// <param name="stream">A seekable stream. It is read, never disposed.</param>
@@ -44,52 +41,80 @@ public static class EventText
         ArgumentOutOfRangeException.ThrowIfNegative(extent.Start, nameof(extent));
         ArgumentOutOfRangeException.ThrowIfLessThan(extent.End, extent.Start, nameof(extent));
 
-        long start = extent.Start;
-        if (start == 0 && extent.End >= 3 && HasByteOrderMark(stream))
-        {
-            start = 3;
-        }
+        bool byteOrderMark = extent.Start == 0 && extent.End >= 3 && HasByteOrderMark(stream);
+        (long start, int take, bool truncated) = TextBytes(extent, byteOrderMark, maxBytes);
+        var bytes = new byte[take];
+        stream.Position = start;
+        stream.ReadExactly(bytes);
+        return (Decode(bytes, truncated), truncated);
+    }
 
+    /// <summary>
+    /// The bytes of an event's text: the offset of the first byte, the number of bytes, and whether the event is cut at
+    /// <paramref name="maxBytes"/>. A byte order mark at the start of a file is skipped when <paramref name="byteOrderMark"/> is set and
+    /// the event starts at offset 0.
+    /// </summary>
+    internal static (long Start, int Count, bool Truncated) TextBytes(EventExtent extent, bool byteOrderMark, int maxBytes)
+    {
+        long start = byteOrderMark && extent.Start == 0 ? 3 : extent.Start;
         long available = extent.End - start;
         bool truncated = available > maxBytes;
         int take = (int)Math.Min(available, maxBytes);
+        return (start, take, truncated);
+    }
 
-        // Each raw byte yields at most one output byte (a CR before a LF is dropped), so take bytes always suffice.
-        byte[] output = new byte[take];
+    /// <summary>
+    /// Decodes the bytes of an event's text, as <see cref="Read"/> does: <c>\r\n</c> becomes <c>\n</c>, the final terminator is dropped
+    /// unless the text is truncated, and a truncated text is cut back to a character boundary.
+    /// </summary>
+    /// <param name="bytes">The event's bytes after any byte order mark, at most the cap, as <see cref="Span"/> gives them.</param>
+    /// <param name="truncated">Whether the event was longer than the cap.</param>
+    internal static string Decode(ReadOnlySpan<byte> bytes, bool truncated)
+    {
+        if (bytes.IndexOf(CarriageReturn) < 0)
+        {
+            // Without a carriage return the bytes are the text: only the final terminator and a cut differ.
+            ReadOnlySpan<byte> body = bytes;
+            if (!truncated && body.Length > 0 && body[^1] == LineFeed)
+            {
+                body = body[..^1];
+            }
+
+            if (truncated)
+            {
+                body = body[..CompleteLength(body)];
+            }
+
+            return Encoding.UTF8.GetString(body);
+        }
+
+        // Each raw byte yields at most one output byte (a CR before a LF is dropped), so the byte count always suffices.
+        byte[] output = new byte[bytes.Length];
         int count = 0;
         bool pendingCarriageReturn = false;
         byte lastByte = 0;
-        byte[] chunk = new byte[Math.Min(take, ChunkSize)];
-
-        stream.Position = start;
-        for (int remaining = take; remaining > 0;)
+        foreach (byte value in bytes)
         {
-            int n = Math.Min(chunk.Length, remaining);
-            stream.ReadExactly(chunk, 0, n);
-            remaining -= n;
-            foreach (byte value in chunk.AsSpan(0, n))
+            lastByte = value;
+            if (pendingCarriageReturn)
             {
-                lastByte = value;
-                if (pendingCarriageReturn)
+                pendingCarriageReturn = false;
+                if (value == LineFeed)
                 {
-                    pendingCarriageReturn = false;
-                    if (value == LineFeed)
-                    {
-                        output[count++] = LineFeed;
-                        continue;
-                    }
-
-                    output[count++] = CarriageReturn;
-                }
-
-                if (value == CarriageReturn)
-                {
-                    pendingCarriageReturn = true;
+                    output[count++] = LineFeed;
                     continue;
                 }
 
-                output[count++] = value;
+                output[count++] = CarriageReturn;
             }
+
+            if (value == CarriageReturn)
+            {
+                pendingCarriageReturn = true;
+                continue;
+            }
+
+            output[count++] = value;
         }
 
         // A carriage return at the very end of the bytes read is not followed by a LF within the event.
@@ -109,7 +134,7 @@ public static class EventText
             count = CompleteLength(output.AsSpan(0, count));
         }
 
-        return (Encoding.UTF8.GetString(output, 0, count), truncated);
+        return Encoding.UTF8.GetString(output, 0, count);
     }
 
     /// <summary>Tells whether the stream starts with a UTF-8 byte order mark. The stream must be at least three bytes long.</summary>
