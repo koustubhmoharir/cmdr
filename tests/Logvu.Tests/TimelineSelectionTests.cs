@@ -79,7 +79,7 @@ public sealed class TimelineSelectionTests
 
         Assert.Equal(TimelineMode.Paused, model.Mode);
         Assert.Equal("r0", model.SelectedRow!.Preview);
-        Assert.Equal(new[] { "00" }, copied);
+        Assert.Equal(new[] { "00." }, copied);
     }
 
     [Fact]
@@ -97,12 +97,13 @@ public sealed class TimelineSelectionTests
             () => view.HandleMouse(Drag(x: 9, y: 3)),
             () => view.HandleMouse(Release(x: 9, y: 3)));
 
-        // The offsets 6 and 7 of the row are drawn in columns 7 and 8, after the gutter.
+        // The offsets 6 to 8 of the row are drawn in columns 7 to 9, after the gutter: the pointer's cell at offset 8 is included.
         TerminalScreen dragged = screens[2];
         Assert.True(dragged.Cells[1][7].Attribute.Style.HasFlag(TextStyle.Reverse));
         Assert.True(dragged.Cells[1][8].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.True(dragged.Cells[1][9].Attribute.Style.HasFlag(TextStyle.Reverse));
         Assert.False(dragged.Cells[1][6].Attribute.Style.HasFlag(TextStyle.Reverse));
-        Assert.False(dragged.Cells[1][9].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.False(dragged.Cells[1][10].Attribute.Style.HasFlag(TextStyle.Reverse));
         Assert.False(dragged.Cells[3][8].Attribute.Style.HasFlag(TextStyle.Reverse));
     }
 
@@ -131,6 +132,93 @@ public sealed class TimelineSelectionTests
 
         Assert.Empty(copied);
         Assert.Equal(new[] { model.SelectedRow!.Key }, events);
+    }
+
+    [Fact]
+    public void A_drag_from_the_first_character_of_a_word_to_its_last_selects_the_whole_word()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var copied = new List<string>();
+        view.CopyRequested += copied.Add;
+
+        // The row's text starts with the hour, "10": offsets 0 and 1, drawn in columns 1 and 2.
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 1, y: 1)),
+            () => view.HandleMouse(Drag(x: 2, y: 1)),
+            () => view.HandleMouse(Release(x: 2, y: 1)),
+            () => Assert.True(view.HandleKey(Key.C)));
+
+        Assert.Equal(new[] { "10" }, copied);
+    }
+
+    [Fact]
+    public void A_backward_drag_from_the_last_character_of_a_word_to_its_first_selects_the_whole_word()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var copied = new List<string>();
+        view.CopyRequested += copied.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 2, y: 1)),
+            () => view.HandleMouse(Drag(x: 1, y: 1)),
+            () => view.HandleMouse(Release(x: 1, y: 1)),
+            () => Assert.True(view.HandleKey(Key.C)));
+
+        Assert.Equal(new[] { "10" }, copied);
+    }
+
+    [Fact]
+    public void A_drag_back_onto_the_press_cell_selects_that_one_character()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var copied = new List<string>();
+        view.CopyRequested += copied.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 4, y: 1)),
+            () => view.HandleMouse(Drag(x: 4, y: 1)),
+            () => view.HandleMouse(Release(x: 4, y: 1)),
+            () => Assert.True(view.HandleKey(Key.C)));
+
+        Assert.Equal(new[] { "0" }, copied);
+    }
+
+    [Fact]
+    public void A_drag_to_the_right_of_the_row_selects_to_its_end()
+    {
+        TimelineModel model = Model(Store(3));
+        model.Start(3);
+        var view = new TimelineView(model, TimeZoneInfo.Utc);
+        var copied = new List<string>();
+        view.CopyRequested += copied.Add;
+
+        TerminalHarness.Run(
+            view,
+            Width,
+            Height,
+            () => view.HandleMouse(Press(x: 7, y: 1)),
+            () => view.HandleMouse(Drag(x: 59, y: 1)),
+            () => view.HandleMouse(Release(x: 59, y: 1)),
+            () => Assert.True(view.HandleKey(Key.C)));
+
+        // From the first character of the row's text to its end, which is the row's padding too.
+        Assert.StartsWith("00.000 -     r0", copied[0], StringComparison.Ordinal);
+        Assert.Equal("00.000 -     r0", copied[0].TrimEnd());
     }
 
     [Fact]
@@ -261,7 +349,7 @@ public sealed class TimelineSelectionTests
             () => view.HandleMouse(Release(x: 6, y: 3)),
             () => seed = view.SelectionSeed());
 
-        Assert.Equal(new SearchSeed("10:00", 0, 0), seed);
+        Assert.Equal(new SearchSeed("10:00:", 0, 0), seed);
     }
 
     private static Mouse Press(int x, int y) => new() { Flags = MouseFlags.LeftButtonPressed, Position = new(x, y) };

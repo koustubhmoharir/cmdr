@@ -541,7 +541,8 @@ public sealed class SearchControllerTests : IDisposable
         const string text = "Execute(Int32";
         int line = 6;
         int from = detail.Document!.Lines[line].Text.IndexOf(text, StringComparison.Ordinal);
-        SelectInDetail(detail, line, from, from + text.Length);
+        // The drag ends on the last character of the text, which the selection includes.
+        SelectInDetail(detail, line, from, from + text.Length - 1);
 
         Send((Key)'/');
 
@@ -555,7 +556,7 @@ public sealed class SearchControllerTests : IDisposable
     [Fact]
     public void Slash_with_a_selection_in_the_timeline_seeds_the_query_and_starts_no_scan()
     {
-        // The newest row, r9 at 10:00:09, is the bottom one of the three rows: its first five characters are its hour and minute.
+        // The newest row, r9 at 10:00:09, is the bottom one of the three rows: its first six characters are its hour, its minute and the colon.
         _controller.Timeline.Viewport = new System.Drawing.Rectangle(0, 0, 60, 4);
         _controller.Timeline.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(1, 3) });
         _controller.Timeline.HandleMouse(new Mouse { Flags = MouseFlags.PositionReport, Position = new(6, 3) });
@@ -564,7 +565,7 @@ public sealed class SearchControllerTests : IDisposable
         Assert.True(Send((Key)'/'));
 
         Assert.True(Bar.Visible);
-        Assert.Equal("10:00", Bar.Query.Text);
+        Assert.Equal("10:00:", Bar.Query.Text);
         Assert.Empty(_source.Finds);
         Assert.False(_controller.Search.IsScanning);
     }

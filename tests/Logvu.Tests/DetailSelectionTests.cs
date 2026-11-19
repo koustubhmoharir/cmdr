@@ -178,11 +178,12 @@ public sealed class DetailSelectionTests
                 Assert.True(v.HandleKey(Key.C));
             });
 
-        // From the sixth character of the first row to the fifth of the continuation row.
-        Assert.Equal(lineText.Substring(5, second + 4 - 5), copied);
+        // From the sixth character of the first row to the fifth of the continuation row, the pointer's cell included.
+        Assert.Equal(lineText.Substring(5, second + 5 - 5), copied);
         Assert.True(screens[1].Cells[first][1 + 5].Attribute.Style.HasFlag(TextStyle.Reverse));
         Assert.False(screens[1].Cells[first][1 + 4].Attribute.Style.HasFlag(TextStyle.Reverse));
         Assert.True(screens[1].Cells[first + 1][1 + 9].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.True(screens[1].Cells[first + 1][1 + 9 + 4].Attribute.Style.HasFlag(TextStyle.Reverse)); // the pointer's cell
         Assert.False(screens[1].Cells[first + 1][1 + 9 + 5].Attribute.Style.HasFlag(TextStyle.Reverse));
     }
 
@@ -200,6 +201,71 @@ public sealed class DetailSelectionTests
                 Assert.False(v.HasSelection);
                 Assert.Equal(5, v.CursorLine);
             });
+    }
+
+    [Fact]
+    public void A_drag_from_the_first_letter_of_a_word_to_its_last_selects_the_whole_word_and_c_copies_it()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        string? copied = null;
+        view.CopyRequested += text => copied = text;
+
+        // The first line is "level: ERROR": E is at offset 7 and the last R at offset 11.
+        List<TerminalScreen> screens = Draw(
+            view,
+            v => SelectInRow(v, 0, from: 7, to: 11),
+            v => Assert.True(v.HandleKey(Key.C)));
+
+        Assert.Equal("ERROR", copied);
+        Assert.True(screens[1].Cells[0][1 + 7].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.True(screens[1].Cells[0][1 + 11].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.False(screens[1].Cells[0][1 + 6].Attribute.Style.HasFlag(TextStyle.Reverse));
+        Assert.False(screens[1].Cells[0][1 + 12].Attribute.Style.HasFlag(TextStyle.Reverse));
+    }
+
+    [Fact]
+    public void A_backward_drag_from_the_last_letter_of_a_word_to_its_first_selects_the_whole_word()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        string? copied = null;
+        view.CopyRequested += text => copied = text;
+
+        Draw(
+            view,
+            v => SelectInRow(v, 0, from: 11, to: 7),
+            v => Assert.True(v.HandleKey(Key.C)));
+
+        Assert.Equal("ERROR", copied);
+    }
+
+    [Fact]
+    public void A_drag_back_onto_the_press_cell_selects_that_one_character()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        string? copied = null;
+        view.CopyRequested += text => copied = text;
+
+        Draw(
+            view,
+            v => SelectInRow(v, 0, from: 9, to: 9),
+            v => Assert.True(v.HandleKey(Key.C)));
+
+        Assert.Equal("R", copied);
+    }
+
+    [Fact]
+    public void A_drag_to_the_right_of_the_line_selects_to_the_end_of_the_line()
+    {
+        DetailView view = Loaded(DetailFixtures.Text(DetailFixtures.StackEvent), DetailFixtures.Config());
+        string? copied = null;
+        view.CopyRequested += text => copied = text;
+
+        Draw(
+            view,
+            v => SelectInRow(v, 0, from: 7, to: 60),
+            v => Assert.True(v.HandleKey(Key.C)));
+
+        Assert.Equal("ERROR", copied);
     }
 
     [Fact]
@@ -335,7 +401,7 @@ public sealed class DetailSelectionTests
         DrawAt(
             view,
             300,
-            v => SelectInRow(v, 4, from: 9, to: 9 + 200),
+            v => SelectInRow(v, 4, from: 9, to: 9 + 199),
             v => seed = v.SelectionSeed());
 
         Assert.Equal(200, seed!.Value.Text.Length);
@@ -344,7 +410,7 @@ public sealed class DetailSelectionTests
         DrawAt(
             longer,
             300,
-            v => SelectInRow(v, 4, from: 9, to: 9 + 201),
+            v => SelectInRow(v, 4, from: 9, to: 9 + 200),
             v => seed = v.SelectionSeed());
 
         Assert.Null(seed);

@@ -417,8 +417,24 @@ internal sealed class TimelineView : View
         }
 
         string text = TimelineLayout.Text(page.Lines[index], page.Columns);
-        LogicalRange range = TextSelection.Clamp(new LogicalPoint(0, selection.Anchor), new LogicalPoint(0, selection.Active), [text]);
-        return new ShownSelection(index, text, range);
+        return new ShownSelection(index, text, Range(selection, text));
+    }
+
+    /// <summary>
+    /// The characters of the row from the anchor cell to the active cell, both cells included, on line 0 of <paramref name="text"/>. Empty
+    /// until a drag has moved the active end. A drag forwards ends after the pointer's cell; a drag backwards starts at it.
+    /// </summary>
+    private static LogicalRange Range(SelectionState selection, string text)
+    {
+        if (!selection.Dragged)
+        {
+            return default;
+        }
+
+        LogicalRange cells = selection.Active.Before >= selection.Anchor.Before
+            ? new LogicalRange(new LogicalPoint(0, selection.Anchor.Before), new LogicalPoint(0, selection.Active.After))
+            : new LogicalRange(new LogicalPoint(0, selection.Active.Before), new LogicalPoint(0, selection.Anchor.After));
+        return TextSelection.Clamp(cells.Start, cells.End, [text]);
     }
 
     /// <summary>
@@ -444,8 +460,9 @@ internal sealed class TimelineView : View
         }
 
         string text = TimelineLayout.Text(page.Lines[index], page.Columns);
-        LogicalPoint point = TextSelection.PointAt([new SelectionRow(0, 0, text.Length, Gutter)], [text], 0, column);
-        SetSelection(new SelectionState(shown[index].Key, point.Offset, point.Offset));
+        (LogicalPoint Before, LogicalPoint After) cell = TextSelection.CellAt([new SelectionRow(0, 0, text.Length, Gutter)], [text], 0, column);
+        var offsets = (cell.Before.Offset, cell.After.Offset);
+        SetSelection(new SelectionState(shown[index].Key, offsets, offsets, Dragged: false));
         _dragging = true;
         App?.Mouse.GrabMouse(this);
     }
@@ -461,15 +478,15 @@ internal sealed class TimelineView : View
             return;
         }
 
-        LogicalPoint point = TextSelection.PointAt([new SelectionRow(0, 0, shown.Text.Length, Gutter)], [shown.Text], 0, mouse.Position?.X ?? 0);
-        SetSelection(selection with { Active = point.Offset });
+        (LogicalPoint Before, LogicalPoint After) cell = TextSelection.CellAt([new SelectionRow(0, 0, shown.Text.Length, Gutter)], [shown.Text], 0, mouse.Position?.X ?? 0);
+        SetSelection(selection with { Active = (cell.Before.Offset, cell.After.Offset), Dragged = true });
     }
 
     /// <summary>Left release: releases the grab. A press without a drag leaves no selection.</summary>
     private void EndDrag()
     {
         StopDrag();
-        if (_selection is { } selection && selection.Anchor == selection.Active)
+        if (_selection is { Dragged: false })
         {
             SetSelection(null);
         }
@@ -626,8 +643,11 @@ internal sealed class TimelineView : View
     private static Attribute Faint(Attribute attribute) =>
         new(attribute.Foreground, attribute.Background, attribute.Style | TextStyle.Faint);
 
-    /// <summary>The selection: the key of its row, and the anchor and the active end as offsets in the row's text.</summary>
-    private readonly record struct SelectionState(RowKey Key, int Anchor, int Active);
+    /// <summary>
+    /// The selection: the key of its row, and the anchor and the active end as cells, each as its offsets in the row's text (see
+    /// <see cref="TextSelection.CellAt"/>). It selects nothing until a drag has moved the active end.
+    /// </summary>
+    private readonly record struct SelectionState(RowKey Key, (int Before, int After) Anchor, (int Before, int After) Active, bool Dragged);
 
     /// <summary>A selection in the shown rows: the index of its row, the row's text and the selected range in it.</summary>
     private readonly record struct ShownSelection(int Index, string Text, LogicalRange Range);

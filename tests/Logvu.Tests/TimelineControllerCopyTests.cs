@@ -55,8 +55,9 @@ public sealed class TimelineControllerCopyTests : IDisposable
 
         _controller.Timeline.HandleKey(Key.C);
 
-        Assert.Equal(new[] { Osc52.Build("10:01") }, _written);
-        Assert.Contains("Copied 5 characters", _controller.StatusLeft, StringComparison.Ordinal);
+        // The drag to column 6 ends on the colon at offset 5, which is included: "10:01:" is six characters.
+        Assert.Equal(new[] { Osc52.Build("10:01:") }, _written);
+        Assert.Contains("Copied 6 characters", _controller.StatusLeft, StringComparison.Ordinal);
     }
 
     [Fact]

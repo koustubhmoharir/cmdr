@@ -228,4 +228,104 @@ public sealed class TextSelectionTests
         // A lone surrogate is one replacement character, as in Rune enumeration.
         Assert.Equal(2, TextSelection.CharacterCount("\uD83Da"));
     }
+
+    [Fact]
+    public void Cell_of_a_one_column_grapheme_is_the_whole_grapheme_on_both_sides()
+    {
+        string[] texts = { "abc def" };
+        SelectionRow[] rows = { new(0, 0, 3), new(0, 4, 7) };
+
+        // The cell of "b" is [1, 2), whichever side of the cell's middle the pointer is on: it is one column wide.
+        Assert.Equal((P(0, 1), P(0, 2)), TextSelection.CellAt(rows, texts, 0, 1));
+        Assert.Equal((P(0, 4), P(0, 5)), TextSelection.CellAt(rows, texts, 1, 0));
+        Assert.Equal((P(0, 6), P(0, 7)), TextSelection.CellAt(rows, texts, 1, 2));
+    }
+
+    [Fact]
+    public void Cell_of_a_wide_grapheme_is_the_same_from_either_column()
+    {
+        string[] texts = { "日本" };
+        SelectionRow[] rows = { new(0, 0, 2) };
+
+        Assert.Equal((P(0, 0), P(0, 1)), TextSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 0), P(0, 1)), TextSelection.CellAt(rows, texts, 0, 1));
+        Assert.Equal((P(0, 1), P(0, 2)), TextSelection.CellAt(rows, texts, 0, 2));
+        Assert.Equal((P(0, 1), P(0, 2)), TextSelection.CellAt(rows, texts, 0, 3));
+    }
+
+    [Fact]
+    public void Cell_takes_the_zero_width_graphemes_that_follow_it()
+    {
+        // U+200B is a zero-width space: its own grapheme, with no cell, that stays with the "a" before it.
+        string[] texts = { "a\u200Bb" };
+        SelectionRow[] rows = { new(0, 0, 3) };
+
+        Assert.Equal((P(0, 0), P(0, 2)), TextSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 2), P(0, 3)), TextSelection.CellAt(rows, texts, 0, 1));
+    }
+
+    [Fact]
+    public void Cell_keeps_a_combining_mark_with_its_grapheme()
+    {
+        string[] texts = { "e\u0301x" };
+        SelectionRow[] rows = { new(0, 0, 3) };
+
+        Assert.Equal((P(0, 0), P(0, 2)), TextSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 2), P(0, 3)), TextSelection.CellAt(rows, texts, 0, 1));
+    }
+
+    [Fact]
+    public void Cell_left_of_the_row_column_is_the_first_cell()
+    {
+        string[] texts = { "abc def" };
+        SelectionRow[] rows = { new(0, 0, 3, Column: 10) };
+
+        Assert.Equal((P(0, 0), P(0, 1)), TextSelection.CellAt(rows, texts, 0, 9));
+        Assert.Equal((P(0, 0), P(0, 1)), TextSelection.CellAt(rows, texts, 0, 0));
+    }
+
+    [Fact]
+    public void Cell_past_the_end_of_the_row_is_the_end_of_the_row_on_both_sides()
+    {
+        string[] texts = { "abc def" };
+        SelectionRow[] rows = { new(0, 0, 3), new(0, 4, 7) };
+
+        Assert.Equal((P(0, 3), P(0, 3)), TextSelection.CellAt(rows, texts, 0, 3));
+        Assert.Equal((P(0, 7), P(0, 7)), TextSelection.CellAt(rows, texts, 1, 40));
+    }
+
+    [Fact]
+    public void Cell_of_an_empty_row_is_its_start_on_both_sides()
+    {
+        string[] texts = { "abc", string.Empty };
+        SelectionRow[] rows = { new(1, 0, 0) };
+
+        Assert.Equal((P(1, 0), P(1, 0)), TextSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(1, 0), P(1, 0)), TextSelection.CellAt(rows, texts, 0, 5));
+    }
+
+    [Fact]
+    public void Cell_clamps_the_row_index_and_handles_no_rows()
+    {
+        string[] texts = { "abc" };
+        SelectionRow[] rows = { new(0, 0, 3) };
+
+        Assert.Equal((P(0, 1), P(0, 2)), TextSelection.CellAt(rows, texts, 5, 1));
+        Assert.Equal(default((LogicalPoint, LogicalPoint)), TextSelection.CellAt(Array.Empty<SelectionRow>(), texts, 0, 0));
+    }
+
+    [Fact]
+    public void Points_of_the_cell_bracket_the_point_that_PointAt_gives()
+    {
+        string[] texts = { "日a\u0301b" };
+        SelectionRow[] rows = { new(0, 0, texts[0].Length, Column: 2) };
+
+        for (int column = 0; column < 8; column++)
+        {
+            (LogicalPoint before, LogicalPoint after) = TextSelection.CellAt(rows, texts, 0, column);
+            LogicalPoint point = TextSelection.PointAt(rows, texts, 0, column);
+
+            Assert.True(point == before || point == after, $"column {column}");
+        }
+    }
 }

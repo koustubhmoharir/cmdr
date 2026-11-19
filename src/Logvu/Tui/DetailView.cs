@@ -594,8 +594,9 @@ internal sealed class DetailView : View
         _cursor = Math.Clamp(line, 0, LineCount - 1);
         if (extend)
         {
-            LogicalPoint anchor = _selection?.Anchor ?? new LogicalPoint(from, 0);
-            SetSelection(new SelectionState(anchor, new LogicalPoint(_cursor, 0), LineMode: true));
+            LogicalPoint anchor = _selection?.Anchor.Before ?? new LogicalPoint(from, 0);
+            LogicalPoint end = new(_cursor, 0);
+            SetSelection(new SelectionState((anchor, anchor), (end, end), LineMode: true, Dragged: true));
         }
 
         EnsureCursorVisible();
@@ -697,14 +698,29 @@ internal sealed class DetailView : View
         if (s.LineMode)
         {
             return TextSelection.Clamp(
-                new LogicalPoint(Math.Min(s.Anchor.Line, s.Active.Line), 0),
-                new LogicalPoint(Math.Max(s.Anchor.Line, s.Active.Line), int.MaxValue),
+                new LogicalPoint(Math.Min(s.Anchor.Before.Line, s.Active.Before.Line), 0),
+                new LogicalPoint(Math.Max(s.Anchor.Before.Line, s.Active.Before.Line), int.MaxValue),
                 _texts);
         }
 
-        LogicalRange range = TextSelection.Clamp(s.Anchor, s.Active, _texts);
+        if (!s.Dragged)
+        {
+            return null;
+        }
+
+        LogicalRange cells = CellRange(s);
+        LogicalRange range = TextSelection.Clamp(cells.Start, cells.End, _texts);
         return range.IsEmpty ? null : range;
     }
+
+    /// <summary>
+    /// The characters from the anchor cell to the active cell, both cells included. From the start of the earlier cell to the end of the
+    /// later one: a drag forwards ends after the pointer's cell, and a drag backwards starts at it.
+    /// </summary>
+    private static LogicalRange CellRange(SelectionState s) =>
+        s.Active.Before.CompareTo(s.Anchor.Before) >= 0
+            ? new LogicalRange(s.Anchor.Before, s.Active.After)
+            : new LogicalRange(s.Active.Before, s.Anchor.After);
 
     /// <summary>
     /// Copies the selection, or the cursor line when there is none, with the indentation the copied lines share removed. The text goes to
@@ -768,10 +784,10 @@ internal sealed class DetailView : View
             return;
         }
 
-        LogicalPoint point = TextSelection.PointAt(rows, _texts, row, mouse.Position?.X ?? 0);
-        _cursor = point.Line;
+        (LogicalPoint Before, LogicalPoint After) cell = TextSelection.CellAt(rows, _texts, row, mouse.Position?.X ?? 0);
+        _cursor = cell.Before.Line;
         _dragging = true;
-        SetSelection(new SelectionState(point, point, LineMode: false));
+        SetSelection(new SelectionState(cell, cell, LineMode: false, Dragged: false));
         App?.Mouse.GrabMouse(this);
     }
 
@@ -806,16 +822,16 @@ internal sealed class DetailView : View
             return;
         }
 
-        LogicalPoint point = TextSelection.PointAt(rows, _texts, row, column);
-        _cursor = point.Line;
-        SetSelection(selection with { Active = point });
+        (LogicalPoint Before, LogicalPoint After) cell = TextSelection.CellAt(rows, _texts, row, column);
+        _cursor = cell.Before.Line;
+        SetSelection(selection with { Active = cell, Dragged = true });
     }
 
     /// <summary>Left release: releases the grab. A press without a drag leaves no selection.</summary>
     private void EndDrag()
     {
         StopDrag();
-        if (_selection is { LineMode: false } s && s.Anchor == s.Active)
+        if (_selection is { LineMode: false, Dragged: false })
         {
             SetSelection(null);
         }
@@ -1007,8 +1023,16 @@ internal sealed class DetailView : View
     /// <summary>A row of the viewport: its visible line, its index among the rows of that line, and the row.</summary>
     private readonly record struct ScreenRow(int Line, int Index, WrapRow Row);
 
-    /// <summary>The selection on the visible lines: the anchor and the active end, and whether it covers whole lines.</summary>
-    private readonly record struct SelectionState(LogicalPoint Anchor, LogicalPoint Active, bool LineMode);
+    /// <summary>
+    /// The selection on the visible lines. A character selection runs between two cells (see <see cref="TextSelection.CellAt"/>): the cell
+    /// the press was on, and the cell under the pointer. It selects nothing until a drag has moved the active end (<see cref="Dragged"/>),
+    /// so a press and release alone leave none. A line selection covers whole lines from the line of the anchor to the line of the active end.
+    /// </summary>
+    private readonly record struct SelectionState(
+        (LogicalPoint Before, LogicalPoint After) Anchor,
+        (LogicalPoint Before, LogicalPoint After) Active,
+        bool LineMode,
+        bool Dragged);
 
     /// <summary>A run of text of one attribute, with its width in columns and its search highlight.</summary>
     private readonly record struct Piece(string Text, Attribute Attribute, int Columns, SearchRunKind Kind);
