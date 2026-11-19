@@ -41,7 +41,8 @@ internal interface ISearchHost
 /// <b>Scan.</b> Enter in the bar, <c>n</c> or F3 in the timeline start a scan toward older events from the selected row, and <c>N</c> or
 /// Shift+F3 toward newer ones. Every search compiles a fresh pattern. A new search, a change of the query, closing the bar or opening a
 /// detail cancels the running scan, and its late result is ignored. A found row is jumped to; the end of history is a boundary, which
-/// leaves the selection where it is. The scan reports the bytes it has read, at most every 100 ms.
+/// leaves the selection where it is. The status line shows the bytes the scan has read from 300 ms into it, at most every 100 ms; until then
+/// it keeps its previous text.
 /// </para>
 /// <para>
 /// <b>Detail.</b> While a detail is open the same keys move between its matches within the event, in document order: <c>n</c> and F3 to the
@@ -51,6 +52,12 @@ internal interface ISearchHost
 /// </remarks>
 internal sealed class SearchController
 {
+    /// <summary>
+    /// The time a scan runs before its progress is shown, in milliseconds. A scan that ends sooner shows no progress, so a quick search
+    /// does not flicker the status line.
+    /// </summary>
+    internal const long ProgressDelayMs = 300;
+
     /// <summary>The least time between two progress reports of a scan, in milliseconds.</summary>
     internal const long ProgressIntervalMs = 100;
 
@@ -60,7 +67,6 @@ internal sealed class SearchController
     private readonly ITimelineSource _source;
     private readonly TimeZoneInfo _zone;
     private readonly Action<Action> _post;
-    private readonly Stopwatch _clock = Stopwatch.StartNew();
     private SearchQuery _lastQuery = new(string.Empty, false, false, false);
     private SearchPattern? _pattern;
     private bool _open;
@@ -108,6 +114,12 @@ internal sealed class SearchController
 
     /// <summary>The search bar. The window places it above the status line.</summary>
     public SearchBar Bar { get; }
+
+    /// <summary>
+    /// The clock, in milliseconds, that the progress delay and interval of a scan are measured on. A stopwatch by default; a test sets a
+    /// fake one before it starts a scan.
+    /// </summary>
+    internal Func<long> ClockMs { get; set; } = CreateClock();
 
     /// <summary>Whether the search bar is open. A closed bar has no highlights and no active query.</summary>
     internal bool IsOpen => _open;
@@ -289,14 +301,13 @@ internal sealed class SearchController
         var cancellation = new CancellationTokenSource();
         _scan = cancellation;
         int epoch = _epoch;
-        _message = SearchMessages.Progress(0);
-        _problem = null;
-        _host.RefreshStatus();
 
+        // The status line keeps its previous text until the first progress report passes or the outcome arrives.
         var progress = new ScanProgress(
             bytes => _post(() => Progressed(epoch, bytes)),
+            ProgressDelayMs,
             ProgressIntervalMs,
-            () => _clock.ElapsedMilliseconds);
+            ClockMs);
         _ = RunScanAsync(epoch, from, older, pattern, _host.Filter, cancellation.Token, progress);
     }
 
@@ -505,6 +516,13 @@ internal sealed class SearchController
     {
         _timeline.ActiveRow = null;
         _host.Detail?.ClearActiveHit();
+    }
+
+    /// <summary>A clock that counts the milliseconds from now, on a stopwatch.</summary>
+    private static Func<long> CreateClock()
+    {
+        Stopwatch clock = Stopwatch.StartNew();
+        return () => clock.ElapsedMilliseconds;
     }
 
     private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;

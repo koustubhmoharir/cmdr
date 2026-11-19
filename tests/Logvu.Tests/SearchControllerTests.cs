@@ -315,24 +315,79 @@ public sealed class SearchControllerTests : IDisposable
     }
 
     [Fact]
-    public void Progress_of_a_scan_is_shown_in_megabytes_and_throttled()
+    public void Progress_of_a_scan_is_shown_in_megabytes_after_the_delay_and_throttled()
     {
+        long ms = 0;
+        _controller.Search.ClockMs = () => ms;
         _source.HoldFinds = true;
         Send((Key)'/');
         Type("needle");
         Send(Key.Enter);
         SearchRequest request = _source.Finds[0];
 
+        ms = SearchController.ProgressDelayMs;
         request.Progress!.Report(12_900_000);
         _posted.PumpUntil(() => _controller.StatusLeft.Contains("Searching… 12.3 MB", StringComparison.Ordinal), "the progress");
 
         // A second report within the interval of the first is not shown.
+        ms += 50;
         request.Progress.Report(26_000_000);
         _posted.Pump();
         Assert.Contains("Searching… 12.3 MB", _controller.StatusLeft, StringComparison.Ordinal);
 
         request.Complete(Logvu.Core.Store.SearchResult.Boundary);
         Settle();
+    }
+
+    [Fact]
+    public void A_report_before_the_delay_is_not_shown_and_the_previous_status_stays()
+    {
+        long ms = 0;
+        _controller.Search.ClockMs = () => ms;
+        Send((Key)'/');
+        Type("needle 6");
+        Send(Key.Enter);
+        Settle();
+        const string previous = "Match 2026-11-18 10:00:06";
+        Assert.Contains(previous, _controller.StatusLeft, StringComparison.Ordinal);
+
+        _source.HoldFinds = true;
+        Send((Key)'n');
+        SearchRequest request = _source.Finds[^1];
+
+        ms = SearchController.ProgressDelayMs - 1;
+        request.Progress!.Report(12_900_000);
+        _posted.Pump();
+
+        Assert.DoesNotContain("Searching", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.Contains(previous, _controller.StatusLeft, StringComparison.Ordinal);
+
+        request.Complete(Logvu.Core.Store.SearchResult.Boundary);
+        Settle();
+    }
+
+    [Fact]
+    public void A_scan_that_ends_before_the_delay_goes_from_the_previous_status_to_its_outcome()
+    {
+        long ms = 0;
+        _controller.Search.ClockMs = () => ms;
+        Send((Key)'/');
+        Type("needle 6");
+        Send(Key.Enter);
+        Settle();
+        Assert.Contains("Match 2026-11-18 10:00:06", _controller.StatusLeft, StringComparison.Ordinal);
+
+        _source.HoldFinds = true;
+        Send((Key)'n');
+        ms = SearchController.ProgressDelayMs - 1;
+        Assert.DoesNotContain("Searching", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.Contains("Match 2026-11-18 10:00:06", _controller.StatusLeft, StringComparison.Ordinal);
+
+        _source.Finds[^1].Complete(Logvu.Core.Store.SearchResult.Found(Row(3, Preview(3))));
+        Settle();
+
+        Assert.Contains("Match 2026-11-18 10:00:03", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Searching", _controller.StatusLeft, StringComparison.Ordinal);
     }
 
     [Fact]

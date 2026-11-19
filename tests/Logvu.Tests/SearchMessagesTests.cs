@@ -60,7 +60,7 @@ public sealed class SearchMessagesTests
     {
         var clock = new FakeClock();
         var passed = new List<long>();
-        var progress = new ScanProgress(passed.Add, intervalMs: 100, clock.Now);
+        var progress = new ScanProgress(passed.Add, delayMs: 0, intervalMs: 100, clock.Now);
 
         progress.Report(1);
         clock.Ms = 50;
@@ -76,7 +76,7 @@ public sealed class SearchMessagesTests
     {
         var clock = new FakeClock();
         var passed = new List<long>();
-        var progress = new ScanProgress(passed.Add, intervalMs: 100, clock.Now);
+        var progress = new ScanProgress(passed.Add, delayMs: 0, intervalMs: 100, clock.Now);
 
         progress.Report(1);
         clock.Ms = 100;
@@ -87,6 +87,54 @@ public sealed class SearchMessagesTests
         progress.Report(4);
 
         Assert.Equal([1L, 2L, 4L], passed);
+    }
+
+    [Fact]
+    public void Reports_before_the_delay_are_dropped_and_the_first_one_at_the_delay_passes()
+    {
+        var clock = new FakeClock();
+        var passed = new List<long>();
+        var progress = new ScanProgress(passed.Add, delayMs: 300, intervalMs: 100, clock.Now);
+
+        progress.Report(1);
+        clock.Ms = 299;
+        progress.Report(2);
+        clock.Ms = 300;
+        progress.Report(3);
+
+        Assert.Equal([3L], passed);
+    }
+
+    [Fact]
+    public void After_the_delay_the_interval_applies_from_the_first_report_that_passed()
+    {
+        var clock = new FakeClock();
+        var passed = new List<long>();
+        var progress = new ScanProgress(passed.Add, delayMs: 300, intervalMs: 100, clock.Now);
+
+        clock.Ms = 300;
+        progress.Report(1);
+        clock.Ms = 399;
+        progress.Report(2);
+        clock.Ms = 400;
+        progress.Report(3);
+
+        Assert.Equal([1L, 3L], passed);
+    }
+
+    [Fact]
+    public void The_delay_is_measured_from_the_creation_of_the_throttle()
+    {
+        var clock = new FakeClock { Ms = 1000 };
+        var passed = new List<long>();
+        var progress = new ScanProgress(passed.Add, delayMs: 300, intervalMs: 100, clock.Now);
+
+        clock.Ms = 1299;
+        progress.Report(1);
+        clock.Ms = 1300;
+        progress.Report(2);
+
+        Assert.Equal([2L], passed);
     }
 
     private static EventRow Row(DateTimeOffset? time, string? timeText) => new(
