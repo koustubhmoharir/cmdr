@@ -45,9 +45,9 @@ internal static class DetailColors
             : For(span.Style, normal);
 
     /// <summary>
-    /// The attribute of a structural span. Field names are bold, exception types and messages are bold red, methods are bold yellow,
-    /// file locations are cyan, directories and framework frames are dimmed, and JSON members, strings, numbers and literals each have a
-    /// color, and the date and time of a JSON timestamp are cyan and bright yellow. Fold markers are dim italic and muted text is dim.
+    /// The attribute of a structural span. Field names are bold, exception types are bold muted red and their messages muted red,
+    /// methods are bold yellow, file locations are cyan, directories and framework frames are dimmed, and JSON members, strings, numbers
+    /// and literals each have a color, and the date and time of a JSON timestamp are cyan and bright yellow. Fold markers are dim italic and muted text is dim.
     /// Plain text and punctuation keep the normal attribute.
     /// </summary>
     /// <param name="style">The span's style.</param>
@@ -59,8 +59,8 @@ internal static class DetailColors
         return style switch
         {
             SpanStyle.FieldName => new Attribute(fg, bg, TextStyle.Bold),
-            SpanStyle.ExceptionType => new Attribute(ColorName16.BrightRed, bg, TextStyle.Bold),
-            SpanStyle.ExceptionMessage => new Attribute(ColorName16.Red, bg, TextStyle.Bold),
+            SpanStyle.ExceptionType => new Attribute(LevelColors.Error, bg, TextStyle.Bold),
+            SpanStyle.ExceptionMessage => new Attribute(LevelColors.Error, bg, TextStyle.None),
             SpanStyle.Method => new Attribute(ColorName16.Yellow, bg, TextStyle.Bold),
             SpanStyle.FileLocation => new Attribute(ColorName16.Cyan, bg, TextStyle.None),
             SpanStyle.Directory => new Attribute(fg, bg, TextStyle.Faint),
@@ -78,7 +78,7 @@ internal static class DetailColors
     }
 
     /// <summary>
-    /// The attribute of a highlight rule's style: a built-in style name (<c>error</c> red, <c>warning</c> yellow, <c>info</c> cyan,
+    /// The attribute of a highlight rule's style: a built-in style name (<c>error</c> muted red, <c>warning</c> yellow, <c>info</c> cyan,
     /// <c>debug</c> dim, <c>accent</c> magenta, <c>emphasis</c> bold, <c>dim</c> dim, <c>success</c> green), or else a style of the
     /// configuration. Names are matched ignoring case.
     /// </summary>
@@ -93,7 +93,7 @@ internal static class DetailColors
         switch (name.ToLowerInvariant())
         {
             case "error":
-                return new Attribute(ColorName16.Red, bg, TextStyle.None);
+                return new Attribute(LevelColors.Error, bg, TextStyle.None);
             case "warning":
                 return new Attribute(ColorName16.Yellow, bg, TextStyle.None);
             case "info":

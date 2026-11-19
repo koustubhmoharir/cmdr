@@ -27,12 +27,12 @@ public sealed class DetailViewTests
         Assert.StartsWith("message: Run failed", screen.Text(4));
 
         Attribute type = screen.At("System.InvalidOperationException");
-        Assert.Equal(new Color(ColorName16.BrightRed), type.Foreground);
+        Assert.Equal(LevelColors.Error, type.Foreground);
         Assert.True(type.Style.HasFlag(TextStyle.Bold));
 
         Attribute message = screen.At("Sheet not found");
-        Assert.Equal(new Color(ColorName16.Red), message.Foreground);
-        Assert.True(message.Style.HasFlag(TextStyle.Bold));
+        Assert.Equal(LevelColors.Error, message.Foreground);
+        Assert.False(message.Style.HasFlag(TextStyle.Bold));
 
         Attribute method = screen.At("Execute(Int32");
         Assert.Equal(new Color(ColorName16.Yellow), method.Foreground);
@@ -298,8 +298,18 @@ public sealed class DetailViewTests
         Assert.Equal(screen.Normal.Foreground, screen.At("finished").Foreground);
     }
 
+    [Fact]
+    public void The_built_in_error_highlight_style_is_the_muted_error_red()
+    {
+        var normal = new Attribute(ColorName16.White, ColorName16.Black, TextStyle.None);
+
+        Attribute attribute = DetailColors.Highlight("Error", normal, DetailFixtures.Config());
+
+        Assert.Equal(LevelColors.Error, attribute.Foreground);
+        Assert.Equal(normal.Background, attribute.Background);
+    }
+
     [Theory]
-    [InlineData("error", ColorName16.Red)]
     [InlineData("warning", ColorName16.Yellow)]
     [InlineData("Success", ColorName16.Green)]
     public void Built_in_highlight_style_names_map_to_their_colors(string name, ColorName16 expected)

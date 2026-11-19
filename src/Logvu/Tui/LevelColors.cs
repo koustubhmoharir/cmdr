@@ -13,14 +13,17 @@ internal static class LevelColors
     /// <summary>The foreground of Warn labels.</summary>
     public static readonly Color Warn = new(ColorName16.Yellow);
 
-    /// <summary>The foreground of Error labels.</summary>
-    public static readonly Color Error = new(ColorName16.Red);
+    /// <summary>
+    /// The foreground of Error labels, and of error text in the detail: a muted red (xterm 167). A named ANSI red is too glaring in
+    /// common terminal themes, and its shade depends on the theme.
+    /// </summary>
+    public static readonly Color Error = new(0xD7, 0x5F, 0x5F);
 
     /// <summary>The foreground of Fatal labels, on <see cref="FatalBackground"/>.</summary>
     public static readonly Color FatalForeground = new(ColorName16.White);
 
-    /// <summary>The background of Fatal labels.</summary>
-    public static readonly Color FatalBackground = new(ColorName16.Red);
+    /// <summary>The background of Fatal labels: a darker muted red, under white text.</summary>
+    public static readonly Color FatalBackground = new(0xAF, 0x3A, 0x3A);
 
     /// <summary>
     /// The attribute of a row's time, extra and message cells. Trace and Debug are dimmed. A selected row keeps its focus
