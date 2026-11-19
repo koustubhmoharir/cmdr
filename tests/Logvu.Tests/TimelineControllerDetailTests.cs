@@ -1,6 +1,7 @@
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Logvu.Tui;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 
@@ -153,6 +154,55 @@ public sealed class TimelineControllerDetailTests : IDisposable
         _controller.Timeline.HandleKey(Key.Enter);
 
         Assert.Single(_details.Reads);
+    }
+
+    [Fact]
+    public void C_in_the_detail_writes_the_clipboard_sequence_of_the_cursor_line_and_notes_its_characters()
+    {
+        OpenJsonDetail();
+        var written = new List<string>();
+        _controller.WriteRaw = written.Add;
+
+        Assert.True(_controller.Detail!.HandleKey(Key.C));
+
+        const string expected = "Timestamp: \"2026-11-18T10:20:31.007Z\"";
+        Assert.Equal(new[] { Osc52.Build(expected) }, written);
+        Assert.Contains($"Copied {expected.Length} characters", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_copy_too_large_for_the_clipboard_is_refused_with_a_notice()
+    {
+        var written = new List<string>();
+        _controller.WriteRaw = written.Add;
+
+        _controller.CopyToClipboard(new string('x', Osc52.MaxBytes + 1), "Copied");
+
+        Assert.Empty(written);
+        Assert.Contains("Selection too large to copy", _controller.StatusLeft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_detail_hint_names_the_copy_that_c_makes_and_switches_with_the_selection()
+    {
+        OpenJsonDetail();
+        DetailView detail = _controller.Detail!;
+        Assert.Contains("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+
+        Assert.True(detail.HandleKey(Key.CursorDown.WithShift));
+        Assert.Contains("c copy selection", _controller.StatusRight, StringComparison.Ordinal);
+        Assert.DoesNotContain("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+
+        Assert.True(detail.HandleKey(Key.Esc));
+        Assert.Contains("c copy line", _controller.StatusRight, StringComparison.Ordinal);
+    }
+
+    /// <summary>Opens the detail of the selected row with the Serilog JSON event, and waits until it is loaded.</summary>
+    private void OpenJsonDetail()
+    {
+        _controller.Timeline.HandleKey(Key.Enter);
+        _details.Reads.Single().Complete(DetailFixtures.Json(DetailFixtures.JsonEvent));
+        _posted.PumpUntil(() => _controller.Detail!.Document is not null, "the detail");
     }
 
     public void Dispose()

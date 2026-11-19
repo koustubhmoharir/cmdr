@@ -149,15 +149,6 @@ internal static class DetailColors
         return new Attribute(fg, bg, style);
     }
 
-    /// <summary>
-    /// The attribute of a span on the cursor line: the focus colors, as the timeline's selected row uses them, so the text reads on the
-    /// selection background. The bold, italic and underline of the span are kept; faint is not, since it is dim on the selection.
-    /// </summary>
-    /// <param name="attr">The span's attribute.</param>
-    /// <param name="focus">The focus attribute of the view.</param>
-    public static Attribute Selected(Attribute attr, Attribute focus) =>
-        new(focus.Foreground, focus.Background, attr.Style & ~TextStyle.Faint);
-
     /// <summary>The color of a configured color: a named ANSI color, or the RGB color.</summary>
     private static Color ToColor(LogColor color)
     {

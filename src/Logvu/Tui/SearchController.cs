@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Shared.Core;
@@ -48,6 +49,11 @@ internal interface ISearchHost
 /// <b>Detail.</b> While a detail is open the same keys move between its matches within the event, in document order: <c>n</c> and F3 to the
 /// next, <c>N</c> and Shift+F3 to the previous. A match in a collapsed node or fold is revealed. The position of the search is the active
 /// match when the cursor is on its line; otherwise the cursor's line. There is no wrap: the end is reported.
+/// </para>
+/// <para>
+/// <b>Seed.</b> <c>/</c> and Ctrl+F in a detail with a character selection of one line (see <see cref="DetailView.SelectionSeed"/>) make the
+/// query the selected text, escaped for a regular expression, with the bar's options. The selected occurrence is the current match. A
+/// selection that spans lines, or a line selection, leaves the query as it was.
 /// </para>
 /// </remarks>
 internal sealed class SearchController
@@ -151,15 +157,15 @@ internal sealed class SearchController
     }
 
     /// <summary>
-    /// Handles a key that no focused view took: <c>/</c> and Ctrl+F open the bar, F3 and <c>n</c> find toward the next match, and Shift+F3 and
-    /// <c>N</c> toward the previous one. Returns <c>true</c> for a key of the search.
+    /// Handles a key that no focused view took: <c>/</c> and Ctrl+F open the bar, seeded with the detail's selection when it has one, F3 and
+    /// <c>n</c> find toward the next match, and Shift+F3 and <c>N</c> toward the previous one. Returns <c>true</c> for a key of the search.
     /// </summary>
     /// <param name="key">The key.</param>
     public bool HandleShortcut(Key key)
     {
         if (key == Key.F.WithCtrl || IsPlain(key, '/'))
         {
-            Open(focusBar: true);
+            Open(focusBar: true, seed: _host.Detail?.SelectionSeed());
             return true;
         }
 
@@ -259,17 +265,41 @@ internal sealed class SearchController
         _problem = null;
     }
 
-    /// <summary>Opens the bar with the last query, compiled, and highlights its matches. Focuses the field with its text selected when asked.</summary>
-    private void Open(bool focusBar)
+    /// <summary>
+    /// Opens the bar with the last query, compiled, and highlights its matches. Focuses the field with its text selected when asked. With a
+    /// <paramref name="seed"/>, the query is the selected text instead, with the options of the last query (closed) or of the bar (open), and
+    /// the selected occurrence becomes the current match of the detail.
+    /// </summary>
+    private void Open(bool focusBar, SearchSeed? seed = null)
     {
         if (!_open)
         {
             _open = true;
-            Bar.SetQuery(_lastQuery);
-            _pattern = Compile(_lastQuery);
+            SearchQuery start = seed is { } closed ? SeedQuery(_lastQuery, closed.Text) : _lastQuery;
+            if (seed is not null)
+            {
+                _lastQuery = start;
+            }
+
+            Bar.SetQuery(start);
+            _pattern = Compile(start);
             ClearActive();
             ApplyHighlights();
             _host.ShowSearchBar(true);
+            if (seed is { } seeded)
+            {
+                SeedDetail(seeded);
+            }
+        }
+        else if (seed is { } open)
+        {
+            SearchQuery query = SeedQuery(Bar.Query, open.Text);
+            _lastQuery = query;
+            Bar.SetQuery(query);
+            _pattern = Compile(query);
+            ClearActive();
+            ApplyHighlights();
+            SeedDetail(open);
         }
 
         if (focusBar)
@@ -278,6 +308,28 @@ internal sealed class SearchController
         }
 
         _host.RefreshStatus();
+    }
+
+    /// <summary>
+    /// The query a selection seeds: the options of <paramref name="options"/> and the selected text as the pattern, escaped when the
+    /// Regex option is on so that it matches itself.
+    /// </summary>
+    private static SearchQuery SeedQuery(SearchQuery options, string text) =>
+        options with { Text = options.Regex ? Regex.Escape(text) : text };
+
+    /// <summary>
+    /// Makes the seed the active match of the open detail, then finds inclusively from it, so that the selected occurrence is the current
+    /// match, or the next one of the query when the selected text is not a match under its options. Does nothing without a pattern or a detail.
+    /// </summary>
+    private void SeedDetail(SearchSeed seed)
+    {
+        if (_pattern is null || _host.Detail is not { } detail)
+        {
+            return;
+        }
+
+        detail.ShowHit(new DetailHit((int)seed.Line, seed.Start, seed.Text.Length));
+        FindInDetail(detail, next: true, inclusive: true);
     }
 
     /// <summary>
@@ -396,8 +448,11 @@ internal sealed class SearchController
         _host.RefreshStatus();
     }
 
-    /// <summary>Moves to the next (or previous) match of the detail, from the cursor, and reveals it. Reports the end of the event.</summary>
-    private void FindInDetail(DetailView detail, bool next)
+    /// <summary>
+    /// Moves to the next (or previous) match of the detail, from the cursor, and reveals it. Reports the end of the event. With
+    /// <paramref name="inclusive"/>, a match at the active match itself counts, so the active match is found when it is a match.
+    /// </summary>
+    private void FindInDetail(DetailView detail, bool next, bool inclusive = false)
     {
         SearchPattern? pattern = Compile(Bar.Query);
         if (pattern is null || detail.Document is not { Lines.Count: > 0 } document)
@@ -413,6 +468,12 @@ internal sealed class SearchController
         DetailHit? active = detail.ActiveHit is { } hit && hit.Line == cursor ? hit : null;
         int line = active?.Line ?? cursor;
         int start = active?.Start ?? -1;
+        if (inclusive && active is not null)
+        {
+            // The searches take matches strictly after (or before) the position, so one unit toward the search takes the position itself.
+            start += next ? -1 : 1;
+        }
+
         DetailHit? found = next
             ? DetailSearch.Next(document.FullLines, pattern, line, start)
             : DetailSearch.Previous(document.FullLines, pattern, line, start);

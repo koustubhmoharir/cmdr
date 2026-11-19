@@ -91,13 +91,17 @@ Runs of framework frames get a `… N framework frames` marker that folds them. 
 
 | Detail | |
 |---|---|
-| ↑ / ↓ or `k` / `j`, PgUp / PgDn, Home / End | Move the cursor |
+| ↑ / ↓ or `k` / `j`, PgUp / PgDn, Home / End | Move the cursor (the `>` in the left column marks its line) |
+| Shift+↑ / Shift+↓, Shift+PgUp / Shift+PgDn | Select whole lines from the cursor |
+| Mouse | A click moves the cursor; dragging selects text, and dragging past the top or bottom scrolls |
+| `c` | Copy the selection, or the cursor line without one, with the indentation the lines share removed |
 | Enter / Space | Expand or collapse the node or fold under the cursor |
 | `z` | Fold or unfold all framework-frame runs |
 | `r` | Raw text of the event |
 | `f` | Filter the timeline to the value of the field under the cursor |
-| `/`, `n`, `N` | Search within the event |
-| Esc, ← or `h` | Back to the timeline, at the same position |
+| `/`, `n`, `N` | Search within the event; `/` with a one-line selection searches for the selected text |
+| Esc | Clears the selection; without one, back to the timeline, at the same position |
+| ← or `h` | Back to the timeline, at the same position |
 
 **Search** matches the full text of events (all lines, JSON names and values, stack frames, and Serilog's rendered message),
 case-insensitively by default; the bar's toggles switch on case sensitivity, whole words and regular expressions. Only events

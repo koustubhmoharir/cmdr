@@ -457,7 +457,8 @@ public sealed class FilterControllerTests : IDisposable
     public void The_timeline_hints_name_the_filter_and_level_keys()
     {
         Assert.Equal("f filter  -/+ level  Space pause/follow  End newest  ^Q quit", TimelineController.Hints);
-        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  ←/Esc back", TimelineController.DetailHints);
+        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back", TimelineController.DetailHints);
+        Assert.Equal("f filter on value  Enter toggle  z folds  r raw  c copy selection  ←/Esc back", TimelineController.DetailSelectionHints);
     }
 
     public void Dispose()

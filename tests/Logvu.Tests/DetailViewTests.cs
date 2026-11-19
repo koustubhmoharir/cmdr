@@ -23,8 +23,8 @@ public sealed class DetailViewTests
 
         TerminalScreen screen = Draw(view)[0];
 
-        Assert.StartsWith("level: ERROR", screen.Text(0));
-        Assert.StartsWith("message: Run failed", screen.Text(4));
+        Assert.StartsWith(">level: ERROR", screen.Text(0));
+        Assert.StartsWith(" message: Run failed", screen.Text(4));
 
         Attribute type = screen.At("System.InvalidOperationException");
         Assert.Equal(LevelColors.Error, type.Foreground);
@@ -78,10 +78,10 @@ public sealed class DetailViewTests
             });
 
         // Screen 0 is the first draw; screen n is the draw after step n. Moved past the bottom, the cursor line is on the last row.
-        Assert.Equal("line 35", screens[2].Text(Height - 1).Trim());
-        Assert.Equal("line 34", screens[3].Text(Height - 2).Trim());
-        Assert.StartsWith("level: INFO", screens[4].Text(0));
-        Assert.Equal("line 39", screens[5].Text(Height - 1).Trim());
+        Assert.Equal("line 35", screens[2].Text(Height - 1).TrimStart('>', ' ').Trim());
+        Assert.Equal("line 34", screens[3].Text(Height - 2).TrimStart('>', ' ').Trim());
+        Assert.StartsWith(">level: INFO", screens[4].Text(0));
+        Assert.Equal("line 39", screens[5].Text(Height - 1).TrimStart('>', ' ').Trim());
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public sealed class DetailViewTests
 
         List<TerminalScreen> screens = Draw(view, v => Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.WheeledDown })));
 
-        Assert.Equal(view.Document!.Lines[DetailView.WheelRows].Text.TrimEnd(), screens[1].Text(0));
+        Assert.Equal(" " + view.Document!.Lines[DetailView.WheelRows].Text.TrimEnd(), screens[1].Text(0));
         Assert.Equal(0, view.CursorLine);
     }
 
@@ -105,32 +105,9 @@ public sealed class DetailViewTests
             v => Assert.True(v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(0, 5) })));
 
         Assert.Equal(5, view.CursorLine);
-        Assert.Equal(screens[0].Text(0), screens[1].Text(0));
-    }
-
-    [Fact]
-    public void A_wrapped_cursor_line_is_drawn_in_the_focus_colors_on_all_its_rows()
-    {
-        string message = string.Join(' ', Enumerable.Repeat("alpha", 12));
-        DetailView view = Loaded(
-            DetailFixtures.Text("INFO 2026-11-18 10:20:31,007 [Worker 3] SheetKraft.Engine.Runner - " + message),
-            DetailFixtures.Config());
-
-        List<TerminalScreen> screens = DrawAt(
-            view,
-            40,
-            v => MoveTo(v, line => line.Text.Contains("alpha alpha", StringComparison.Ordinal)));
-
-        TerminalScreen screen = screens[1];
-        int[] rows = Enumerable.Range(0, Height).Where(r => screen.Text(r).Contains("alpha", StringComparison.Ordinal)).ToArray();
-        Assert.True(rows.Length >= 2, $"expected the message to wrap, got {rows.Length} row(s)");
-        foreach (int row in rows)
-        {
-            Assert.Equal(screen.Focus.Background, screen.Cells[row][0].Attribute.Background);
-            Assert.Equal(screen.Focus.Background, screen.Cells[row][39].Attribute.Background);
-        }
-
-        Assert.NotEqual(screen.Focus.Background, screen.Normal.Background);
+        // The cursor moved to the pressed line, so its glyph moved too: the text of the rows is compared without the gutter.
+        Assert.Equal(screens[0].Text(0)[1..], screens[1].Text(0)[1..]);
+        Assert.StartsWith(">", screens[1].Text(5), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -180,8 +157,8 @@ public sealed class DetailViewTests
         Assert.Contains("RunInternal", string.Join("\n", Rows(screens[0])), StringComparison.Ordinal);
         Assert.DoesNotContain("RunInternal", string.Join("\n", Rows(screens[1])), StringComparison.Ordinal);
         Assert.Contains("RunInternal", string.Join("\n", Rows(screens[2])), StringComparison.Ordinal);
-        Assert.StartsWith("ERROR 2026-11-18 10:20:31,007", screens[3].Text(0));
-        Assert.StartsWith("level: ERROR", screens[4].Text(0));
+        Assert.StartsWith(">ERROR 2026-11-18 10:20:31,007", screens[3].Text(0));
+        Assert.StartsWith(">level: ERROR", screens[4].Text(0));
     }
 
     [Fact]

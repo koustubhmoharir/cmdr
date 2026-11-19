@@ -36,8 +36,11 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// <summary>The status line's key hints.</summary>
     internal const string Hints = "f filter  -/+ level  Space pause/follow  End newest  ^Q quit";
 
-    /// <summary>The status line's key hints while the detail is open.</summary>
-    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  ←/Esc back";
+    /// <summary>The status line's key hints while the detail is open and has no selection.</summary>
+    internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back";
+
+    /// <summary>The status line's key hints while the detail is open and has a selection, which <c>c</c> copies.</summary>
+    internal const string DetailSelectionHints = "f filter on value  Enter toggle  z folds  r raw  c copy selection  ←/Esc back";
 
     /// <summary>How long a new retention gap stays on the status line. The gap stays in the store's status.</summary>
     internal static readonly TimeSpan GapShownFor = TimeSpan.FromSeconds(10);
@@ -127,8 +130,14 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _view = new TimelineView(_model, config.TimeZone, config.Columns) { Placeholder = "Loading…" };
         _statusLine = new StatusLine();
         _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
+        WriteRaw = sequence => _app.Driver?.WriteRaw(sequence);
         Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, HandleShortcut, _search.CancelScan);
     }
+
+    /// <summary>
+    /// Writes a raw sequence to the terminal. The application's driver by default; a test replaces it to capture the OSC 52 sequence of a copy.
+    /// </summary>
+    internal Action<string> WriteRaw { get; set; }
 
     /// <summary>The main window. Run it with the application.</summary>
     public MainWindow Window { get; }
@@ -318,6 +327,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         view.CloseRequested += CloseDetail;
         view.DocumentChanged += RefreshStatus;
         view.FilterRequested += FilterFromDetail;
+        view.CopyRequested += CopyFromDetail;
+        view.SelectionChanged += RefreshStatus;
         _detail = session;
         Window.SetContent(view);
         RefreshStatus();
@@ -518,6 +529,36 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         ApplyFilter(filter);
     }
 
+    /// <summary>Copies the text a detail asked to copy (its selection, or its cursor line), and reports the number of characters copied.</summary>
+    /// <param name="text">The text to copy.</param>
+    private void CopyFromDetail(string text)
+    {
+        if (_disposed || _detail is null)
+        {
+            return;
+        }
+
+        CopyToClipboard(text, $"Copied {TextSelection.CharacterCount(text)} characters");
+    }
+
+    /// <summary>
+    /// Writes the text to the system clipboard with OSC 52 and shows <paramref name="successMessage"/> as a notice. Text over
+    /// <see cref="Osc52.MaxBytes"/> is not copied, and the notice says so.
+    /// </summary>
+    /// <param name="text">The text to copy.</param>
+    /// <param name="successMessage">The notice shown once the text is copied.</param>
+    internal void CopyToClipboard(string text, string successMessage)
+    {
+        if (!Osc52.Fits(text))
+        {
+            ShowNotice("Selection too large to copy");
+            return;
+        }
+
+        WriteRaw(Osc52.Build(text));
+        ShowNotice(successMessage);
+    }
+
     /// <summary>Shows a notice of a filter key in the left part of the status line for <see cref="NoticeShownFor"/>. A newer notice restarts the time.</summary>
     private void ShowNotice(string text)
     {
@@ -564,7 +605,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         bool inDetail = _detail is not null;
         _view.Placeholder = BodyText();
         _statusLeft = _detail is { } session ? DetailLeft(session, _notice, _search.Status) : LeftText();
-        string keys = inDetail ? DetailHints : Hints;
+        string keys = _detail is { } open
+            ? (open.View.HasSelection ? DetailSelectionHints : DetailHints)
+            : Hints;
         string right = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
         _statusRight = right;
         _statusLine.Show(_statusLeft, message: false, right: right);

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Logvu.Core.Detail;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
@@ -496,6 +497,71 @@ public sealed class SearchControllerTests : IDisposable
         Assert.True(_controller.Search.IsOpen);
         Assert.NotNull(_controller.Timeline.Search);
         Assert.StartsWith("n older  N newer  ", _controller.StatusRight, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Slash_with_a_one_line_selection_in_the_detail_seeds_the_bar_and_makes_it_the_current_match()
+    {
+        OpenDetail();
+        DetailView detail = _controller.Detail!;
+        SelectInDetail(detail, line: 4, from: 9, to: 19);
+        Assert.Equal("Run failed", detail.SelectionSeed()!.Value.Text);
+
+        Send((Key)'/');
+
+        Assert.Equal("Run failed", Bar.Query.Text);
+        Assert.True(Bar.HasFieldFocus);
+        Assert.Equal(new DetailHit(4, 9, 10), detail.ActiveHit);
+        Assert.Equal("message: Run failed", CursorText(detail));
+    }
+
+    [Fact]
+    public void Slash_with_a_selection_over_lines_leaves_the_query_as_it_was()
+    {
+        OpenDetail();
+        DetailView detail = _controller.Detail!;
+        Assert.True(detail.HandleKey(Key.CursorDown.WithShift));
+
+        Send((Key)'/');
+
+        Assert.Equal(string.Empty, Bar.Query.Text);
+        Assert.Null(detail.ActiveHit);
+    }
+
+    [Fact]
+    public void With_the_regex_option_on_the_seeded_text_is_escaped_and_keeps_the_option()
+    {
+        Send((Key)'/');
+        Send(Key.R.WithAlt);
+        Send(Key.Esc);
+        Assert.False(Bar.Visible);
+
+        OpenDetail();
+        DetailView detail = _controller.Detail!;
+        const string text = "Execute(Int32";
+        int line = 6;
+        int from = detail.Document!.Lines[line].Text.IndexOf(text, StringComparison.Ordinal);
+        SelectInDetail(detail, line, from, from + text.Length);
+
+        Send((Key)'/');
+
+        Assert.Equal(Regex.Escape(text), Bar.Query.Text);
+        Assert.True(Bar.Query.Regex);
+        Assert.Equal(line, detail.CursorLine);
+        Assert.Contains("Execute(Int32", CursorText(detail), StringComparison.Ordinal);
+    }
+
+    /// <summary>Selects the characters from <paramref name="from"/> to <paramref name="to"/> of a visible line of the detail, with the mouse.</summary>
+    private void SelectInDetail(DetailView detail, int line, int from, int to)
+    {
+        // The detail is not in a running window here, so it gets its size directly; its rows are then measured at that width.
+        detail.Frame = new System.Drawing.Rectangle(0, 0, 80, 30);
+        detail.Layout(new System.Drawing.Size(80, 30));
+        int width = Math.Max(1, detail.Viewport.Width - DetailView.Gutter);
+        int row = Enumerable.Range(0, line).Sum(i => new DetailWrap(detail.Document!.Lines[i], width).RowCount);
+        Assert.True(detail.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(DetailView.Gutter + from, row) }));
+        Assert.True(detail.HandleMouse(new Mouse { Flags = MouseFlags.PositionReport, Position = new(DetailView.Gutter + to, row) }));
+        Assert.True(detail.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonReleased, Position = new(DetailView.Gutter + to, row) }));
     }
 
     public void Dispose()
