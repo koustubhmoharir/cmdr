@@ -718,39 +718,7 @@ internal sealed class DetailView : View
         }
 
         string text = SelectedRange() is { } range ? TextSelection.Extract(_texts, range) : _texts[_cursor];
-        CopyRequested?.Invoke(Unindent(text));
-    }
-
-    /// <summary>
-    /// Removes the leading spaces that the non-blank lines of a text share: the smallest count of them is taken from every line. A text
-    /// with no non-blank line, or none indented, is returned as it is.
-    /// </summary>
-    private static string Unindent(string text)
-    {
-        string[] lines = text.Split('\n');
-        int common = int.MaxValue;
-        foreach (string line in lines.Where(line => !string.IsNullOrWhiteSpace(line)))
-        {
-            common = Math.Min(common, LeadingSpaces(line));
-        }
-
-        if (common is int.MaxValue or 0)
-        {
-            return text;
-        }
-
-        return string.Join('\n', lines.Select(line => line[Math.Min(common, LeadingSpaces(line))..]));
-    }
-
-    private static int LeadingSpaces(string line)
-    {
-        int count = 0;
-        while (count < line.Length && line[count] == ' ')
-        {
-            count++;
-        }
-
-        return count;
+        CopyRequested?.Invoke(CopyText.Unindent(text));
     }
 
     /// <summary>
@@ -945,7 +913,7 @@ internal sealed class DetailView : View
                     int next = at < selected.From ? Math.Min(run.End, selected.From)
                         : isSelected ? Math.Min(run.End, selected.To)
                         : run.End;
-                    Attribute drawn = isSelected ? Invert(attribute) : attribute;
+                    Attribute drawn = isSelected ? SelectionColors.Invert(attribute) : attribute;
                     AddPiece(pieces, line.Text, at, next, drawn, run.Kind);
                     at = next;
                 }
@@ -990,12 +958,6 @@ internal sealed class DetailView : View
         int to = line == range.End.Line ? range.End.Offset : length;
         return (from, to);
     }
-
-    /// <summary>Selected cells use the terminal's reverse video rather than swapped colors, which do nothing when a color is the default.</summary>
-    private static Attribute Invert(Attribute attr) => new(
-        attr.Foreground,
-        attr.Background,
-        attr.Style.HasFlag(TextStyle.Reverse) ? attr.Style & ~TextStyle.Reverse : attr.Style | TextStyle.Reverse);
 
     private static void AddPiece(List<Piece> pieces, string text, int from, int to, Attribute attribute, SearchRunKind kind)
     {

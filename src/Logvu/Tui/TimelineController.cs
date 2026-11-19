@@ -33,8 +33,11 @@ namespace Logvu.Tui;
 /// </remarks>
 internal sealed class TimelineController : IDisposable, ISearchHost
 {
-    /// <summary>The status line's key hints.</summary>
-    internal const string Hints = "f filter  -/+ level  Space pause/follow  End newest  ^Q quit";
+    /// <summary>The status line's key hints, with no selection in the timeline.</summary>
+    internal const string Hints = "f filter  -/+ level  Space pause/follow  c copy event  End newest  ^Q quit";
+
+    /// <summary>The status line's key hints while the timeline's selected row has a selection, which <c>c</c> copies.</summary>
+    internal const string SelectionHints = "f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^Q quit";
 
     /// <summary>The status line's key hints while the detail is open and has no selection.</summary>
     internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back";
@@ -171,6 +174,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _model.Changed += OnModelChanged;
         _view.ViewportRowsChanged += OnViewportRowsChanged;
         _view.OpenRequested += OpenDetail;
+        _view.CopyRequested += CopySelection;
+        _view.CopyEventRequested += CopyEvent;
+        _view.SelectionChanged += RefreshStatus;
         _view.SetFocus();
         _store.Start();
         RefreshStatus();
@@ -192,6 +198,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _model.Changed -= OnModelChanged;
         _view.ViewportRowsChanged -= OnViewportRowsChanged;
         _view.OpenRequested -= OpenDetail;
+        _view.CopyRequested -= CopySelection;
+        _view.CopyEventRequested -= CopyEvent;
+        _view.SelectionChanged -= RefreshStatus;
         _search.StopScan();
         if (_detail is { } session)
         {
@@ -541,6 +550,66 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         CopyToClipboard(text, $"Copied {TextSelection.CharacterCount(text)} characters");
     }
 
+    /// <summary>Copies the timeline's selected text, and reports its number of characters. Nothing is copied while a detail is open.</summary>
+    /// <param name="text">The selected text.</param>
+    private void CopySelection(string text)
+    {
+        if (_disposed || _detail is not null)
+        {
+            return;
+        }
+
+        CopyToClipboard(text, $"Copied {TextSelection.CharacterCount(text)} characters");
+    }
+
+    /// <summary>
+    /// Copies the whole event at <paramref name="key"/>, as its detail shows it with everything expanded. The read runs off the UI thread and
+    /// its result is copied on the UI thread.
+    /// </summary>
+    /// <param name="key">The key of the selected event.</param>
+    private void CopyEvent(RowKey key)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _ = CopyEventAsync(key);
+    }
+
+    /// <summary>Reads the event for a copy, and posts its arrival to the UI thread. A read that fails shows as unavailable.</summary>
+    private async Task CopyEventAsync(RowKey key)
+    {
+        EventDetail detail;
+        try
+        {
+            detail = await _details.ReadDetailAsync(key, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            detail = new EventDetail.Unavailable(key, ex.Message);
+        }
+
+        Post(() => CopyDetail(detail));
+    }
+
+    /// <summary>
+    /// Copies an event's text: every line of its document with all nodes and folds expanded, in the structured view, with the indentation the
+    /// lines share removed. An unavailable event shows its reason as a notice instead.
+    /// </summary>
+    private void CopyDetail(EventDetail detail)
+    {
+        if (detail is EventDetail.Unavailable unavailable)
+        {
+            ShowNotice(unavailable.Reason);
+            return;
+        }
+
+        DetailDocument document = DetailDocument.Build(detail, _config, DetailOptions.Default);
+        string text = CopyText.Unindent(string.Join('\n', document.FullLines.Select(line => line.Text)));
+        CopyToClipboard(text, $"Copied {TextSelection.CharacterCount(text)} characters");
+    }
+
     /// <summary>
     /// Writes the text to the system clipboard with OSC 52 and shows <paramref name="successMessage"/> as a notice. Text over
     /// <see cref="Osc52.MaxBytes"/> is not copied, and the notice says so.
@@ -607,7 +676,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _statusLeft = _detail is { } session ? DetailLeft(session, _notice, _search.Status) : LeftText();
         string keys = _detail is { } open
             ? (open.View.HasSelection ? DetailSelectionHints : DetailHints)
-            : Hints;
+            : (_view.HasSelection ? SelectionHints : Hints);
         string right = _search.KeyHint(inDetail) is { } hint ? hint + "  " + keys : keys;
         _statusRight = right;
         _statusLine.Show(_statusLeft, message: false, right: right);

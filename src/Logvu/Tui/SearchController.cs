@@ -51,9 +51,10 @@ internal interface ISearchHost
 /// match when the cursor is on its line; otherwise the cursor's line. There is no wrap: the end is reported.
 /// </para>
 /// <para>
-/// <b>Seed.</b> <c>/</c> and Ctrl+F in a detail with a character selection of one line (see <see cref="DetailView.SelectionSeed"/>) make the
-/// query the selected text, escaped for a regular expression, with the bar's options. The selected occurrence is the current match. A
-/// selection that spans lines, or a line selection, leaves the query as it was.
+/// <b>Seed.</b> <c>/</c> and Ctrl+F with a character selection of one line make the query the selected text, escaped for a regular
+/// expression, with the bar's options. In a detail the selection is in its document (see <see cref="DetailView.SelectionSeed"/>), and the
+/// selected occurrence is the current match. In the timeline it is the selected row's text (see <see cref="TimelineView.SelectionSeed"/>),
+/// and no scan starts: the row already contains it. A selection that spans lines, or a line selection, leaves the query as it was.
 /// </para>
 /// </remarks>
 internal sealed class SearchController
@@ -157,15 +158,17 @@ internal sealed class SearchController
     }
 
     /// <summary>
-    /// Handles a key that no focused view took: <c>/</c> and Ctrl+F open the bar, seeded with the detail's selection when it has one, F3 and
-    /// <c>n</c> find toward the next match, and Shift+F3 and <c>N</c> toward the previous one. Returns <c>true</c> for a key of the search.
+    /// Handles a key that no focused view took: <c>/</c> and Ctrl+F open the bar, seeded with the selection of the detail or of the timeline
+    /// when there is one, F3 and <c>n</c> find toward the next match, and Shift+F3 and <c>N</c> toward the previous one. Returns <c>true</c>
+    /// for a key of the search.
     /// </summary>
     /// <param name="key">The key.</param>
     public bool HandleShortcut(Key key)
     {
         if (key == Key.F.WithCtrl || IsPlain(key, '/'))
         {
-            Open(focusBar: true, seed: _host.Detail?.SelectionSeed());
+            SearchSeed? seed = _host.Detail is { } detail ? detail.SelectionSeed() : _timeline.SelectionSeed();
+            Open(focusBar: true, seed: seed);
             return true;
         }
 
@@ -319,7 +322,8 @@ internal sealed class SearchController
 
     /// <summary>
     /// Makes the seed the active match of the open detail, then finds inclusively from it, so that the selected occurrence is the current
-    /// match, or the next one of the query when the selected text is not a match under its options. Does nothing without a pattern or a detail.
+    /// match, or the next one of the query when the selected text is not a match under its options. Does nothing without a pattern or a
+    /// detail: a timeline seed has no detail to move in, and its row already shows the match.
     /// </summary>
     private void SeedDetail(SearchSeed seed)
     {

@@ -74,12 +74,17 @@ while paused, the active filter, search progress and read problems.
 | Space | Pause / follow. Following resumes at the newest event |
 | End | Follow the newest event |
 | Enter, → or `l` | Open the selected event in detail |
-| `/` or Ctrl+F | Search; Enter searches toward older events |
+| `/` or Ctrl+F | Search; Enter searches toward older events. With a text selection in a row, searches for the selected text |
 | `n` or F3 / `N` or Shift+F3 | Next match toward older / newer events |
 | `f` / `F` | Edit the filter / clear it |
 | `-` or `_` / `=` or `+` | Lower / raise the minimum level (any → Debug → Info → Warn → Error → Fatal), keeping the rest of the filter |
-| Mouse | Wheel scrolls; a click selects (and pauses) |
+| Mouse | Wheel scrolls; a click selects (and pauses); dragging selects text within that row |
+| `c` | Copy the selected text, or without a selection the whole event as its detail shows it with everything expanded, with the indentation the lines share removed |
+| Esc | Clears a selection; without one, cancels a running scan |
 | Ctrl+Q | Quit |
+
+The `>` in the left column marks the selected event. A text selection stays in the row it was made in, and is cleared when that
+row is no longer the selected one or scrolls out of view.
 
 Any movement pauses Follow; scrolling back to the bottom stays paused until Space or End.
 

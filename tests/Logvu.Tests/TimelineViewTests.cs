@@ -33,25 +33,27 @@ public sealed class TimelineViewTests
 
         Screen screen = Draw(model, Width, 3);
 
-        // At 40 columns the message has 21 columns, so nothing is dropped: the header has Time, Level and Message.
-        Assert.Equal("Time" + new string(' ', 9) + "Level Message", screen.Text(0));
-        Assert.True(screen.Cells[0][0].Attribute.Style.HasFlag(TextStyle.Bold));
+        // The gutter takes the first column, so at 40 columns the message has 20 columns and nothing is dropped: the header has Time,
+        // Level and Message, after the blank gutter.
+        Assert.Equal(" Time" + new string(' ', 9) + "Level Message", screen.Text(0));
+        Assert.True(screen.Cells[0][1].Attribute.Style.HasFlag(TextStyle.Bold));
     }
 
     [Fact]
-    public void The_selected_row_is_drawn_in_the_focus_colors_and_the_others_in_the_normal_ones()
+    public void The_selected_row_is_marked_in_the_gutter_and_drawn_in_the_normal_colors_like_the_others()
     {
         TimelineModel model = Model(Store(3));
         model.Start(3);
 
         Screen screen = Draw(model, Width, 4);
 
-        Attribute focus = screen.Focus;
         Attribute selected = screen.Cells[3][^1].Attribute;
         Attribute other = screen.Cells[1][^1].Attribute;
-        Assert.Equal(focus.Foreground, selected.Foreground);
-        Assert.Equal(focus.Background, selected.Background);
-        Assert.NotEqual(screen.Normal.Background, selected.Background);
+        Assert.Equal(">", screen.Cells[3][0].Grapheme);
+        Assert.True(screen.Cells[3][0].Attribute.Style.HasFlag(TextStyle.Bold));
+        Assert.Equal(" ", screen.Cells[1][0].Grapheme);
+        Assert.Equal(screen.Normal.Foreground, selected.Foreground);
+        Assert.Equal(screen.Normal.Background, selected.Background);
         Assert.Equal(screen.Normal.Foreground, other.Foreground);
         Assert.Equal(screen.Normal.Background, other.Background);
         Assert.Contains("r2", screen.Text(3));
@@ -486,8 +488,8 @@ public sealed class TimelineViewTests
         Attribute selected = screen.Cells[3][TextOf(screen, 3, "r99")].Attribute;
         Assert.True(other.Style.HasFlag(TextStyle.Faint));
         Assert.True(selected.Style.HasFlag(TextStyle.Faint));
-        Assert.Equal(screen.Focus.Foreground, selected.Foreground);
-        Assert.Equal(screen.Focus.Background, selected.Background);
+        Assert.Equal(screen.Normal.Foreground, selected.Foreground);
+        Assert.Equal(screen.Normal.Background, selected.Background);
         Assert.False(screen.Cells[0][0].Attribute.Style.HasFlag(TextStyle.Faint));
     }
 

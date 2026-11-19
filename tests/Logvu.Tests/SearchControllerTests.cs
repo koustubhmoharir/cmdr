@@ -552,6 +552,23 @@ public sealed class SearchControllerTests : IDisposable
     }
 
     /// <summary>Selects the characters from <paramref name="from"/> to <paramref name="to"/> of a visible line of the detail, with the mouse.</summary>
+    [Fact]
+    public void Slash_with_a_selection_in_the_timeline_seeds_the_query_and_starts_no_scan()
+    {
+        // The newest row, r9 at 10:00:09, is the bottom one of the three rows: its first five characters are its hour and minute.
+        _controller.Timeline.Viewport = new System.Drawing.Rectangle(0, 0, 60, 4);
+        _controller.Timeline.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed, Position = new(1, 3) });
+        _controller.Timeline.HandleMouse(new Mouse { Flags = MouseFlags.PositionReport, Position = new(6, 3) });
+        _controller.Timeline.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonReleased, Position = new(6, 3) });
+
+        Assert.True(Send((Key)'/'));
+
+        Assert.True(Bar.Visible);
+        Assert.Equal("10:00", Bar.Query.Text);
+        Assert.Empty(_source.Finds);
+        Assert.False(_controller.Search.IsScanning);
+    }
+
     private void SelectInDetail(DetailView detail, int line, int from, int to)
     {
         // The detail is not in a running window here, so it gets its size directly; its rows are then measured at that width.

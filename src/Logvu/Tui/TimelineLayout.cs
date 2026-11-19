@@ -125,6 +125,41 @@ internal static class TimelineLayout
     }
 
     /// <summary>
+    /// The text a line shows across its visible columns, as the view draws it: the cells in order with one space between each pair, a hidden
+    /// column left out with its space. A selection in a row is made in this text, and a copy of the selection copies it.
+    /// </summary>
+    /// <param name="line">The line.</param>
+    /// <param name="columns">The columns the line was fitted to.</param>
+    public static string Text(TimelineLine line, TimelineColumns columns)
+    {
+        var cells = new List<string>();
+        if (columns.Time > 0)
+        {
+            cells.Add(line.Time);
+        }
+
+        if (columns.Level > 0)
+        {
+            cells.Add(line.LevelLabel);
+        }
+
+        for (int i = 0; i < columns.Extra.Count; i++)
+        {
+            if (columns.Extra[i] > 0)
+            {
+                cells.Add(line.Extra[i]);
+            }
+        }
+
+        if (columns.Message > 0)
+        {
+            cells.Add(line.Message);
+        }
+
+        return string.Join(' ', cells);
+    }
+
+    /// <summary>
     /// Composes the page for the rows at a width. The rows are in the order given, which is the order of the viewport.
     /// </summary>
     /// <param name="rows">The visible rows, top first.</param>
