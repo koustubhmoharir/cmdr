@@ -25,6 +25,9 @@ internal sealed class FakeTimelineSource : ITimelineSource
     /// <summary>Whether the searches wait until the test completes them. A search that is not held finds its result at once.</summary>
     public bool HoldFinds { get; set; }
 
+    /// <summary>Every read asked for, in order, with its kind and the filter it was given (<c>null</c> for every row).</summary>
+    public List<(ReadKind Kind, IRowFilter? Filter)> Reads { get; } = [];
+
     /// <summary>Every search asked for, in order, held or not.</summary>
     public List<FindRequest> Finds { get; } = [];
 
@@ -61,6 +64,7 @@ internal sealed class FakeTimelineSource : ITimelineSource
 
     private Task<RowPage> Read(ReadKind kind, RowKey anchor, int count, IRowFilter? filter, bool inclusive = false)
     {
+        Reads.Add((kind, filter));
         RowPage page = Page(kind, anchor, count, filter, inclusive);
         if (!Held.Contains(kind))
         {

@@ -96,7 +96,6 @@ public sealed class SearchMessagesTests
         timeText,
         LogLevel.Unknown,
         null,
-        null,
         "preview",
         IsRaw: false,
         Orphan: false,

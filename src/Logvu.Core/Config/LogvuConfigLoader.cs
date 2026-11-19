@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Shared.Core;
 
@@ -14,6 +15,18 @@ namespace Logvu.Core.Config;
 internal static class LogvuConfigLoader
 {
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
+
+    /// <summary>The level names <c>minLevel</c> accepts, ignoring case, besides <c>"any"</c>.</summary>
+    private static readonly (string Name, LogLevel Level)[] MinLevelNames =
+    [
+        ("trace", LogLevel.Trace),
+        ("debug", LogLevel.Debug),
+        ("info", LogLevel.Info),
+        ("warn", LogLevel.Warn),
+        ("warning", LogLevel.Warn),
+        ("error", LogLevel.Error),
+        ("fatal", LogLevel.Fatal),
+    ];
 
     /// <summary>Loads and validates the file at <paramref name="configPath"/>.</summary>
     internal static LogvuConfig Load(string configPath)
@@ -125,6 +138,10 @@ internal static class LogvuConfigLoader
                     $"must be between {LogvuConfig.MinRecentCapacity} and {LogvuConfig.MaxRecentCapacity}, got {recentCapacity}");
             }
 
+            LogLevel? minLevel = ParseMinLevel(document.MinLevel);
+
+            IReadOnlyList<ColumnSpec> columns = BuildColumns(document.Columns);
+
             Dictionary<string, ILogScheme> configuredSchemes = BuildSchemes(document.Schemes, out List<ILogScheme> schemes);
 
             IEnumerable<string> styleNames = document.Styles is null ? Enumerable.Empty<string>() : document.Styles.Keys;
@@ -153,6 +170,8 @@ internal static class LogvuConfigLoader
                 schemes,
                 timeZone,
                 recentCapacity,
+                minLevel,
+                columns,
                 highlights,
                 styles,
                 frameworkPrefixes);
@@ -174,6 +193,155 @@ internal static class LogvuConfigLoader
             }
 
             return value;
+        }
+
+        /// <summary>Parses <c>minLevel</c>: <c>"any"</c> is no minimum (<c>null</c>); an absent value is <see cref="LogvuConfig.DefaultMinLevel"/>.</summary>
+        private LogLevel? ParseMinLevel(string? text)
+        {
+            if (text is null)
+            {
+                return LogvuConfig.DefaultMinLevel;
+            }
+
+            if (string.Equals(text, "any", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            foreach ((string name, LogLevel level) in MinLevelNames)
+            {
+                if (string.Equals(text, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return level;
+                }
+            }
+
+            throw Error(
+                "minLevel",
+                $"unknown level '{text}': expected one of any, trace, debug, info, warn (or warning), error, fatal");
+        }
+
+        /// <summary>
+        /// Validates <c>columns</c> in order. An item is a path string or an object with <c>path</c>, and optionally <c>title</c>,
+        /// <c>width</c> and <c>keepEnd</c>. An absent value is an empty list.
+        /// </summary>
+        private IReadOnlyList<ColumnSpec> BuildColumns(List<JsonElement>? documents)
+        {
+            if (documents is null)
+            {
+                return [];
+            }
+
+            var columns = new List<ColumnSpec>(documents.Count);
+            for (int i = 0; i < documents.Count; i++)
+            {
+                columns.Add(BuildColumn(documents[i], $"columns[{i}]"));
+            }
+
+            return columns;
+        }
+
+        private ColumnSpec BuildColumn(JsonElement item, string itemPath)
+        {
+            switch (item.ValueKind)
+            {
+                case JsonValueKind.String:
+                    return new ColumnSpec(ValidColumnPath(item.GetString()!, itemPath));
+                case JsonValueKind.Object:
+                    return BuildColumnObject(item, itemPath);
+                default:
+                    throw Error(itemPath, $"must be a string or an object, found {item.ValueKind.ToString().ToLowerInvariant()}");
+            }
+        }
+
+        /// <summary>Validates an object column: its members are checked as they are read, then its required path.</summary>
+        private ColumnSpec BuildColumnObject(JsonElement item, string itemPath)
+        {
+            string? path = null;
+            string? title = null;
+            int width = ColumnSpec.DefaultMaxWidth;
+            bool keepEnd = false;
+            foreach (JsonProperty property in item.EnumerateObject())
+            {
+                string memberPath = $"{itemPath}.{property.Name}";
+                JsonElement value = property.Value;
+                switch (property.Name)
+                {
+                    case "path":
+                        path = value.ValueKind == JsonValueKind.Null ? null : TextMember(value, memberPath);
+                        break;
+                    case "title":
+                        title = value.ValueKind == JsonValueKind.Null ? null : TextMember(value, memberPath);
+                        if (title is not null && string.IsNullOrWhiteSpace(title))
+                        {
+                            throw Error(memberPath, "must not be empty");
+                        }
+
+                        break;
+                    case "width":
+                        if (value.ValueKind != JsonValueKind.Null)
+                        {
+                            width = WidthMember(value, memberPath);
+                        }
+
+                        break;
+                    case "keepEnd":
+                        if (value.ValueKind != JsonValueKind.Null)
+                        {
+                            keepEnd = BoolMember(value, memberPath);
+                        }
+
+                        break;
+                    default:
+                        throw Error(memberPath, $"unknown member '{property.Name}': expected path, title, width or keepEnd");
+                }
+            }
+
+            string pathPath = $"{itemPath}.path";
+            return new ColumnSpec(ValidColumnPath(RequireText(path, pathPath), pathPath), title, width, keepEnd);
+        }
+
+        private string TextMember(JsonElement value, string memberPath) =>
+            value.ValueKind == JsonValueKind.String
+                ? value.GetString()!
+                : throw Error(memberPath, $"must be a string, found {value.ValueKind.ToString().ToLowerInvariant()}");
+
+        private bool BoolMember(JsonElement value, string memberPath) =>
+            value.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? value.GetBoolean()
+                : throw Error(memberPath, $"must be true or false, found {value.ValueKind.ToString().ToLowerInvariant()}");
+
+        private int WidthMember(JsonElement value, string memberPath)
+        {
+            if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out int width))
+            {
+                throw Error(memberPath, $"must be an integer between {ColumnSpec.MinWidth} and {ColumnSpec.MaxAllowedWidth}");
+            }
+
+            if (width is < ColumnSpec.MinWidth or > ColumnSpec.MaxAllowedWidth)
+            {
+                throw Error(memberPath, $"must be between {ColumnSpec.MinWidth} and {ColumnSpec.MaxAllowedWidth}, got {width}");
+            }
+
+            return width;
+        }
+
+        /// <summary>Checks a column's path against the JSON path syntax, which a text event's field name also satisfies.</summary>
+        private string ValidColumnPath(string path, string jsonPath)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                throw Error(jsonPath, "must not be empty");
+            }
+
+            if (!JsonFieldPath.IsWellFormed(path))
+            {
+                throw Error(
+                    jsonPath,
+                    $"'{path}' is not a valid path: segments are separated by dots, and each is a name optionally followed by [n] indices");
+            }
+
+            return path;
         }
 
         private string ResolveDirectory(string text, string configDirectory)

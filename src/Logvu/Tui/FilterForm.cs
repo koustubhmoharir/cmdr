@@ -8,10 +8,9 @@ namespace Logvu.Tui;
 
 /// <summary>
 /// The text of the filter editor's fields, as the user typed it. Times are text until they are parsed, and the predicates are one
-/// <c>path = value</c> per line.
+/// <c>path keyword value</c> per line.
 /// </summary>
 /// <param name="MinLevel">The minimum level, or <c>null</c> for any level.</param>
-/// <param name="Source">The source substring. Trimmed when parsed.</param>
 /// <param name="File">The file name substring. Trimmed when parsed.</param>
 /// <param name="From">The earliest time, or blank.</param>
 /// <param name="To">The latest time, or blank.</param>
@@ -19,10 +18,9 @@ namespace Logvu.Tui;
 /// <param name="CaseSensitive">Whether the text is matched case-sensitively.</param>
 /// <param name="WholeWord">Whether the text must match whole words.</param>
 /// <param name="Regex">Whether the text is a regular expression.</param>
-/// <param name="Predicates">The field predicates, one <c>path = value</c> per line.</param>
+/// <param name="Predicates">The field predicates, one <c>path keyword value</c> per line.</param>
 internal sealed record FilterInput(
     LogLevel? MinLevel,
-    string Source,
     string File,
     string From,
     string To,
@@ -54,9 +52,6 @@ internal sealed class FilterInputException : Exception
 /// </summary>
 internal static class FilterForm
 {
-    /// <summary>The separator of a field predicate line: the first occurrence splits the path from the value.</summary>
-    public const string PredicateSeparator = " = ";
-
     /// <summary>The form of a time that the editor shows, and of a time it accepts with a date.</summary>
     public const string TimeFormat = "yyyy-MM-dd HH:mm:ss";
 
@@ -144,11 +139,13 @@ internal static class FilterForm
         TimeZoneInfo.ConvertTime(time, zone).ToString(TimeFormat, CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Parses the field predicates: one <c>path = value</c> per line, split at the first <see cref="PredicateSeparator"/>. Blank lines are
-    /// ignored. The path is trimmed and must not be empty; the value is kept as typed.
+    /// Parses the field predicates: one <c>path keyword value</c> per line. Blank lines are ignored. The path is the line's first whitespace-
+    /// delimited token, so it has no whitespace. The keyword follows it after one or more spaces, and it is read ignoring case (see
+    /// <see cref="FieldOperators"/>). One space follows the keyword, and the value is the rest of the line as typed: it may be empty, when
+    /// the line ends with that space.
     /// </summary>
     /// <param name="text">The text of the field.</param>
-    /// <exception cref="FilterInputException">A line has no separator or no path. The message names the line.</exception>
+    /// <exception cref="FilterInputException">A line has no keyword, an unknown keyword, or no space after the keyword. The message names the line.</exception>
     public static IReadOnlyList<FieldPredicate> ParsePredicates(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
@@ -157,38 +154,89 @@ internal static class FilterForm
         string[] lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         for (int i = 0; i < lines.Length; i++)
         {
-            string line = lines[i];
-            if (string.IsNullOrWhiteSpace(line))
+            if (string.IsNullOrWhiteSpace(lines[i]))
             {
                 continue;
             }
 
-            int at = line.IndexOf(PredicateSeparator, StringComparison.Ordinal);
-            if (at < 0)
-            {
-                throw new FilterInputException(FieldLabels.Predicates, $"Line {i + 1} is not path = value: \"{line.Trim()}\".");
-            }
-
-            string path = line[..at].Trim();
-            if (path.Length == 0)
-            {
-                throw new FilterInputException(FieldLabels.Predicates, $"Line {i + 1} has no path before \" = \".");
-            }
-
-            predicates.Add(new FieldPredicate(path, line[(at + PredicateSeparator.Length)..]));
+            predicates.Add(ParsePredicate(lines[i], i + 1));
         }
 
         return predicates;
     }
 
-    /// <summary>The field predicates as the editor shows them: one <c>path = value</c> per line.</summary>
+    /// <summary>Parses one non-blank predicate line, read from its path to the value.</summary>
+    /// <param name="line">The line.</param>
+    /// <param name="number">The line's number, for the error.</param>
+    /// <exception cref="FilterInputException">The keyword is missing, unknown, or not followed by the separating space.</exception>
+    private static FieldPredicate ParsePredicate(string line, int number)
+    {
+        int pathStart = 0;
+        while (pathStart < line.Length && char.IsWhiteSpace(line[pathStart]))
+        {
+            pathStart++;
+        }
+
+        int pathEnd = pathStart;
+        while (pathEnd < line.Length && !char.IsWhiteSpace(line[pathEnd]))
+        {
+            pathEnd++;
+        }
+
+        string path = line[pathStart..pathEnd];
+
+        int keywordStart = pathEnd;
+        while (keywordStart < line.Length && line[keywordStart] == ' ')
+        {
+            keywordStart++;
+        }
+
+        int keywordEnd = keywordStart;
+        while (keywordEnd < line.Length && !char.IsWhiteSpace(line[keywordEnd]))
+        {
+            keywordEnd++;
+        }
+
+        string keyword = line[keywordStart..keywordEnd];
+        if (keyword.Length == 0)
+        {
+            throw new FilterInputException(
+                FieldLabels.Predicates,
+                $"Line {number} has no keyword after \"{path}\". Write path keyword value, with one of {KeywordList()}.");
+        }
+
+        if (!FieldOperators.TryParse(keyword, out FieldOperator op))
+        {
+            throw new FilterInputException(
+                FieldLabels.Predicates,
+                $"Line {number} has the keyword \"{keyword}\", which is not one of {KeywordList()}.");
+        }
+
+        if (keywordEnd == line.Length || line[keywordEnd] != ' ')
+        {
+            throw new FilterInputException(
+                FieldLabels.Predicates,
+                $"Line {number} has no space after the keyword \"{keyword}\". Write path {keyword} value, with one space before the value.");
+        }
+
+        return new FieldPredicate(path, op, line[(keywordEnd + 1)..]);
+    }
+
+    /// <summary>The accepted keywords, as the errors list them: <c>equals, prefix, suffix or contains</c>.</summary>
+    private static string KeywordList()
+    {
+        IReadOnlyList<string> keywords = FieldOperators.Keywords;
+        return string.Join(", ", keywords.Take(keywords.Count - 1)) + " or " + keywords[^1];
+    }
+
+    /// <summary>The field predicates as the editor shows them: one <c>path keyword value</c> per line.</summary>
     /// <param name="predicates">The predicates.</param>
     public static string FormatPredicates(IEnumerable<FieldPredicate> predicates) =>
-        string.Join("\n", predicates.Select(predicate => predicate.Path + PredicateSeparator + predicate.Value));
+        string.Join("\n", predicates.Select(predicate => $"{predicate.Path} {FieldOperators.Keyword(predicate.Operator)} {predicate.Value}"));
 
     /// <summary>
-    /// Builds the spec of the editor's input. A blank field is not set. The source and file names are trimmed. The times must be in order,
-    /// and the text must be a valid pattern.
+    /// Builds the spec of the editor's input. A blank field is not set. The file name is trimmed. The times must be in order, and the text
+    /// must be a valid pattern.
     /// </summary>
     /// <param name="input">The input.</param>
     /// <param name="zone">The zone the times are in.</param>
@@ -220,7 +268,6 @@ internal static class FilterForm
         IReadOnlyList<FieldPredicate> predicates = ParsePredicates(input.Predicates);
         return new FilterSpec(
             MinLevel: input.MinLevel,
-            SourceContains: input.Source.Trim(),
             FileContains: input.File.Trim(),
             From: from,
             To: to,
@@ -237,7 +284,6 @@ internal static class FilterForm
         SearchQuery? text = filter?.Text;
         return new FilterInput(
             MinLevel: filter?.MinLevel,
-            Source: filter?.SourceContains ?? string.Empty,
             File: filter?.FileContains ?? string.Empty,
             From: filter?.From is { } from ? FormatTime(from, zone) : string.Empty,
             To: filter?.To is { } to ? FormatTime(to, zone) : string.Empty,
@@ -256,7 +302,6 @@ internal static class FilterForm
             : new FilterSpec(
                 filter.MinLevel,
                 filter.Levels,
-                filter.SourceContains,
                 filter.FileContains,
                 filter.From,
                 filter.To,
@@ -332,8 +377,9 @@ internal static class FilterForm
     }
 
     /// <summary>
-    /// The field predicate that a detail line filters on: its scope (the field name or the JSON dotted path) and its value. A line with no
-    /// value, such as a message, a fold, or a line of a multi-line string, filters on nothing.
+    /// The field predicate that a detail line filters on: its scope (the field name or the JSON dotted path) and its value, with the
+    /// <see cref="FieldOperator.Equals"/> operator. A line with no value, such as a message, a fold, or a line of a multi-line string, filters
+    /// on nothing.
     /// </summary>
     /// <param name="line">The line under the cursor.</param>
     public static FieldPredicate? FieldPredicateOf(DetailLine line)
@@ -344,15 +390,12 @@ internal static class FilterForm
             return null;
         }
 
-        return new FieldPredicate(line.Scope, value);
+        return new FieldPredicate(line.Scope, FieldOperator.Equals, value);
     }
 
     /// <summary>The labels of the editor's fields, as the errors name them.</summary>
     public static class FieldLabels
     {
-        /// <summary>The label of the source field.</summary>
-        public const string Source = "Source contains";
-
         /// <summary>The label of the file name field.</summary>
         public const string File = "File contains";
 

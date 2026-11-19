@@ -103,13 +103,17 @@ internal sealed class LogSet : IDisposable
 {
     private const string LogName = "app.log";
 
-    /// <summary>Creates the folder, the configuration and <paramref name="events"/> events.</summary>
-    public LogSet(int events)
+    /// <summary>
+    /// Creates the folder, the configuration and <paramref name="events"/> events. The configuration's <c>minLevel</c> is
+    /// <paramref name="minLevel"/>, which defaults to <c>any</c> so that the timeline starts unfiltered.
+    /// </summary>
+    public LogSet(int events, string minLevel = "any")
     {
         Folder = Path.Combine(Path.GetTempPath(), $"logvu-set-{Guid.NewGuid():N}");
         Directory.CreateDirectory(Folder);
         string configPath = Path.Combine(Folder, "logvu.json");
-        File.WriteAllText(configPath, "{ \"format\": \"serilog-json\", " + DetailFixtures.BaseMembers + " }");
+        string members = DetailFixtures.BaseMembers.Replace("\"minLevel\": \"any\"", $"\"minLevel\": \"{minLevel}\"");
+        File.WriteAllText(configPath, "{ \"format\": \"serilog-json\", " + members + " }");
         File.WriteAllLines(LogPath, Enumerable.Range(0, events).Select(Json));
         Config = LogvuConfig.Load(configPath);
     }

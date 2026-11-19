@@ -49,8 +49,8 @@ public sealed class RawUnavailableTests
 
         DetailDocument doc = DetailRig.Build(DetailRig.Loaded(text, BuiltInSchemes.Log4NetCore));
 
-        Assert.Equal("Message: \u25B8 not a node", doc.FullLines.Single(l => l.Kind == LineKind.Message).Text);
-        Assert.Equal("Message: \u25B8 not a node", doc.Lines.Single(l => l.Kind == LineKind.Message).Text);
+        Assert.Equal("message: \u25B8 not a node", doc.FullLines.Single(l => l.Kind == LineKind.Message).Text);
+        Assert.Equal("message: \u25B8 not a node", doc.Lines.Single(l => l.Kind == LineKind.Message).Text);
     }
 
     [Fact]

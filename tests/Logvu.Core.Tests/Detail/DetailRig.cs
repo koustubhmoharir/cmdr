@@ -32,6 +32,8 @@ internal static class DetailRig
             schemes: BuiltInSchemes.All,
             timeZone: TimeZoneInfo.Utc,
             recentCapacity: LogvuConfig.DefaultRecentCapacity,
+            minLevel: null,
+            columns: [],
             highlights: highlights ?? [],
             styles: new Dictionary<string, StyleSpec>(StringComparer.OrdinalIgnoreCase),
             frameworkPrefixes: frameworkPrefixes ?? LogvuConfig.DefaultFrameworkPrefixes);
@@ -55,7 +57,6 @@ internal static class DetailRig
             e.TimeText,
             e.Level,
             e.LevelText,
-            e.Source,
             preview,
             e.IsRaw,
             Orphan: false,

@@ -52,9 +52,8 @@ public sealed class LogEvent
     DateTimeOffset? Time;      // null when absent or unparseable
     string? TimeText;          // original spelling
     LogLevel Level; string? LevelText;
-    string? Source;            // logger: log4net %logger, Serilog Properties.SourceContext, slog "logger" attribute
     string Message;            // full message (text: first-line message + continuation lines joined with \n)
-    IReadOnlyList<LogField> Fields;   // named fields in scheme order (text) or top-level members (JSON)
+    IReadOnlyList<LogField> Fields;   // named groups in pattern order, `message` included (text) or top-level members (JSON)
     JsonElement? Json;         // the parsed object for JSON events
     string? ParseError;        // set for raw events
     bool IsRaw;
@@ -126,6 +125,13 @@ leaves the file undetected (retried as it grows).
   must not shadow built-ins; their `header` is validated by `TextScheme`'s constructor.
 - `timeZone`: `"local"` (default), `"utc"`, or a system time zone id (IANA or Windows); unknown ids are errors.
 - `recentCapacity`: events kept in the recent-history ring; default 20000, range 100–1000000.
+- `minLevel`: the timeline's initial minimum level (`any`, `trace` … `fatal`, `warning` = `warn`); default `info`. The
+  controller passes it as the filter of `TimelineModel.Start`, so the first load is already filtered.
+- `columns`: extra timeline columns, each a path string or `{path, title?, width?}` (`ColumnSpec`; path syntax checked by
+  `JsonFieldPath.IsWellFormed`, width 1–200, default 30). `RowBuilder.BuildFromText` stores one value per column on
+  `EventRow.Columns` (JSON path for JSON events, first field of that name for text events; first line, capped at 256 chars;
+  raw rows and `BuildHead` rows have none), so drawing never re-parses. The layout drops extra columns first on narrow
+  terminals and keeps per-column grow-only widths; `keepEnd` columns are cut from the front.
 - `highlights`: ordered; `field` is `message`, `raw`, or a field name (JSON dotted path for JSON events); `pattern` is a
   regex (validated, 250 ms timeout); `style` is a built-in style (`error`, `warning`, `info`, `debug`, `accent`, `emphasis`,
   `dim`, `success`) or a key of `styles`.
@@ -158,7 +164,7 @@ dated members, in basename order, as a separate marked group. Pending members ar
 ## Paging and memory (M4)
 
 A **row key** is `(generation, offset)` of an event start. The **ring** holds the newest `recentCapacity` row summaries
-(key, extent, time, level, source, first-line preview capped at 512 chars, raw/provisional flags). The **page** is the list of
+(key, extent, time, level, column values, first-line preview capped at 512 chars, raw/provisional flags). The **page** is the list of
 row summaries currently visible plus a margin; it is filled from the ring when possible and otherwise by framing backward or
 forward from an anchor row, crossing to the adjacent member at a file boundary. Detail and search read full text through
 `EventText.Read` on a freshly opened handle whose identity is verified against the member.
@@ -277,13 +283,12 @@ indented by 2 under the value column).
 
 There is no header block: the document starts with the content. The status line shows the event's file name.
 
-**Text events.** Named fields (`name: value`) in scheme order, time/level/logger included as written (the message excepted),
-then `Message:` and the full multi-line message
-as one value (continuation lines at the value indent).
+**Text events.** Named fields (`name: value`) in pattern order, as written. The `message` field is the full multi-line
+message as one value (stack analysis, continuation lines at the value indent).
 
-**JSON events.** First the surfaced summary: the message (`msg` / rendered Serilog message) and an **error summary** when
-present — Serilog: `Exception` first line (type: message); Go: `err.message`/`error.message` or top-level `cause[0]`.
-Then the tree: objects and arrays as expandable nodes (`▾ key {n}` / `▸ key [n]`), scalars as `key: value` with JSON styling.
+**JSON events.** The tree only: the message and error are already values in it. The one exception is a Serilog message
+logvu rendered from `MessageTemplate` + `Properties` (`LogEvent.MessageRendered`), which is shown first as `Message:` since it
+appears nowhere else. The tree: objects and arrays as expandable nodes (`▾ key {n}` / `▸ key [n]`), scalars as `key: value` with JSON styling.
 Default expansion: depth ≤ 2 expanded, deeper collapsed, except nodes on the path to an error/exception/stack/cause value
 (expanded so stacks are visible). Strings containing newlines (Serilog `Exception`) are shown as multi-line values and get
 stack-trace treatment.
@@ -336,17 +341,20 @@ events, `N` / Shift+F3 search toward newer events. There is no wrap-around: at t
 
 ## Filter (M10)
 
-`f` opens the filter editor (a dialog): minimum level (or a level set), source contains, file name contains, time from / to
+`f` opens the filter editor (a dialog): minimum level (or a level set), file name contains, time from / to
 (in the config time zone, `yyyy-MM-dd HH:mm[:ss]`), text (literal or regex, case-insensitive by default) and any number of
-field predicates `path = value` (text-scheme field name or JSON dotted path; exact string match). All predicates are ANDed.
-`EventFilter : IRowFilter` checks row-level predicates (level, source, file, time) before reading anything else.
+field predicates `path operator value` (`FieldPredicate`; operators `equals`, `prefix`, `suffix`, `contains`, all ignoring
+case; keywords in `FieldOperators` so variants such as `equals_case` can be added). Paths resolve through
+`EventFields.TryGetValue`, shared with `columns`: a JSON dotted path, else `message` = the event's message; for text events
+the field of that name. All predicates are ANDed. There is no special source: the logger is an ordinary field/member.
+`EventFilter : IRowFilter` checks row-level predicates (level, file, time) before reading anything else.
 
 - **Time-interval skipping**: `IRowFilter.TimeWindow` lets `HistoryReader` skip whole members whose range `[FirstTime, next
   member's FirstTime]` lies outside the window; members touching a boundary are kept (equal times are candidates).
 - **Incoming events**: with a filter active, the controller does not pass store arrivals to the model directly; when the model
   is at the newest end it requests `ReadNewer` from its newest row with the filter (the store applies the same predicate), and
   `NewCount` counts the matching rows returned. Without a filter arrivals flow as before.
-- **Filter to this value**: `f` on a field / JSON scalar line in the detail adds `path = value` to the active filter and returns
+- **Filter to this value**: `f` on a field / JSON scalar line in the detail adds `path equals value` to the active filter and returns
   to the timeline.
 - **Status**: `Filter: level ≥ WARN · text ~ timeout`; while a filtered load scans: `Scanning… 34 MB`; when a completed scan found
   nothing: `No matching events`.
@@ -355,7 +363,7 @@ field predicates `path = value` (text-scheme field name or JSON dotted path; exa
 
 History scans frame events with an allocation-free span scanner shared by `LineReader` and `EventFramer`, and take each event's
 text from the framer's cached blocks (no second read). Filters may opt into two pre-checks before an event is parsed:
-`MayMatchHead` (the header line: level, source, time for text schemes) and `MayMatchText` (the raw text). Pre-checks must be
+`MayMatchHead` (the header line: level and time for text schemes) and `MayMatchText` (the raw text). Pre-checks must be
 exact — they may only reject events the full `Matches` would reject. The raw-text pre-check for search is exact for text schemes,
 and for slog only with a literal, non-whole-word pattern and a line without backslashes (escapes make the decoded message differ
 from the raw line); Serilog is never pre-checked (messages are rendered from templates). Batches hold a handle for up to 4096

@@ -121,13 +121,18 @@ public sealed partial class TimelineModel
     /// <summary>Whether the window reaches the newest end of history under the active filter.</summary>
     public bool AtEnd => _atEnd;
 
-    /// <summary>Loads the newest rows in Follow mode, with the viewport <paramref name="height"/> rows high.</summary>
+    /// <summary>
+    /// Loads the newest rows in Follow mode, with the viewport <paramref name="height"/> rows high. The first load already uses
+    /// <paramref name="filter"/>, so no unfiltered rows are loaded first; <see cref="SetFilter"/> changes it later.
+    /// </summary>
     /// <param name="height">The viewport height. It is at least 1.</param>
+    /// <param name="filter">The filter the timeline starts with, or <c>null</c> for every row.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="height"/> is below 1.</exception>
-    public void Start(int height)
+    public void Start(int height, IRowFilter? filter = null)
     {
         ValidateHeight(height);
         _height = height;
+        _filter = filter;
         _mode = TimelineMode.Follow;
         _newCount = 0;
         _hasUnseenArrivals = false;

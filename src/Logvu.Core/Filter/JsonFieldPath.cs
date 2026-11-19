@@ -38,6 +38,59 @@ internal static class JsonFieldPath
         return true;
     }
 
+    /// <summary>
+    /// Tells whether a dotted path has the syntax <see cref="TryGetText"/> reads: non-empty segments separated by dots, each a member name
+    /// optionally followed by array indices, or only indices. Every index is one or more decimal digits between brackets. A path that is
+    /// not well formed can never resolve, so a configuration checks its paths with this method.
+    /// </summary>
+    /// <param name="path">The dotted path to check.</param>
+    /// <returns><c>true</c> when the path is well formed; otherwise <c>false</c>.</returns>
+    internal static bool IsWellFormed(string path)
+    {
+        if (path.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (string segment in path.Split('.'))
+        {
+            if (!IsWellFormedSegment(segment))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Tells whether one path segment is a member name, indices, or a name followed by indices, as <see cref="IsWellFormed"/> reads it.</summary>
+    private static bool IsWellFormedSegment(string segment)
+    {
+        int position = segment.IndexOf('[');
+        if (position < 0)
+        {
+            return segment.Length > 0;
+        }
+
+        while (position < segment.Length)
+        {
+            if (segment[position] != '[')
+            {
+                return false;
+            }
+
+            int close = segment.IndexOf(']', position);
+            if (close < 0 || !int.TryParse(segment.AsSpan(position + 1, close - position - 1), NumberStyles.None, CultureInfo.InvariantCulture, out _))
+            {
+                return false;
+            }
+
+            position = close + 1;
+        }
+
+        return true;
+    }
+
     /// <summary>Moves to the member and then the indices of one path segment.</summary>
     private static bool TryStep(ref JsonElement current, string segment)
     {

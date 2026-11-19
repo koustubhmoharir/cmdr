@@ -48,9 +48,11 @@ file through a file dialog, Esc or Ctrl+Q quits.
 | `activeFile` | Optional. The fixed name of the file being written (log4net numbered rotation). Without it, the newest file is the live one (date-named files). Numbered backups of the active file (`SheetKraft2.log`) order before lower numbers when their first events have the same time. |
 | `format` | `auto` (default: detected per file) or a scheme name: `log4net-core`, `log4net-web`, `log4net-scheduler`, `log4net-date-first`, `serilog-json`, `slog-json`, or a configured scheme. |
 | `timeZone` | Time zone for timestamps written without an offset (log4net): `local` (default), `utc`, or a system time zone id. Times are also displayed in this zone. |
+| `minLevel` | The minimum level the timeline starts with: `info` (default), `trace`, `debug`, `warn` (or `warning`), `error`, `fatal`, or `any` for no filter. Events without a recognised level (text before a file's first header, malformed lines) only show with `any`. Change it at run time with `-` / `+` or `f`. |
+| `columns` | Timeline columns between Level and Message (Time, Level and Message are always shown): each item is a path string or `{ "path", "title", "width", "keepEnd" }`. `path` is a JSON path for JSON events (`status`, `req.path`, `err.attrs[0].code`, `Properties.SourceContext`) or a field name for text events (`logger`, `thread`). `message` is the event's message in every format.  `title` defaults to the path's last name; `width` is the most columns it may take (1–200, default 30); `keepEnd: true` cuts a long value from the front (`…Engine.Runner`), for logger names. A column fits its widest value on screen and does not shrink while scrolling; on narrow terminals extra columns are dropped first, from the right. Objects and arrays show as compact JSON; a missing value is blank. |
 | `recentCapacity` | Events kept in memory near the newest end for fast paging (default 20000, 100–1000000). Older history is read from disk on demand. |
 | `schemes` | Custom text formats: `{ "name", "header", "timeFormats" }`. `header` is a regular expression matched against a whole line, with named groups `message` (required), `time`, `level`, `logger` and any others (shown as fields). Lines that do not match the header continue the previous event. |
-| `highlights` | Ordered rules `{ "field", "pattern", "style" }` colouring matches in the detail: `field` is `message`, `raw`, a field name or a JSON dotted path (`Properties.SourceContext`; a path to an array covers its items). The first matching rule wins where matches overlap. |
+| `highlights` | Ordered rules `{ "field", "pattern", "style" }` colouring matches in the detail: `field` is `message`, `raw`, a field name or a JSON dotted path (`Properties.SourceContext`; a path to an array covers its items). For JSON events `message` applies only to a message logvu rendered from a Serilog template; scope rules to the JSON field (`msg`, `RenderedMessage`) instead. The first matching rule wins where matches overlap. |
 | `styles` | Named styles for `highlights`: `{ "name": { "foreground", "background", "bold", "italic", "underline" } }` with ANSI colour names (`red`, `brightCyan`, …) or `#rrggbb`. Built-in names: `error`, `warning`, `info`, `debug`, `accent`, `emphasis`, `dim`, `success`. |
 | `frameworkPrefixes` | Namespace or package prefixes whose stack frames are dimmed and can be folded. Default: `System.`, `Microsoft.`, `Newtonsoft.`, `log4net.`, `Serilog.`, `runtime.`, `net/http.`, `github.com/labstack/`. |
 
@@ -58,7 +60,8 @@ Unknown settings are errors, so typos are reported.
 
 ## Screen and keys
 
-The timeline shows one row per event — **Time, Level, Source** (the logger), **Message** (its first line) — oldest at the top.
+The timeline shows one row per event — **Time, Level**, the configured `columns` (for example the logger), **Message** (its
+first line) — oldest at the top.
 When a page spans more than one day every row shows the date. The status line shows Follow or Paused, the number of new events
 while paused, the active filter, search progress and read problems.
 
@@ -79,8 +82,9 @@ while paused, the active filter, search progress and read problems.
 
 Any movement pauses Follow; scrolling back to the bottom stays paused until Space or End.
 
-**Detail.** The fields (time, level and logger as written) and the full message — or, for JSON, the message and error summary
-followed by an expandable tree. The status line shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
+**Detail.** The fields of a text event as written, in pattern order, `message` as a multi-line value — or, for JSON, the expandable tree of the
+event (preceded by the message only when logvu rendered it from a Serilog template, since it appears nowhere else). The status
+line shows the event's file name. .NET exceptions (including inner exceptions) and Go stack traces are
 styled: exception types and messages, method names and `file:line` stand out, directories and framework frames are dimmed.
 Runs of framework frames get a `… N framework frames` marker that folds them.
 
@@ -98,7 +102,9 @@ Runs of framework frames get a `… N framework frames` marker that folds them.
 case-insensitively by default; the bar's toggles switch on case sensitivity, whole words and regular expressions. Only events
 passing the filter are searched. A search does not wrap: the status line says when there are no more matches.
 
-**Filter** combines a minimum level, source and file name substrings, text, a time range and `path = value` field conditions
+**Filter** starts at the configured `minLevel` (Info by default) and combines a minimum level, a file name substring, text, a time range and field conditions, one per line as
+`path operator value` with the operator `equals`, `prefix`, `suffix` or `contains` (ignoring case), e.g. `logger contains Engine`,
+`message prefix Timeout`. Paths are those of `columns`.
 (all must match). Incoming events go through the same filter. The status line distinguishes a scan in progress from a scan that
 found nothing.
 

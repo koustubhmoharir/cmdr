@@ -20,11 +20,14 @@ public sealed class LogEvent
     /// <summary>The level as written in the log, or <c>null</c> when absent.</summary>
     public string? LevelText { get; init; }
 
-    /// <summary>The logger name or source context, or <c>null</c> when the event has none.</summary>
-    public string? Source { get; init; }
-
     /// <summary>The full message. For text events, continuation lines are joined with <c>\n</c>.</summary>
     public required string Message { get; init; }
+
+    /// <summary>
+    /// True when <see cref="Message"/> is not a value of the event as written but was rendered by logvu (a Serilog message template filled
+    /// from its properties) and differs from the template text. Only then does the message appear nowhere else in the event.
+    /// </summary>
+    public bool MessageRendered { get; init; }
 
     /// <summary>The named values of the event, in scheme order.</summary>
     public IReadOnlyList<LogField> Fields { get; init; } = [];

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
@@ -89,6 +90,33 @@ public sealed class HistoryReaderTests
 
         pages.Reverse();
         return pages.SelectMany(rows => rows).ToList();
+    }
+
+    [Fact]
+    public void Rows_read_from_history_carry_the_configured_column_values()
+    {
+        using var dir = new ConfigTestDirectory();
+        dir.Write(
+            "SheetKraft.log",
+            "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"INFO\",\"msg\":\"first\",\"req\":{\"path\":\"/a\"}}\n" +
+            "{\"time\":\"2026-11-18T09:00:01Z\",\"level\":\"ERROR\",\"msg\":\"second\",\"req\":{\"path\":\"/b\"}}\n" +
+            "{\"time\":\"2026-11-18T09:00:02Z\",\"level\":\"INFO\",\"msg\":\"third\"}\n");
+        var columns = new JsonArray
+        {
+            "req.path",
+            "msg",
+            new JsonObject { ["path"] = "req.nope", ["title"] = "Nope", ["width"] = 12 },
+        };
+        LogvuConfig config = StoreTestConfig.Create(dir, format: "slog-json", activeFile: "SheetKraft.log", columns: columns);
+        Catalog catalog = CatalogOf(dir, config, "SheetKraft.log");
+
+        RowPage page = NewReader(config).ReadNewest(catalog.Snapshot(), 100, null, null, CancellationToken.None);
+
+        Assert.Empty(page.Errors);
+        Assert.Equal(3, page.Rows.Count);
+        Assert.Equal(new string?[] { "/a", "first", null }, page.Rows.Single(r => r.Preview == "first").Columns);
+        Assert.Equal(new string?[] { "/b", "second", null }, page.Rows.Single(r => r.Preview == "second").Columns);
+        Assert.Equal(new string?[] { null, "third", null }, page.Rows.Single(r => r.Preview == "third").Columns);
     }
 
     /// <summary>Pages forward from the oldest row until the end of history, starting with that row.</summary>

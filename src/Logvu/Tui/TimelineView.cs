@@ -1,3 +1,4 @@
+using Logvu.Core.Config;
 using Logvu.Core.Store;
 using Logvu.Core.Timeline;
 using Shared.Core;
@@ -15,7 +16,8 @@ namespace Logvu.Tui;
 /// </summary>
 /// <remarks>
 /// The model's viewport height is the view's height less the header row, at least 1. The owner keeps the model in step with the view
-/// through <see cref="ViewportRowsChanged"/>.
+/// through <see cref="ViewportRowsChanged"/>. The extra columns of the configuration are drawn between Level and Message, under their
+/// titles.
 /// </remarks>
 internal sealed class TimelineView : View
 {
@@ -24,10 +26,11 @@ internal sealed class TimelineView : View
 
     private readonly TimelineModel _model;
     private readonly TimeZoneInfo _zone;
+    private readonly IReadOnlyList<ColumnSpec> _columns;
 
-    // The widest source column drawn at the current width (see OnDrawingContent), and that width.
-    private int _sourceFloor;
-    private int _sourceFloorWidth = -1;
+    // The widest of each extra column drawn at the current width (see OnDrawingContent), and that width.
+    private readonly List<int> _extraFloors = [];
+    private int _floorWidth = -1;
     private string? _placeholder;
     private SearchPattern? _search;
     private RowKey? _activeRow;
@@ -35,13 +38,15 @@ internal sealed class TimelineView : View
     /// <summary>Creates the view. It draws nothing but its header until a placeholder or rows are shown.</summary>
     /// <param name="model">The model the view draws and drives.</param>
     /// <param name="zone">The time zone that times are shown in.</param>
+    /// <param name="columns">The configured extra columns, drawn between Level and Message in this order. Null or empty for none.</param>
     /// <exception cref="ArgumentNullException"><paramref name="model"/> or <paramref name="zone"/> is <c>null</c>.</exception>
-    public TimelineView(TimelineModel model, TimeZoneInfo zone)
+    public TimelineView(TimelineModel model, TimeZoneInfo zone, IReadOnlyList<ColumnSpec>? columns = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(zone);
         _model = model;
         _zone = zone;
+        _columns = columns ?? Array.Empty<ColumnSpec>();
         CanFocus = true;
     }
 
@@ -67,7 +72,7 @@ internal sealed class TimelineView : View
     }
 
     /// <summary>
-    /// The search whose matches are highlighted in the Source and Message cells of the rows. Null for none. Changing it keeps
+    /// The search whose matches are highlighted in the extra and Message cells of the rows. Null for none. Changing it keeps
     /// <see cref="ActiveRow"/>; the owner clears that when the query changes.
     /// </summary>
     public SearchPattern? Search
@@ -239,16 +244,26 @@ internal sealed class TimelineView : View
         var header = new Attribute(normal.Foreground, normal.Background, TextStyle.Bold);
 
         IReadOnlyList<EventRow> visible = _model.VisibleRows;
-        // The source column only grows while the width stays the same, so scrolling does not make the columns jump.
-        if (width != _sourceFloorWidth)
+        // The extra columns only grow while the width stays the same, so scrolling does not make the columns jump.
+        if (width != _floorWidth)
         {
-            _sourceFloorWidth = width;
-            _sourceFloor = 0;
+            _floorWidth = width;
+            _extraFloors.Clear();
         }
 
-        TimelinePage page = TimelineLayout.Compose(visible, width, _zone, _sourceFloor);
-        _sourceFloor = Math.Max(_sourceFloor, page.Columns.Source);
-        DrawLine(0, TimelineLayout.Header(page.Columns), page.Columns, header, selected: false, active: false);
+        if (_extraFloors.Count != _columns.Count)
+        {
+            _extraFloors.Clear();
+            _extraFloors.AddRange(new int[_columns.Count]);
+        }
+
+        TimelinePage page = TimelineLayout.Compose(visible, width, _zone, _columns, _extraFloors);
+        for (int i = 0; i < _extraFloors.Count; i++)
+        {
+            _extraFloors[i] = Math.Max(_extraFloors[i], page.Columns.Extra[i]);
+        }
+
+        DrawLine(0, TimelineLayout.Header(page.Columns, _columns), page.Columns, header, selected: false, active: false);
 
         for (int i = 0; i < page.Lines.Count && i + 1 < height; i++)
         {
@@ -268,7 +283,10 @@ internal sealed class TimelineView : View
         return true;
     }
 
-    /// <summary>Draws one line: each column at its offset, with the attribute of its cell. Only the source and the message are searched.</summary>
+    /// <summary>
+    /// Draws one line: each column at its offset, with the attribute of its cell. The extra columns and the message are searched; the
+    /// time and the level are not.
+    /// </summary>
     private void DrawLine(int row, TimelineLine line, TimelineColumns columns, Attribute baseline, bool selected, bool active)
     {
         int x = 0;
@@ -276,8 +294,13 @@ internal sealed class TimelineView : View
         x += columns.Time > 0 ? columns.Time + 1 : 0;
         DrawCell(x, row, columns.Level, line.LevelLabel, LevelColors.Label(line.Severity, baseline, selected), searched: false, active);
         x += columns.Level > 0 ? columns.Level + 1 : 0;
-        DrawCell(x, row, columns.Source, line.Source, LevelColors.Text(line.Severity, baseline, selected), searched: true, active);
-        x += columns.Source > 0 ? columns.Source + 1 : 0;
+        for (int i = 0; i < columns.Extra.Count; i++)
+        {
+            int width = columns.Extra[i];
+            DrawCell(x, row, width, line.Extra[i], LevelColors.Text(line.Severity, baseline, selected), searched: true, active);
+            x += width > 0 ? width + 1 : 0;
+        }
+
         DrawCell(x, row, columns.Message, line.Message, LevelColors.Message(line.Severity, baseline, selected), searched: true, active);
     }
 

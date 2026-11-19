@@ -50,7 +50,7 @@ public sealed class DetailValueTests
         foreach (DetailLine line in valued)
         {
             Assert.NotNull(line.Scope);
-            var filter = new EventFilter(new FilterSpec(Fields: [new FieldPredicate(line.Scope!, line.Value!)]));
+            var filter = new EventFilter(new FilterSpec(Fields: [new FieldPredicate(line.Scope!, FieldOperator.Equals, line.Value!)]));
             Assert.True(filter.Matches(loaded.Row, loaded.Event, loaded.Text), $"{line.Scope} = {line.Value}");
         }
     }

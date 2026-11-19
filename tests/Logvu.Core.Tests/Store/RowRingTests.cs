@@ -13,7 +13,7 @@ public sealed class RowRingTests
     private static RowKey K(int generation, long offset) => new(generation, offset);
 
     private static EventRow Row(int generation, long offset, string preview = "") =>
-        new(K(generation, offset), new EventExtent(offset, offset + 10, offset, false, false), null, null, LogLevel.Info, null, null, preview, false, false, false);
+        new(K(generation, offset), new EventExtent(offset, offset + 10, offset, false, false), null, null, LogLevel.Info, null, preview, false, false, false);
 
     private static RowKey[] Keys(IEnumerable<EventRow> rows) => rows.Select(row => row.Key).ToArray();
 

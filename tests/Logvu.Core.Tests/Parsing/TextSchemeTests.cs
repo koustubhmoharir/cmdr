@@ -92,30 +92,61 @@ public sealed class TextSchemeTests
     }
 
     [Fact]
-    public void Unmatched_optional_groups_are_empty_fields_and_null_source()
+    public void Unmatched_optional_groups_are_empty_fields()
     {
         TextScheme scheme = Custom(@"(?<level>[A-Z]+)(?: (?<tag>#\w+))? (?<message>.*)");
 
         LogEvent e = scheme.Parse("INFO hi", Utc);
 
-        Assert.Null(e.Source);
-        ParsingFixtures.AssertFields(e, ("level", "INFO"), ("tag", ""));
+        ParsingFixtures.AssertFields(e, ("level", "INFO"), ("tag", ""), ("message", "hi"));
     }
 
     [Fact]
-    public void Logger_group_becomes_source_and_is_also_a_field_in_pattern_order()
+    public void An_event_has_no_source_property_of_its_own()
+    {
+        // The logger is an ordinary field of every scheme that names one: nothing else carries it.
+        Assert.Null(typeof(LogEvent).GetProperty("Source"));
+    }
+
+    [Fact]
+    public void Logger_group_is_an_ordinary_field_in_pattern_order()
     {
         TextScheme scheme = Custom(@"(?<time>\d{4}) (?<logger>\S+) (?<level>[A-Z]+) (?<id>\d+) (?<message>.*)", "yyyy");
 
         LogEvent e = scheme.Parse("2026 Svc.A WARN 9 text", Utc);
 
-        Assert.Equal("Svc.A", e.Source);
         Assert.Equal(LogLevel.Warn, e.Level);
         ParsingFixtures.AssertFields(e,
             ("time", "2026"),
             ("logger", "Svc.A"),
             ("level", "WARN"),
-            ("id", "9"));
+            ("id", "9"),
+            ("message", "text"));
+    }
+
+    [Fact]
+    public void Message_is_a_field_in_its_pattern_position_holding_the_whole_message_with_its_continuation_lines()
+    {
+        TextScheme scheme = Custom(@"(?<level>[A-Z]+) (?<message>.+?) \| (?<tag>\w+)");
+
+        LogEvent e = scheme.Parse("WARN first part | ops\n  second line\n\nthird line", Utc);
+
+        AssertFields(e,
+            ("level", "WARN"),
+            ("message", "first part\n  second line\n\nthird line"),
+            ("tag", "ops"));
+        Assert.Equal("first part\n  second line\n\nthird line", e.Message);
+    }
+
+    [Fact]
+    public void A_header_only_read_has_no_message_field_and_the_message_of_its_first_line()
+    {
+        TextScheme scheme = Custom(@"(?<level>[A-Z]+) (?<message>.*)");
+
+        LogEvent e = scheme.ParseHeader("WARN first line\n  more", Utc, withTime: false);
+
+        Assert.Empty(e.Fields);
+        Assert.Equal(string.Empty, e.Message);
     }
 
     [Fact]

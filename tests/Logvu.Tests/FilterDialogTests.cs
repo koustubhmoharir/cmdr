@@ -28,24 +28,23 @@ public sealed class FilterDialogTests
         using IApplication app = CreateApp();
         EventFilter active = new(new FilterSpec(
             MinLevel: LogLevel.Warn,
-            SourceContains: "Orders",
             FileContains: "app",
             From: new DateTimeOffset(2026, 11, 18, 10, 0, 0, TimeSpan.FromHours(2)),
             Text: new SearchQuery("timeout", true, false, true),
-            Fields: [new FieldPredicate("user", "alice")]));
+            Fields: [new FieldPredicate("user", FieldOperator.Equals, "alice"), new FieldPredicate("logger", FieldOperator.Contains, "Orders")]));
         using var dialog = new FilterDialog(app, active, Zone, () => Now);
 
         FilterInput shown = dialog.Input();
 
         Assert.Equal(FilterForm.InputOf(active, Zone), shown);
         Assert.Equal(LogLevel.Warn, shown.MinLevel);
-        Assert.Equal("Orders", shown.Source);
+        Assert.Equal("app", shown.File);
         Assert.Equal("2026-11-18 10:00:00", shown.From);
         Assert.Equal("", shown.To);
         Assert.True(shown.CaseSensitive);
         Assert.True(shown.Regex);
         Assert.False(shown.WholeWord);
-        Assert.Equal("user = alice", shown.Predicates);
+        Assert.Equal("user equals alice\nlogger contains Orders", shown.Predicates);
     }
 
     [Fact]
@@ -66,20 +65,20 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
-        Control<TextField>(dialog, "_source").Text = "Orders";
+        Control<TextField>(dialog, "_file").Text = "app";
         Control<TextField>(dialog, "_from").Text = "10:00";
         Control<TextField>(dialog, "_text").Text = "time.*out";
         Control<CheckBox>(dialog, "_regex").Value = CheckState.Checked;
-        Control<TextView>(dialog, "_predicates").Text = "code = 42";
+        Control<TextView>(dialog, "_predicates").Text = "code equals 42";
 
         Assert.True(dialog.TryRead(out FilterEdit? edit, out string? error));
 
         Assert.Null(error);
         Assert.NotNull(edit!.Filter);
-        Assert.Equal("Orders", edit.Filter!.SourceContains);
+        Assert.Equal("app", edit.Filter!.FileContains);
         Assert.Equal(new DateTimeOffset(2026, 11, 19, 10, 0, 0, TimeSpan.FromHours(2)), edit.Filter.From);
         Assert.Equal(new SearchQuery("time.*out", false, false, true), edit.Filter.Text);
-        Assert.Equal([new FieldPredicate("code", "42")], edit.Filter.Fields);
+        Assert.Equal([new FieldPredicate("code", FieldOperator.Equals, "42")], edit.Filter.Fields);
     }
 
     [Fact]
@@ -126,7 +125,7 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
-        Control<TextView>(dialog, "_predicates").Text = "code = 42\nnot a predicate";
+        Control<TextView>(dialog, "_predicates").Text = "code equals 42\nnot a predicate";
 
         Assert.False(dialog.TryRead(out _, out string? error));
 
@@ -137,12 +136,12 @@ public sealed class FilterDialogTests
     public void Clear_empties_every_field_and_the_editor_applies_as_no_filter()
     {
         using IApplication app = CreateApp();
-        EventFilter active = new(new FilterSpec(MinLevel: LogLevel.Error, SourceContains: "Orders", Fields: [new FieldPredicate("a", "b")]));
+        EventFilter active = new(new FilterSpec(MinLevel: LogLevel.Error, FileContains: "Orders", Fields: [new FieldPredicate("a", FieldOperator.Equals, "b")]));
         using var dialog = new FilterDialog(app, active, Zone, () => Now);
 
         dialog.Clear();
 
-        Assert.Equal(new FilterInput(null, "", "", "", "", "", false, false, false, ""), dialog.Input());
+        Assert.Equal(new FilterInput(null, "", "", "", "", false, false, false, ""), dialog.Input());
         Assert.True(dialog.TryRead(out FilterEdit? edit, out _));
         Assert.Null(edit!.Filter);
     }
@@ -166,18 +165,18 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
-        Control<TextField>(dialog, "_source").Text = "Orders";
+        Control<TextField>(dialog, "_file").Text = "app";
         FilterEdit? result = RunAndPress(app, dialog, 2);
 
         Assert.NotNull(result);
-        Assert.Equal("Orders", result!.Filter!.SourceContains);
+        Assert.Equal("app", result!.Filter!.FileContains);
     }
 
     [Fact]
     public void Clear_keeps_the_editor_open_until_it_is_applied()
     {
         using IApplication app = CreateApp();
-        EventFilter active = new(new FilterSpec(SourceContains: "Orders"));
+        EventFilter active = new(new FilterSpec(FileContains: "Orders"));
         using var dialog = new FilterDialog(app, active, Zone, () => Now);
         bool stillOpenAfterClear = false;
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
@@ -200,7 +199,7 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
-        Control<TextField>(dialog, "_source").Text = "Orders";
+        Control<TextField>(dialog, "_file").Text = "app";
 
         FilterEdit? result = RunAndPress(app, dialog, 1);
 
@@ -215,7 +214,6 @@ public sealed class FilterDialogTests
         View[] fields =
         [
             Control<OptionSelector>(dialog, "_level"),
-            Control<TextField>(dialog, "_source"),
             Control<TextField>(dialog, "_file"),
             Control<TextField>(dialog, "_text"),
             Control<CheckBox>(dialog, "_caseSensitive"),
@@ -264,6 +262,7 @@ public sealed class FilterDialogTests
         }
 
         Assert.Contains("Field predicates", screen, StringComparison.Ordinal);
+        Assert.Contains("Fields: path equals|prefix|suffix|contains value", screen, StringComparison.Ordinal);
         Assert.Contains("Time to", screen, StringComparison.Ordinal);
     }
 
@@ -275,7 +274,6 @@ public sealed class FilterDialogTests
         View[] order =
         [
             Control<OptionSelector>(dialog, "_level"),
-            Control<TextField>(dialog, "_source"),
             Control<TextField>(dialog, "_file"),
             Control<TextField>(dialog, "_text"),
             Control<CheckBox>(dialog, "_caseSensitive"),
@@ -313,14 +311,14 @@ public sealed class FilterDialogTests
     }
 
     [Fact]
-    public void Typing_letters_on_the_level_does_not_change_it_and_typing_after_Tab_goes_to_the_source()
+    public void Typing_letters_on_the_level_does_not_change_it_and_typing_after_Tab_goes_to_the_file_name()
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
         var selector = Control<OptionSelector>(dialog, "_level");
-        var source = Control<TextField>(dialog, "_source");
+        var file = Control<TextField>(dialog, "_file");
         int? levelAfterTyping = null;
-        string? sourceText = null;
+        string? fileText = null;
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
         {
             app.LayoutAndDraw();
@@ -336,14 +334,14 @@ public sealed class FilterDialogTests
                 app.Keyboard.RaiseKeyDownEvent((Key)ch);
             }
 
-            sourceText = source.Text;
+            fileText = file.Text;
             app.RequestStop(dialog);
             return false;
         });
         app.Run(dialog);
 
         Assert.Equal(0, levelAfterTyping);
-        Assert.Equal("Orders", sourceText);
+        Assert.Equal("Orders", fileText);
     }
 
     [Fact]

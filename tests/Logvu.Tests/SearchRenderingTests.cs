@@ -1,3 +1,4 @@
+using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 using Logvu.Core.Store;
@@ -11,7 +12,7 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace Logvu.Tests;
 
 /// <summary>
-/// The search's highlights as drawn: the matches of the timeline's source and message cells, the active row, and the matches of a detail,
+/// The search's highlights as drawn: the matches of the timeline's extra and message cells, the active row, and the matches of a detail,
 /// including the active match, and a match that wraps across rows.
 /// </summary>
 [Collection("Terminal GUI")]
@@ -20,7 +21,7 @@ public sealed class SearchRenderingTests
     private static readonly Color BrightYellow = new(ColorName16.BrightYellow);
 
     [Fact]
-    public void Matches_in_the_message_and_source_cells_are_drawn_in_the_match_colors()
+    public void Matches_in_the_message_cells_are_drawn_in_the_match_colors()
     {
         TimelineView view = Timeline(search: "needle", "row zero", "needle here", "row two");
 
@@ -32,13 +33,18 @@ public sealed class SearchRenderingTests
     }
 
     [Fact]
-    public void The_source_column_is_searched_as_drawn()
+    public void A_keep_end_column_is_searched_as_drawn()
     {
-        TimelineView view = Timeline(search: "Logvu", "row zero", "row one", "row two");
+        // The value is cut from its front to fit the column, so the drawn text is "…ogvu.Test": the match is found in that text.
+        var source = new FakeTimelineSource([WithValue(Row(0, "row zero"), "Core.Logvu.Test")]);
+        var model = new TimelineModel(source, action => action(), FakeTimelineSource.CompareKeys);
+        model.Start(1);
+        var view = new TimelineView(model, TimeZoneInfo.Utc, [new ColumnSpec("logger", "Logger", 10, keepEnd: true)]) { Search = Pattern("ogvu") };
 
         TerminalScreen screen = Draw(view)[0];
 
-        Assert.Equal(SearchColors.Match(screen.Normal), screen.At("Logvu"));
+        Assert.Contains("…ogvu.Test", screen.Text(1), StringComparison.Ordinal);
+        Assert.Equal(SearchColors.Match(screen.Normal), screen.At("ogvu"));
     }
 
     [Fact]
@@ -105,6 +111,22 @@ public sealed class SearchRenderingTests
         Assert.Equal(SearchColors.Active(screens[1].Normal).Background, screens[1].At("Runner").Background);
     }
 
+    [Fact]
+    public void Matches_in_an_extra_column_are_drawn_in_the_match_colors()
+    {
+        var source = new FakeTimelineSource([WithValue(Row(0, "row zero"), "needle"), WithValue(Row(1, "row one"), "other")]);
+        var model = new TimelineModel(source, action => action(), FakeTimelineSource.CompareKeys);
+        model.Start(2);
+        var view = new TimelineView(model, TimeZoneInfo.Utc, [new ColumnSpec("value", "Value", 10)]) { Search = Pattern("needle") };
+
+        TerminalScreen screen = Draw(view)[0];
+
+        Assert.Equal(SearchColors.Match(screen.Normal), screen.At("needle"));
+        Assert.Equal(screen.Normal, screen.At("row zero"));
+    }
+
+    private static EventRow WithValue(EventRow row, string value) => row with { Columns = [value] };
+
     /// <summary>A timeline with the given messages as its rows, drawn in a 60 by 5 view with the search's pattern.</summary>
     private static TimelineView Timeline(string search, params string[] previews)
     {
@@ -126,7 +148,6 @@ public sealed class SearchRenderingTests
         null,
         LogLevel.Unknown,
         null,
-        "Logvu.Test",
         preview,
         IsRaw: false,
         Orphan: false,

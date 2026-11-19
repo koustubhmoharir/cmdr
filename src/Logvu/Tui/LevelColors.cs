@@ -23,7 +23,7 @@ internal static class LevelColors
     public static readonly Color FatalBackground = new(ColorName16.Red);
 
     /// <summary>
-    /// The attribute of a row's time, source and message cells. Trace and Debug are dimmed. A selected row keeps its focus
+    /// The attribute of a row's time, extra and message cells. Trace and Debug are dimmed. A selected row keeps its focus
     /// attribute, which is inverted, so nothing is dimmed on it.
     /// </summary>
     /// <param name="level">The row's level.</param>

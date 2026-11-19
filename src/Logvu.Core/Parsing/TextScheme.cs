@@ -11,8 +11,9 @@ namespace Logvu.Core.Parsing;
 /// <para>
 /// The header pattern is matched against the whole line, so it need not carry its own anchors. Named groups have these
 /// meanings: <c>time</c> is parsed with the time formats and becomes <see cref="LogEvent.Time"/>; <c>level</c> is
-/// normalized; <c>logger</c> becomes <see cref="LogEvent.Source"/>; <c>message</c> is the start of the message, which
-/// is required. Every named group, <c>message</c> excepted, becomes a <see cref="LogField"/> in pattern order.
+/// normalized; <c>message</c> is the start of the message, which is required. Every named group, <c>logger</c> among them,
+/// becomes a <see cref="LogField"/> in pattern order. The <c>message</c> field holds the whole message,
+/// the header's part of it and its continuation lines, as <see cref="LogEvent.Message"/> does.
 /// </para>
 /// <para>
 /// Matching runs with a 250 ms timeout. A header match that times out counts as no match.
@@ -27,10 +28,10 @@ public sealed class TextScheme : ILogScheme
     private readonly string[] _timeFormats;
     private readonly string[] _fieldNames;
     private readonly int[] _fieldGroups;
+    private readonly int _messageField;
     private readonly int _messageGroup;
     private readonly int _timeGroup;
     private readonly int _levelGroup;
-    private readonly int _loggerGroup;
 
     /// <summary>Creates a text scheme.</summary>
     /// <param name="name">The scheme name.</param>
@@ -68,16 +69,17 @@ public sealed class TextScheme : ILogScheme
         _header = new Regex(@"\A(?:" + headerPattern + @")\z", RegexOptions.CultureInvariant | RegexOptions.Compiled, MatchTimeout);
 
         _fieldNames = raw.GetGroupNames()
-            .Where(group => !char.IsAsciiDigit(group[0]) && group != "message")
+            .Where(group => !char.IsAsciiDigit(group[0]))
             .OrderBy(group => raw.GroupNumberFromName(group))
             .ToArray();
 
-        // The wrapper adds no capture, so the group numbers of the compiled header are those of the pattern.
+        // The wrapper adds no capture, so the group numbers of the compiled header are those of the pattern. The message field takes the
+        // whole message rather than its group's text, so the message group is read only to build that message.
         _fieldGroups = _fieldNames.Select(name => _header.GroupNumberFromName(name)).ToArray();
+        _messageField = Array.IndexOf(_fieldNames, "message");
         _messageGroup = _header.GroupNumberFromName("message");
         _timeGroup = _header.GroupNumberFromName("time");
         _levelGroup = _header.GroupNumberFromName("level");
-        _loggerGroup = _header.GroupNumberFromName("logger");
 
         var formats = new string[timeFormats.Count];
         for (int i = 0; i < formats.Length; i++)
@@ -138,7 +140,7 @@ public sealed class TextScheme : ILogScheme
     }
 
     /// <summary>
-    /// Parses the header of an event: its first line alone. The result has the header's level and source as <see cref="Parse"/> gives them
+    /// Parses the header of an event: its first line alone. The result has the header's level as <see cref="Parse"/> gives it
     /// for the same event, its time too when <paramref name="withTime"/> is set, and no message and no fields. Used to decide on the header
     /// before the rest of the event is read.
     /// </summary>
@@ -189,6 +191,12 @@ public sealed class TextScheme : ILogScheme
         var fields = full ? new LogField[_fieldNames.Length] : [];
         for (int i = 0; i < fields.Length; i++)
         {
+            if (i == _messageField)
+            {
+                fields[i] = new LogField(_fieldNames[i], message);
+                continue;
+            }
+
             Group group = match.Groups[_fieldGroups[i]];
             fields[i] = new LogField(_fieldNames[i], group.Success ? group.Value : string.Empty);
         }
@@ -199,7 +207,6 @@ public sealed class TextScheme : ILogScheme
             TimeText = timeText,
             Level = LogLevels.Normalize(levelText),
             LevelText = levelText,
-            Source = Captured(match, _loggerGroup),
             Message = message,
             Fields = fields,
         };

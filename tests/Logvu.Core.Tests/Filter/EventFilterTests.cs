@@ -35,8 +35,8 @@ public sealed class EventFilterTests
         return (Row(), ev, json);
     }
 
-    /// <summary>A row of generation 1 with the given level, time and source.</summary>
-    private static EventRow Row(int generation = 1, LogLevel level = LogLevel.Info, DateTimeOffset? time = null, string? source = null) =>
+    /// <summary>A row of generation 1 with the given level and time.</summary>
+    private static EventRow Row(int generation = 1, LogLevel level = LogLevel.Info, DateTimeOffset? time = null) =>
         new(
             new RowKey(generation, 0),
             new EventExtent(0, 0, 0, false, false),
@@ -44,7 +44,6 @@ public sealed class EventFilterTests
             time?.ToString("O"),
             level,
             null,
-            source,
             "preview",
             false,
             false,
@@ -52,6 +51,14 @@ public sealed class EventFilterTests
 
     /// <summary>An event with the given message and no fields, for predicates that read only the row or the text.</summary>
     private static LogEvent Plain(string message = "message") => new() { Message = message };
+
+    /// <summary>A JSON event of the given text, with the given message: the message of a slog event is its <c>msg</c> member.</summary>
+    private static (EventRow Row, LogEvent Event, string Text) JsonEvent(string json, string message)
+    {
+        using JsonDocument document = JsonDocument.Parse(json);
+        var ev = new LogEvent { Message = message, Json = document.RootElement.Clone() };
+        return (Row(), ev, json);
+    }
 
     private static bool Matches(IRowFilter filter, (EventRow Row, LogEvent Event, string Text) parsed) =>
         filter.Matches(parsed.Row, parsed.Event, parsed.Text);
@@ -78,11 +85,10 @@ public sealed class EventFilterTests
     [Fact]
     public void Empty_strings_and_an_empty_set_are_not_predicates()
     {
-        var filter = Filter(new FilterSpec(SourceContains: string.Empty, FileContains: string.Empty, Levels: new HashSet<LogLevel>(), Text: Literal(string.Empty)));
+        var filter = Filter(new FilterSpec(FileContains: string.Empty, Levels: new HashSet<LogLevel>(), Text: Literal(string.Empty)));
 
         Assert.True(filter.IsEmpty);
         Assert.Null(filter.Text);
-        Assert.Null(filter.SourceContains);
         Assert.Null(filter.Levels);
     }
 
@@ -117,13 +123,13 @@ public sealed class EventFilterTests
     }
 
     [Fact]
-    public void Source_contains_is_case_insensitive_and_excludes_an_event_without_a_source()
+    public void Logger_contains_is_case_insensitive_and_excludes_an_event_without_a_logger_field()
     {
-        var filter = Filter(new FilterSpec(SourceContains: "orders"));
+        var filter = Filter(new FilterSpec(Fields: [new FieldPredicate("logger", FieldOperator.Contains, "orders")]));
 
-        Assert.True(filter.Matches(Row(source: "SampleDotNetApp.Orders.Engine"), Plain(), string.Empty));
-        Assert.False(filter.Matches(Row(source: "Payments"), Plain(), string.Empty));
-        Assert.False(filter.Matches(Row(source: null), Plain(), string.Empty));
+        Assert.True(Matches(filter, Parse(BuiltInSchemes.Log4NetCore, Log4NetLine)), "The logger is Orders.Engine.");
+        Assert.False(Matches(filter, Parse(BuiltInSchemes.Log4NetCore, Log4NetLine.Replace("Orders.Engine", "Payments.Engine", StringComparison.Ordinal))));
+        Assert.False(filter.Matches(Row(), Plain(), string.Empty), "A row alone has no logger field to read.");
     }
 
     [Fact]
@@ -264,10 +270,10 @@ public sealed class EventFilterTests
         var parsed = Parse(BuiltInSchemes.Log4NetCore, Log4NetLine);
         Assert.Contains(parsed.Event.Fields, field => field.Name == "thread" && field.Value == "Worker 3");
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("thread", "Worker 3")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("thread", "Worker")])), parsed), "The value must be exact.");
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Thread", "Worker 3")])), parsed), "Names are ordinal.");
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("missing", "Worker 3")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("thread", FieldOperator.Equals, "Worker 3")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("thread", FieldOperator.Equals, "Worker")])), parsed), "The value must be exact.");
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Thread", FieldOperator.Equals, "Worker 3")])), parsed), "Names are ordinal.");
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("missing", FieldOperator.Equals, "Worker 3")])), parsed));
     }
 
     [Fact]
@@ -275,10 +281,10 @@ public sealed class EventFilterTests
     {
         var parsed = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", "42")])), parsed));
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer.Name", "Asha")])), parsed), "A string is compared unquoted.");
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", "43")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", "\"42\"")])), parsed), "A number is not a string.");
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer.Name", FieldOperator.Equals, "Asha")])), parsed), "A string is compared unquoted.");
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "43")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "\"42\"")])), parsed), "A number is not a string.");
     }
 
     [Fact]
@@ -286,8 +292,8 @@ public sealed class EventFilterTests
     {
         var parsed = JsonEvent("""{"req":{"headers":{"accept":"application/json"}}}""");
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("req.headers.accept", "application/json")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("req.headers.accept", "text/html")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("req.headers.accept", FieldOperator.Equals, "application/json")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("req.headers.accept", FieldOperator.Equals, "text/html")])), parsed));
     }
 
     [Fact]
@@ -295,10 +301,10 @@ public sealed class EventFilterTests
     {
         var parsed = JsonEvent("""{"err":{"stack":["main.handler (/src/app/main.go:42)","main.main (/src/app/main.go:10)"]}}""");
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[0]", "main.handler (/src/app/main.go:42)")])), parsed));
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[1]", "main.main (/src/app/main.go:10)")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[0]", "main.main (/src/app/main.go:10)")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[2]", "anything")])), parsed), "An index past the end matches nothing.");
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[0]", FieldOperator.Equals, "main.handler (/src/app/main.go:42)")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[1]", FieldOperator.Equals, "main.main (/src/app/main.go:10)")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[0]", FieldOperator.Equals, "main.main (/src/app/main.go:10)")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("err.stack[2]", FieldOperator.Equals, "anything")])), parsed), "An index past the end matches nothing.");
     }
 
     [Fact]
@@ -306,8 +312,8 @@ public sealed class EventFilterTests
     {
         var parsed = JsonEvent("""{"grid":[[1,2],[3,4]]}""");
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("grid[1][0]", "3")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("grid[1][2]", "3")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("grid[1][0]", FieldOperator.Equals, "3")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("grid[1][2]", FieldOperator.Equals, "3")])), parsed));
     }
 
     [Fact]
@@ -315,9 +321,9 @@ public sealed class EventFilterTests
     {
         var parsed = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
 
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Nope", "x")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Scope[1]", "Request 7")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId.Deeper", "42")])), parsed), "A scalar has no members.");
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Nope", FieldOperator.Equals, "x")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Scope[1]", FieldOperator.Equals, "Request 7")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId.Deeper", FieldOperator.Equals, "42")])), parsed), "A scalar has no members.");
     }
 
     [Theory]
@@ -333,8 +339,8 @@ public sealed class EventFilterTests
     {
         var parsed = JsonEvent("""{"stack":["a"],"a":{"b":"c"}}""");
 
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate(path, "a")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate(path, "c")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate(path, FieldOperator.Equals, "a")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate(path, FieldOperator.Equals, "c")])), parsed));
     }
 
     [Fact]
@@ -342,8 +348,8 @@ public sealed class EventFilterTests
     {
         var parsed = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer", """{"Name":"Asha"}""")])), parsed));
-        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer", "Asha")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer", FieldOperator.Equals, """{"Name":"Asha"}""")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer", FieldOperator.Equals, "Asha")])), parsed));
     }
 
     [Fact]
@@ -351,16 +357,60 @@ public sealed class EventFilterTests
     {
         var parsed = JsonEvent("""{"opt":null,"flag":true}""");
 
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("opt", "null")])), parsed));
-        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("flag", "true")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("opt", FieldOperator.Equals, "null")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("flag", FieldOperator.Equals, "true")])), parsed));
+    }
+
+    [Fact]
+    public void Message_contains_matches_the_whole_message_of_a_text_event_including_its_continuation_lines()
+    {
+        string text = "ERROR 2026-11-18 09:00:00,000 [1] Orders.Engine - failed\n   at Orders.Run() in Run.cs:line 9\n";
+        var parsed = Parse(BuiltInSchemes.Log4NetCore, text);
+
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Contains, "run.cs")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Prefix, "FAILED")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Equals, "failed")])), parsed), "The message has its continuation.");
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Contains, "gateway")])), parsed));
+    }
+
+    [Fact]
+    public void Message_contains_matches_the_message_of_a_JSON_event_when_the_object_has_no_message_member()
+    {
+        var slog = JsonEvent("""{"msg":"request failed","err":{"message":"db down"}}""", message: "request failed");
+        var serilog = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
+
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Suffix, "failed")])), slog));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Contains, "db down")])), slog)," The nested err.message is not the message.");
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Contains, "process 42")])), serilog));
+    }
+
+    [Fact]
+    public void Message_is_the_JSON_member_named_message_when_the_object_has_one()
+    {
+        var parsed = JsonEvent("""{"msg":"the msg","message":"own"}""", message: "the msg");
+
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Equals, "own")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("message", FieldOperator.Equals, "the msg")])), parsed));
+    }
+
+    [Fact]
+    public void Each_operator_compares_the_value_of_the_event_ignoring_case()
+    {
+        var parsed = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
+
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Prefix, "4")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer.Name", FieldOperator.Suffix, "HA")])), parsed));
+        Assert.True(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.Customer.Name", FieldOperator.Contains, "sha")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Contains, "43")])), parsed));
+        Assert.False(Matches(Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Prefix, "2")])), parsed));
     }
 
     [Fact]
     public void Field_predicates_are_anded_with_each_other()
     {
         var parsed = Parse(BuiltInSchemes.SerilogJson, SerilogLine);
-        var both = Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", "42"), new FieldPredicate("Properties.Customer.Name", "Asha")]));
-        var oneWrong = Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", "42"), new FieldPredicate("Properties.Customer.Name", "Bo")]));
+        var both = Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42"), new FieldPredicate("Properties.Customer.Name", FieldOperator.Equals, "Asha")]));
+        var oneWrong = Filter(new FilterSpec(Fields: [new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42"), new FieldPredicate("Properties.Customer.Name", FieldOperator.Equals, "Bo")]));
 
         Assert.True(Matches(both, parsed));
         Assert.False(Matches(oneWrong, parsed));
@@ -371,20 +421,21 @@ public sealed class EventFilterTests
     {
         var parsed = Parse(BuiltInSchemes.Log4NetCore, Log4NetLine);
         (EventRow row, LogEvent ev, string text) = parsed;
+        var thread = new FieldPredicate("thread", FieldOperator.Equals, "Worker 3");
+        var logger = new FieldPredicate("logger", FieldOperator.Contains, "orders");
         var spec = new FilterSpec(
             MinLevel: LogLevel.Warn,
-            SourceContains: "orders",
             From: T0.AddMinutes(-1),
             To: T0.AddMinutes(1),
             Text: Literal("timeout"),
-            Fields: [new FieldPredicate("thread", "Worker 3")]);
+            Fields: [thread, logger]);
 
         Assert.True(Filter(spec).Matches(row, ev, text));
         Assert.False(Filter(spec with { MinLevel = LogLevel.Fatal }).Matches(row, ev, text));
-        Assert.False(Filter(spec with { SourceContains = "payments" }).Matches(row, ev, text));
+        Assert.False(Filter(spec with { Fields = [thread, new FieldPredicate("logger", FieldOperator.Contains, "payments")] }).Matches(row, ev, text));
         Assert.False(Filter(spec with { To = T0.AddMinutes(-1) }).Matches(row, ev, text));
         Assert.False(Filter(spec with { Text = Literal("gateway timeout") }).Matches(row, ev, text));
-        Assert.False(Filter(spec with { Fields = [new FieldPredicate("thread", "Worker 4")] }).Matches(row, ev, text));
+        Assert.False(Filter(spec with { Fields = [new FieldPredicate("thread", FieldOperator.Equals, "Worker 4")] }).Matches(row, ev, text));
     }
 
     [Fact]
@@ -408,11 +459,10 @@ public sealed class EventFilterTests
     {
         var filter = Filter(new FilterSpec(
             MinLevel: LogLevel.Warn,
-            SourceContains: "Orders",
             Text: Literal("timeout"),
-            Fields: [new FieldPredicate("Properties.OrderId", "42")]));
+            Fields: [new FieldPredicate("logger", FieldOperator.Contains, "Orders"), new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42")]));
 
-        Assert.Equal("level ≥ WARN · source ~ Orders · text ~ timeout · Properties.OrderId = 42", filter.Describe());
+        Assert.Equal("level ≥ WARN · text ~ timeout · logger contains Orders · Properties.OrderId equals 42", filter.Describe());
     }
 
     [Fact]
@@ -451,7 +501,7 @@ public sealed class EventFilterTests
     [Fact]
     public void A_field_predicate_with_an_empty_path_is_rejected()
     {
-        Assert.Throws<ArgumentException>(() => new EventFilter(new FilterSpec(Fields: [new FieldPredicate(string.Empty, "x")])));
+        Assert.Throws<ArgumentException>(() => new EventFilter(new FilterSpec(Fields: [new FieldPredicate(string.Empty, FieldOperator.Equals, "x")])));
     }
 
     [Fact]
@@ -481,6 +531,20 @@ public sealed class EventFilterTests
 
         Assert.True(bound.TimedOut);
         Assert.True(filter.TimedOut);
+    }
+
+    [Fact]
+    public void Describe_writes_each_field_predicate_with_its_keyword_in_order()
+    {
+        var filter = Filter(new FilterSpec(Fields:
+        [
+            new FieldPredicate("user", FieldOperator.Equals, "alice"),
+            new FieldPredicate("logger", FieldOperator.Prefix, "Orders"),
+            new FieldPredicate("code", FieldOperator.Suffix, "9"),
+            new FieldPredicate("message", FieldOperator.Contains, "timeout"),
+        ]));
+
+        Assert.Equal("user equals alice · logger prefix Orders · code suffix 9 · message contains timeout", filter.Describe());
     }
 
     [Fact]

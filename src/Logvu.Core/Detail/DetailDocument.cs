@@ -5,8 +5,8 @@ using Logvu.Core.Store;
 namespace Logvu.Core.Detail;
 
 /// <summary>
-/// The detail of one event as lines: the structured document (fields or summary, the tree, stack analysis) or the raw text, with the
-/// expansion state of <see cref="Options"/> applied. Pure: it has no terminal and no I/O.
+/// The detail of one event as lines: the structured document (fields, or the tree preceded by a rendered message, and stack analysis)
+/// or the raw text, with the expansion state of <see cref="Options"/> applied. Pure: it has no terminal and no I/O.
 /// </summary>
 /// <remarks>
 /// <para>

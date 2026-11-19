@@ -3,7 +3,7 @@ using Logvu.Core.Parsing;
 
 namespace Logvu.Core.Tests.Detail;
 
-/// <summary>A Go slog JSON event: the error summary, the <c>err</c> object, top-level cause chains and Go stack arrays.</summary>
+/// <summary>A Go slog JSON event: the tree with no message line, the <c>err</c> object, top-level cause chains and Go stack arrays.</summary>
 public sealed class SlogDocumentTests
 {
     private static string ErrEvent() => DetailRig.JsonEvents("slog.json").Single(l => l.Contains("\"err\":{", StringComparison.Ordinal));
@@ -14,14 +14,14 @@ public sealed class SlogDocumentTests
         DetailRig.Build(DetailRig.Loaded(text, BuiltInSchemes.SlogJson), options: options);
 
     [Fact]
-    public void Summary_shows_the_message_and_the_err_objects_message()
+    public void The_document_starts_with_the_first_tree_line_and_has_no_message_or_error_line()
     {
         IReadOnlyList<DetailLine> lines = Document(ErrEvent()).Lines;
 
-        Assert.Equal("Message: request failed", lines.Single(l => l.Text.StartsWith("Message: ", StringComparison.Ordinal)).Text);
-        DetailLine error = lines.Single(l => l.Text.StartsWith("Error: ", StringComparison.Ordinal));
-        Assert.Equal("Error: db down", error.Text);
-        Assert.Equal("err.message", error.Scope);
+        Assert.Equal(LineKind.Json, lines[0].Kind);
+        Assert.StartsWith("  time: ", lines[0].Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, l => l.Kind == LineKind.Message);
+        Assert.DoesNotContain(lines, l => l.Text.StartsWith("Error: ", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -67,13 +67,10 @@ public sealed class SlogDocumentTests
     }
 
     [Fact]
-    public void Top_level_cause_gives_the_summary_error_and_a_numbered_chain_with_attrs()
+    public void Top_level_cause_gives_a_numbered_chain_with_attrs()
     {
         DetailDocument doc = Document(CauseEvent());
         IReadOnlyList<DetailLine> lines = doc.Lines;
-
-        Assert.Equal("Error: inner", lines.Single(l => l.Text.StartsWith("Error: ", StringComparison.Ordinal)).Text);
-        Assert.Equal("cause[0].message", lines.Single(l => l.Text.StartsWith("Error: ", StringComparison.Ordinal)).Scope);
 
         DetailLine head = lines.Single(l => l.Text.Contains("cause[0]: inner", StringComparison.Ordinal));
         Assert.Equal("cause[0].message", head.Scope);

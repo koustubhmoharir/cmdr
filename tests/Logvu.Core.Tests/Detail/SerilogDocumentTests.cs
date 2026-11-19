@@ -4,7 +4,7 @@ using Logvu.Core.Parsing;
 
 namespace Logvu.Core.Tests.Detail;
 
-/// <summary>A Serilog JSON event: the rendered message and error summary, the multi-line Exception, and the default expansion of the tree.</summary>
+/// <summary>A Serilog JSON event: the rendered message line, the multi-line Exception, and the default expansion of the tree.</summary>
 public sealed class SerilogDocumentTests
 {
     /// <summary>
@@ -37,26 +37,17 @@ public sealed class SerilogDocumentTests
     private static DetailDocument Document(DetailOptions? options = null) =>
         DetailRig.Build(DetailRig.Loaded(Event(), BuiltInSchemes.SerilogJson), options: options);
 
+    private static DetailDocument Of(string text) => DetailRig.Build(DetailRig.Loaded(text, BuiltInSchemes.SerilogJson));
+
     [Fact]
-    public void Summary_shows_the_rendered_message_and_the_first_line_of_the_exception()
+    public void The_rendered_message_is_a_message_line_and_the_exception_has_no_summary_line()
     {
         IReadOnlyList<DetailLine> lines = Document().Lines;
 
         DetailLine message = lines.Single(l => l.Kind == LineKind.Message && l.Text.StartsWith("Message: ", StringComparison.Ordinal));
         Assert.Equal("Message: Failed to process 42 for {\"Name\":\"Asha\"} {literal}", message.Text);
         Assert.Equal("message", message.Scope);
-
-        DetailLine error = lines.Single(l => l.Kind == LineKind.Message && l.Text.StartsWith("Error: ", StringComparison.Ordinal));
-        Assert.Equal("Error: System.InvalidOperationException: boom", error.Text);
-        Assert.Equal("Exception", error.Scope);
-        Assert.Equal<(SpanStyle, string)>(
-        [
-            (SpanStyle.FieldName, "Error"),
-            (SpanStyle.Punctuation, ": "),
-            (SpanStyle.ExceptionType, "System.InvalidOperationException"),
-            (SpanStyle.Punctuation, ": "),
-            (SpanStyle.ExceptionMessage, "boom"),
-        ], DetailRig.SpansOf(error));
+        Assert.DoesNotContain(lines, l => l.Text.StartsWith("Error: ", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -66,6 +57,47 @@ public sealed class SerilogDocumentTests
 
         Assert.Equal(LineKind.Message, first.Kind);
         Assert.Equal("Message: Failed to process 42 for {\"Name\":\"Asha\"} {literal}", first.Text);
+    }
+
+    [Fact]
+    public void Event_with_a_rendered_message_starts_with_the_tree_and_has_no_message_line()
+    {
+        string text = DetailRig.JsonEvents("serilog.json").Single(l => l.Contains("\"RenderedMessage\":\"Retry 2 of 5\"", StringComparison.Ordinal));
+
+        IReadOnlyList<DetailLine> lines = Of(text).Lines;
+
+        Assert.Equal(LineKind.Json, lines[0].Kind);
+        Assert.StartsWith("  Timestamp: ", lines[0].Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, l => l.Kind == LineKind.Message);
+        Assert.Contains(lines, l => l.Text.StartsWith("  RenderedMessage: ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Template_that_renders_differently_starts_with_the_message_then_a_blank_line_then_the_tree()
+    {
+        string text = DetailRig.JsonEvents("serilog.json").Single(l => l.Contains("Request {Method:l} took", StringComparison.Ordinal));
+
+        IReadOnlyList<DetailLine> lines = Of(text).Lines;
+
+        Assert.Equal(LineKind.Message, lines[0].Kind);
+        Assert.Equal("Message: Request GET took 14.2 ms", lines[0].Text);
+        Assert.Equal("message", lines[0].Scope);
+        Assert.Equal(string.Empty, lines[1].Text);
+        Assert.Equal(LineKind.Json, lines[2].Kind);
+        Assert.StartsWith("  Timestamp: ", lines[2].Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Template_without_holes_renders_to_itself_so_there_is_no_message_line()
+    {
+        const string text =
+            """{"Timestamp":"2026-11-18T10:20:30+05:30","Level":"Information","MessageTemplate":"Server started","Properties":{"SourceContext":"SampleDotNetApp.Host"}}""";
+
+        IReadOnlyList<DetailLine> lines = Of(text).Lines;
+
+        Assert.Equal(LineKind.Json, lines[0].Kind);
+        Assert.StartsWith("  Timestamp: ", lines[0].Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(lines, l => l.Kind == LineKind.Message);
     }
 
     [Fact]

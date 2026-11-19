@@ -7,7 +7,7 @@ namespace Logvu.Core.Detail;
 
 /// <summary>
 /// Builds the structured document of a loaded event, with every node and fold expanded: the fields and message of a text event, or the
-/// summary and the JSON tree of a JSON event. Highlights are not applied here.
+/// JSON tree of a JSON event (preceded by its message when logvu rendered it). Highlights are not applied here.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -32,7 +32,6 @@ internal sealed class DetailBuilder
     private const string FoldIdPrefix = "fold:";
     private const string MessageScope = "message";
     private const string MessageLabel = "Message";
-    private const string ErrorLabel = "Error";
 
     private static readonly HashSet<string> ErrorKeys = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -89,6 +88,10 @@ internal sealed class DetailBuilder
     /// <summary>Splits text into its lines, with <c>\r\n</c> and <c>\n</c> as terminators.</summary>
     public static string[] SplitLines(string text) => text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
+    /// <summary>
+    /// A text event starts with its fields, in pattern order. The <c>message</c> field is a multi-line value: its text is analyzed as a stack
+    /// trace, and its continuation lines are indented to its value. A raw event has no fields, so its notice and its text come instead.
+    /// </summary>
     private void EmitText(LogEvent e)
     {
         if (e.IsRaw)
@@ -96,10 +99,32 @@ internal sealed class DetailBuilder
             Add(NoticeLine(e.ParseError is null
                 ? "Text before the first header of the file"
                 : $"Not a parsed record: {e.ParseError}").Line, null);
+            EmitTextValue(
+                MessageLabel + ": ",
+                LabelSpans(0, MessageLabel, SpanStyle.FieldName),
+                e.Message,
+                LineKind.Message,
+                _ => MessageScope,
+                MessageScope,
+                null);
+            return;
         }
 
         foreach (LogField field in e.Fields)
         {
+            if (field.Name == EventFields.MessagePath)
+            {
+                EmitTextValue(
+                    field.Name + ": ",
+                    LabelSpans(0, field.Name, SpanStyle.FieldName),
+                    field.Value,
+                    LineKind.Message,
+                    _ => MessageScope,
+                    MessageScope,
+                    null);
+                continue;
+            }
+
             string head = field.Name + ": ";
             var spans = new List<StyledSpan>
             {
@@ -108,105 +133,28 @@ internal sealed class DetailBuilder
             };
             Add(new DetailLine(head + field.Value, spans, LineKind.Field, head.Length, null, field.Name, field.Value), null);
         }
-
-        EmitTextValue(
-            MessageLabel + ": ",
-            LabelSpans(0, MessageLabel, SpanStyle.FieldName),
-            e.Message,
-            LineKind.Message,
-            _ => MessageScope,
-            MessageScope,
-            null);
-    }
-
-    private void EmitJson(LogEvent e, JsonElement root)
-    {
-        EmitTextValue(
-            MessageLabel + ": ",
-            LabelSpans(0, MessageLabel, SpanStyle.FieldName),
-            e.Message,
-            LineKind.Message,
-            _ => MessageScope,
-            MessageScope,
-            null);
-
-        if (ErrorSummary(root) is { } summary)
-        {
-            EmitTextValue(
-                ErrorLabel + ": ",
-                LabelSpans(0, ErrorLabel, SpanStyle.FieldName),
-                summary.Text,
-                LineKind.Message,
-                _ => summary.Scope,
-                summary.Scope,
-                null);
-        }
-
-        Add(new DetailLine(string.Empty, [], LineKind.Json, 0, null, null), null);
-        EmitMembers(root, string.Empty, 1, 0, null, inError: false, skip: null);
     }
 
     /// <summary>
-    /// The error summary of a JSON event, with the scope of its text: a Serilog <c>Exception</c>, else <c>err</c> or <c>error</c> (an object's
-    /// <c>message</c>, or a string), else the first element of <c>cause</c>. The text is the first line only.
+    /// A JSON event starts with its tree. The message comes first only when logvu rendered it from a Serilog template, since that text
+    /// appears nowhere else in the event.
     /// </summary>
-    private static (string Text, string Scope)? ErrorSummary(JsonElement root)
+    private void EmitJson(LogEvent e, JsonElement root)
     {
-        if (root.TryGetProperty("Exception", out JsonElement exception) && exception.ValueKind == JsonValueKind.String)
+        if (e.MessageRendered)
         {
-            string? line = FirstLine(exception.GetString()!);
-            if (line is not null)
-            {
-                return (line, "Exception");
-            }
+            EmitTextValue(
+                MessageLabel + ": ",
+                LabelSpans(0, MessageLabel, SpanStyle.FieldName),
+                e.Message,
+                LineKind.Message,
+                _ => MessageScope,
+                MessageScope,
+                null);
+            Add(new DetailLine(string.Empty, [], LineKind.Json, 0, null, null), null);
         }
 
-        foreach (string name in new[] { "err", "error" })
-        {
-            if (!root.TryGetProperty(name, out JsonElement value))
-            {
-                continue;
-            }
-
-            (string Text, string Scope)? found = ErrorTextOf(value, name);
-            if (found is not null)
-            {
-                return found;
-            }
-        }
-
-        if (root.TryGetProperty("cause", out JsonElement cause)
-            && cause.ValueKind == JsonValueKind.Array
-            && cause.GetArrayLength() > 0)
-        {
-            return ErrorTextOf(cause.EnumerateArray().First(), "cause[0]");
-        }
-
-        return null;
-    }
-
-    private static (string Text, string Scope)? ErrorTextOf(JsonElement value, string scope)
-    {
-        if (value.ValueKind == JsonValueKind.String)
-        {
-            return FirstLine(value.GetString()!) is { } text ? (text, scope) : null;
-        }
-
-        if (value.ValueKind == JsonValueKind.Object
-            && value.TryGetProperty("message", out JsonElement message)
-            && message.ValueKind == JsonValueKind.String)
-        {
-            return FirstLine(message.GetString()!) is { } text ? (text, scope + ".message") : null;
-        }
-
-        return null;
-    }
-
-    private static string? FirstLine(string text)
-    {
-        int newline = text.IndexOf('\n');
-        string line = (newline < 0 ? text : text[..newline]).TrimEnd('\r');
-        return line.Length > 0 ? line : null;
+        EmitMembers(root, string.Empty, 1, 0, null, inError: false, skip: null);
     }
 
     /// <summary>Emits the members of an object. Returns whether any of them, or anything under them, is an error key.</summary>

@@ -15,7 +15,7 @@ public sealed class SlogSchemeTests
         """{"time":"2026-11-18T10:20:31.5+05:30","level":"WARN+2","msg":"retrying","cause":[{"message":"inner","attrs":{"attempt":2}},"io: EOF"],"stack":["pkg.F (pkg/f.go:10)"]}""";
 
     [Fact]
-    public void Error_example_parses_time_level_source_message_and_fields()
+    public void Error_example_parses_time_level_message_and_fields()
     {
         LogEvent e = Scheme.Parse(ErrorLine, Utc);
 
@@ -24,7 +24,6 @@ public sealed class SlogSchemeTests
         Assert.Equal("2026-11-18T10:20:31.007000000+05:30", e.TimeText);
         Assert.Equal(LogLevel.Error, e.Level);
         Assert.Equal("ERROR", e.LevelText);
-        Assert.Equal("api", e.Source);
         Assert.Equal("request failed", e.Message);
         AssertFields(e,
             ("time", "2026-11-18T10:20:31.007000000+05:30"),
@@ -54,7 +53,6 @@ public sealed class SlogSchemeTests
         Assert.False(e.IsRaw);
         Assert.Equal(LogLevel.Warn, e.Level);
         Assert.Equal("WARN+2", e.LevelText);
-        Assert.Null(e.Source);
         Assert.Equal("retrying", e.Message);
         AssertFields(e,
             ("time", "2026-11-18T10:20:31.5+05:30"),
@@ -118,11 +116,11 @@ public sealed class SlogSchemeTests
     }
 
     [Fact]
-    public void Non_string_logger_is_not_a_source()
+    public void Non_string_logger_is_an_ordinary_member()
     {
         LogEvent e = Scheme.Parse("""{"time":"2026-11-18T10:20:34Z","level":"INFO","msg":"x","logger":5}""", Utc);
 
-        Assert.Null(e.Source);
+        Assert.Contains(e.Fields, field => field.Name == "logger" && field.Value == "5");
     }
 
     [Fact]

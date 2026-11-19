@@ -109,24 +109,24 @@ public sealed class SerilogJsonScheme : JsonScheme
             properties = props;
         }
 
-        string? source = null;
-        if (properties is { } p
-            && p.TryGetProperty("SourceContext", out JsonElement sourceContext)
-            && sourceContext.ValueKind == JsonValueKind.String)
-        {
-            source = sourceContext.GetString();
-        }
-
         string message;
+        bool messageRendered = false;
         if (JsonValues.TryGetPresent(root, "RenderedMessage", out JsonElement rendered))
         {
             message = JsonValues.AsText(rendered);
         }
         else if (JsonValues.TryGetPresent(root, "MessageTemplate", out JsonElement template))
         {
-            message = template.ValueKind == JsonValueKind.String
-                ? SerilogTemplate.Render(template.GetString()!, properties)
-                : JsonValues.AsText(template);
+            if (template.ValueKind == JsonValueKind.String)
+            {
+                string templateText = template.GetString()!;
+                message = SerilogTemplate.Render(templateText, properties);
+                messageRendered = !string.Equals(message, templateText, StringComparison.Ordinal);
+            }
+            else
+            {
+                message = JsonValues.AsText(template);
+            }
         }
         else
         {
@@ -139,8 +139,8 @@ public sealed class SerilogJsonScheme : JsonScheme
             TimeText = timeText,
             Level = LogLevels.Normalize(levelText),
             LevelText = levelText,
-            Source = source,
             Message = message,
+            MessageRendered = messageRendered,
             Fields = TopLevelFields(root),
             Json = root.Clone(),
         };
@@ -177,12 +177,6 @@ public sealed class SlogJsonScheme : JsonScheme
             levelText = JsonValues.AsText(level);
         }
 
-        string? source = null;
-        if (JsonValues.TryGetPresent(root, "logger", out JsonElement logger) && logger.ValueKind == JsonValueKind.String)
-        {
-            source = logger.GetString();
-        }
-
         string message = JsonValues.TryGetPresent(root, "msg", out JsonElement msg) ? JsonValues.AsText(msg) : string.Empty;
 
         return new LogEvent
@@ -191,7 +185,6 @@ public sealed class SlogJsonScheme : JsonScheme
             TimeText = timeText,
             Level = LogLevels.Normalize(levelText),
             LevelText = levelText,
-            Source = source,
             Message = message,
             Fields = TopLevelFields(root),
             Json = root.Clone(),

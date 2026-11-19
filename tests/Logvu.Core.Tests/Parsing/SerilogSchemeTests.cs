@@ -12,7 +12,7 @@ public sealed class SerilogSchemeTests
     private static readonly SerilogJsonScheme Scheme = BuiltInSchemes.SerilogJson;
 
     [Fact]
-    public void Spec_example_parses_time_level_source_message_and_fields()
+    public void Spec_example_parses_time_level_message_and_fields()
     {
         LogEvent e = Scheme.Parse(SpecExample, Utc);
 
@@ -21,7 +21,7 @@ public sealed class SerilogSchemeTests
         Assert.Equal("2026-11-18T10:20:30.1234567+05:30", e.TimeText);
         Assert.Equal(LogLevel.Error, e.Level);
         Assert.Equal("Error", e.LevelText);
-        Assert.Equal("SampleDotNetApp.Orders", e.Source);
+        Assert.Equal("SampleDotNetApp.Orders", e.Json!.Value.GetProperty("Properties").GetProperty("SourceContext").GetString());
         Assert.Equal("Failed to process 42 for {\"Name\":\"Asha\"} {literal}", e.Message);
         AssertFields(e,
             ("Timestamp", "2026-11-18T10:20:30.1234567+05:30"),
@@ -58,6 +58,48 @@ public sealed class SerilogSchemeTests
     }
 
     [Fact]
+    public void Rendered_message_present_is_never_marked_as_rendered_by_logvu()
+    {
+        LogEvent e = Scheme.Parse(
+            """{"Timestamp":"2026-11-18T10:20:31.5000000+05:30","Level":"Warning","MessageTemplate":"Retry {Attempt} of {Max}","RenderedMessage":"Retry 2 of 5 (rendered)","Properties":{"Attempt":2,"Max":5}}""",
+            Utc);
+
+        Assert.Equal("Retry 2 of 5 (rendered)", e.Message);
+        Assert.False(e.MessageRendered);
+    }
+
+    [Theory]
+    [InlineData("Started {RunId}", """{"RunId":42}""", true)]
+    [InlineData("{{literal}}", "{}", true)]
+    [InlineData("Server started", "{}", false)]
+    [InlineData("Missing {Nope} here", """{"A":1}""", false)]
+    public void Message_is_marked_rendered_only_when_the_rendered_text_differs_from_the_template(string template, string properties, bool rendered)
+    {
+        LogEvent e = Scheme.Parse(
+            $$"""{"Timestamp":"2026-11-18T10:20:30+05:30","Level":"Information","MessageTemplate":"{{template}}","Properties":{{properties}}}""",
+            Utc);
+
+        Assert.Equal(rendered, e.MessageRendered);
+    }
+
+    [Fact]
+    public void Non_string_template_is_not_marked_as_rendered()
+    {
+        LogEvent e = Scheme.Parse("""{"Timestamp":"2026-11-18T10:20:30+05:30","Level":"Information","MessageTemplate":5}""", Utc);
+
+        Assert.Equal("5", e.Message);
+        Assert.False(e.MessageRendered);
+    }
+
+    [Fact]
+    public void Missing_template_and_rendered_message_is_not_marked_as_rendered()
+    {
+        LogEvent e = Scheme.Parse("""{"Timestamp":"2026-11-18T10:20:30+05:30","Level":"Debug"}""", Utc);
+
+        Assert.False(e.MessageRendered);
+    }
+
+    [Fact]
     public void Missing_level_is_info_spelled_information()
     {
         LogEvent e = Scheme.Parse("""{"Timestamp":"2026-11-18T10:20:30+05:30","MessageTemplate":"hi"}""", Utc);
@@ -77,11 +119,11 @@ public sealed class SerilogSchemeTests
     }
 
     [Fact]
-    public void Source_is_null_without_source_context()
+    public void Properties_stay_one_field_without_a_source_context()
     {
         LogEvent e = Scheme.Parse("""{"Timestamp":"2026-11-18T10:20:30+05:30","Level":"Debug","MessageTemplate":"x","Properties":{"A":1}}""", Utc);
 
-        Assert.Null(e.Source);
+        Assert.Contains(e.Fields, field => field.Name == "Properties");
     }
 
     [Fact]

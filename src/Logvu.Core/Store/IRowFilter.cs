@@ -47,7 +47,7 @@ public interface IRowFilter
     /// <see cref="ChecksHead"/> is set, and only for events of a text scheme.
     /// </summary>
     /// <remarks>
-    /// The row has the fields that the header line alone gives: its key, extent, level and source, and its time unless
+    /// The row has the fields that the header line alone gives: its key, extent, level and its time unless
     /// <see cref="ChecksHeadTime"/> is <c>false</c>. Its preview is empty, since the message is not known yet. The result is <c>false</c> only
     /// when <see cref="Matches"/> would be <c>false</c> for the event, and <see cref="Matches"/> would decide it on those fields alone.
     /// </remarks>

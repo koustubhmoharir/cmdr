@@ -24,7 +24,7 @@ public sealed class DetailViewTests
         TerminalScreen screen = Draw(view)[0];
 
         Assert.StartsWith("level: ERROR", screen.Text(0));
-        Assert.StartsWith("Message: Run failed", screen.Text(4));
+        Assert.StartsWith("message: Run failed", screen.Text(4));
 
         Attribute type = screen.At("System.InvalidOperationException");
         Assert.Equal(new Color(ColorName16.BrightRed), type.Foreground);

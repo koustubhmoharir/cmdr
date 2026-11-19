@@ -7,12 +7,12 @@ using Shared.Core;
 namespace Logvu.Core.Filter;
 
 /// <summary>
-/// The filter editor's predicate over events: minimum or set of levels, source and file name substrings, a time interval, text, and
+/// The filter editor's predicate over events: minimum or set of levels, a file name substring, a time interval, text, and
 /// field-value predicates, all ANDed. Immutable, and safe to share between reads.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Order.</b> <see cref="Matches"/> checks the row-level predicates first (level, source, file name, time), then the field predicates,
+/// <b>Order.</b> <see cref="Matches"/> checks the row-level predicates first (level, file name, time), then the field predicates,
 /// and the text last, since a regex is the most expensive. An event is read as text only when its row passes.
 /// </para>
 /// <para>
@@ -30,7 +30,6 @@ public sealed class EventFilter : IBindableRowFilter
 {
     private readonly LogLevel? _minLevel;
     private readonly IReadOnlySet<LogLevel>? _levels;
-    private readonly string? _sourceContains;
     private readonly string? _fileContains;
     private readonly DateTimeOffset? _from;
     private readonly DateTimeOffset? _to;
@@ -56,7 +55,6 @@ public sealed class EventFilter : IBindableRowFilter
 
         _minLevel = spec.MinLevel;
         _levels = spec.Levels is { Count: > 0 } levels ? new HashSet<LogLevel>(levels) : null;
-        _sourceContains = NonEmpty(spec.SourceContains);
         _fileContains = NonEmpty(spec.FileContains);
         _from = spec.From;
         _to = spec.To;
@@ -76,7 +74,6 @@ public sealed class EventFilter : IBindableRowFilter
     {
         _minLevel = source._minLevel;
         _levels = source._levels;
-        _sourceContains = source._sourceContains;
         _fileContains = source._fileContains;
         _from = source._from;
         _to = source._to;
@@ -92,9 +89,6 @@ public sealed class EventFilter : IBindableRowFilter
 
     /// <summary>The levels that match, or <c>null</c> when no set is given.</summary>
     public IReadOnlySet<LogLevel>? Levels => _levels;
-
-    /// <summary>The source substring, or <c>null</c>.</summary>
-    public string? SourceContains => _sourceContains;
 
     /// <summary>The file name substring, or <c>null</c>.</summary>
     public string? FileContains => _fileContains;
@@ -133,7 +127,6 @@ public sealed class EventFilter : IBindableRowFilter
     public bool IsEmpty =>
         _minLevel is null
         && _levels is null
-        && _sourceContains is null
         && _fileContains is null
         && _from is null
         && _to is null
@@ -141,8 +134,8 @@ public sealed class EventFilter : IBindableRowFilter
         && _fields.Count == 0;
 
     /// <summary>
-    /// A short description of the set predicates for the status line, such as <c>level ≥ WARN · source ~ Orders · text ~ timeout ·
-    /// Properties.OrderId = 42</c>. It is empty when <see cref="IsEmpty"/>.
+    /// A short description of the set predicates for the status line, such as <c>level ≥ WARN · text ~ timeout · logger contains Orders ·
+    /// Properties.OrderId equals 42</c>. It is empty when <see cref="IsEmpty"/>.
     /// </summary>
     public string Describe() => _description;
 
@@ -179,11 +172,10 @@ public sealed class EventFilter : IBindableRowFilter
     }
 
     /// <inheritdoc/>
-    /// <remarks>True when a level, source, file name or time predicate is set: those are on the header line.</remarks>
+    /// <remarks>True when a level, file name or time predicate is set: those are on the header line.</remarks>
     public bool ChecksHead =>
         _minLevel is not null
         || _levels is not null
-        || _sourceContains is not null
         || _fileContains is not null
         || _from is not null
         || _to is not null;
@@ -213,7 +205,7 @@ public sealed class EventFilter : IBindableRowFilter
         return !ChecksText || EventSearch.MayMatch(_pattern!, text, scheme);
     }
 
-    /// <summary>Checks the level, source, file name and time, which are all on the row.</summary>
+    /// <summary>Checks the level, file name and time, which are all on the row.</summary>
     private bool MatchesRow(EventRow row)
     {
         if (_minLevel is { } minimum && (row.Level == LogLevel.Unknown || row.Level < minimum))
@@ -222,11 +214,6 @@ public sealed class EventFilter : IBindableRowFilter
         }
 
         if (_levels is not null && !_levels.Contains(row.Level))
-        {
-            return false;
-        }
-
-        if (_sourceContains is not null && (row.Source is null || !row.Source.Contains(_sourceContains, StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }
@@ -270,26 +257,11 @@ public sealed class EventFilter : IBindableRowFilter
     }
 
     /// <summary>
-    /// Tells whether an event has the field's value. A JSON event is looked up by its dotted path. A text event has its named fields,
-    /// and one of them with the path as its name must have the value.
+    /// Tells whether the event has a value at the predicate's path that the predicate's operator relates to its value. The value is found by
+    /// <see cref="EventFields.TryGetValue"/>, so a JSON event and a text event are read as the columns are.
     /// </summary>
-    private static bool MatchesField(LogEvent ev, FieldPredicate predicate)
-    {
-        if (ev.Json is { } json)
-        {
-            return JsonFieldPath.TryGetText(json, predicate.Path, out string value) && value == predicate.Value;
-        }
-
-        foreach (LogField field in ev.Fields)
-        {
-            if (field.Name == predicate.Path && field.Value == predicate.Value)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool MatchesField(LogEvent ev, FieldPredicate predicate) =>
+        EventFields.TryGetValue(ev, predicate.Path, out string value) && predicate.Matches(value);
 
     /// <summary>Null or empty becomes null, so that an empty predicate is not set.</summary>
     private static string? NonEmpty(string? text) => string.IsNullOrEmpty(text) ? null : text;
@@ -316,11 +288,6 @@ public sealed class EventFilter : IBindableRowFilter
         {
             string names = string.Join(", ", levels.OrderBy(level => level).Select(LevelName));
             parts.Add($"level ∈ {{{names}}}");
-        }
-
-        if (NonEmpty(spec.SourceContains) is { } source)
-        {
-            parts.Add($"source ~ {source}");
         }
 
         if (NonEmpty(spec.FileContains) is { } file)
@@ -356,7 +323,7 @@ public sealed class EventFilter : IBindableRowFilter
 
         foreach (FieldPredicate field in spec.Fields ?? [])
         {
-            parts.Add($"{field.Path} = {field.Value}");
+            parts.Add($"{field.Path} {FieldOperators.Keyword(field.Operator)} {field.Value}");
         }
 
         return string.Join(" · ", parts);

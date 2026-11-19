@@ -22,7 +22,8 @@ internal static class StoreTestConfig
         string? format = null,
         string timeZone = "utc",
         JsonArray? schemes = null,
-        string logsDirectory = ".")
+        string logsDirectory = ".",
+        JsonArray? columns = null)
     {
         var document = new JsonObject
         {
@@ -45,6 +46,11 @@ internal static class StoreTestConfig
         if (schemes is not null)
         {
             document["schemes"] = schemes;
+        }
+
+        if (columns is not null)
+        {
+            document["columns"] = columns;
         }
 
         return LogvuConfig.Load(dir.Write("logvu.json", document.ToJsonString()));

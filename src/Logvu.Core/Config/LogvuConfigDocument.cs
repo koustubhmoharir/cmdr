@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Logvu.Core.Config;
 
 /// <summary>The JSON shape of a logvu configuration file. Every member is nullable: validation happens after deserialization.</summary>
@@ -17,6 +19,8 @@ internal sealed class LogvuConfigDocument
 
     public int? RecentCapacity { get; set; }
 
+    public string? MinLevel { get; set; }
+
     public List<SchemeDocument?>? Schemes { get; set; }
 
     public List<HighlightDocument?>? Highlights { get; set; }
@@ -24,6 +28,9 @@ internal sealed class LogvuConfigDocument
     public Dictionary<string, StyleDocument?>? Styles { get; set; }
 
     public List<string?>? FrameworkPrefixes { get; set; }
+
+    /// <summary>Each column as a string (its path) or an object, validated by the loader.</summary>
+    public List<JsonElement>? Columns { get; set; }
 }
 
 /// <summary>The JSON shape of one configured text scheme.</summary>

@@ -1,3 +1,4 @@
+using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 
@@ -11,6 +12,12 @@ public static class RowBuilder
 
     /// <summary>The most characters of the first line kept as a row's <see cref="EventRow.Preview"/>.</summary>
     public const int PreviewCap = 512;
+
+    /// <summary>The most characters of the first line kept as one of a row's <see cref="EventRow.Columns"/> values.</summary>
+    public const int ColumnCap = 256;
+
+    /// <summary>The shared column list of a row built with no columns configured.</summary>
+    private static readonly string?[] NoColumns = Array.Empty<string?>();
 
     /// <summary>
     /// Reads and parses one event, and builds its row. The text is read with <see cref="EventText.Read"/> and capped at
@@ -62,17 +69,20 @@ public static class RowBuilder
             ev.TimeText,
             ev.Level,
             ev.LevelText,
-            ev.Source,
             Preview(ev.Message),
             ev.IsRaw,
             extent.Orphan,
-            extent.Provisional);
+            extent.Provisional)
+        {
+            Columns = ColumnValues(ev, context.Columns),
+        };
         return (row, ev);
     }
 
     /// <summary>
     /// Builds the row of an event of a text scheme from its header line alone, for a filter to decide on before the event is parsed. The
-    /// row has the same key, extent, time, level and source as <see cref="BuildFromText"/> gives, and an empty preview.
+    /// row has the same key, extent, time and level as <see cref="BuildFromText"/> gives, and an empty preview. Its
+    /// <see cref="EventRow.Columns"/> are empty: a header row is only filtered on and is never displayed.
     /// </summary>
     /// <param name="text">The event's text, as <see cref="EventText.Read"/> gives it. Only its first line is parsed.</param>
     /// <param name="scheme">The scheme of the event's member.</param>
@@ -102,7 +112,6 @@ public static class RowBuilder
             ev.TimeText,
             ev.Level,
             ev.LevelText,
-            ev.Source,
             string.Empty,
             ev.IsRaw,
             extent.Orphan,
@@ -128,13 +137,55 @@ public static class RowBuilder
     /// <summary>
     /// The first line of a message, cut to <see cref="PreviewCap"/> characters. A cut never separates the two halves of a surrogate pair.
     /// </summary>
-    internal static string Preview(string message)
+    internal static string Preview(string message) => FirstLine(message, PreviewCap);
+
+    /// <summary>
+    /// The values of the configured columns of an event, in configuration order. A raw event has no values, and a value the event does not
+    /// have is <c>null</c>.
+    /// </summary>
+    /// <param name="ev">The parsed event.</param>
+    /// <param name="columns">The configured columns, in configuration order.</param>
+    /// <returns>One value per column, or the shared empty list when there are no columns.</returns>
+    private static IReadOnlyList<string?> ColumnValues(LogEvent ev, IReadOnlyList<ColumnSpec> columns)
     {
-        int newline = message.IndexOf('\n');
-        ReadOnlySpan<char> line = newline < 0 ? message.AsSpan() : message.AsSpan(0, newline);
-        if (line.Length > PreviewCap)
+        if (columns.Count == 0)
         {
-            int cut = PreviewCap;
+            return NoColumns;
+        }
+
+        var values = new string?[columns.Count];
+        if (ev.IsRaw)
+        {
+            return values;
+        }
+
+        for (int i = 0; i < columns.Count; i++)
+        {
+            values[i] = ColumnValue(ev, columns[i].Path);
+        }
+
+        return values;
+    }
+
+    /// <summary>
+    /// The cell text of one column of an event, or <c>null</c> when the event has no value at the path. The value is found by
+    /// <see cref="EventFields.TryGetValue"/>, the reader the field filter uses, so a column and a predicate on one path agree.
+    /// </summary>
+    private static string? ColumnValue(LogEvent ev, string path) =>
+        EventFields.TryGetValue(ev, path, out string text) ? FirstLine(text, ColumnCap) : null;
+
+    /// <summary>
+    /// The first line of a value, cut to <paramref name="cap"/> characters. A cut never separates the two halves of a surrogate pair.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="cap">The most characters kept.</param>
+    private static string FirstLine(string value, int cap)
+    {
+        int newline = value.IndexOf('\n');
+        ReadOnlySpan<char> line = newline < 0 ? value.AsSpan() : value.AsSpan(0, newline);
+        if (line.Length > cap)
+        {
+            int cut = cap;
             if (char.IsHighSurrogate(line[cut - 1]))
             {
                 cut--;

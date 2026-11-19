@@ -176,7 +176,6 @@ public sealed class FilterPipelineEquivalenceTests
     {
         LogLevel? minLevel = rng.Next(3) == 0 ? (LogLevel)rng.Next(1, 7) : null;
         IReadOnlySet<LogLevel>? levels = rng.Next(5) == 0 ? new HashSet<LogLevel> { LogLevel.Warn, LogLevel.Error } : null;
-        string? source = rng.Next(4) == 0 ? "Acme" : rng.Next(6) == 0 ? "zz" : null;
         string? file = rng.Next(5) == 0 ? "SheetKraft2" : null;
         DateTimeOffset? from = null;
         DateTimeOffset? to = null;
@@ -194,10 +193,16 @@ public sealed class FilterPipelineEquivalenceTests
         var fields = new List<FieldPredicate>();
         if (rng.Next(5) == 0)
         {
-            fields.Add(new FieldPredicate(rng.Next(2) == 0 ? "thread" : "msg", Vocabulary[rng.Next(Vocabulary.Length)]));
+            fields.Add(new FieldPredicate(rng.Next(2) == 0 ? "thread" : "msg", FieldOperator.Equals, Vocabulary[rng.Next(Vocabulary.Length)]));
         }
 
-        return new FilterSpec(minLevel, levels, source, file, from, to, text, fields.Count == 0 ? null : fields);
+        if (rng.Next(4) == 0)
+        {
+            // A logger predicate is a predicate on the logger field.
+            fields.Add(new FieldPredicate("logger", (FieldOperator)rng.Next(4), rng.Next(4) == 0 ? "zz" : "Acme"));
+        }
+
+        return new FilterSpec(minLevel, levels, file, from, to, text, fields.Count == 0 ? null : fields);
     }
 
     private static SearchQuery RandomQuery(Random rng)

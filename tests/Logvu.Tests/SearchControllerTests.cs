@@ -494,7 +494,6 @@ public sealed class SearchControllerTests : IDisposable
         null,
         LogLevel.Unknown,
         null,
-        "Logvu.Test",
         preview,
         IsRaw: false,
         Orphan: false,

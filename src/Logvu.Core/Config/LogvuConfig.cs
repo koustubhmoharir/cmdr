@@ -15,6 +15,9 @@ public sealed class LogvuConfig
     /// <summary>The recent-history capacity used when the configuration does not set one.</summary>
     public const int DefaultRecentCapacity = 20000;
 
+    /// <summary>The minimum level the timeline starts with when the configuration does not set <c>minLevel</c>.</summary>
+    public const LogLevel DefaultMinLevel = LogLevel.Info;
+
     /// <summary>The smallest allowed <c>recentCapacity</c>.</summary>
     public const int MinRecentCapacity = 100;
 
@@ -39,6 +42,8 @@ public sealed class LogvuConfig
         IReadOnlyList<ILogScheme> schemes,
         TimeZoneInfo timeZone,
         int recentCapacity,
+        LogLevel? minLevel,
+        IReadOnlyList<ColumnSpec> columns,
         IReadOnlyList<HighlightRule> highlights,
         IReadOnlyDictionary<string, StyleSpec> styles,
         IReadOnlyList<string> frameworkPrefixes)
@@ -52,6 +57,8 @@ public sealed class LogvuConfig
         Schemes = schemes;
         TimeZone = timeZone;
         RecentCapacity = recentCapacity;
+        MinLevel = minLevel;
+        Columns = columns;
         Highlights = highlights;
         Styles = styles;
         FrameworkPrefixes = frameworkPrefixes;
@@ -86,6 +93,18 @@ public sealed class LogvuConfig
 
     /// <summary>The number of events kept in the recent-history ring.</summary>
     public int RecentCapacity { get; }
+
+    /// <summary>
+    /// The minimum level the timeline starts with, or <c>null</c> for no minimum (<c>"any"</c>). Set by <c>minLevel</c>; the default is
+    /// <see cref="DefaultMinLevel"/>. Events below it are not shown until the user changes the filter.
+    /// </summary>
+    public LogLevel? MinLevel { get; }
+
+    /// <summary>
+    /// The extra columns of the timeline table, in configuration order. Empty when the configuration names none. Each row carries one value
+    /// per column; see <see cref="Store.EventRow.Columns"/>.
+    /// </summary>
+    public IReadOnlyList<ColumnSpec> Columns { get; }
 
     /// <summary>The highlight rules, in configuration order.</summary>
     public IReadOnlyList<HighlightRule> Highlights { get; }

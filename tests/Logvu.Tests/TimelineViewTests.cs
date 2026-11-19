@@ -1,3 +1,4 @@
+using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 using Logvu.Core.Store;
@@ -32,7 +33,7 @@ public sealed class TimelineViewTests
 
         Screen screen = Draw(model, Width, 3);
 
-        // At 40 columns the source is dropped (the message would have less than 20 columns), so the header has Time, Level, Message.
+        // At 40 columns the message has 21 columns, so nothing is dropped: the header has Time, Level and Message.
         Assert.Equal("Time" + new string(' ', 9) + "Level Message", screen.Text(0));
         Assert.True(screen.Cells[0][0].Attribute.Style.HasFlag(TextStyle.Bold));
     }
@@ -400,6 +401,59 @@ public sealed class TimelineViewTests
     }
 
     [Fact]
+    public void Extra_columns_are_drawn_under_their_titles_between_level_and_message()
+    {
+        var specs = new[] { new ColumnSpec("method", "Method", 10) };
+        TimelineModel model = Model(new FakeTimelineSource([WithValues(Row(0, LogLevel.Unknown), "GET"), WithValues(Row(1, LogLevel.Unknown), "POST")]));
+        model.Start(2);
+
+        Screen screen = Draw(model, 80, 3, columns: specs);
+
+        string header = screen.Text(0);
+        int method = header.IndexOf("Method", StringComparison.Ordinal);
+        Assert.True(header.IndexOf("Level", StringComparison.Ordinal) < method);
+        Assert.True(method < header.IndexOf("Message", StringComparison.Ordinal));
+        Assert.Equal(method, screen.Text(1).IndexOf("GET", StringComparison.Ordinal));
+        Assert.Equal(method, screen.Text(2).IndexOf("POST", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void An_extra_column_keeps_its_width_when_scrolling_to_shorter_values_and_resets_on_a_resize()
+    {
+        // The newest row, which Follow shows at the bottom, has the long value; the rows above have short ones.
+        var rows = Enumerable.Range(0, 10).Select(index => WithValues(Row(index, LogLevel.Unknown), index == 9 ? "abcdefghi" : "x")).ToList();
+        TimelineModel model = Model(new FakeTimelineSource(rows));
+        model.Start(3);
+        var specs = new[] { new ColumnSpec("v", "Ext", 30) };
+        TimelineView? view = null;
+
+        List<TerminalScreen> screens = TerminalHarness.Run(
+            view = new TimelineView(model, TimeZoneInfo.Utc, specs),
+            60,
+            4,
+            () =>
+            {
+                // Three rows up: the newest row, with the long value, leaves the viewport.
+                for (int i = 0; i < 3; i++)
+                {
+                    model.Execute(TimelineCommand.ShiftUp);
+                }
+
+                // Without the controller there is no owner to redraw the view when the model changes.
+                view!.SetNeedsDraw();
+            },
+            () => view!.Width = 50);
+
+        int wide = screens[0].Text(0).IndexOf("Message", StringComparison.Ordinal);
+        Assert.Contains("abcdefghi", screens[0].Text(1) + screens[0].Text(2) + screens[0].Text(3));
+        Assert.DoesNotContain("abcdefghi", screens[1].Text(1) + screens[1].Text(2) + screens[1].Text(3));
+        Assert.Equal(wide, screens[1].Text(0).IndexOf("Message", StringComparison.Ordinal));
+
+        // A narrower view is a new width: the column is only as wide as its title and its values now.
+        Assert.True(screens[2].Text(0).IndexOf("Message", StringComparison.Ordinal) < wide);
+    }
+
+    [Fact]
     public void The_model_height_is_the_view_height_less_the_header_and_at_least_one()
     {
         Assert.Equal(4, TimelineView.RowsFor(5));
@@ -416,6 +470,8 @@ public sealed class TimelineViewTests
     private static TimelineModel Model(FakeTimelineSource source) =>
         new(source, action => action(), FakeTimelineSource.CompareKeys);
 
+    private static EventRow WithValues(EventRow row, params string?[] values) => row with { Columns = values };
+
     private static FakeTimelineSource Store(int count) =>
         new(Enumerable.Range(0, count).Select(index => Row(index, LogLevel.Unknown)));
 
@@ -426,7 +482,6 @@ public sealed class TimelineViewTests
         null,
         level,
         null,
-        "Logvu.Test",
         $"r{index}",
         false,
         false,
@@ -436,14 +491,14 @@ public sealed class TimelineViewTests
     /// Draws the view at a size, in a window of the same size, and reads the driver's cells back. The model must be started before
     /// the call; the view is sized to the model's rows plus the header.
     /// </summary>
-    private static Screen Draw(TimelineModel model, int width, int height, string? placeholder = null)
+    private static Screen Draw(TimelineModel model, int width, int height, string? placeholder = null, IReadOnlyList<ColumnSpec>? columns = null)
     {
         using IApplication app = Application.Create();
         app.Init("ansi");
         app.Driver!.SetScreenSize(width, height);
 
         Screen? screen = null;
-        var view = new TimelineView(model, TimeZoneInfo.Utc) { X = 0, Y = 0, Width = width, Height = height, Placeholder = placeholder };
+        var view = new TimelineView(model, TimeZoneInfo.Utc, columns) { X = 0, Y = 0, Width = width, Height = height, Placeholder = placeholder };
         var window = new Window { X = 0, Y = 0, Width = width, Height = height, BorderStyle = LineStyle.None };
         window.Add(view);
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>

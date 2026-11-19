@@ -1,3 +1,4 @@
+using System.Text;
 using Logvu.Core.Config;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
@@ -173,5 +174,135 @@ public sealed class RowBuilderTests
 
         Assert.Throws<InvalidOperationException>(() =>
             RowBuilder.Build(stream, member.Scheme, member.Generation, new EventExtent(0, stream.Length, stream.Length, false, false), new ParseContext(TimeZoneInfo.Utc)));
+    }
+
+    private const string SlogPrefix = "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"INFO\",\"msg\":\"ok\",";
+
+    private const string SlogEvent =
+        "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"INFO\",\"msg\":\"ok\",\"status\":503,\"req\":{\"path\":\"/api\",\"tags\":[\"a\",\"b\"]},\"err\":{\"code\":\"E1\"},\"ok\":true}";
+
+    /// <summary>The columns of the given paths, each with the default heading and width.</summary>
+    private static ColumnSpec[] Columns(params string[] paths) => paths.Select(path => new ColumnSpec(path)).ToArray();
+
+    /// <summary>Builds the row of one event text with the given scheme and columns, as the store does for a read event.</summary>
+    private static EventRow RowOf(string text, ILogScheme scheme, IReadOnlyList<ColumnSpec> columns)
+    {
+        var extent = new EventExtent(0, Encoding.UTF8.GetByteCount(text), Encoding.UTF8.GetByteCount(text), false, false);
+        (EventRow row, _) = RowBuilder.BuildFromText(text, scheme, 1, extent, new ParseContext(TimeZoneInfo.Utc, columns));
+        return row;
+    }
+
+    [Fact]
+    public void Json_column_values_are_scalars_as_text_and_objects_and_arrays_as_raw_json()
+    {
+        EventRow row = RowOf(SlogEvent, BuiltInSchemes.SlogJson, Columns("status", "req.path", "req.tags[1]", "req", "req.tags", "ok", "err.code", "msg"));
+
+        Assert.Equal(
+            new string?[] { "503", "/api", "b", "{\"path\":\"/api\",\"tags\":[\"a\",\"b\"]}", "[\"a\",\"b\"]", "true", "E1", "ok" },
+            row.Columns);
+    }
+
+    [Fact]
+    public void Json_column_value_missing_at_any_step_is_null()
+    {
+        EventRow row = RowOf(SlogEvent, BuiltInSchemes.SlogJson, Columns("nope", "req.missing", "req.path.x", "req.tags[5]", "status.x", "status[0]"));
+
+        Assert.Equal(new string?[] { null, null, null, null, null, null }, row.Columns);
+    }
+
+    [Fact]
+    public void Json_column_value_keeps_only_the_first_line_of_a_multi_line_string()
+    {
+        const string text = SlogPrefix + "\"detail\":\"line one\\nline two\"}";
+
+        EventRow row = RowOf(text, BuiltInSchemes.SlogJson, Columns("detail"));
+
+        Assert.Equal(new string?[] { "line one" }, row.Columns);
+    }
+
+    [Theory]
+    [InlineData(255, 255)]
+    [InlineData(256, 256)]
+    [InlineData(257, 256)]
+    [InlineData(300, 256)]
+    public void Column_value_is_cut_to_256_characters(int length, int expectedLength)
+    {
+        string value = new string('v', length);
+        string text = SlogPrefix + "\"big\":\"" + value + "\"}";
+
+        EventRow row = RowOf(text, BuiltInSchemes.SlogJson, Columns("big"));
+
+        Assert.Equal(RowBuilder.ColumnCap, 256);
+        Assert.Equal(value[..expectedLength], row.Columns[0]);
+    }
+
+    [Fact]
+    public void Column_value_cut_does_not_separate_a_surrogate_pair()
+    {
+        // The pair occupies characters 255 and 256: a 256-character cut would keep a lone high surrogate.
+        string split = new string('x', 255) + "\U0001F600" + "tail";
+        // The pair occupies characters 254 and 255: a 256-character cut is already clean.
+        string whole = new string('x', 254) + "\U0001F600" + "tail";
+
+        EventRow first = RowOf(SlogPrefix + "\"big\":\"" + split + "\"}", BuiltInSchemes.SlogJson, Columns("big"));
+        EventRow second = RowOf(SlogPrefix + "\"big\":\"" + whole + "\"}", BuiltInSchemes.SlogJson, Columns("big"));
+
+        Assert.Equal(new string('x', 255), first.Columns[0]);
+        Assert.Equal(new string('x', 254) + "\U0001F600", second.Columns[0]);
+    }
+
+    [Fact]
+    public void Text_column_values_are_the_named_fields_of_the_header()
+    {
+        string text = Line(T0, "ERROR", "boom").TrimEnd('\n');
+
+        // The message is a field of a text event, so a column named message has its value.
+        EventRow row = RowOf(text, BuiltInSchemes.Log4NetCore, Columns("thread", "logger", "message", "level", "missing", "Thread"));
+
+        Assert.Equal(new string?[] { "1", "SheetKraft.Engine", "boom", "ERROR", null, null }, row.Columns);
+    }
+
+    [Fact]
+    public void A_JSON_column_named_message_gives_the_event_message_when_the_object_has_no_message_member()
+    {
+        string text = """{"time":"2026-11-18T10:20:31.007+05:30","level":"ERROR","msg":"request failed","err":{"message":"db down"}}""";
+
+        EventRow row = RowOf(text, BuiltInSchemes.SlogJson, Columns("message", "err.message", "missing"));
+
+        Assert.Equal(new string?[] { "request failed", "db down", null }, row.Columns);
+    }
+
+    [Fact]
+    public void Raw_event_has_null_column_values()
+    {
+        const string broken = "{\"time\":\"2026-11-18T09:00:01Z\",\"level\":\"ERR";
+
+        EventRow row = RowOf(broken, BuiltInSchemes.SlogJson, Columns("status", "level"));
+
+        Assert.True(row.IsRaw);
+        Assert.Equal(new string?[] { null, null }, row.Columns);
+    }
+
+    [Fact]
+    public void Without_columns_every_row_shares_one_empty_list()
+    {
+        EventRow json = RowOf(SlogEvent, BuiltInSchemes.SlogJson, Array.Empty<ColumnSpec>());
+        EventRow text = RowOf(Line(T0, "ERROR", "boom").TrimEnd('\n'), BuiltInSchemes.Log4NetCore, Array.Empty<ColumnSpec>());
+
+        Assert.Empty(json.Columns);
+        Assert.Empty(text.Columns);
+        Assert.Same(json.Columns, text.Columns);
+    }
+
+    [Fact]
+    public void Header_rows_have_no_column_values()
+    {
+        string text = Line(T0, "ERROR", "boom").TrimEnd('\n');
+        var extent = new EventExtent(0, Encoding.UTF8.GetByteCount(text), Encoding.UTF8.GetByteCount(text), false, false);
+
+        EventRow? head = RowBuilder.BuildHead(text, BuiltInSchemes.Log4NetCore, 1, extent, new ParseContext(TimeZoneInfo.Utc, Columns("thread")));
+
+        Assert.NotNull(head);
+        Assert.Empty(head.Columns);
     }
 }

@@ -442,7 +442,6 @@ public sealed class FilteredArrivalTests
         null,
         LogLevel.Unknown,
         null,
-        null,
         preview ?? $"r{index}",
         false,
         false,

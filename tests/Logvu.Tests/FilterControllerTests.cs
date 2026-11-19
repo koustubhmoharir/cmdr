@@ -361,9 +361,9 @@ public sealed class FilterControllerTests : IDisposable
 
         Assert.Null(_controller.Detail);
         Assert.Same(_controller.Timeline, _controller.Window.Content);
-        Assert.Equal(new[] { new FieldPredicate("user", "alice") }, _controller.Filter!.Fields);
+        Assert.Equal(new[] { new FieldPredicate("user", FieldOperator.Equals, "alice") }, _controller.Filter!.Fields);
         Assert.StartsWith("PAUSED", _controller.StatusLeft, StringComparison.Ordinal);
-        Assert.Contains("Filter: user = alice", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.Contains("Filter: user equals alice", _controller.StatusLeft, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -377,8 +377,8 @@ public sealed class FilterControllerTests : IDisposable
         Assert.True(Send((Key)'f'));
 
         Assert.Null(_controller.Detail);
-        Assert.Equal(new[] { new FieldPredicate("Properties.OrderId", "42") }, _controller.Filter!.Fields);
-        Assert.Contains("Filter: Properties.OrderId = 42", _controller.StatusLeft, StringComparison.Ordinal);
+        Assert.Equal(new[] { new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42") }, _controller.Filter!.Fields);
+        Assert.Contains("Filter: Properties.OrderId equals 42", _controller.StatusLeft, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -393,7 +393,7 @@ public sealed class FilterControllerTests : IDisposable
         Assert.True(Send((Key)'f'));
 
         Assert.Null(_controller.Detail);
-        Assert.Equal(new[] { new FieldPredicate("Properties.Tags[1]", "beta") }, _controller.Filter!.Fields);
+        Assert.Equal(new[] { new FieldPredicate("Properties.Tags[1]", FieldOperator.Equals, "beta") }, _controller.Filter!.Fields);
     }
 
     [Fact]
@@ -534,7 +534,6 @@ public sealed class FilterControllerTests : IDisposable
         null,
         LogLevel.Unknown,
         null,
-        "Logvu.Test",
         preview,
         IsRaw: false,
         Orphan: false,

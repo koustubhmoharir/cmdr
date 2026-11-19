@@ -21,14 +21,14 @@ public sealed class Log4NetSchemeTests
         Assert.Equal("2026-11-18 10:20:31,007", e.TimeText);
         Assert.Equal(LogLevel.Error, e.Level);
         Assert.Equal("ERROR", e.LevelText);
-        Assert.Equal("SheetKraft.Engine.Runner", e.Source);
         Assert.Equal("Run failed", e.Message);
         Assert.Null(e.Json);
         AssertFields(e,
             ("level", "ERROR"),
             ("time", "2026-11-18 10:20:31,007"),
             ("thread", "Worker 3"),
-            ("logger", "SheetKraft.Engine.Runner"));
+            ("logger", "SheetKraft.Engine.Runner"),
+            ("message", "Run failed"));
     }
 
     [Fact]
@@ -83,7 +83,6 @@ public sealed class Log4NetSchemeTests
 
         Assert.False(e.IsRaw);
         Assert.Equal(LogLevel.Error, e.Level);
-        Assert.Equal("SheetKraftWeb.Startup", e.Source);
         Assert.Equal("Anonymous", e.Message);
         AssertFields(e,
             ("level", "ERROR"),
@@ -93,7 +92,8 @@ public sealed class Log4NetSchemeTests
             ("sourceAddress", "(null)"),
             ("localAddress", "(null)"),
             ("thread", "7"),
-            ("logger", "SheetKraftWeb.Startup"));
+            ("logger", "SheetKraftWeb.Startup"),
+            ("message", "Anonymous"));
     }
 
     [Fact]
@@ -104,7 +104,6 @@ public sealed class Log4NetSchemeTests
         Assert.Equal(LogLevel.Warn, e.Level);
         Assert.Equal("WARN", e.LevelText);
         AssertTime(e.Time, new DateTime(2026, 11, 18, 10, 20, 30, 123), TimeSpan.FromHours(5.5));
-        Assert.Equal("SheetKraftWeb.Controllers.ApiController", e.Source);
         Assert.Equal("Slow request", e.Message);
         AssertFields(e,
             ("level", "WARN"),
@@ -114,11 +113,12 @@ public sealed class Log4NetSchemeTests
             ("sourceAddress", "10.0.0.5"),
             ("localAddress", "10.0.0.1"),
             ("thread", "23"),
-            ("logger", "SheetKraftWeb.Controllers.ApiController"));
+            ("logger", "SheetKraftWeb.Controllers.ApiController"),
+            ("message", "Slow request"));
     }
 
     [Fact]
-    public void Scheduler_parses_bracketed_time_without_fraction_and_has_no_source()
+    public void Scheduler_parses_bracketed_time_without_fraction_and_no_logger_field()
     {
         LogEvent e = BuiltInSchemes.Log4NetScheduler.Parse(SchedulerHeader, Utc);
 
@@ -127,9 +127,10 @@ public sealed class Log4NetSchemeTests
         Assert.Equal("2026-11-18 10:20:30", e.TimeText);
         Assert.Equal(LogLevel.Info, e.Level);
         Assert.Equal("INFO", e.LevelText);
-        Assert.Null(e.Source);
+        Assert.DoesNotContain(e.Fields, field => field.Name == "logger");
         Assert.Equal("Task Daily-Import started", e.Message);
-        AssertFields(e, ("time", "2026-11-18 10:20:30"), ("level", "INFO"));
+        AssertFields(e, ("time", "2026-11-18 10:20:30"), ("level", "INFO"),
+            ("message", "Task Daily-Import started"));
     }
 
     [Fact]
@@ -140,13 +141,13 @@ public sealed class Log4NetSchemeTests
         Assert.False(e.IsRaw);
         AssertTime(e.Time, new DateTime(2026, 11, 18, 10, 20, 30, 123), TimeSpan.FromHours(5.5));
         Assert.Equal(LogLevel.Info, e.Level);
-        Assert.Equal("AxisBankBalance.Program", e.Source);
         Assert.Equal("Fetched 12 rows", e.Message);
         AssertFields(e,
             ("time", "2026-11-18 10:20:30,123"),
             ("thread", "1"),
             ("level", "INFO"),
-            ("logger", "AxisBankBalance.Program"));
+            ("logger", "AxisBankBalance.Program"),
+            ("message", "Fetched 12 rows"));
     }
 
     [Theory]

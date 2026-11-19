@@ -18,7 +18,7 @@ public sealed class FilterFormTests
     // 23:30 UTC on the 18th is 01:30 on the 19th in the zone: "today" there is the 19th.
     private static readonly DateTimeOffset Now = new(2026, 11, 18, 23, 30, 0, TimeSpan.Zero);
 
-    private static FilterInput Empty => new(null, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, false, false, false, string.Empty);
+    private static FilterInput Empty => new(null, string.Empty, string.Empty, string.Empty, string.Empty, false, false, false, string.Empty);
 
     [Fact]
     public void A_date_and_minute_is_a_time_in_the_zone()
@@ -66,40 +66,82 @@ public sealed class FilterFormTests
     }
 
     [Fact]
-    public void Predicate_lines_split_at_the_first_separator_and_keep_the_value_as_typed()
+    public void Predicate_lines_read_a_path_a_keyword_and_the_value_as_typed()
     {
-        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("user = alice\n\n  code = 42 \na = b = c\n   \n");
+        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("user equals alice\n\n  code contains 42 \nname prefix a b  c\n   \n");
 
         Assert.Equal(
-            [new FieldPredicate("user", "alice"), new FieldPredicate("code", "42 "), new FieldPredicate("a", "b = c")],
+            [
+                new FieldPredicate("user", FieldOperator.Equals, "alice"),
+                new FieldPredicate("code", FieldOperator.Contains, "42 "),
+                new FieldPredicate("name", FieldOperator.Prefix, "a b  c"),
+            ],
             predicates);
+    }
+
+    [Fact]
+    public void The_keyword_is_read_ignoring_case_and_the_value_starts_after_the_one_space_that_follows_it()
+    {
+        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("a SUFFIX  x\nb Equals y");
+
+        Assert.Equal([new FieldPredicate("a", FieldOperator.Suffix, " x"), new FieldPredicate("b", FieldOperator.Equals, "y")], predicates);
     }
 
     [Fact]
     public void Carriage_return_line_feeds_are_read_as_line_breaks()
     {
-        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("a = 1\r\nb = 2");
+        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("a equals 1\r\nb contains 2");
 
-        Assert.Equal([new FieldPredicate("a", "1"), new FieldPredicate("b", "2")], predicates);
+        Assert.Equal([new FieldPredicate("a", FieldOperator.Equals, "1"), new FieldPredicate("b", FieldOperator.Contains, "2")], predicates);
     }
 
     [Fact]
-    public void An_empty_value_is_a_predicate_for_an_empty_field()
+    public void An_empty_value_is_a_predicate_for_an_empty_field_when_the_keyword_is_followed_by_its_space()
     {
-        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("a = ");
+        IReadOnlyList<FieldPredicate> predicates = FilterForm.ParsePredicates("a equals ");
 
-        Assert.Equal([new FieldPredicate("a", string.Empty)], predicates);
+        Assert.Equal([new FieldPredicate("a", FieldOperator.Equals, string.Empty)], predicates);
     }
 
     [Theory]
-    [InlineData("a = 1\nnovalue", 2)]
-    [InlineData("a = 1\n\n= value", 3)]
-    public void A_malformed_line_names_the_field_and_the_line(string text, int line)
+    [InlineData("a equals 1\nnovalue", 2, "no keyword")]
+    [InlineData("a equals 1\nuser sometimes x", 2, "\"sometimes\"")]
+    [InlineData("a equals 1\n\nuser equals", 3, "no space after the keyword")]
+    [InlineData("a = 1", 1, "\"=\"")]
+    [InlineData("a prefix", 1, "no space after the keyword")]
+    public void A_malformed_line_names_the_field_the_line_and_what_is_wrong(string text, int line, string problem)
     {
         FilterInputException error = Assert.Throws<FilterInputException>(() => FilterForm.ParsePredicates(text));
 
         Assert.Equal("Field predicates", error.Field);
         Assert.Contains($"Line {line}", error.Message, StringComparison.Ordinal);
+        Assert.Contains(problem, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_unknown_keyword_lists_the_accepted_keywords()
+    {
+        FilterInputException error = Assert.Throws<FilterInputException>(() => FilterForm.ParsePredicates("a like b"));
+
+        Assert.Contains("equals, prefix, suffix or contains", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Predicates_round_trip_through_the_editor_text()
+    {
+        FieldPredicate[] predicates =
+        [
+            new("user", FieldOperator.Equals, "alice"),
+            new("logger", FieldOperator.Prefix, "Orders."),
+            new("code", FieldOperator.Suffix, "9"),
+            new("message", FieldOperator.Contains, string.Empty),
+            new("note", FieldOperator.Contains, " spaced value "),
+        ];
+
+        string text = FilterForm.FormatPredicates(predicates);
+
+        Assert.Equal("user equals alice\nlogger prefix Orders.\ncode suffix 9\nmessage contains \nnote contains  spaced value ", text);
+        Assert.Equal(predicates, FilterForm.ParsePredicates(text));
     }
 
     [Fact]
@@ -114,24 +156,22 @@ public sealed class FilterFormTests
         var input = Empty with
         {
             MinLevel = LogLevel.Warn,
-            Source = "  Orders  ",
             File = " app ",
             From = "2026-11-18 10:00",
             To = "2026-11-18 11:00",
             Text = "timeout ",
             CaseSensitive = true,
-            Predicates = "Properties.OrderId = 42",
+            Predicates = "Properties.OrderId equals 42",
         };
 
         FilterSpec spec = FilterForm.Build(input, Zone, Now);
 
         Assert.Equal(LogLevel.Warn, spec.MinLevel);
-        Assert.Equal("Orders", spec.SourceContains);
         Assert.Equal("app", spec.FileContains);
         Assert.Equal(new DateTimeOffset(2026, 11, 18, 10, 0, 0, TimeSpan.FromHours(2)), spec.From);
         Assert.Equal(new DateTimeOffset(2026, 11, 18, 11, 0, 0, TimeSpan.FromHours(2)), spec.To);
         Assert.Equal(new SearchQuery("timeout ", true, false, false), spec.Text);
-        Assert.Equal([new FieldPredicate("Properties.OrderId", "42")], spec.Fields);
+        Assert.Equal([new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42")], spec.Fields);
     }
 
     [Fact]
@@ -182,12 +222,11 @@ public sealed class FilterFormTests
     {
         FilterSpec spec = new(
             MinLevel: LogLevel.Error,
-            SourceContains: "Orders",
             FileContains: "app",
             From: new DateTimeOffset(2026, 11, 18, 10, 0, 0, TimeSpan.FromHours(2)),
             To: new DateTimeOffset(2026, 11, 18, 11, 30, 15, TimeSpan.FromHours(2)),
             Text: new SearchQuery("time.*out", false, true, true),
-            Fields: [new FieldPredicate("user", "alice"), new FieldPredicate("code", "42")]);
+            Fields: [new FieldPredicate("user", FieldOperator.Equals, "alice"), new FieldPredicate("logger", FieldOperator.Contains, "Orders"), new FieldPredicate("code", FieldOperator.Equals, "42")]);
         var active = new EventFilter(spec);
 
         FilterInput shown = FilterForm.InputOf(active, Zone);
@@ -198,7 +237,7 @@ public sealed class FilterFormTests
         Assert.Equal("2026-11-18 11:30:15", shown.To);
         Assert.True(shown.WholeWord);
         Assert.True(shown.Regex);
-        Assert.Equal("user = alice\ncode = 42", shown.Predicates);
+        Assert.Equal("user equals alice\nlogger contains Orders\ncode equals 42", shown.Predicates);
         Assert.Equal(active.Describe(), rebuilt.Describe());
     }
 
@@ -214,7 +253,7 @@ public sealed class FilterFormTests
     public void Extending_a_filter_adds_the_predicate_once_and_keeps_the_rest()
     {
         var current = new EventFilter(new FilterSpec(MinLevel: LogLevel.Warn, Text: new SearchQuery("timeout", false, false, false)));
-        var predicate = new FieldPredicate("user", "alice");
+        var predicate = new FieldPredicate("user", FieldOperator.Equals, "alice");
 
         EventFilter once = FilterForm.Extend(current, predicate);
         EventFilter twice = FilterForm.Extend(once, predicate);
@@ -226,11 +265,21 @@ public sealed class FilterFormTests
     }
 
     [Fact]
+    public void Extending_a_filter_with_the_same_path_and_value_under_another_operator_adds_that_predicate_too()
+    {
+        EventFilter once = FilterForm.Extend(null, new FieldPredicate("user", FieldOperator.Equals, "alice"));
+
+        EventFilter twice = FilterForm.Extend(once, new FieldPredicate("user", FieldOperator.Prefix, "alice"));
+
+        Assert.Equal([new FieldPredicate("user", FieldOperator.Equals, "alice"), new FieldPredicate("user", FieldOperator.Prefix, "alice")], twice.Fields);
+    }
+
+    [Fact]
     public void Extending_no_filter_gives_a_filter_with_only_the_predicate()
     {
-        EventFilter filter = FilterForm.Extend(null, new FieldPredicate("user", "alice"));
+        EventFilter filter = FilterForm.Extend(null, new FieldPredicate("user", FieldOperator.Equals, "alice"));
 
-        Assert.Equal([new FieldPredicate("user", "alice")], filter.Fields);
+        Assert.Equal([new FieldPredicate("user", FieldOperator.Equals, "alice")], filter.Fields);
         Assert.Null(filter.MinLevel);
         Assert.Null(filter.Text);
     }
@@ -299,24 +348,22 @@ public sealed class FilterFormTests
         var current = new EventFilter(new FilterSpec(
             MinLevel: LogLevel.Warn,
             Levels: new HashSet<LogLevel> { LogLevel.Warn },
-            SourceContains: "Engine",
             FileContains: "app.log",
             From: from,
             To: to,
             Text: new SearchQuery("timeout", false, false, false),
-            Fields: [new FieldPredicate("user", "alice")]));
+            Fields: [new FieldPredicate("user", FieldOperator.Equals, "alice")]));
 
         EventFilter? changed = FilterForm.WithMinLevel(current, LogLevel.Error);
 
         Assert.NotNull(changed);
         Assert.Equal(LogLevel.Error, changed.MinLevel);
         Assert.Equal(new[] { LogLevel.Warn }, changed.Levels);
-        Assert.Equal("Engine", changed.SourceContains);
         Assert.Equal("app.log", changed.FileContains);
         Assert.Equal(from, changed.From);
         Assert.Equal(to, changed.To);
         Assert.Equal("timeout", changed.Text!.Value.Text);
-        Assert.Equal(new[] { new FieldPredicate("user", "alice") }, changed.Fields);
+        Assert.Equal(new[] { new FieldPredicate("user", FieldOperator.Equals, "alice") }, changed.Fields);
     }
 
     [Fact]
@@ -341,13 +388,13 @@ public sealed class FilterFormTests
     [Fact]
     public void Removing_the_minimum_level_keeps_the_other_predicates()
     {
-        var current = new EventFilter(new FilterSpec(MinLevel: LogLevel.Warn, SourceContains: "Engine"));
+        var current = new EventFilter(new FilterSpec(MinLevel: LogLevel.Warn, FileContains: "app.log"));
 
         EventFilter? filter = FilterForm.WithMinLevel(current, null);
 
         Assert.NotNull(filter);
         Assert.Null(filter.MinLevel);
-        Assert.Equal("Engine", filter.SourceContains);
+        Assert.Equal("app.log", filter.FileContains);
     }
 
     [Fact]
@@ -355,7 +402,7 @@ public sealed class FilterFormTests
     {
         var line = new DetailLine("user: alice", [], LineKind.Field, Indent: 6, NodeId: null, Scope: "user", Value: "alice");
 
-        Assert.Equal(new FieldPredicate("user", "alice"), FilterForm.FieldPredicateOf(line));
+        Assert.Equal(new FieldPredicate("user", FieldOperator.Equals, "alice"), FilterForm.FieldPredicateOf(line));
     }
 
     [Fact]
@@ -363,7 +410,7 @@ public sealed class FilterFormTests
     {
         var line = new DetailLine("trace: one\ntwo", [], LineKind.Field, Indent: 7, NodeId: null, Scope: "trace", Value: "one\ntwo");
 
-        Assert.Equal(new FieldPredicate("trace", "one\ntwo"), FilterForm.FieldPredicateOf(line));
+        Assert.Equal(new FieldPredicate("trace", FieldOperator.Equals, "one\ntwo"), FilterForm.FieldPredicateOf(line));
     }
 
     [Fact]
@@ -371,7 +418,7 @@ public sealed class FilterFormTests
     {
         var line = new DetailLine("OrderId: 42", [], LineKind.Json, Indent: 9, NodeId: null, Scope: "Properties.OrderId", Value: "42");
 
-        Assert.Equal(new FieldPredicate("Properties.OrderId", "42"), FilterForm.FieldPredicateOf(line));
+        Assert.Equal(new FieldPredicate("Properties.OrderId", FieldOperator.Equals, "42"), FilterForm.FieldPredicateOf(line));
     }
 
     [Fact]

@@ -115,8 +115,9 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _post = post ?? (action => app.Invoke(action));
         _editFilter = editFilter ?? (current => FilterDialog.Ask(app, current, config.TimeZone));
         ITimelineSource timeline = source ?? new LogStoreTimelineSource(store);
+        _filter = config.MinLevel is { } minLevel ? new EventFilter(new FilterSpec(MinLevel: minLevel)) : null;
         _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
-        _view = new TimelineView(_model, config.TimeZone) { Placeholder = "Loading…" };
+        _view = new TimelineView(_model, config.TimeZone, config.Columns) { Placeholder = "Loading…" };
         _statusLine = new StatusLine();
         _search = new SearchController(this, _view, _model, timeline, config.TimeZone, Post);
         Window = new MainWindow(() => _app.RequestStop(Window), _view, _statusLine, _search.Bar, HandleShortcut, _search.CancelScan);
@@ -196,7 +197,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
             if (update.Batch.Initial || update.Resync)
             {
                 _started = true;
-                _model.Start(TimelineView.RowsFor(_view.Viewport.Height));
+                _model.Start(TimelineView.RowsFor(_view.Viewport.Height), _filter);
             }
 
             RefreshStatus();

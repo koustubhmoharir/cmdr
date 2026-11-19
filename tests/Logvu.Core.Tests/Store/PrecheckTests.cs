@@ -186,14 +186,12 @@ public sealed class PrecheckTests
             Assert.Equal(row.TimeText, head.TimeText);
             Assert.Equal(row.Level, head.Level);
             Assert.Equal(row.LevelText, head.LevelText);
-            Assert.Equal(row.Source, head.Source);
             Assert.Equal(row.IsRaw, head.IsRaw);
             Assert.Equal(row.Key, head.Key);
             Assert.Equal(string.Empty, head.Preview);
 
             var filter = new EventFilter(new FilterSpec(
                 MinLevel: rng.Next(3) == 0 ? LogLevel.Warn : null,
-                SourceContains: rng.Next(3) == 0 ? "acme" : null,
                 From: rng.Next(3) == 0 ? T0.AddSeconds(-100) : null,
                 To: rng.Next(4) == 0 ? T0 : null));
             bool full = filter.Matches(row, ev, text);

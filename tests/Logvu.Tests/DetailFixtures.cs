@@ -29,7 +29,7 @@ internal static class DetailFixtures
 
     /// <summary>The configuration every fixture uses: the logs in the configuration's directory, with UTC times.</summary>
     public const string BaseMembers =
-        "\"logsDirectory\": \".\", \"filePrefix\": \"app\", \"fileNamePattern\": \"^app[.]log$\", \"timeZone\": \"utc\"";
+        "\"logsDirectory\": \".\", \"filePrefix\": \"app\", \"fileNamePattern\": \"^app[.]log$\", \"timeZone\": \"utc\", \"minLevel\": \"any\"";
 
     /// <summary>A log4net-core text event with the given message, read as the store reads it.</summary>
     public static EventDetail.Loaded Text(string text) => Loaded(text, BuiltInSchemes.Log4NetCore);
@@ -50,7 +50,6 @@ internal static class DetailFixtures
             e.TimeText,
             e.Level,
             e.LevelText,
-            e.Source,
             preview,
             e.IsRaw,
             Orphan: false,

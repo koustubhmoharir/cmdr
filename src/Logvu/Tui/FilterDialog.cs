@@ -18,7 +18,7 @@ namespace Logvu.Tui;
 internal sealed record FilterEdit(EventFilter? Filter);
 
 /// <summary>
-/// The filter editor: the minimum level, the source and file name, the text with its options, the time interval and the field predicates,
+/// The filter editor: the minimum level, the file name, the text with its options, the time interval and the field predicates,
 /// all ANDed. It is pre-filled from the active filter. <b>Apply</b> validates the fields and gives the filter; an invalid field shows a
 /// message that names it, and the editor stays open. <b>Clear</b> empties the fields and stays open, so the user may still cancel. <b>Cancel</b>
 /// and Esc end without a result.
@@ -37,14 +37,13 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
 
     // The rows of the content, from the top: a row per field, the text options on their own row, and two hint rows. The dialog's
     // button area is below them, so the content height is the number of rows the form needs.
-    private const int ContentRows = 13;
+    private const int ContentRows = 12;
     private const int ButtonAreaRows = 6;
 
     private readonly IApplication _app;
     private readonly TimeZoneInfo _zone;
     private readonly Func<DateTimeOffset> _clock;
     private readonly OptionSelector _level;
-    private readonly TextField _source;
     private readonly TextField _file;
     private readonly TextField _text;
     private readonly CheckBox _caseSensitive;
@@ -99,23 +98,22 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
             };
         }
 
-        _source = Field(LabelWidth, 1, input.Source);
-        _file = Field(LabelWidth, 2, input.File);
-        _text = Field(LabelWidth, 3, input.Text);
+        _file = Field(LabelWidth, 1, input.File);
+        _text = Field(LabelWidth, 2, input.Text);
 
-        // Row 4: the three text options, each a check box.
-        _caseSensitive = Check("Case-sensitive", LabelWidth, 4, input.CaseSensitive);
-        _regex = Check("Regex", LabelWidth + 21, 4, input.Regex);
-        _wholeWord = Check("Whole word", LabelWidth + 33, 4, input.WholeWord);
+        // Row 3: the three text options, each a check box.
+        _caseSensitive = Check("Case-sensitive", LabelWidth, 3, input.CaseSensitive);
+        _regex = Check("Regex", LabelWidth + 21, 3, input.Regex);
+        _wholeWord = Check("Whole word", LabelWidth + 33, 3, input.WholeWord);
 
-        _from = Field(LabelWidth, 5, input.From);
-        _to = Field(LabelWidth, 6, input.To);
+        _from = Field(LabelWidth, 4, input.From);
+        _to = Field(LabelWidth, 5, input.To);
 
-        // Rows 7 to 10: the predicates, one per line.
+        // Rows 6 to 9: the predicates, one per line.
         _predicates = new TextView
         {
             X = LabelWidth,
-            Y = 7,
+            Y = 6,
             Width = FieldWidth,
             Height = PredicateRows,
             Multiline = true,
@@ -127,15 +125,14 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
         View[] root =
         {
             Caption("Minimum level", 0, 0), _level,
-            Caption(FilterForm.FieldLabels.Source, 0, 1), _source,
-            Caption(FilterForm.FieldLabels.File, 0, 2), _file,
-            Caption(FilterForm.FieldLabels.Text, 0, 3), _text,
+            Caption(FilterForm.FieldLabels.File, 0, 1), _file,
+            Caption(FilterForm.FieldLabels.Text, 0, 2), _text,
             _caseSensitive, _regex, _wholeWord,
-            Caption(FilterForm.FieldLabels.From, 0, 5), _from,
-            Caption(FilterForm.FieldLabels.To, 0, 6), _to,
-            Caption(FilterForm.FieldLabels.Predicates, 0, 7), _predicates,
-            Caption("Times: yyyy-MM-dd HH:mm[:ss], or HH:mm[:ss] for today.", 0, 11),
-            Caption("Fields: one path = value per line; blank lines are ignored.", 0, 12),
+            Caption(FilterForm.FieldLabels.From, 0, 4), _from,
+            Caption(FilterForm.FieldLabels.To, 0, 5), _to,
+            Caption(FilterForm.FieldLabels.Predicates, 0, 6), _predicates,
+            Caption("Times: yyyy-MM-dd HH:mm[:ss], or HH:mm[:ss] for today.", 0, 10),
+            Caption("Fields: path equals|prefix|suffix|contains value, one per line.", 0, 11),
         };
         Add(root);
 
@@ -185,7 +182,6 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
     /// <summary>The input as the fields hold it now.</summary>
     internal FilterInput Input() => new(
         FilterForm.LevelAt(_level.Value),
-        _source.Text,
         _file.Text,
         _from.Text,
         _to.Text,
@@ -224,11 +220,10 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
         return false;
     }
 
-    /// <summary>Empties every field: the level is any, the text options are off, and the times and predicates are blank.</summary>
+    /// <summary>Empties every field: the level is any, the text options are off, and the file name, times and predicates are blank.</summary>
     internal void Clear()
     {
         _level.Value = FilterForm.LevelIndex(null);
-        _source.Text = string.Empty;
         _file.Text = string.Empty;
         _text.Text = string.Empty;
         _caseSensitive.Value = CheckState.UnChecked;

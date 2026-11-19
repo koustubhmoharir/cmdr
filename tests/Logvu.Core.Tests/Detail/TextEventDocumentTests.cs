@@ -62,10 +62,35 @@ public sealed class TextEventDocumentTests
     {
         IReadOnlyList<DetailLine> message = Document().Lines.Where(l => l.Kind == LineKind.Message).ToList();
 
-        Assert.Equal("Message: Run failed", message[0].Text);
+        Assert.Equal("message: Run failed", message[0].Text);
         Assert.Equal(9, message[0].Indent);
         Assert.All(message, line => Assert.Equal("message", line.Scope));
         Assert.All(message.Skip(1), line => Assert.Equal(9, line.Indent));
+    }
+
+    [Fact]
+    public void The_message_is_the_last_field_in_pattern_order_and_there_is_no_separate_Message_line()
+    {
+        IReadOnlyList<DetailLine> lines = Document().Lines;
+
+        Assert.DoesNotContain(lines, l => l.Text.StartsWith("Message:", StringComparison.Ordinal));
+        int logger = IndexOf(lines, l => l.Kind == LineKind.Field && l.Scope == "logger");
+        int message = IndexOf(lines, l => l.Kind == LineKind.Message);
+        Assert.True(logger < message, "The message follows the logger field.");
+        Assert.Equal("message", lines[message].Scope);
+    }
+
+    [Fact]
+    public void The_message_value_is_analyzed_as_a_stack_trace_under_its_field_label()
+    {
+        IReadOnlyList<DetailLine> lines = Document().Lines;
+
+        DetailLine header = lines.Single(l => l.Text.TrimStart().StartsWith("System.InvalidOperationException:", StringComparison.Ordinal));
+        Assert.Equal(9, header.Indent);
+        DetailLine runner = lines.Single(l => l.Text.Contains("SheetKraft.Engine.Runner.Execute", StringComparison.Ordinal));
+        Assert.Equal(9, runner.Indent);
+        Assert.All(lines.Where(l => l.Kind == LineKind.Message), line => Assert.Equal("message", line.Scope));
+        Assert.Null(lines.First(l => l.Kind == LineKind.Message).Value);
     }
 
     [Fact]
