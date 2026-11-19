@@ -11,7 +11,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] `src/Shared.Core` (no Terminal.Gui): DisplayWidth, RecentFiles (store folder per app), SearchPattern, SearchHistory,
       FileIdentity. Tests in `tests/Shared.Core.Tests`. (`core:`)
 - [x] `src/Shared.Tui`: SearchBar (+SearchColors, SearchTarget), StatusLine, Confirm, NumberTyping, DisplayWidthSetup,
-      TextWidth, a recent-file picker generic over "open this path" (moved to M7). SearchBar has no shared tests yet (cmdr's need its session); covered by logvu's in M9. (`core:`)
+      TextWidth, a recent-file picker generic over "open this path" (moved to M7), Osc52, TextSelection, SearchSeed. SearchBar has no shared tests yet (cmdr's need its session); covered by logvu's in M9. (`core:`)
 - [x] Create `src/Logvu.Core`, `src/Logvu`, `tests/Logvu.Core.Tests`, `tests/Logvu.Tests`; add to `Cmdr.slnx`; Terminal.Gui
       reference with `TerminalGuiBuildProperties`; `logvu --version`. (`logvu:`)
 
@@ -121,4 +121,4 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M12. Refactoring round (after logvu is done)
 
-- [ ] Replace cmdr's copies with the shared components; generalize where the two apps differ. (`cmdr:` / `core:`)
+- [ ] Replace cmdr's copies with the shared components; generalize where the two apps differ. Includes the M0 copies of Osc52, TextSelection and SearchSeed. (`cmdr:` / `core:`)
