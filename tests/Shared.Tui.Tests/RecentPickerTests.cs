@@ -256,6 +256,39 @@ public sealed class RecentPickerTests
         Assert.Null(f.Picker.Opened);
     }
 
+    [Fact]
+    public void Ctrl_Q_quits_with_nothing_opened_and_sets_QuitRequested()
+    {
+        using var f = new Fixture("a.json", "b.json");
+
+        Assert.True(Press(f, Key.Q.WithCtrl));
+
+        Assert.True(f.Picker.QuitRequested);
+        Assert.Null(f.Picker.Opened);
+        Assert.Null(f.Picker.OpenedPath);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("b.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void Esc_quits_with_nothing_opened_and_leaves_QuitRequested_false()
+    {
+        using var f = new Fixture("a.json");
+
+        // Esc is bound to the application's Quit, so it is raised on the application's keyboard as the terminal sends it.
+        bool stoppedItself = RunPickerLoop(f, iteration =>
+        {
+            if (iteration == 1)
+            {
+                f.App.Keyboard.RaiseKeyDownEvent(Key.Esc);
+            }
+        });
+
+        Assert.True(stoppedItself);
+
+        Assert.False(f.Picker.QuitRequested);
+        Assert.Null(f.Picker.Opened);
+    }
+
     // Sends a key on the picker's first loop iteration and runs the loop. True when the picker stopped by itself.
     private static bool Press(Fixture f, Key key) => RunPickerLoop(f, iteration =>
     {

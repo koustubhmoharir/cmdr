@@ -39,8 +39,8 @@ internal static class Program
         return Usage(stderr);
     }
 
-    // Loads the config, records it in the recent list and runs the main window. A config that does not load is reported and the
-    // TUI is not started.
+    // Loads the config, records it in the recent list and runs the main window, which switches sets from that list. A config that
+    // does not load is reported and the TUI is not started.
     private static int Open(string configPath, TextWriter stderr)
     {
         LogvuConfig config;
@@ -54,8 +54,8 @@ internal static class Program
             return 1;
         }
 
-        RecordRecent(config.ConfigPath);
-        LogvuHost.Run(config);
+        RecentFiles? recent = RecordRecent(config.ConfigPath);
+        LogvuHost.Run(config, recent);
         return 0;
     }
 
@@ -66,17 +66,19 @@ internal static class Program
         return store is null ? null : RecentFiles.Load(store);
     }
 
-    // Moves an opened config to the front of logvu's recent list. Skipped without a store location; a failed save is ignored.
-    private static void RecordRecent(string configPath)
+    // Moves an opened config to the front of logvu's recent list and returns the list. Without a store location nothing is recorded
+    // and the result is null; a failed save is ignored.
+    private static RecentFiles? RecordRecent(string configPath)
     {
         RecentFiles? recent = LoadRecent();
         if (recent is null)
         {
-            return;
+            return null;
         }
 
         recent.Add(configPath);
         recent.TrySave();
+        return recent;
     }
 
     private static int Usage(TextWriter stderr)

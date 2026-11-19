@@ -129,6 +129,12 @@ public sealed class RecentPicker<T> : Window
     /// <summary>The path of the config the user opened, or null when the user quit the picker.</summary>
     public string? OpenedPath { get; private set; }
 
+    /// <summary>
+    /// Whether the user quit with Ctrl+Q, as opposed to Esc or nothing. Both leave <see cref="Opened"/> null; a caller that
+    /// shows the picker over a running application can use this to quit the application too.
+    /// </summary>
+    public bool QuitRequested { get; private set; }
+
     // The rows' list and the empty-state line, for the tests.
     internal ListView Rows => _list;
 
@@ -139,6 +145,7 @@ public sealed class RecentPicker<T> : Window
     {
         if (key == Key.Q.WithCtrl)
         {
+            QuitRequested = true;
             _app.RequestStop(this);
             return true;
         }

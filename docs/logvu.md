@@ -80,6 +80,7 @@ while paused, the active filter, search progress and read problems.
 | `-` or `_` / `=` or `+` | Lower / raise the minimum level (any → Debug → Info → Warn → Error → Fatal), keeping the rest of the filter |
 | Mouse | Wheel scrolls; a click selects (and pauses); dragging selects text within that row |
 | `c` | Copy the selected text, or without a selection the whole event as its detail shows it with everything expanded, with the indentation the lines share removed |
+| Ctrl+O | Open another log set from the recent configs (Esc returns, ^Q quits) |
 | Esc | Clears a selection; without one, cancels a running scan |
 | Ctrl+Q | Quit |
 

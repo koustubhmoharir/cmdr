@@ -30,14 +30,31 @@ namespace Logvu.Tui;
 /// its read starts. Esc, Left or <c>h</c> closes it: the read is cancelled, the timeline comes back as it was, and the model is not touched.
 /// Store updates go on reaching the model while the detail is open. A read that completes after the detail was closed is ignored.
 /// </para>
+/// <para>
+/// <b>Switch.</b> Ctrl+O shows the set picker over the window. A chosen config is kept in <see cref="SwitchTo"/> and the window stops, so
+/// the host can run that set next. Ctrl+Q in the picker stops the window with no switch, as Ctrl+Q does in the window.
+/// </para>
 /// </remarks>
 internal sealed class TimelineController : IDisposable, ISearchHost
 {
+    /// <summary>How the set picker ended: Back to the current set, Chosen to switch to its config, or Quit the application.</summary>
+    internal enum PickOutcome
+    {
+        /// <summary>Esc: the current set stays as it was.</summary>
+        Back,
+
+        /// <summary>A config was opened: the window stops with it as <see cref="SwitchTo"/>.</summary>
+        Chosen,
+
+        /// <summary>Ctrl+Q: the window stops with no switch.</summary>
+        Quit,
+    }
+
     /// <summary>The status line's key hints, with no selection in the timeline.</summary>
-    internal const string Hints = "f filter  -/+ level  Space pause/follow  c copy event  End newest  ^Q quit";
+    internal const string Hints = "f filter  -/+ level  Space pause/follow  c copy event  End newest  ^O open  ^Q quit";
 
     /// <summary>The status line's key hints while the timeline's selected row has a selection, which <c>c</c> copies.</summary>
-    internal const string SelectionHints = "f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^Q quit";
+    internal const string SelectionHints = "f filter  -/+ level  Space pause/follow  c copy selection  End newest  ^O open  ^Q quit";
 
     /// <summary>The status line's key hints while the detail is open and has no selection.</summary>
     internal const string DetailHints = "f filter on value  Enter toggle  z folds  r raw  c copy line  ←/Esc back";
@@ -67,6 +84,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private readonly StatusLine _statusLine;
     private readonly SearchController _search;
     private readonly Func<EventFilter?, FilterEdit?> _editFilter;
+    private readonly Func<(PickOutcome Outcome, LogvuConfig? Config)>? _pickSet;
     private StoreStatus? _storeStatus;
     private RetentionGap? _latestGap;
     private bool _gapShown;
@@ -85,9 +103,14 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// <param name="app">The initialized application.</param>
     /// <param name="store">The store to show. It must not be started yet.</param>
     /// <param name="config">The configuration of the set: the time zone, and the highlights and styles of the detail.</param>
-    /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
-    public TimelineController(IApplication app, LogStore store, LogvuConfig config)
-        : this(app, store, new LogStoreDetailSource(store), config, post: null)
+    /// <param name="pickSet">Shows the set picker for Ctrl+O, as the internal constructor describes. Ctrl+O does nothing when it is <c>null</c>.</param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="pickSet"/> is <c>null</c>.</exception>
+    public TimelineController(
+        IApplication app,
+        LogStore store,
+        LogvuConfig config,
+        Func<(PickOutcome Outcome, LogvuConfig? Config)>? pickSet = null)
+        : this(app, store, new LogStoreDetailSource(store), config, post: null, pickSet: pickSet)
     {
     }
 
@@ -105,7 +128,10 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// Shows the filter editor over the active filter and returns its edit, or <c>null</c> when it was cancelled. The editor is shown with
     /// <see cref="FilterDialog.Ask(IApplication, EventFilter?, TimeZoneInfo)"/> by default.
     /// </param>
-    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/>, <paramref name="source"/>, <paramref name="compare"/> and <paramref name="editFilter"/> is <c>null</c>.</exception>
+    /// <param name="pickSet">
+    /// Shows the set picker and returns how it ended, with the chosen config. Ctrl+O does nothing when it is <c>null</c>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument other than <paramref name="post"/>, <paramref name="source"/>, <paramref name="compare"/>, <paramref name="editFilter"/> and <paramref name="pickSet"/> is <c>null</c>.</exception>
     internal TimelineController(
         IApplication app,
         LogStore store,
@@ -114,7 +140,8 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         Action<Action>? post,
         ITimelineSource? source = null,
         Comparison<RowKey>? compare = null,
-        Func<EventFilter?, FilterEdit?>? editFilter = null)
+        Func<EventFilter?, FilterEdit?>? editFilter = null,
+        Func<(PickOutcome Outcome, LogvuConfig? Config)>? pickSet = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(store);
@@ -127,6 +154,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         _config = config;
         _post = post ?? (action => app.Invoke(action));
         _editFilter = editFilter ?? (current => FilterDialog.Ask(app, current, config.TimeZone));
+        _pickSet = pickSet;
         ITimelineSource timeline = source ?? new LogStoreTimelineSource(store);
         _filter = config.MinLevel is { } minLevel ? new EventFilter(new FilterSpec(MinLevel: minLevel)) : null;
         _model = new TimelineModel(timeline, Post, compare ?? store.Compare);
@@ -165,6 +193,11 @@ internal sealed class TimelineController : IDisposable, ISearchHost
 
     /// <summary>The active filter of the timeline, or <c>null</c> when every event is shown.</summary>
     internal EventFilter? Filter => _filter;
+
+    /// <summary>
+    /// The config chosen in the set picker, or <c>null</c>. Set when the window stopped for a switch; the host runs that set next.
+    /// </summary>
+    internal LogvuConfig? SwitchTo { get; private set; }
 
     /// <summary>Subscribes to the store and to the model, focuses the timeline and starts the store.</summary>
     /// <exception cref="InvalidOperationException">The store is already started.</exception>
@@ -406,6 +439,12 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// </summary>
     private bool HandleShortcut(Key key)
     {
+        if (key == Key.O.WithCtrl && _pickSet is not null)
+        {
+            OpenSetPicker();
+            return true;
+        }
+
         if (_detail is null)
         {
             if (IsPlain(key, 'f'))
@@ -434,6 +473,25 @@ internal sealed class TimelineController : IDisposable, ISearchHost
         }
 
         return _search.HandleShortcut(key);
+    }
+
+    /// <summary>
+    /// Shows the set picker over the window. A chosen config becomes <see cref="SwitchTo"/> and the window stops; Ctrl+Q stops it with no
+    /// switch; Esc leaves the window as it was.
+    /// </summary>
+    private void OpenSetPicker()
+    {
+        (PickOutcome outcome, LogvuConfig? config) = _pickSet!();
+        switch (outcome)
+        {
+            case PickOutcome.Chosen when config is not null:
+                SwitchTo = config;
+                _app.RequestStop(Window);
+                break;
+            case PickOutcome.Quit:
+                _app.RequestStop(Window);
+                break;
+        }
     }
 
     /// <summary>
