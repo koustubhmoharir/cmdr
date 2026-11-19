@@ -235,7 +235,7 @@ returns a notice that is written to the output.
   cancel its siblings; the parallel group itself fails as soon as any child fails.
 - Enter on a group: kill-first over the whole subtree (stopping / leftovers); otherwise run it, skipping
   commands that are already running and dropping groups left with nothing to start. Refused with a
-  message when the plan overlaps an active run.
+  message when the plan overlaps an active run. A sequential group takes no new start (run, command row, enclosing plan or sub-run) while a command below it is running or stopping, e.g. one a cancelled run left running.
 - Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
   On a command, it cancels the innermost run containing it (which then fails upward) and stops the
   command if it is running; on a queued command, whatever that run is currently running keeps going.

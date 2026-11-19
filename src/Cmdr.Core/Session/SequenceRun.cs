@@ -347,10 +347,11 @@ internal sealed class SequenceRun
         if (group.Mode == GroupMode.Sequential)
         {
             var child = new SequenceRun(_session, group, step.Children, _inputs, this);
-            if (!_session.TryStart(child))
+            string? refusal = _session.TryStart(child);
+            if (refusal is not null)
             {
                 _session.Unqueue(step);
-                Session.WriteRefusal(step, $"A sequence is already running in group '{group.Name}'.");
+                Session.WriteRefusal(step, refusal);
                 return false;
             }
 

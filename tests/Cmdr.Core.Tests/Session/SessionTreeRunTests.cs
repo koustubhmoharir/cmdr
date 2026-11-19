@@ -521,4 +521,325 @@ public class SessionTreeRunTests
             Cleanup(session);
         }
     }
+
+    /// <summary>
+    /// Starts the sequential group, then stops its queued second command. The run ends, but the first command, which was
+    /// running, keeps running: the group has no active run while one of its commands is still running.
+    /// </summary>
+    private static void EndRunWhileFirstCommandKeepsRunning(CmdrSession session, GroupEntry group, CommandEntry running, CommandEntry queued)
+    {
+        Assert.Null(session.Activate(group));
+        WaitUntil(() => running.Process.Snapshot.State == ProcessState.Running, "first command running", running.Process);
+        Assert.True(queued.IsQueued);
+
+        Assert.Null(session.Stop(new[] { queued }));
+        WaitUntil(() => !group.IsSequenceRunning, "run to end", running.Process);
+        Assert.Equal(ProcessState.Running, running.Process.Snapshot.State);
+    }
+
+    [Fact]
+    public void Activate_GroupAfterStopOfQueuedCommand_IsRefusedWhileTheRunningCommandStillRuns()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string release = dir.File("release");
+        CmdrSession session = OpenWith(
+            dir,
+            Seq("build", Sh("a", $"while [ ! -f '{release}' ]; do sleep 0.02; done"), Mark(dir, "b", "b"), Mark(dir, "c", "c")));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            CommandEntry c = build.Commands[2];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            string? refusal = session.Activate(build);
+
+            Assert.Equal("Cannot start: 'a' in sequential group 'build' is still running.", refusal);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, c.Process.Snapshot.State);
+            Assert.False(b.IsQueued);
+            Assert.False(c.IsQueued);
+            Assert.Equal(ProcessState.Running, a.Process.Snapshot.State);
+            Assert.Empty(OrderLines(dir));
+
+            // a exits on its own; once it has, the group is startable again and runs in order (a exits at once now).
+            File.WriteAllText(release, "go");
+            WaitForExited(a.Process);
+            Assert.Equal(0, a.Process.Snapshot.ExitCode);
+
+            Assert.Null(session.Activate(build));
+            WaitUntil(() => !build.IsSequenceRunning, "build to finish", a.Process);
+            Assert.Equal(new[] { "b", "c" }, OrderLines(dir));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void Activate_CommandRowAfterStopOfQueuedCommand_IsRefusedWhileTheRunningCommandStillRuns()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq("build", Sleeper("a"), Mark(dir, "b", "b"), Mark(dir, "c", "c")));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            CommandEntry c = build.Commands[2];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            string? refusal = session.Activate(new[] { b });
+
+            Assert.Equal("Cannot start 'b': 'a' in sequential group 'build' is still running.", refusal);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.False(b.IsQueued);
+            Assert.Empty(OrderLines(dir));
+
+            Assert.Null(session.Stop(new[] { a }));
+            WaitForExited(a.Process);
+
+            Assert.Null(session.Activate(new[] { b }));
+            WaitUntil(() => !build.IsSequenceRunning, "b to finish", b.Process);
+            Assert.Equal(new[] { "b" }, OrderLines(dir));
+            Assert.Equal(ProcessState.NotStarted, c.Process.Snapshot.State);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void Activate_ParallelParentOfBusySequence_IsRefusedAndStartsNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Par(
+            "root",
+            Seq("build", Sleeper("a"), Mark(dir, "b", "b")),
+            Mark(dir, "sibling", "sibling")));
+        try
+        {
+            GroupEntry root = session.Groups[0];
+            GroupEntry build = root.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            CommandEntry sibling = root.Commands[0];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            string? refusal = session.Activate(root);
+
+            Assert.Equal("Cannot start: 'a' in sequential group 'build' is still running.", refusal);
+            Assert.Equal(ProcessState.NotStarted, sibling.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.Empty(OrderLines(dir));
+
+            Assert.Null(session.Stop(new[] { a }));
+            WaitForExited(a.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void SubRun_WhoseGroupHasARunningCommand_IsRefusedAndFailsTheEnclosingSequence()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string release = dir.File("release");
+        CmdrSession session = OpenWith(
+            dir,
+            Seq(
+                "outer",
+                Sh("gate", $"while [ ! -f '{release}' ]; do sleep 0.02; done"),
+                Seq("inner", Mark(dir, "b", "b")),
+                Mark(dir, "after", "after")),
+            Group("free", GroupMode.Parallel, Sleeper("x")));
+        try
+        {
+            GroupEntry outer = session.Groups[0];
+            GroupEntry inner = outer.Groups[0];
+            CommandEntry gate = outer.Commands[0];
+            CommandEntry b = inner.Commands[0];
+            CommandEntry after = outer.Commands[1];
+            CommandEntry x = session.Groups[1].Commands[0];
+
+            Assert.Null(session.Activate(outer));
+            WaitUntil(() => gate.Process.Snapshot.State == ProcessState.Running, "gate running", gate.Process);
+            Assert.Null(session.Activate(new[] { x }));
+            WaitUntil(() => x.Process.Snapshot.State == ProcessState.Running, "x running", x.Process);
+
+            // Moving a running command is allowed; it lands in a group the active run has planned but not started.
+            session.UpdateCommand(x, Sleeper("x"), inner);
+            File.WriteAllText(release, "go");
+
+            WaitUntil(() => !outer.IsSequenceRunning, "outer sequence to fail", gate.Process);
+            WaitForText(b.Process, "Cannot start: 'x' in sequential group 'inner' is still running.");
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, after.Process.Snapshot.State);
+            Assert.False(b.IsQueued);
+            Assert.False(after.IsQueued);
+            Assert.Equal(ProcessState.Running, x.Process.Snapshot.State);
+            Assert.Empty(OrderLines(dir));
+
+            Assert.Null(session.Stop(new[] { x }));
+            WaitForExited(x.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task RestartAsync_RunningCommandOfBusySequence_RestartsIt()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq("build", Sleeper("a"), Mark(dir, "b", "b"), Mark(dir, "c", "c")));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+            int? firstPid = a.Process.Snapshot.Pid;
+
+            string? message = await session.RestartAsync(new[] { a });
+
+            Assert.Null(message);
+            WaitUntil(
+                () => a.Process.Snapshot.State == ProcessState.Running && a.Process.Snapshot.Pid != firstPid,
+                "a restarted",
+                a.Process);
+            Assert.True(build.IsSequenceRunning);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.Empty(OrderLines(dir));
+
+            Assert.Null(session.Stop(new[] { a }));
+            WaitUntil(() => !build.IsSequenceRunning, "restarted run to end", a.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public async Task RestartAsync_OtherCommandOfBusySequence_IsRefused()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq("build", Sleeper("a"), Mark(dir, "b", "b")));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            string? message = await session.RestartAsync(new[] { b });
+
+            Assert.Equal("Cannot start 'b': 'a' in sequential group 'build' is still running.", message);
+            Assert.Equal(ProcessState.Running, a.Process.Snapshot.State);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+            Assert.False(b.IsQueued);
+            Assert.False(build.IsSequenceRunning);
+            Assert.Empty(OrderLines(dir));
+
+            Assert.Null(session.Stop(new[] { a }));
+            WaitForExited(a.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void Activate_CommandsOfParallelGroupBesideBusySequence_StillStart()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Par(
+            "root",
+            Seq("build", Sleeper("a"), Mark(dir, "b", "b")),
+            Sleeper("x"),
+            Sleeper("y")));
+        try
+        {
+            GroupEntry root = session.Groups[0];
+            GroupEntry build = root.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            CommandEntry x = root.Commands[0];
+            CommandEntry y = root.Commands[1];
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            Assert.Null(session.Activate(new[] { x, y }));
+
+            WaitUntil(
+                () => x.Process.Snapshot.State == ProcessState.Running && y.Process.Snapshot.State == ProcessState.Running,
+                "x and y running",
+                x.Process);
+            Assert.Equal(ProcessState.NotStarted, b.Process.Snapshot.State);
+
+            Assert.Null(session.Stop(new[] { x, y }));
+            Assert.Null(session.Stop(new[] { a }));
+            WaitUntil(() => !build.IsSequenceRunning, "build to end", a.Process);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void InputsForActivate_BusySequence_AsksForNoInputsForRefusedStarts()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        var needsInput = new CommandSpec
+        {
+            Name = "b",
+            Program = "sh",
+            Args = new List<string> { "-c", "echo b", "_", "${input:v}" },
+        };
+        CmdrSession session = OpenWith(dir, Seq("build", Sleeper("a"), needsInput));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+            Assert.Single(session.InputsForActivate(build));
+
+            EndRunWhileFirstCommandKeepsRunning(session, build, a, b);
+
+            Assert.Empty(session.InputsForActivate(build));
+            Assert.Empty(session.InputsForActivate(new[] { b }));
+
+            Assert.Null(session.Stop(new[] { a }));
+            WaitForExited(a.Process);
+            Assert.Single(session.InputsForActivate(build));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
 }

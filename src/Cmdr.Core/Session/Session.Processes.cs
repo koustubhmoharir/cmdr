@@ -56,7 +56,8 @@ public sealed partial class Session
     /// Carries out what <paramref name="prepared"/> decided, with the input values for it. A kill decision force-kills the commands
     /// that were killable when it was prepared, if they still are, and starts nothing. A start decision starts only the commands it
     /// named that can still start: commands that became startable since then are not started, and their inputs are not needed.
-    /// Refusals (a running sequence, a busy command) are checked now, as <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> does.
+    /// Refusals (a running sequence, a busy command, a command of a sequential group still running) are checked now, as
+    /// <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> does.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
     /// <returns>A message when something was not done, otherwise null.</returns>
@@ -117,7 +118,10 @@ public sealed partial class Session
     /// cannot start are skipped, and groups left with nothing to start are dropped.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
-    /// <returns>A message when the group could not be started because it overlaps a running sequence; otherwise null.</returns>
+    /// <returns>
+    /// A message when the group could not be started because it overlaps a running sequence, or a sequential group at or above a
+    /// part of it has a command that is still running or stopping; otherwise null.
+    /// </returns>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
     public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null) =>
         Activate(PrepareActivate(group), inputs);
@@ -721,7 +725,8 @@ public sealed partial class Session
 
     /// <summary>
     /// Starts the given commands of a group: in sequence for a sequential group, otherwise each at once. Refuses, with a
-    /// message, when the group already has a sequence or a command is part of a running sequence. With a restart operation,
+    /// message, when the group already has a sequence, a command is part of a running sequence, or a command of a sequential
+    /// group at or above it is still running (see <see cref="CommandsRefusal"/>). With a restart operation,
     /// the restart is checked for staleness before each launch: when it fails, what this batch started is stopped again and
     /// <see cref="OperationCanceledException"/> is thrown. A run started for the restart is recorded in <paramref name="starts"/>.
     /// </summary>
@@ -740,10 +745,10 @@ public sealed partial class Session
         lock (_sync)
         {
             ThrowIfRevokedLocked(op);
-            CommandEntry? busy = startable.FirstOrDefault(IsBusyCommand);
-            if (busy is not null)
+            string? refusal = CommandsRefusal(group, startable);
+            if (refusal is not null)
             {
-                return BusyMessage(busy);
+                return refusal;
             }
         }
 
@@ -787,15 +792,10 @@ public sealed partial class Session
         lock (_sync)
         {
             ThrowIfRevokedLocked(op);
-            if (group.ActiveSequence is not null)
+            string? refusal = CommandsRefusal(group, entries);
+            if (refusal is not null)
             {
-                return $"A sequence is already running in group '{group.Name}'.";
-            }
-
-            CommandEntry? busy = entries.FirstOrDefault(IsBusyCommand);
-            if (busy is not null)
-            {
-                return BusyMessage(busy);
+                return refusal;
             }
 
             Register(run);
@@ -916,8 +916,8 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// The reason a plan cannot start: a sequential group in it already has a run, or a command in it is busy. Null when it can.
-    /// Caller holds <c>_sync</c>.
+    /// The reason a plan cannot start: a sequential group in it already has a run, a sequential group in it has a command that
+    /// is still running or stopping, or a command in it is busy. Null when it can. Caller holds <c>_sync</c>.
     /// </summary>
     private string? RefusalFor(IReadOnlyList<PlanNode> nodes)
     {
@@ -937,6 +937,11 @@ public sealed partial class Session
                     return $"A sequence is already running in group '{group.Name}'.";
                 }
 
+                if (RunningRefusalIn(group, target: null) is { } running)
+                {
+                    return running;
+                }
+
                 if (IsReservedSequentialGroup(group))
                 {
                     return $"Group '{group.Name}' is already part of a running sequence.";
@@ -954,7 +959,9 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// The reason <see cref="StartCommands"/> would refuse these commands, or null. Caller holds <c>_sync</c>.
+    /// The reason <see cref="StartCommands"/> would refuse these commands, or null: a sequential group already has a run, a
+    /// command is part of a running sequence, or a command of a sequential group at or above the group is still running or
+    /// stopping. Caller holds <c>_sync</c>.
     /// </summary>
     private string? CommandsRefusal(GroupEntry group, IReadOnlyList<CommandEntry> startable)
     {
@@ -964,11 +971,18 @@ public sealed partial class Session
         }
 
         CommandEntry? busy = startable.FirstOrDefault(IsBusyCommand);
-        return busy is null ? null : BusyMessage(busy);
+        if (busy is not null)
+        {
+            return BusyMessage(busy);
+        }
+
+        return startable.Count == 0 ? null : RunningRefusalAbove(group, startable[0].Spec.Name);
     }
 
     /// <summary>
-    /// The reason <see cref="StartGroup"/> would refuse the plan of a group, or null. Caller holds <c>_sync</c>.
+    /// The reason <see cref="StartGroup"/> would refuse the plan of a group, or null: a sequential group already has a run, a
+    /// group is part of a running sequence, a sequential group at or above the group has a command still running or stopping,
+    /// or the plan is refused by <see cref="RefusalFor"/>. Caller holds <c>_sync</c>.
     /// </summary>
     private string? GroupRefusal(GroupEntry group, IReadOnlyList<PlanNode> children)
     {
@@ -982,20 +996,73 @@ public sealed partial class Session
             return $"Group '{group.Name}' is already part of a running sequence.";
         }
 
+        if (RunningRefusalAbove(group, target: null) is { } running)
+        {
+            return running;
+        }
+
         return RefusalFor(children);
     }
 
     /// <summary>
-    /// Registers a sub-run on its group, if the group has no active run, and starts it. Returns false when the group is busy.
-    /// With a restart operation, the caller's token cancels the run until its first command launches (see <see cref="HandOver"/>).
+    /// The reason a start in <paramref name="group"/> is refused because a sequential group at or above it has a command that is
+    /// running or stopping, or null. Sequential groups run one command at a time, so a command that a cancelled run left running
+    /// blocks new starts in its group until it has exited. <paramref name="target"/> names the command being started; null for a group.
+    /// Caller holds <c>_sync</c>.
     /// </summary>
-    internal bool TryStart(SequenceRun run, RestartOperation? op = null)
+    private static string? RunningRefusalAbove(GroupEntry group, string? target)
+    {
+        for (GroupEntry? ancestor = group; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (RunningRefusalIn(ancestor, target) is { } refusal)
+            {
+                return refusal;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The reason a new run of <paramref name="group"/> would be refused because one of its commands is running or stopping, or
+    /// null. Commands in its sub-groups count too: they are steps of the group's run. Null for a parallel group. Only the group's
+    /// own subtree is looked at, not its ancestors, so that a run's steps that are starting together do not block each other.
+    /// Caller holds <c>_sync</c>.
+    /// </summary>
+    private static string? RunningRefusalIn(GroupEntry group, string? target)
+    {
+        if (group.Mode != GroupMode.Sequential)
+        {
+            return null;
+        }
+
+        CommandEntry? running = group.AllCommands.FirstOrDefault(IsRunningOrStopping);
+        if (running is null)
+        {
+            return null;
+        }
+
+        string blocker = $"'{running.Spec.Name}' in sequential group '{group.Name}' is still running.";
+        return target is null ? $"Cannot start: {blocker}" : $"Cannot start '{target}': {blocker}";
+    }
+
+    /// <summary>
+    /// Registers a sub-run on its group and starts it. Returns the reason it cannot start, or null when it did: the group has an
+    /// active run, or a command below it is running or stopping (see <see cref="RunningRefusalIn"/>). With a restart operation, the
+    /// caller's token cancels the run until its first command launches (see <see cref="HandOver"/>).
+    /// </summary>
+    internal string? TryStart(SequenceRun run, RestartOperation? op = null)
     {
         lock (_sync)
         {
             if (run.Group.ActiveSequence is not null)
             {
-                return false;
+                return $"A sequence is already running in group '{run.Group.Name}'.";
+            }
+
+            if (RunningRefusalIn(run.Group, target: null) is { } running)
+            {
+                return running;
             }
 
             Register(run);
@@ -1007,7 +1074,7 @@ public sealed partial class Session
         }
 
         Launch(run);
-        return true;
+        return null;
     }
 
     /// <summary>Makes the run the active run of its group and marks its planned commands queued. Caller holds <c>_sync</c>.</summary>
@@ -1082,7 +1149,8 @@ public sealed partial class Session
                 if (group.Mode == GroupMode.Sequential)
                 {
                     var run = new SequenceRun(this, group, child.Children, inputs, owner);
-                    if (TryStart(run, op))
+                    string? refusal = TryStart(run, op);
+                    if (refusal is null)
                     {
                         createdRuns?.Add(run);
                         if (owner is { IsCancelled: true })
@@ -1095,7 +1163,7 @@ public sealed partial class Session
                     else
                     {
                         Unqueue(child);
-                        WriteRefusal(child, $"A sequence is already running in group '{group.Name}'.");
+                        WriteRefusal(child, refusal);
                         branches.Add(Task.FromResult(false));
                     }
                 }
