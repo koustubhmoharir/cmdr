@@ -46,7 +46,8 @@ public sealed class LogvuConfig
         IReadOnlyList<ColumnSpec> columns,
         IReadOnlyList<HighlightRule> highlights,
         IReadOnlyDictionary<string, StyleSpec> styles,
-        IReadOnlyList<string> frameworkPrefixes)
+        IReadOnlyList<string> frameworkPrefixes,
+        IReadOnlyList<string>? messageFields = null)
     {
         ConfigPath = configPath;
         LogsDirectory = logsDirectory;
@@ -59,6 +60,7 @@ public sealed class LogvuConfig
         RecentCapacity = recentCapacity;
         MinLevel = minLevel;
         Columns = columns;
+        MessageFields = messageFields ?? [];
         Highlights = highlights;
         Styles = styles;
         FrameworkPrefixes = frameworkPrefixes;
@@ -105,6 +107,12 @@ public sealed class LogvuConfig
     /// per column; see <see cref="Store.EventRow.Columns"/>.
     /// </summary>
     public IReadOnlyList<ColumnSpec> Columns { get; }
+
+    /// <summary>
+    /// The JSON paths whose values a JSON event's timeline preview shows after its message as <c>path=value</c>, in configuration order. Each
+    /// path is resolved on the event's JSON only; a path that does not resolve is skipped. Empty when the configuration names none.
+    /// </summary>
+    public IReadOnlyList<string> MessageFields { get; }
 
     /// <summary>The highlight rules, in configuration order.</summary>
     public IReadOnlyList<HighlightRule> Highlights { get; }

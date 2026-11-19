@@ -48,7 +48,7 @@ public sealed class HistoryReader
     public HistoryReader(LogvuConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        _context = new ParseContext(config.TimeZone, config.Columns);
+        _context = new ParseContext(config.TimeZone, config.Columns, config.MessageFields);
     }
 
     /// <summary>The most events read from one open handle before it is closed and reopened. Tests lower it.</summary>

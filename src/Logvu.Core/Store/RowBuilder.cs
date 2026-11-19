@@ -1,4 +1,6 @@
+using System.Text;
 using Logvu.Core.Config;
+using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 
@@ -69,7 +71,7 @@ public static class RowBuilder
             ev.TimeText,
             ev.Level,
             ev.LevelText,
-            Preview(ev.Message),
+            Preview(ev, context.MessageFields),
             ev.IsRaw,
             extent.Orphan,
             extent.Provisional)
@@ -135,9 +137,42 @@ public static class RowBuilder
     }
 
     /// <summary>
-    /// The first line of a message, cut to <see cref="PreviewCap"/> characters. A cut never separates the two halves of a surrogate pair.
+    /// The preview of an event: the first line of its message, then, for a JSON event, each configured message field that resolves in its
+    /// JSON as <c>path=value</c>. The first pair is preceded by two spaces, or none when the message is empty; later pairs by one space. The
+    /// value of a pair is the first line of its JSON text, as <see cref="JsonFieldPath.TryGetText"/> gives it. The whole is cut to
+    /// <see cref="PreviewCap"/> characters.
     /// </summary>
-    internal static string Preview(string message) => FirstLine(message, PreviewCap);
+    /// <param name="ev">The parsed event.</param>
+    /// <param name="messageFields">The configured JSON paths, in configuration order.</param>
+    internal static string Preview(LogEvent ev, IReadOnlyList<string> messageFields)
+    {
+        string head = FirstLine(ev.Message, PreviewCap);
+        if (messageFields.Count == 0 || ev.IsRaw || ev.Json is not { } json)
+        {
+            return head;
+        }
+
+        var preview = new StringBuilder(head);
+        bool any = false;
+        foreach (string path in messageFields)
+        {
+            if (preview.Length >= PreviewCap)
+            {
+                break;
+            }
+
+            if (!JsonFieldPath.TryGetText(json, path, out string text))
+            {
+                continue;
+            }
+
+            string separator = any ? " " : head.Length > 0 ? "  " : string.Empty;
+            preview.Append(separator).Append(path).Append('=').Append(FirstLine(text, PreviewCap));
+            any = true;
+        }
+
+        return FirstLine(preview.ToString(), PreviewCap);
+    }
 
     /// <summary>
     /// The values of the configured columns of an event, in configuration order. A raw event has no values, and a value the event does not

@@ -86,7 +86,7 @@ public sealed class Reconciler
         _config = config;
         _catalog = catalog;
         _ring = ring;
-        _context = new ParseContext(config.TimeZone, config.Columns);
+        _context = new ParseContext(config.TimeZone, config.Columns, config.MessageFields);
     }
 
     /// <summary>The identity of a path, as the rescan takes it. Tests replace it to simulate transient failures.</summary>

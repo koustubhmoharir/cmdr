@@ -4,6 +4,7 @@ using Logvu.Core.Parsing;
 using Logvu.Core.Reading;
 using Logvu.Core.Store;
 using Logvu.Core.Tests.Config;
+using Logvu.Core.Tests.Detail;
 using static Logvu.Core.Tests.Store.StoreFixtures;
 
 namespace Logvu.Core.Tests.Store;
@@ -304,5 +305,149 @@ public sealed class RowBuilderTests
 
         Assert.NotNull(head);
         Assert.Empty(head.Columns);
+    }
+
+    /// <summary>The preview of one event text built with the given scheme and message fields, as the store does for a read event.</summary>
+    private static string PreviewOf(string text, ILogScheme scheme, params string[] messageFields)
+    {
+        var extent = new EventExtent(0, Encoding.UTF8.GetByteCount(text), Encoding.UTF8.GetByteCount(text), false, false);
+        (EventRow row, _) = RowBuilder.BuildFromText(text, scheme, 1, extent, new ParseContext(TimeZoneInfo.Utc, messageFields: messageFields));
+        return row.Preview;
+    }
+
+    [Fact]
+    public void Message_fields_follow_the_first_line_in_configuration_order_with_two_spaces_before_the_first()
+    {
+        Assert.Equal("ok  status=503 req.path=/api", PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "status", "req.path"));
+        Assert.Equal("ok  req.path=/api status=503", PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "req.path", "status"));
+    }
+
+    [Fact]
+    public void Message_fields_skip_missing_paths()
+    {
+        Assert.Equal("ok  status=503", PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "nope", "status", "req.missing", "status.x"));
+    }
+
+    [Fact]
+    public void Message_fields_take_nested_and_indexed_paths()
+    {
+        Assert.Equal("ok  err.code=E1 req.tags[1]=b", PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "err.code", "req.tags[1]"));
+    }
+
+    [Fact]
+    public void Message_field_object_and_array_values_are_compact_json()
+    {
+        Assert.Equal(
+            "ok  req={\"path\":\"/api\",\"tags\":[\"a\",\"b\"]} req.tags=[\"a\",\"b\"] ok=true",
+            PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "req", "req.tags", "ok"));
+    }
+
+    [Fact]
+    public void Message_field_named_message_shows_nothing_without_a_json_message_member()
+    {
+        Assert.Equal("ok", PreviewOf(SlogEvent, BuiltInSchemes.SlogJson, "message"));
+    }
+
+    [Fact]
+    public void Message_field_named_message_shows_a_json_message_member()
+    {
+        string text = SlogPrefix + "\"message\":\"from the object\"}";
+
+        Assert.Equal("ok  message=from the object", PreviewOf(text, BuiltInSchemes.SlogJson, "message"));
+    }
+
+    [Fact]
+    public void Message_fields_follow_the_first_line_of_a_multi_line_message()
+    {
+        string text = "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"INFO\",\"msg\":\"first\\nsecond\",\"status\":503}";
+
+        EventRow row = RowOf(text, BuiltInSchemes.SlogJson, Array.Empty<ColumnSpec>());
+        string preview = PreviewOf(text, BuiltInSchemes.SlogJson, "status");
+
+        Assert.Equal("first  status=503", preview);
+        Assert.DoesNotContain('\n', preview);
+        Assert.Equal("first", row.Preview);
+    }
+
+    [Fact]
+    public void Message_fields_of_an_empty_message_have_no_leading_spaces()
+    {
+        string text = "{\"time\":\"2026-11-18T09:00:00Z\",\"level\":\"INFO\",\"msg\":\"\",\"status\":503,\"req\":{\"path\":\"/api\"}}";
+
+        Assert.Equal("status=503 req.path=/api", PreviewOf(text, BuiltInSchemes.SlogJson, "status", "req.path"));
+    }
+
+    [Fact]
+    public void Message_field_values_keep_only_the_first_line()
+    {
+        string text = SlogPrefix + "\"detail\":\"line one\\nline two\"}";
+
+        Assert.Equal("ok  detail=line one", PreviewOf(text, BuiltInSchemes.SlogJson, "detail"));
+    }
+
+    [Fact]
+    public void Message_fields_are_cut_with_the_whole_preview_at_the_cap()
+    {
+        string message = new string('m', 490);
+        string text = SlogPrefix.Replace("\"msg\":\"ok\"", "\"msg\":\"" + message + "\"") + "\"status\":503,\"req\":{\"path\":\"/api/x/y/z\"}}";
+
+        string preview = PreviewOf(text, BuiltInSchemes.SlogJson, "status", "req.path");
+
+        Assert.Equal(RowBuilder.PreviewCap, preview.Length);
+        Assert.Equal((message + "  status=503 req.path=/api/x/y/z")[..RowBuilder.PreviewCap], preview);
+    }
+
+    [Fact]
+    public void A_message_at_the_cap_leaves_no_room_for_message_fields()
+    {
+        string message = new string('m', RowBuilder.PreviewCap);
+        string text = SlogPrefix.Replace("\"msg\":\"ok\"", "\"msg\":\"" + message + "\"") + "\"status\":503}";
+
+        Assert.Equal(message, PreviewOf(text, BuiltInSchemes.SlogJson, "status"));
+    }
+
+    [Fact]
+    public void Message_fields_do_not_change_the_message_or_the_columns()
+    {
+        var extent = new EventExtent(0, Encoding.UTF8.GetByteCount(SlogEvent), Encoding.UTF8.GetByteCount(SlogEvent), false, false);
+
+        (EventRow row, LogEvent ev) = RowBuilder.BuildFromText(SlogEvent, BuiltInSchemes.SlogJson, 1, extent, new ParseContext(TimeZoneInfo.Utc, Columns("status"), ["status"]));
+
+        Assert.Equal("ok", ev.Message);
+        Assert.Equal(new string?[] { "503" }, row.Columns);
+        Assert.Equal("ok  status=503", row.Preview);
+    }
+
+    [Fact]
+    public void Message_fields_leave_a_raw_json_event_unchanged()
+    {
+        const string broken = "{\"time\":\"2026-11-18T09:00:01Z\",\"level\":\"ERR";
+
+        Assert.Equal(broken, PreviewOf(broken, BuiltInSchemes.SlogJson, "status", "level"));
+    }
+
+    [Fact]
+    public void Message_fields_leave_a_text_event_unchanged()
+    {
+        string text = Line(T0, "ERROR", "boom").TrimEnd('\n');
+
+        Assert.Equal("boom", PreviewOf(text, BuiltInSchemes.Log4NetCore, "thread", "logger", "message"));
+    }
+
+    [Fact]
+    public void Message_fields_apply_to_a_serilog_event()
+    {
+        string text = DetailRig.JsonEvents("serilog.json")[0];
+        var extent = new EventExtent(0, Encoding.UTF8.GetByteCount(text), Encoding.UTF8.GetByteCount(text), false, false);
+
+        (EventRow row, LogEvent ev) = RowBuilder.BuildFromText(
+            text,
+            BuiltInSchemes.SerilogJson,
+            1,
+            extent,
+            new ParseContext(TimeZoneInfo.Utc, messageFields: ["Properties.SourceContext", "Properties.Missing", "Properties.RunId"]));
+
+        Assert.Equal("Started run 42", ev.Message);
+        Assert.Equal("Started run 42  Properties.SourceContext=SampleDotNetApp.Runner Properties.RunId=42", row.Preview);
     }
 }

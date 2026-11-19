@@ -31,6 +31,9 @@ internal sealed class LogvuConfigDocument
 
     /// <summary>Each column as a string (its path) or an object, validated by the loader.</summary>
     public List<JsonElement>? Columns { get; set; }
+
+    /// <summary>Each message field as a string, validated by the loader.</summary>
+    public List<JsonElement>? MessageFields { get; set; }
 }
 
 /// <summary>The JSON shape of one configured text scheme.</summary>

@@ -38,7 +38,7 @@ internal sealed class StoreReader
     /// <param name="history">The history reader. It holds no state between calls, so the store may share it.</param>
     public StoreReader(LogvuConfig config, HistoryReader history)
     {
-        _context = new ParseContext(config.TimeZone, config.Columns);
+        _context = new ParseContext(config.TimeZone, config.Columns, config.MessageFields);
         _history = history;
     }
 

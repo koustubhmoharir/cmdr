@@ -142,6 +142,8 @@ internal static class LogvuConfigLoader
 
             IReadOnlyList<ColumnSpec> columns = BuildColumns(document.Columns);
 
+            IReadOnlyList<string> messageFields = BuildMessageFields(document.MessageFields);
+
             Dictionary<string, ILogScheme> configuredSchemes = BuildSchemes(document.Schemes, out List<ILogScheme> schemes);
 
             IEnumerable<string> styleNames = document.Styles is null ? Enumerable.Empty<string>() : document.Styles.Keys;
@@ -174,7 +176,8 @@ internal static class LogvuConfigLoader
                 columns,
                 highlights,
                 styles,
-                frameworkPrefixes);
+                frameworkPrefixes,
+                messageFields);
         }
 
         private LogvuConfigException Error(string jsonPath, string problem) =>
@@ -241,12 +244,38 @@ internal static class LogvuConfigLoader
             return columns;
         }
 
+        /// <summary>
+        /// Validates <c>messageFields</c> in order. Each item is a JSON path string, checked like a column's path. An absent value is an empty list.
+        /// </summary>
+        private IReadOnlyList<string> BuildMessageFields(List<JsonElement>? documents)
+        {
+            if (documents is null)
+            {
+                return [];
+            }
+
+            var paths = new List<string>(documents.Count);
+            for (int i = 0; i < documents.Count; i++)
+            {
+                string itemPath = $"messageFields[{i}]";
+                JsonElement item = documents[i];
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    throw Error(itemPath, $"must be a string, found {item.ValueKind.ToString().ToLowerInvariant()}");
+                }
+
+                paths.Add(ValidPath(item.GetString()!, itemPath));
+            }
+
+            return paths;
+        }
+
         private ColumnSpec BuildColumn(JsonElement item, string itemPath)
         {
             switch (item.ValueKind)
             {
                 case JsonValueKind.String:
-                    return new ColumnSpec(ValidColumnPath(item.GetString()!, itemPath));
+                    return new ColumnSpec(ValidPath(item.GetString()!, itemPath));
                 case JsonValueKind.Object:
                     return BuildColumnObject(item, itemPath);
                 default:
@@ -298,7 +327,7 @@ internal static class LogvuConfigLoader
             }
 
             string pathPath = $"{itemPath}.path";
-            return new ColumnSpec(ValidColumnPath(RequireText(path, pathPath), pathPath), title, width, keepEnd);
+            return new ColumnSpec(ValidPath(RequireText(path, pathPath), pathPath), title, width, keepEnd);
         }
 
         private string TextMember(JsonElement value, string memberPath) =>
@@ -326,8 +355,8 @@ internal static class LogvuConfigLoader
             return width;
         }
 
-        /// <summary>Checks a column's path against the JSON path syntax, which a text event's field name also satisfies.</summary>
-        private string ValidColumnPath(string path, string jsonPath)
+        /// <summary>Checks a column's or message field's path against the JSON path syntax, which a text event's field name also satisfies.</summary>
+        private string ValidPath(string path, string jsonPath)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
