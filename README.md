@@ -57,7 +57,9 @@ dotnet publish src/Cmdr -c Release -r linux-x64    # Linux   → Cmdr
 ```
 
 The executable lands in `src/Cmdr/bin/Release/net10.0/<rid>/publish/`; add `-o <dir>` to choose the
-folder. `./publish.ps1` (PowerShell) publishes both to `publish/win-x64/` and `publish/linux-x64/`. On first run it unpacks one small native library of a dependency to `%TEMP%\.net\Cmdr\` on
+folder. `./publish.ps1` (PowerShell) publishes cmdr and logvu for the current platform to `publish/<rid>/` and installs
+them: on Windows it adds that folder to the user PATH, on Linux it links `~/.local/bin/cmdr` and `~/.local/bin/logvu` to
+the executables. `-All` also publishes for `win-x64` and `linux-x64`; `-NoInstall` skips the install. On first run it unpacks one small native library of a dependency to `%TEMP%\.net\Cmdr\` on
 Windows or `~/.net/Cmdr/` on Linux (override with `DOTNET_BUNDLE_EXTRACT_BASE_DIR`).
 
 Run the tests with `dotnet test`.

@@ -12,7 +12,7 @@ dotnet run --project src/Logvu -- path/to/logvu.json
 dotnet publish src/Logvu -c Release -r win-x64      # or linux-x64 → logvu(.exe)
 ```
 
-`./publish.ps1` publishes cmdr and logvu for both platforms into `publish/<rid>/`.
+`./publish.ps1` publishes cmdr and logvu for the current platform into `publish/<rid>/` and puts them on the PATH (see the README); `-All` publishes for both platforms, `-NoInstall` skips the install.
 
 ## Usage
 
