@@ -113,10 +113,13 @@ public sealed partial class TimelineModel
     }
 
     /// <summary>Whether a row with the key is loaded in the window.</summary>
-    private bool IsLoaded(RowKey key)
+    private bool IsLoaded(RowKey key) => LoadedIndex(key) >= 0;
+
+    /// <summary>The window index of the loaded row with the key, or <c>-1</c> when no row with it is loaded.</summary>
+    private int LoadedIndex(RowKey key)
     {
         int index = LowerBound(key);
-        return index < _rows.Count && _rows[index].Key == key;
+        return index < _rows.Count && _rows[index].Key == key ? index : -1;
     }
 
     /// <summary>

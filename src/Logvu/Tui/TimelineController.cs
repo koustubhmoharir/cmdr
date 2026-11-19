@@ -45,6 +45,12 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     /// <summary>How long a notice of a filter key stays on the status line.</summary>
     internal static readonly TimeSpan NoticeShownFor = TimeSpan.FromSeconds(3);
 
+    /// <summary>
+    /// How long a reload may hold the page on screen before the page is drawn faint. A reload that settles sooner shows the page as it
+    /// was, with no change in its look; one that takes longer shows that it is still loading.
+    /// </summary>
+    internal static readonly TimeSpan HeldDimAfter = TimeSpan.FromMilliseconds(300);
+
     private readonly IApplication _app;
     private readonly LogStore _store;
     private readonly IDetailSource _details;
@@ -64,6 +70,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private EventFilter? _filter;
     private string? _notice;
     private int _noticeEpoch;
+    private int _armedHold;
     private string _statusLeft = "Loading…";
     private string _statusRight = string.Empty;
     private volatile bool _disposed;
@@ -246,7 +253,43 @@ internal sealed class TimelineController : IDisposable, ISearchHost
     private void OnModelChanged()
     {
         _view.SetNeedsDraw();
+        UpdateHold();
         RefreshStatus();
+    }
+
+    /// <summary>
+    /// Keeps the held page's dimming in step with the model. While the model holds a page that has not been timed yet, a timeout of
+    /// <see cref="HeldDimAfter"/> is armed for that hold; when it fires, the page is dimmed if the same hold is still outstanding. A hold
+    /// that settles first is never dimmed, and when the model holds nothing the page is not dimmed.
+    /// </summary>
+    private void UpdateHold()
+    {
+        if (!_model.IsHolding)
+        {
+            if (_view.DimHeld)
+            {
+                _view.DimHeld = false;
+            }
+
+            return;
+        }
+
+        int generation = _model.HoldGeneration;
+        if (generation == _armedHold)
+        {
+            return;
+        }
+
+        _armedHold = generation;
+        _app.AddTimeout(HeldDimAfter, () =>
+        {
+            if (!_disposed && _model.IsHolding && _model.HoldGeneration == generation)
+            {
+                _view.DimHeld = true;
+            }
+
+            return false;
+        });
     }
 
     private void OnViewportRowsChanged(int rows)
@@ -614,7 +657,7 @@ internal sealed class TimelineController : IDisposable, ISearchHost
             parts.Add(search);
         }
 
-        if (TimelineLayout.PageDate(_model.VisibleRows, _config.TimeZone) is { } day)
+        if (TimelineLayout.PageDate(_model.ShownRows, _config.TimeZone) is { } day)
         {
             parts.Add(day);
         }

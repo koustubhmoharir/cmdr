@@ -454,6 +454,72 @@ public sealed class TimelineViewTests
     }
 
     [Fact]
+    public void A_held_reload_draws_the_held_rows_instead_of_the_placeholder()
+    {
+        FakeTimelineSource source = Store(100);
+        TimelineModel model = Model(source);
+        model.Start(3);
+        source.Held.Add(ReadKind.Newest);
+        model.Reset();
+
+        Screen screen = Draw(model, Width, 4, placeholder: "Loading…");
+
+        Assert.True(model.IsHolding);
+        Assert.Empty(model.VisibleRows);
+        Assert.Contains("r97", screen.Text(1));
+        Assert.Contains("r99", screen.Text(3));
+        Assert.DoesNotContain("Loading…", screen.Text(1));
+    }
+
+    [Fact]
+    public void Held_rows_are_drawn_faint_when_dimmed_and_the_selection_keeps_its_role()
+    {
+        FakeTimelineSource source = Store(100);
+        TimelineModel model = Model(source);
+        model.Start(3);
+        source.Held.Add(ReadKind.Newest);
+        model.Reset();
+
+        Screen screen = Draw(model, Width, 4, dimHeld: true);
+
+        Attribute other = screen.Cells[1][TextOf(screen, 1, "r97")].Attribute;
+        Attribute selected = screen.Cells[3][TextOf(screen, 3, "r99")].Attribute;
+        Assert.True(other.Style.HasFlag(TextStyle.Faint));
+        Assert.True(selected.Style.HasFlag(TextStyle.Faint));
+        Assert.Equal(screen.Focus.Foreground, selected.Foreground);
+        Assert.Equal(screen.Focus.Background, selected.Background);
+        Assert.False(screen.Cells[0][0].Attribute.Style.HasFlag(TextStyle.Faint));
+    }
+
+    [Fact]
+    public void Held_rows_are_not_faint_until_the_view_is_dimmed()
+    {
+        FakeTimelineSource source = Store(100);
+        TimelineModel model = Model(source);
+        model.Start(3);
+        source.Held.Add(ReadKind.Newest);
+        model.Reset();
+
+        Screen screen = Draw(model, Width, 4);
+
+        Assert.False(screen.Cells[1][TextOf(screen, 1, "r97")].Attribute.Style.HasFlag(TextStyle.Faint));
+        Assert.False(screen.Cells[3][TextOf(screen, 3, "r99")].Attribute.Style.HasFlag(TextStyle.Faint));
+    }
+
+    [Fact]
+    public void Dimming_does_nothing_when_no_page_is_held()
+    {
+        FakeTimelineSource source = Store(100);
+        TimelineModel model = Model(source);
+        model.Start(3);
+
+        Screen screen = Draw(model, Width, 4, dimHeld: true);
+
+        Assert.False(model.IsHolding);
+        Assert.False(screen.Cells[1][TextOf(screen, 1, "r97")].Attribute.Style.HasFlag(TextStyle.Faint));
+    }
+
+    [Fact]
     public void The_model_height_is_the_view_height_less_the_header_and_at_least_one()
     {
         Assert.Equal(4, TimelineView.RowsFor(5));
@@ -491,14 +557,14 @@ public sealed class TimelineViewTests
     /// Draws the view at a size, in a window of the same size, and reads the driver's cells back. The model must be started before
     /// the call; the view is sized to the model's rows plus the header.
     /// </summary>
-    private static Screen Draw(TimelineModel model, int width, int height, string? placeholder = null, IReadOnlyList<ColumnSpec>? columns = null)
+    private static Screen Draw(TimelineModel model, int width, int height, string? placeholder = null, IReadOnlyList<ColumnSpec>? columns = null, bool dimHeld = false)
     {
         using IApplication app = Application.Create();
         app.Init("ansi");
         app.Driver!.SetScreenSize(width, height);
 
         Screen? screen = null;
-        var view = new TimelineView(model, TimeZoneInfo.Utc, columns) { X = 0, Y = 0, Width = width, Height = height, Placeholder = placeholder };
+        var view = new TimelineView(model, TimeZoneInfo.Utc, columns) { X = 0, Y = 0, Width = width, Height = height, Placeholder = placeholder, DimHeld = dimHeld };
         var window = new Window { X = 0, Y = 0, Width = width, Height = height, BorderStyle = LineStyle.None };
         window.Add(view);
         app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>

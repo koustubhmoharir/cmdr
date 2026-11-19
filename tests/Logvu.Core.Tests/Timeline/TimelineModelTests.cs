@@ -584,6 +584,59 @@ public sealed class TimelineModelTests
         Assert.Equal(TimelineMode.Paused, model.Mode);
     }
 
+    [Fact]
+    public void JumpToALoadedRowOnTheViewportSelectsItWithoutLoadingOrMoving()
+    {
+        var source = Store();
+        var model = Model(source);
+        model.Start(3);
+        Seek(model, 50);
+        Assert.Equal("[r50] r51 r52", Render(model));
+        int requests = source.Requests.Count;
+
+        model.JumpTo(Key(51));
+
+        Assert.Equal("r50 [r51] r52", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+        Assert.Equal(requests, source.Requests.Count);
+    }
+
+    [Fact]
+    public void JumpToALoadedRowOffTheViewportCentresItWithinTheLoadedRows()
+    {
+        var source = Store();
+        var model = Model(source);
+        model.Start(5);
+        int requests = source.Requests.Count;
+
+        model.JumpTo(Key(90));
+
+        Assert.Equal("r88 r89 [r90] r91 r92", Render(model));
+        Assert.Equal(TimelineMode.Paused, model.Mode);
+        Assert.Equal(2, model.SelectedScreenRow);
+        Assert.DoesNotContain(source.Requests.Skip(requests), request => request.Kind == ReadKind.Newest || request.Kind == ReadKind.Newer);
+    }
+
+    [Fact]
+    public void JumpToAnUnloadedRowStillReloadsAroundIt()
+    {
+        var source = Store();
+        var model = Model(source);
+        model.Start(3);
+        source.Held.Add(ReadKind.Newer);
+
+        model.JumpTo(Key(50));
+
+        Assert.Equal(1, source.Waiting(ReadKind.Newer));
+        Assert.True(model.IsHolding);
+        Assert.Equal("r97 r98 [r99]", Shown(model));
+
+        source.CompleteOldest(ReadKind.Newer);
+
+        Assert.Equal("r49 [r50] r51", Render(model));
+        Assert.False(model.IsHolding);
+    }
+
     private static EventRow Row(int index, string? preview = null) => new(
         new RowKey(1, index * 100L),
         new EventExtent(0, 0, 0, false, false),
@@ -608,6 +661,10 @@ public sealed class TimelineModelTests
     /// <summary>Renders the viewport with the selected row in brackets, for example "r7 r8 [r9]".</summary>
     private static string Render(TimelineModel model) =>
         string.Join(' ', model.VisibleRows.Select((row, screenRow) => screenRow == model.SelectedScreenRow ? $"[{row.Preview}]" : row.Preview));
+
+    /// <summary>Renders the rows the owner shows, held or not, in the same form as <see cref="Render"/>.</summary>
+    private static string Shown(TimelineModel model) =>
+        string.Join(' ', model.ShownRows.Select((row, screenRow) => screenRow == model.ShownSelectedScreenRow ? $"[{row.Preview}]" : row.Preview));
 
     /// <summary>Moves the selection, pausing, until it reaches the row with the index.</summary>
     private static void Seek(TimelineModel model, int index)

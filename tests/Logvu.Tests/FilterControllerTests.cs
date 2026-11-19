@@ -328,9 +328,10 @@ public sealed class FilterControllerTests : IDisposable
         _posted.PumpUntil(() => _controller.Model.VisibleRows.Count == 2, "the matching rows");
         _controller.Model.Pause();
 
-        // A reload in progress has not placed the window yet, so an arrival during it cannot be counted.
+        // A reload in progress has not placed the window yet, so an arrival during it cannot be counted. Row 0 does not match the
+        // filter, so it is not loaded and the jump reloads; a loaded row would be selected in place.
         HoldEveryRead();
-        _controller.Model.JumpTo(new RowKey(1, 300));
+        _controller.Model.JumpTo(new RowKey(1, 0));
         _controller.Model.Arrive([Row(Rows, "needle 10")], []);
 
         Assert.True(_controller.Model.HasUnseenArrivals);

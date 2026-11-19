@@ -34,6 +34,7 @@ internal sealed class TimelineView : View
     private string? _placeholder;
     private SearchPattern? _search;
     private RowKey? _activeRow;
+    private bool _dimHeld;
 
     /// <summary>Creates the view. It draws nothing but its header until a placeholder or rows are shown.</summary>
     /// <param name="model">The model the view draws and drives.</param>
@@ -95,6 +96,20 @@ internal sealed class TimelineView : View
         set
         {
             _activeRow = value;
+            SetNeedsDraw();
+        }
+    }
+
+    /// <summary>
+    /// Whether the rows of a held page are drawn faint, while the model holds one (see <see cref="TimelineModel.IsHolding"/>). The owner
+    /// sets it once a reload has taken long enough to be worth showing. The header and the placeholder are not faint.
+    /// </summary>
+    public bool DimHeld
+    {
+        get => _dimHeld;
+        set
+        {
+            _dimHeld = value;
             SetNeedsDraw();
         }
     }
@@ -243,7 +258,8 @@ internal sealed class TimelineView : View
         Attribute focus = GetAttributeForRole(VisualRole.Focus);
         var header = new Attribute(normal.Foreground, normal.Background, TextStyle.Bold);
 
-        IReadOnlyList<EventRow> visible = _model.VisibleRows;
+        IReadOnlyList<EventRow> visible = _model.ShownRows;
+        bool faint = _dimHeld && _model.IsHolding;
         // The extra columns only grow while the width stays the same, so scrolling does not make the columns jump.
         if (width != _floorWidth)
         {
@@ -263,14 +279,14 @@ internal sealed class TimelineView : View
             _extraFloors[i] = Math.Max(_extraFloors[i], page.Columns.Extra[i]);
         }
 
-        DrawLine(0, TimelineLayout.Header(page.Columns, _columns), page.Columns, header, selected: false, active: false);
+        DrawLine(0, TimelineLayout.Header(page.Columns, _columns), page.Columns, header, selected: false, active: false, faint: false);
 
         for (int i = 0; i < page.Lines.Count && i + 1 < height; i++)
         {
-            bool selected = i == _model.SelectedScreenRow;
+            bool selected = i == _model.ShownSelectedScreenRow;
             Attribute baseline = selected ? focus : normal;
             bool active = _activeRow is { } key && key == visible[i].Key;
-            DrawLine(i + 1, page.Lines[i], page.Columns, baseline, selected, active);
+            DrawLine(i + 1, page.Lines[i], page.Columns, baseline, selected, active, faint);
         }
 
         if (visible.Count == 0 && _placeholder is { } text && height > 1)
@@ -285,30 +301,31 @@ internal sealed class TimelineView : View
 
     /// <summary>
     /// Draws one line: each column at its offset, with the attribute of its cell. The extra columns and the message are searched; the
-    /// time and the level are not.
+    /// time and the level are not. A faint line is drawn with the faint style on every cell.
     /// </summary>
-    private void DrawLine(int row, TimelineLine line, TimelineColumns columns, Attribute baseline, bool selected, bool active)
+    private void DrawLine(int row, TimelineLine line, TimelineColumns columns, Attribute baseline, bool selected, bool active, bool faint)
     {
         int x = 0;
-        DrawCell(x, row, columns.Time, line.Time, LevelColors.Text(line.Severity, baseline, selected), searched: false, active);
+        DrawCell(x, row, columns.Time, line.Time, LevelColors.Text(line.Severity, baseline, selected), searched: false, active, faint);
         x += columns.Time > 0 ? columns.Time + 1 : 0;
-        DrawCell(x, row, columns.Level, line.LevelLabel, LevelColors.Label(line.Severity, baseline, selected), searched: false, active);
+        DrawCell(x, row, columns.Level, line.LevelLabel, LevelColors.Label(line.Severity, baseline, selected), searched: false, active, faint);
         x += columns.Level > 0 ? columns.Level + 1 : 0;
         for (int i = 0; i < columns.Extra.Count; i++)
         {
             int width = columns.Extra[i];
-            DrawCell(x, row, width, line.Extra[i], LevelColors.Text(line.Severity, baseline, selected), searched: true, active);
+            DrawCell(x, row, width, line.Extra[i], LevelColors.Text(line.Severity, baseline, selected), searched: true, active, faint);
             x += width > 0 ? width + 1 : 0;
         }
 
-        DrawCell(x, row, columns.Message, line.Message, LevelColors.Message(line.Severity, baseline, selected), searched: true, active);
+        DrawCell(x, row, columns.Message, line.Message, LevelColors.Message(line.Severity, baseline, selected), searched: true, active, faint);
     }
 
     /// <summary>
     /// Draws one cell. A searched cell is drawn in runs: its matches in the match colors, or the active colors on the active row, and
-    /// the rest in <paramref name="attribute"/>. The matches are those of the cell's text as drawn.
+    /// the rest in <paramref name="attribute"/>. The matches are those of the cell's text as drawn. A faint cell adds the faint style to
+    /// each run's attribute, so the selection keeps its background and role.
     /// </summary>
-    private void DrawCell(int x, int row, int width, string text, Attribute attribute, bool searched, bool active)
+    private void DrawCell(int x, int row, int width, string text, Attribute attribute, bool searched, bool active, bool faint)
     {
         if (width <= 0)
         {
@@ -319,7 +336,7 @@ internal sealed class TimelineView : View
         if (matches is null or { Count: 0 })
         {
             Move(x, row);
-            SetAttribute(attribute);
+            SetAttribute(faint ? Faint(attribute) : attribute);
             AddStr(text);
             return;
         }
@@ -327,8 +344,13 @@ internal sealed class TimelineView : View
         foreach (SearchRun run in SearchHighlight.Split(text, 0, text.Length, matches, _ => active))
         {
             Move(x + TextWidth.Columns(text[..run.Start]), row);
-            SetAttribute(SearchHighlight.Paint(attribute, run.Kind));
+            Attribute painted = SearchHighlight.Paint(attribute, run.Kind);
+            SetAttribute(faint ? Faint(painted) : painted);
             AddStr(text[run.Start..run.End]);
         }
     }
+
+    /// <summary>The attribute with the faint style added, and its colors and other style kept.</summary>
+    private static Attribute Faint(Attribute attribute) =>
+        new(attribute.Foreground, attribute.Background, attribute.Style | TextStyle.Faint);
 }

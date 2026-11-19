@@ -44,6 +44,8 @@ public sealed partial class TimelineModel
     private bool _hasUnseenArrivals;
     private long _unseenMark;
     private bool _filterTimedOut;
+    private HeldPage? _held;
+    private int _holdGeneration;
 
     /// <summary>Creates a model with no rows. Call <see cref="Start"/> to load the timeline.</summary>
     /// <param name="source">The rows to load.</param>
@@ -108,6 +110,30 @@ public sealed partial class TimelineModel
 
     /// <summary>The selected row, or <c>null</c> when there are no rows.</summary>
     public EventRow? SelectedRow => _rows.Count == 0 ? null : _rows[_selected];
+
+    /// <summary>
+    /// The rows the owner shows: the page held while a reload is outstanding (see <see cref="IsHolding"/>), otherwise
+    /// <see cref="VisibleRows"/>.
+    /// </summary>
+    public IReadOnlyList<EventRow> ShownRows => _held?.Rows ?? VisibleRows;
+
+    /// <summary>
+    /// The selected row's screen row within <see cref="ShownRows"/>: the held one while holding, otherwise
+    /// <see cref="SelectedScreenRow"/>.
+    /// </summary>
+    public int ShownSelectedScreenRow => _held?.SelectedScreenRow ?? SelectedScreenRow;
+
+    /// <summary>
+    /// Whether a reload holds the page it was showing. It starts when a reload begins while rows are loaded, and ends when the reload has
+    /// rows or has settled with none. While it holds, <see cref="VisibleRows"/> is empty and <see cref="ShownRows"/> is the held page.
+    /// </summary>
+    public bool IsHolding => _held is not null;
+
+    /// <summary>
+    /// The number of holds that have started, so that an owner's timer can tell one hold from the next. It does not change while a
+    /// hold is outstanding, since a reload that starts while holding keeps the held page.
+    /// </summary>
+    public int HoldGeneration => _holdGeneration;
 
     /// <summary>Whether a load is outstanding.</summary>
     public bool IsLoading => _newest is not null || _older is not null || _newer is not null;
@@ -243,18 +269,37 @@ public sealed partial class TimelineModel
     }
 
     /// <summary>
-    /// Pauses Follow, reloads the window around a row and selects it. The row is placed on the middle screen row of the viewport where the
-    /// loaded rows allow it: the rows before it load as the viewport needs them, and at either end of history the row moves toward the
-    /// edge. A later jump, a reset or a resume supersedes an outstanding jump.
+    /// Pauses Follow and selects a row. A row that is loaded is selected in place, without a reload: the viewport keeps its place when the
+    /// row is already on the viewport, and otherwise moves so that the row sits on the middle screen row, within the loaded rows. A row
+    /// that is not loaded reloads the window around it: the row is placed on the middle screen row of the viewport where the loaded rows
+    /// allow it, the rows before it load as the viewport needs them, and at either end of history the row moves toward the edge. A later
+    /// jump, a reset or a resume supersedes an outstanding jump.
     /// </summary>
     /// <param name="key">The row to show. Its generation must be in the timeline.</param>
     public void JumpTo(RowKey key)
     {
+        int index = LoadedIndex(key);
         SetPaused();
-        BeginReload();
-        _pivot = key;
-        _pivotScreenRow = _height / 2;
-        Request(LoadKind.Newer, key, inclusive: true);
+        if (index >= 0)
+        {
+            // The selection the caller made supersedes queued navigation and any pivot of an earlier reload.
+            _queue.Clear();
+            _pivot = null;
+            if (index < _top || index >= _top + _height)
+            {
+                _top = index - _height / 2;
+            }
+
+            _selected = index;
+        }
+        else
+        {
+            BeginReload();
+            _pivot = key;
+            _pivotScreenRow = _height / 2;
+            Request(LoadKind.Newer, key, inclusive: true);
+        }
+
         Finish();
     }
 
@@ -301,6 +346,11 @@ public sealed partial class TimelineModel
 
     private int LastIndex => Math.Max(0, _rows.Count - 1);
 
+    /// <summary>The page a reload holds: the rows shown when it began, and the selected row's screen row among them.</summary>
+    /// <param name="Rows">The rows shown, oldest first.</param>
+    /// <param name="SelectedScreenRow">The selected row's screen row within <paramref name="Rows"/>.</param>
+    private sealed record HeldPage(IReadOnlyList<EventRow> Rows, int SelectedScreenRow);
+
     /// <summary>Pauses Follow. A navigation by the user supersedes a selection that a truncation was to restore.</summary>
     private void SetPaused()
     {
@@ -339,9 +389,18 @@ public sealed partial class TimelineModel
         Request(LoadKind.Newest, default);
     }
 
-    /// <summary>Drops the window, the queue and the outstanding loads, and starts a new generation.</summary>
+    /// <summary>
+    /// Drops the window, the queue and the outstanding loads, and starts a new generation. When rows are loaded and no hold is
+    /// outstanding, the page being shown is held (see <see cref="IsHolding"/>), so the owner keeps drawing it until the reload settles.
+    /// </summary>
     private void BeginReload()
     {
+        if (_held is null && _rows.Count > 0)
+        {
+            _held = new HeldPage(VisibleRows, SelectedScreenRow);
+            _holdGeneration++;
+        }
+
         _generation++;
         Cancel(ref _newest);
         Cancel(ref _older);
@@ -438,12 +497,17 @@ public sealed partial class TimelineModel
     }
 
     /// <summary>
-    /// Completes a change: settles the state and raises <see cref="Changed"/>. Every public call ends with it, and so does every
-    /// applied load.
+    /// Completes a change: settles the state, releases a held page that the reload no longer needs, and raises <see cref="Changed"/>.
+    /// Every public call ends with it, and so does every applied load.
     /// </summary>
     private void Finish()
     {
         Settle();
+        if (_held is not null && (_rows.Count > 0 || !IsLoading))
+        {
+            _held = null;
+        }
+
         Changed?.Invoke();
     }
 
