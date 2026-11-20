@@ -283,4 +283,100 @@ public class SessionInputTests
             Cleanup(session);
         }
     }
+
+    [Fact]
+    public void InputsForRestart_CommandBesideActiveRun_AsksForNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq(
+            "build",
+            Shell("loop", "sleep 600", "${input:y}"),
+            Echo("b", "${input:x}")));
+        try
+        {
+            CommandEntry loop = session.Groups[0].Commands[0];
+            CommandEntry b = session.Groups[0].Commands[1];
+
+            Assert.Null(session.Activate(new[] { loop }, new Dictionary<string, string> { ["y"] = "1" }));
+            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
+
+            // The sequence that runs loop refuses b's start, and nothing it runs is cancelled by a restart of b.
+            Assert.Empty(session.InputsForRestart(new[] { b }));
+
+            // Control: a restart of loop ends its own run, so its input is asked for; with b, both are asked for.
+            Assert.Equal(new[] { Required("y") }, session.InputsForRestart(new[] { loop }));
+            Assert.Equal(new[] { Required("y"), Required("x") }, session.InputsForRestart(new[] { loop, b }));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void InputsForRestart_GroupBelowSequentialGroupWithRunningCommand_AsksForNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq(
+            "outer",
+            Sleeper("loop"),
+            Seq("inner", Echo("b", "${input:x}"))));
+        try
+        {
+            GroupEntry outer = session.Groups[0];
+            GroupEntry inner = outer.Groups[0];
+            CommandEntry loop = outer.Commands[0];
+
+            Assert.Null(session.Activate(new[] { loop }));
+            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
+
+            // Restarting inner would not cancel the run of outer, so loop (still running) refuses the start of b.
+            Assert.Empty(session.InputsForRestart(inner));
+
+            // A restart of outer stops loop and cancels its run, so b's start is not refused.
+            Assert.Equal(new[] { Required("x") }, session.InputsForRestart(outer));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void InputsForRestart_CommandBesideCommandLeftRunningByCancelledRun_AsksForNothingButGroupDoes()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq("build", Sleeper("a"), Echo("b", "${input:x}")));
+        try
+        {
+            GroupEntry build = session.Groups[0];
+            CommandEntry a = build.Commands[0];
+            CommandEntry b = build.Commands[1];
+
+            Assert.Null(session.Activate(build));
+            WaitUntil(() => a.Process.Snapshot.State == ProcessState.Running, "first command running", a.Process);
+            Assert.True(b.IsQueued);
+
+            // Stopping the queued b cancels the run, and a keeps running after the run has ended.
+            Assert.Null(session.Stop(new[] { b }));
+            WaitUntil(() => !build.IsSequenceRunning, "run to end", a.Process);
+            Assert.Equal(ProcessState.Running, a.Process.Snapshot.State);
+
+            // A restart of b does not stop a, so a's running blocks b's start.
+            Assert.Empty(session.InputsForRestart(new[] { b }));
+
+            // A restart of the group stops a, so the start of b is not refused.
+            Assert.Equal(new[] { Required("x") }, session.InputsForRestart(build));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
 }

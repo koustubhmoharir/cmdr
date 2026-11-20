@@ -108,7 +108,8 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 `InputPlaceholders` scans args for `${input:NAME}` / `${input:NAME?}` (escape `$${input:`). Malformed
 placeholders are validation errors and copied literally otherwise. `Session.InputsForActivate/
 InputsForRestart` mirror the real start decisions (kill-instead-of-start, refused starts, startable
-commands) and merge requests by name (required wins over `?`). Enter decides first: `Session.PrepareActivate`
+commands) and merge requests by name (required wins over `?`). For restart, the refusal check ignores the runs it
+cancels and the commands it stops. Enter decides first: `Session.PrepareActivate`
 returns a `PreparedActivation` with the decision (kill the stopping or leftover commands, or start the startable ones),
 the commands that were startable then, and the requests for the dialog; `InputsForActivate` is its `Requests`.
 `Activate(prepared, inputs)` carries out that decision and starts only the prepared commands that can still start,

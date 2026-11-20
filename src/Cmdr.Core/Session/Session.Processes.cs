@@ -571,7 +571,8 @@ public sealed partial class Session
     /// <summary>
     /// The inputs that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
     /// would need for these targets. Restart stops the running targets first, so targets that are running or stopping are
-    /// included as if they would start; whether they do depends on their exit. Empty when no input is needed.
+    /// included as if they would start; whether they do depends on their exit. Empty when the restart's start would be refused,
+    /// allowing for the runs the restart cancels and the commands it stops. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
     public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets)
@@ -582,24 +583,49 @@ public sealed partial class Session
             return Array.Empty<InputPlaceholders.InputRequest>();
         }
 
-        return RequestsFor(targets.Where(WillStartAfterStop));
+        List<CommandEntry> willStart = targets.Where(WillStartAfterStop).ToList();
+        if (willStart.Count == 0)
+        {
+            return NoRequests;
+        }
+
+        bool refused;
+        lock (_sync)
+        {
+            List<SequenceRun> affected = ActiveRuns().Where(run => targets.Any(target => run.Contains(target))).ToList();
+            var view = new RestartView(
+                affected,
+                new HashSet<CommandEntry>(targets.Where(IsRunningOrStopping)));
+            refused = CommandsRefusal(group, willStart, view) is not null;
+        }
+
+        return refused ? NoRequests : RequestsFor(willStart);
     }
 
     /// <summary>
     /// The inputs that <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/> would need for
     /// this group. Running and stopping commands below it are included as in <see cref="InputsForRestart(IReadOnlyList{CommandEntry})"/>.
+    /// Empty when the restart's start would be refused, allowing for the runs the restart cancels and the commands it stops.
     /// </summary>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
     public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(GroupEntry group)
     {
         EnsureOwned(group);
         List<PlanNode> children;
+        bool refused = false;
         lock (_sync)
         {
             children = PlanChildren(group, WillStartAfterStop);
+            if (children.Count > 0)
+            {
+                var view = new RestartView(
+                    RunsCancelledFor(group),
+                    new HashSet<CommandEntry>(group.AllCommands.Where(IsRunningOrStopping)));
+                refused = GroupRefusal(group, children, view) is not null;
+            }
         }
 
-        return RequestsFor(CollectCommands(children));
+        return refused ? NoRequests : RequestsFor(CollectCommands(children));
     }
 
     /// <summary>Toggles the log file of a command. Does not change the spec or the dirty flag.</summary>
@@ -917,37 +943,38 @@ public sealed partial class Session
 
     /// <summary>
     /// The reason a plan cannot start: a sequential group in it already has a run, a sequential group in it has a command that
-    /// is still running or stopping, or a command in it is busy. Null when it can. Caller holds <c>_sync</c>.
+    /// is still running or stopping, or a command in it is busy. Null when it can. With a <paramref name="view"/>, the runs it
+    /// ends and the commands it stops are not counted (see <see cref="CommandsRefusal"/>). Caller holds <c>_sync</c>.
     /// </summary>
-    private string? RefusalFor(IReadOnlyList<PlanNode> nodes)
+    private string? RefusalFor(IReadOnlyList<PlanNode> nodes, RestartView? view = null)
     {
         foreach (PlanNode node in nodes)
         {
             if (node.Command is { } command)
             {
-                if (IsBusyCommand(command))
+                if (IsBusyCommand(command, view))
                 {
                     return BusyMessage(command);
                 }
             }
             else if (node.Group is { } group)
             {
-                if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
+                if (group.Mode == GroupMode.Sequential && ActiveSequenceOf(group, view) is not null)
                 {
                     return $"A sequence is already running in group '{group.Name}'.";
                 }
 
-                if (RunningRefusalIn(group, target: null) is { } running)
+                if (RunningRefusalIn(group, target: null, view) is { } running)
                 {
                     return running;
                 }
 
-                if (IsReservedSequentialGroup(group))
+                if (IsReservedSequentialGroup(group, view))
                 {
                     return $"Group '{group.Name}' is already part of a running sequence.";
                 }
 
-                string? nested = RefusalFor(node.Children);
+                string? nested = RefusalFor(node.Children, view);
                 if (nested is not null)
                 {
                     return nested;
@@ -961,60 +988,62 @@ public sealed partial class Session
     /// <summary>
     /// The reason <see cref="StartCommands"/> would refuse these commands, or null: a sequential group already has a run, a
     /// command is part of a running sequence, or a command of a sequential group at or above the group is still running or
-    /// stopping. Caller holds <c>_sync</c>.
+    /// stopping. With a <paramref name="view"/> (a restart's prediction), the runs it ends do not count, a queued command only
+    /// counts when no run it ends contains it, and a command it stops does not block. Caller holds <c>_sync</c>.
     /// </summary>
-    private string? CommandsRefusal(GroupEntry group, IReadOnlyList<CommandEntry> startable)
+    private string? CommandsRefusal(GroupEntry group, IReadOnlyList<CommandEntry> startable, RestartView? view = null)
     {
-        if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
+        if (group.Mode == GroupMode.Sequential && ActiveSequenceOf(group, view) is not null)
         {
             return $"A sequence is already running in group '{group.Name}'.";
         }
 
-        CommandEntry? busy = startable.FirstOrDefault(IsBusyCommand);
+        CommandEntry? busy = startable.FirstOrDefault(entry => IsBusyCommand(entry, view));
         if (busy is not null)
         {
             return BusyMessage(busy);
         }
 
-        return startable.Count == 0 ? null : RunningRefusalAbove(group, startable[0].Spec.Name);
+        return startable.Count == 0 ? null : RunningRefusalAbove(group, startable[0].Spec.Name, view);
     }
 
     /// <summary>
     /// The reason <see cref="StartGroup"/> would refuse the plan of a group, or null: a sequential group already has a run, a
     /// group is part of a running sequence, a sequential group at or above the group has a command still running or stopping,
-    /// or the plan is refused by <see cref="RefusalFor"/>. Caller holds <c>_sync</c>.
+    /// or the plan is refused by <see cref="RefusalFor"/>. With a <paramref name="view"/>, as for <see cref="CommandsRefusal"/>.
+    /// Caller holds <c>_sync</c>.
     /// </summary>
-    private string? GroupRefusal(GroupEntry group, IReadOnlyList<PlanNode> children)
+    private string? GroupRefusal(GroupEntry group, IReadOnlyList<PlanNode> children, RestartView? view = null)
     {
-        if (group.Mode == GroupMode.Sequential && group.ActiveSequence is not null)
+        if (group.Mode == GroupMode.Sequential && ActiveSequenceOf(group, view) is not null)
         {
             return $"A sequence is already running in group '{group.Name}'.";
         }
 
-        if (IsReservedSequentialGroup(group))
+        if (IsReservedSequentialGroup(group, view))
         {
             return $"Group '{group.Name}' is already part of a running sequence.";
         }
 
-        if (RunningRefusalAbove(group, target: null) is { } running)
+        if (RunningRefusalAbove(group, target: null, view) is { } running)
         {
             return running;
         }
 
-        return RefusalFor(children);
+        return RefusalFor(children, view);
     }
 
     /// <summary>
     /// The reason a start in <paramref name="group"/> is refused because a sequential group at or above it has a command that is
     /// running or stopping, or null. Sequential groups run one command at a time, so a command that a cancelled run left running
     /// blocks new starts in its group until it has exited. <paramref name="target"/> names the command being started; null for a group.
-    /// Caller holds <c>_sync</c>.
+    /// <paramref name="view"/> is passed on to <see cref="RunningRefusalIn"/>. Caller holds <c>_sync</c>.
     /// </summary>
-    private static string? RunningRefusalAbove(GroupEntry group, string? target)
+    private static string? RunningRefusalAbove(GroupEntry group, string? target, RestartView? view = null)
     {
         for (GroupEntry? ancestor = group; ancestor is not null; ancestor = ancestor.Parent)
         {
-            if (RunningRefusalIn(ancestor, target) is { } refusal)
+            if (RunningRefusalIn(ancestor, target, view) is { } refusal)
             {
                 return refusal;
             }
@@ -1027,16 +1056,17 @@ public sealed partial class Session
     /// The reason a new run of <paramref name="group"/> would be refused because one of its commands is running or stopping, or
     /// null. Commands in its sub-groups count too: they are steps of the group's run. Null for a parallel group. Only the group's
     /// own subtree is looked at, not its ancestors, so that a run's steps that are starting together do not block each other.
-    /// Caller holds <c>_sync</c>.
+    /// With a <paramref name="view"/>, commands it stops do not count. Caller holds <c>_sync</c>.
     /// </summary>
-    private static string? RunningRefusalIn(GroupEntry group, string? target)
+    private static string? RunningRefusalIn(GroupEntry group, string? target, RestartView? view = null)
     {
         if (group.Mode != GroupMode.Sequential)
         {
             return null;
         }
 
-        CommandEntry? running = group.AllCommands.FirstOrDefault(IsRunningOrStopping);
+        CommandEntry? running = group.AllCommands.FirstOrDefault(
+            entry => IsRunningOrStopping(entry) && (view is null || !view.Stopped.Contains(entry)));
         if (running is null)
         {
             return null;
@@ -1577,9 +1607,20 @@ public sealed partial class Session
         return task;
     }
 
-    /// <summary>Every active run in the session, nested ones included. Caller holds <c>_sync</c>.</summary>
-    private List<SequenceRun> ActiveRuns() =>
-        GroupEntry.Walk(_groups).OfType<GroupEntry>().Select(g => g.ActiveSequence).OfType<SequenceRun>().ToList();
+    /// <summary>
+    /// Every active run in the session, nested ones included, except those that <paramref name="view"/> ends. Caller holds <c>_sync</c>.
+    /// </summary>
+    private List<SequenceRun> ActiveRuns(RestartView? view = null) =>
+        GroupEntry.Walk(_groups)
+            .OfType<GroupEntry>()
+            .Select(g => g.ActiveSequence)
+            .OfType<SequenceRun>()
+            .Where(run => view is null || !view.Ending.Contains(run))
+            .ToList();
+
+    /// <summary>The group's active run, unless <paramref name="view"/> ends it. Caller holds <c>_sync</c>.</summary>
+    private static SequenceRun? ActiveSequenceOf(GroupEntry group, RestartView? view) =>
+        group.ActiveSequence is { } run && (view is null || !view.Ending.Contains(run)) ? run : null;
 
     /// <summary>
     /// The innermost active run containing each target is cancelled. Innermost is the deepest group among the runs that
@@ -1619,29 +1660,41 @@ public sealed partial class Session
     /// </summary>
     private List<SequenceRun> CancelRunsFor(GroupEntry group)
     {
-        var runs = new List<SequenceRun>();
+        List<SequenceRun> runs;
         lock (_sync)
         {
-            foreach (GroupEntry inside in group.SelfAndDescendantGroups())
-            {
-                if (inside.ActiveSequence is { } insideRun)
-                {
-                    runs.Add(insideRun);
-                }
-            }
-
-            for (GroupEntry? ancestor = group.Parent; ancestor is not null; ancestor = ancestor.Parent)
-            {
-                if (ancestor.ActiveSequence is { } enclosing && enclosing.ContainsGroup(group) && !runs.Contains(enclosing))
-                {
-                    runs.Add(enclosing);
-                }
-            }
+            runs = RunsCancelledFor(group);
         }
 
         foreach (SequenceRun run in runs)
         {
             run.Cancel();
+        }
+
+        return runs;
+    }
+
+    /// <summary>
+    /// The runs that <see cref="CancelRunsFor"/> cancels for the group: the active runs at or below it, and the enclosing runs that
+    /// have it as a step. Caller holds <c>_sync</c>.
+    /// </summary>
+    private static List<SequenceRun> RunsCancelledFor(GroupEntry group)
+    {
+        var runs = new List<SequenceRun>();
+        foreach (GroupEntry inside in group.SelfAndDescendantGroups())
+        {
+            if (inside.ActiveSequence is { } insideRun)
+            {
+                runs.Add(insideRun);
+            }
+        }
+
+        for (GroupEntry? ancestor = group.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ancestor.ActiveSequence is { } enclosing && enclosing.ContainsGroup(group) && !runs.Contains(enclosing))
+            {
+                runs.Add(enclosing);
+            }
         }
 
         return runs;
@@ -1661,17 +1714,21 @@ public sealed partial class Session
         }
     }
 
-    /// <summary>True if the command is queued, or is the current or a pending step of an active run. Caller holds <c>_sync</c>.</summary>
-    private bool IsBusyCommand(CommandEntry entry) =>
-        entry.IsQueued
-        || ActiveRuns().Any(run => run.Contains(entry))
-        || IsReservedSequentialGroup(entry.Group);
+    /// <summary>
+    /// True if the command is queued, or is the current or a pending step of an active run. With a <paramref name="view"/>, a
+    /// queued command does not count when a run it ends contains it, and runs it ends do not count. Caller holds <c>_sync</c>.
+    /// </summary>
+    private bool IsBusyCommand(CommandEntry entry, RestartView? view = null) =>
+        (entry.IsQueued && (view is null || !view.Ending.Any(run => run.Contains(entry))))
+        || ActiveRuns(view).Any(run => run.Contains(entry))
+        || IsReservedSequentialGroup(entry.Group, view);
 
     /// <summary>
-    /// Sequential groups planned by another run are reserved even for commands added after its plan was made. Caller holds <c>_sync</c>.
+    /// Sequential groups planned by another run are reserved even for commands added after its plan was made. With a
+    /// <paramref name="view"/>, runs it ends do not reserve anything. Caller holds <c>_sync</c>.
     /// </summary>
-    private bool IsReservedSequentialGroup(GroupEntry group) =>
-        group.Mode == GroupMode.Sequential && ActiveRuns().Any(run => run.ContainsGroup(group));
+    private bool IsReservedSequentialGroup(GroupEntry group, RestartView? view = null) =>
+        group.Mode == GroupMode.Sequential && ActiveRuns(view).Any(run => run.ContainsGroup(group));
 
     /// <summary>
     /// True if the group has an active run, is a step of one, contains a busy command, or contains a group that is busy.
@@ -1748,6 +1805,13 @@ public sealed partial class Session
 
     /// <summary>True if a restart would start the command: it can start now, or it is running or stopping and is stopped first.</summary>
     private static bool WillStartAfterStop(CommandEntry entry) => entry.Process.CanStart || IsRunningOrStopping(entry);
+
+    /// <summary>
+    /// What a restart clears before it starts, for predicting its refusals: the runs it ends (they are not counted as active)
+    /// and the commands it stops (running or stopping ones that do not block a start). Only the input prediction passes one;
+    /// every other caller sees the session as it is.
+    /// </summary>
+    private sealed record RestartView(IReadOnlyCollection<SequenceRun> Ending, IReadOnlySet<CommandEntry> Stopped);
 
     private static readonly IReadOnlyDictionary<string, string> NoInputs = new Dictionary<string, string>();
 
