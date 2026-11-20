@@ -11,10 +11,10 @@ namespace Cmdr.Tui;
 internal readonly record struct CommandMainText(string Text, int GlyphColumn, int NameColumn);
 
 /// <summary>
-/// The text of a group header: the full line (exactly the requested width, or empty for width 0), and the column and text of
-/// the source label at its end (<c>SourceColumn</c> is -1 and <c>SourceText</c> empty when no label is shown).
+/// The text of a file row: the full line (exactly the requested width, or empty for width 0), and the column and text of its
+/// " (base)" marker (<c>BaseColumn</c> is -1 and <c>BaseText</c> empty when no marker is shown).
 /// </summary>
-internal readonly record struct GroupHeaderText(string Text, int SourceColumn, string SourceText);
+internal readonly record struct FileHeaderText(string Text, int BaseColumn, string BaseText);
 
 /// <summary>Pure text layout of the command list. Every result is exactly the requested width (or empty for width 0).</summary>
 internal static class RowLayout
@@ -42,8 +42,9 @@ internal static class RowLayout
     private const string Unmarked = " ";
     private const string NoValue = "—";
     private const string NotStartedText = "not started";
+    private const string BaseMarker = " (base)";
 
-    /// <summary>Columns of indentation per nesting depth. Depth 0 (a top-level group) has none.</summary>
+    /// <summary>Columns of indentation per nesting depth. Depth 0 (a file row) has none; a top-level group is at depth 1 (see <see cref="TreeRows.ListDepth"/>).</summary>
     public const int IndentPerDepth = 2;
 
     /// <summary>The indentation in columns of an item at the given depth.</summary>
@@ -112,23 +113,7 @@ internal static class RowLayout
     /// sequence runs. A collapsed header shows <c>"▸"</c> and <paramref name="summary"/> after the mode. The header is indented by
     /// <see cref="IndentOf"/> <paramref name="depth"/>. Truncated and padded to <paramref name="width"/>.
     /// </summary>
-    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0) =>
-        FormatGroupHeader(width, name, mode, sequenceRunning, collapsed, summary, depth).Text;
-
-    /// <summary>
-    /// Formats a group header as <see cref="FormatGroupRow"/> does, with <paramref name="sourceLabel"/> (the file a base group comes
-    /// from) after it, separated by two spaces. The label is dropped when the whole header with the label does not fit, so the
-    /// header itself is never truncated for it. Null or empty means no label.
-    /// </summary>
-    public static GroupHeaderText FormatGroupHeader(
-        int width,
-        string name,
-        GroupMode mode,
-        bool sequenceRunning,
-        bool collapsed,
-        string summary,
-        int depth = 0,
-        string? sourceLabel = null)
+    public static string FormatGroupRow(int width, string name, GroupMode mode, bool sequenceRunning, bool collapsed, string summary, int depth = 0)
     {
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(summary);
@@ -142,23 +127,37 @@ internal static class RowLayout
         int shift = IndentOf(depth);
         if (width <= shift)
         {
-            return new GroupHeaderText(new string(' ', Math.Max(width, 0)), -1, string.Empty);
+            return new string(' ', Math.Max(width, 0));
         }
 
-        int room = width - shift;
-        if (!string.IsNullOrEmpty(sourceLabel))
+        return new string(' ', shift) + TextWidth.Fit(text, width - shift);
+    }
+
+    /// <summary>
+    /// Formats a file row: <c>"▾ &lt;path&gt;"</c>, or <c>"▸ &lt;path&gt;"</c> when collapsed. A file of a base file ends with a
+    /// <c>" (base)"</c> marker, which the path gives way to when the line is narrow. Exactly <paramref name="width"/> wide, or empty
+    /// for width 0. The file row is at depth 0: it has no indent.
+    /// </summary>
+    public static FileHeaderText FormatFileRow(int width, string path, bool collapsed, bool isBase)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        if (width <= 0)
         {
-            string withSource = text + "  " + sourceLabel;
-            if (TextWidth.Columns(withSource) <= room)
-            {
-                return new GroupHeaderText(
-                    new string(' ', shift) + TextWidth.Fit(withSource, room),
-                    shift + TextWidth.Columns(text) + 2,
-                    sourceLabel);
-            }
+            return new FileHeaderText(string.Empty, -1, string.Empty);
         }
 
-        return new GroupHeaderText(new string(' ', shift) + TextWidth.Fit(text, room), -1, string.Empty);
+        string head = (collapsed ? "▸ " : "▾ ") + path;
+        int markerWidth = TextWidth.Columns(BaseMarker);
+        if (!isBase || width <= markerWidth)
+        {
+            return new FileHeaderText(TextWidth.Fit(head, width), -1, string.Empty);
+        }
+
+        // The marker stays whole: the path is cut to the room before it.
+        int room = width - markerWidth;
+        string shown = TextWidth.Columns(head) <= room ? head : TextWidth.Fit(head, room);
+        return new FileHeaderText(TextWidth.Fit(shown + BaseMarker, width), TextWidth.Columns(shown), BaseMarker);
     }
 
     /// <summary>The detail text without indent: the start time and detail when there are any, otherwise the kind's own text.</summary>

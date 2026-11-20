@@ -12,7 +12,8 @@ namespace Cmdr.Tui;
 
 /// <summary>
 /// The details strip for the focused row: a command shows its command line, working directory, environment, pid and log,
-/// and description; a group shows its mode, working directory, environment and description (see <see cref="DetailsText"/>).
+/// and description; a group shows its mode, working directory, environment and description; a file row shows its path and
+/// settings (see <see cref="DetailsText"/>).
 /// The lines are wrapped to the width and scroll when they do not fit. The process state is read at draw time. UI thread only.
 /// </summary>
 /// <remarks>
@@ -851,6 +852,11 @@ internal sealed class DetailsView : View, ISearchTarget
             EffectiveEnv.Process(),
             Path.PathSeparator),
         GroupRow group => DetailsText.GroupLines(group.Group, _configDir),
+        FileRow file => DetailsText.FileLines(
+            file.Source,
+            EffectiveEnv.Process(),
+            OperatingSystem.IsWindows(),
+            Path.PathSeparator),
         _ => Array.Empty<DetailsLine>(),
     };
 
@@ -859,6 +865,7 @@ internal sealed class DetailsView : View, ISearchTarget
     {
         CommandRow command => command.Entry,
         GroupRow group => group.Group,
+        FileRow file => file.Source,
         _ => null,
     };
 }

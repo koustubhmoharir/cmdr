@@ -23,7 +23,7 @@ public sealed class ListSearchTargetTests : IDisposable
     public ListSearchTargetTests()
     {
         _host = new FakeHost(_temp.Session);
-        _source = new CommandListSource(new Selection(), new HashSet<GroupEntry>(ReferenceEqualityComparer.Instance));
+        _source = new CommandListSource(new Selection(), new HashSet<object>(ReferenceEqualityComparer.Instance));
         _target = new ListSearchTarget(_host, _source);
     }
 
@@ -61,7 +61,7 @@ public sealed class ListSearchTargetTests : IDisposable
     private ItemEntry Item(string name) =>
         _temp.Session.AllGroups.Cast<ItemEntry>().Concat(_temp.Session.AllEntries).Single(item => item.Name == name);
 
-    /// <summary>The active match as the source holds it: its item's name and its start.</summary>
+    /// <summary>The active match as the source holds it: the name of its row (the display path for a file row) and its start.</summary>
     private (string Name, int Start, int Length)? ActiveOnSource()
     {
         if (_source.ActiveMatch is not { } active)
@@ -69,13 +69,14 @@ public sealed class ListSearchTargetTests : IDisposable
             return null;
         }
 
-        return (active.Item.Name, active.Start, active.Length);
+        string name = active.Key is ConfigSource file ? file.DisplayPath : ((ItemEntry)active.Key).Name;
+        return (name, active.Start, active.Length);
     }
 
     [Fact]
     public void Forward_find_from_the_focused_row_takes_the_first_match_at_or_after_it_and_walks_on_in_order()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
 
         Assert.Equal(SearchResult.Found, _target.Find(backward: false, inclusive: true));
@@ -98,7 +99,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Forward_find_past_the_last_match_wraps_to_the_first_one()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
         for (int i = 0; i < 4; i++)
         {
@@ -114,7 +115,7 @@ public sealed class ListSearchTargetTests : IDisposable
     public void Backward_find_from_the_focused_row_takes_the_last_match_before_it_and_walks_up()
     {
         // The focused row is "ab" (sub's command): its own match is before the end of its row, so backward from the row takes it.
-        _host.FocusedItem = Item("ab");
+        _host.FocusedKey =Item("ab");
         _target.SetSearch(Literal("ab"));
 
         Assert.Equal(SearchResult.Found, _target.Find(backward: true, inclusive: false));
@@ -131,7 +132,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Backward_find_past_the_first_match_wraps_to_the_last_one()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
 
         // From the top row going backward nothing is before the origin, so the search wraps from the end.
@@ -143,7 +144,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Inclusive_find_after_a_longer_query_keeps_the_active_match_and_a_non_inclusive_one_moves_on()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("a"));
         Assert.Equal(SearchResult.Found, _target.Find(backward: false, inclusive: true));
         Assert.Equal(("ab ab", 0, 1), ActiveOnSource());
@@ -161,19 +162,19 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Reveal_is_called_with_the_matched_item()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("zz"));
 
         Assert.Equal(SearchResult.Found, _target.Find(backward: false, inclusive: true));
 
-        Assert.Equal(new[] { Item("zz ab") }, _host.Revealed);
+        Assert.Equal(new object[] { Item("zz ab") }, _host.Revealed);
         Assert.True(_host.Redraws > 0);
     }
 
     [Fact]
     public void Find_without_a_match_calls_nothing_and_changes_no_active_match()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
         Assert.Equal(SearchResult.Found, _target.Find(backward: false, inclusive: true));
         (string Name, int Start, int Length)? before = ActiveOnSource();
@@ -189,7 +190,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Find_without_a_pattern_is_not_found_and_reveals_nothing()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
 
         Assert.Equal(SearchResult.NotFound, _target.Find(backward: false, inclusive: true));
         Assert.Empty(_host.Revealed);
@@ -198,7 +199,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Search_status_counts_every_match_and_numbers_the_active_one_in_list_order()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
         Assert.Equal(new SearchStatus(4, 0), _target.SearchStatus());
 
@@ -210,7 +211,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Active_number_is_zero_when_the_active_match_no_longer_matches_the_pattern()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
         _target.Find(backward: false, inclusive: true);
 
@@ -222,7 +223,7 @@ public sealed class ListSearchTargetTests : IDisposable
     [Fact]
     public void Ending_the_search_clears_the_status_and_the_active_match()
     {
-        _host.FocusedItem = Item("g1");
+        _host.FocusedKey =Item("g1");
         _target.SetSearch(Literal("ab"));
         _target.Find(backward: false, inclusive: true);
 
@@ -253,17 +254,17 @@ public sealed class ListSearchTargetTests : IDisposable
         /// <summary>Every row of the session.</summary>
         public IReadOnlyList<ListRow> AllRows => _session.BuildRows();
 
-        /// <summary>The item the test focuses.</summary>
-        public ItemEntry? FocusedItem { get; set; }
+        /// <summary>The key of the row the test focuses (a group or a command, see <see cref="TreeRows.KeyOf"/>).</summary>
+        public object? FocusedKey { get; set; }
 
-        /// <summary>The items passed to <see cref="Reveal"/>, in call order.</summary>
-        public List<ItemEntry> Revealed { get; } = new();
+        /// <summary>The keys passed to <see cref="Reveal"/>, in call order.</summary>
+        public List<object> Revealed { get; } = new();
 
         /// <summary>How many times the list was asked to redraw.</summary>
         public int Redraws { get; private set; }
 
-        /// <summary>Records the item.</summary>
-        public void Reveal(ItemEntry item) => Revealed.Add(item);
+        /// <summary>Records the key.</summary>
+        public void Reveal(object key) => Revealed.Add(key);
 
         /// <summary>Counts the redraw.</summary>
         public void RedrawList() => Redraws++;

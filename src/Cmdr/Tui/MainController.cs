@@ -57,11 +57,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
     private string? _shownHints;
     private bool _maximized;
 
-    // Groups collapsed in the list. UI state only: not saved, and not part of the session. Compared by identity.
-    private readonly HashSet<GroupEntry> _collapsed = new(ReferenceEqualityComparer.Instance);
+    // Files and groups collapsed in the list, by key (a ConfigSource or a GroupEntry, see TreeRows.KeyOf). UI state only: not saved,
+    // and not part of the session. Compared by identity.
+    private readonly HashSet<object> _collapsed = new(ReferenceEqualityComparer.Instance);
 
-    // Groups the list search expanded to reveal a match. Closing the search collapses them again (see RestoreSearchCollapsed).
-    private readonly HashSet<GroupEntry> _searchExpanded = new(ReferenceEqualityComparer.Instance);
+    // Files and groups the list search expanded to reveal a match. Closing the search collapses them again (see RestoreSearchCollapsed).
+    private readonly HashSet<object> _searchExpanded = new(ReferenceEqualityComparer.Instance);
     private ListSearchTarget _listSearch = null!;
 
     // The search bar's target: the pane that had the focus when the bar opened, while the bar is open. Null while it is closed.
@@ -319,7 +320,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// In run mode, Enter, Ctrl+C, F5, L and Del act on the marks or the focused row here (Del clears their output). In edit mode
     /// Enter and F2 edit the focused row, Del deletes it, and Ctrl+N, Ctrl+G and Alt+Up/Down add and move. The info and output
     /// panes take the same keys for the shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and
-    /// collapsing are list-only.
+    /// collapsing are list-only. A file row does nothing with the command keys (see <see cref="IsIgnoredOnFile"/>); Ctrl+N and Ctrl+G
+    /// add a command or a group as they do with no row focused.
     /// </remarks>
     public bool OnListKey(Key key)
     {
@@ -333,6 +335,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
         if (key == Key.Tab || key == Key.Tab.WithShift)
         {
             CycleFocusPane(backward: key == Key.Tab.WithShift);
+            return true;
+        }
+
+        // A file row takes the keys of a group or command row and does nothing with them: no action and no message.
+        if (focused is FileRow && IsIgnoredOnFile(key))
+        {
             return true;
         }
 
@@ -476,6 +484,15 @@ internal sealed class MainController : IDisposable, IListSearchHost
         key == Key.Space || key == Key.CursorUp.WithShift || key == Key.CursorDown.WithShift || key == Key.A.WithCtrl;
 
     /// <summary>
+    /// The keys a file row takes and does nothing with: Enter, F2, Del, Space, Ctrl+A, Ctrl+C, c, F5, L and Alt+Up/Down. Ctrl+N and
+    /// Ctrl+G are not among them: they add a command or a group whatever row is focused. Left, Right, Up, Down and Shift+Up/Down are
+    /// not among them either.
+    /// </summary>
+    private static bool IsIgnoredOnFile(Key key) =>
+        key == Key.Enter || key == Key.F2 || key == Key.Delete || key == Key.Space || key == Key.A.WithCtrl || key == Key.C
+        || key == Key.C.WithCtrl || key == Key.F5 || key == Key.CursorUp.WithAlt || key == Key.CursorDown.WithAlt || IsLogKey(key);
+
+    /// <summary>
     /// Runs an edit-mode action in edit mode. In run mode it shows the message that says how to reach edit mode. Always handled.
     /// </summary>
     private bool EditOnly(Action action)
@@ -615,18 +632,19 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// A plain click on the ▾ or ▸ of a group header (see <see cref="RowLayout.GroupGlyphColumn"/>). Focuses the header and toggles
-    /// its group the way the keys do: Left collapses an expanded header and Right expands a collapsed one. Other rows are left alone.
+    /// A plain click on the ▾ or ▸ of a file row or a group header (see <see cref="RowLayout.GroupGlyphColumn"/>). Focuses the header and
+    /// toggles it the way the keys do: Left collapses an expanded header and Right expands a collapsed one. Command rows are left alone.
     /// </summary>
     public void OnGroupGlyphClick(int rowIndex)
     {
-        if (rowIndex < 0 || rowIndex >= _rows.Count || _rows[rowIndex] is not GroupRow header)
+        if (rowIndex < 0 || rowIndex >= _rows.Count || _rows[rowIndex] is CommandRow)
         {
             return;
         }
 
+        ListRow header = _rows[rowIndex];
         FocusRowIndex(rowIndex);
-        if (_collapsed.Contains(header.Group))
+        if (_collapsed.Contains(TreeRows.KeyOf(header)))
         {
             ExpandHeader(header);
         }
@@ -686,12 +704,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _ => throw new ArgumentOutOfRangeException(nameof(row), row, "Unknown row type."),
     };
 
-    private static object? KeyOf(ListRow? row) => row switch
-    {
-        GroupRow group => group.Group,
-        CommandRow command => command.Entry,
-        _ => null,
-    };
+    private static object? KeyOf(ListRow? row) => row is null ? null : TreeRows.KeyOf(row);
 
     private static bool IsStoppable(CommandEntry entry)
     {
@@ -837,8 +850,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
         int previousIndex = Math.Max(FocusedIndex, 0);
 
         // Collapsed state of removed groups is dropped; a focused row that is now hidden gives the focus to the header that hides it.
-        _collapsed.RemoveWhere(group => !_session.AllGroups.Any(existing => ReferenceEquals(existing, group)));
-        if (focusedRow is not null && TreeRows.FocusHeaderFor(TreeRows.ItemOf(focusedRow), _collapsed) is { } header)
+        _collapsed.RemoveWhere(key => key is GroupEntry group && !_session.AllGroups.Any(existing => ReferenceEquals(existing, group)));
+        if (focusedRow is GroupRow or CommandRow && TreeRows.FocusHeaderFor(TreeRows.ItemOf(focusedRow), _collapsed) is { } header)
         {
             focusKey = header;
         }
@@ -852,7 +865,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
         int index = focusKey is null ? -1 : IndexOfKey(focusKey);
         if (index < 0 && _rows.Count > 0)
         {
-            index = Math.Clamp(previousIndex, 0, _rows.Count - 1);
+            // Nothing had the focus (the first load): the first group or command, so that a file row does not take it. With no
+            // group or command at all, the first file row.
+            index = focusedRow is null ? FirstItemRowIndex() : Math.Clamp(previousIndex, 0, _rows.Count - 1);
         }
 
         FocusRowIndex(index);
@@ -871,8 +886,25 @@ internal sealed class MainController : IDisposable, IListSearchHost
         return Math.Max(TopRowMinHeight, Math.Min(window * TopRowMaxPercent / 100, wanted));
     }
 
-    /// <summary>The rows shown: everything below a collapsed group is left out, at any depth.</summary>
+    /// <summary>The rows shown: everything below a collapsed file or group is left out, at any depth.</summary>
     private IReadOnlyList<ListRow> VisibleRows(IReadOnlyList<ListRow> all) => TreeRows.Visible(all, _collapsed);
+
+    /// <summary>
+    /// The index of the first row that is not a file row (the first group or command), or of the first row when there is none. Used
+    /// for the focus when nothing had it.
+    /// </summary>
+    private int FirstItemRowIndex()
+    {
+        for (int i = 0; i < _rows.Count; i++)
+        {
+            if (_rows[i] is not FileRow)
+            {
+                return i;
+            }
+        }
+
+        return 0;
+    }
 
     /// <summary>Points the details and output views at the focused row. Called when the focus moves or the rows change.</summary>
     private void UpdateFocusedViews()
@@ -935,19 +967,25 @@ internal sealed class MainController : IDisposable, IListSearchHost
         + (_session.IsDirty ? " *" : string.Empty);
 
     /// <summary>
-    /// Left: on a command, collapses its group (the focus moves to the header). On an expanded header, collapses it. On a
-    /// collapsed header, moves the focus to the header of its parent (nothing at top level).
+    /// Left: on a command, collapses its group (the focus moves to the header). On an expanded header, collapses it. On a collapsed
+    /// group, moves the focus to the header of its parent, or to its file row at top level. A file row collapses; a collapsed file
+    /// does nothing, as there is no header above a file.
     /// </summary>
     private void CollapseOrFocusHeader(ListRow? focused)
     {
         switch (focused)
         {
-            case GroupRow group when _collapsed.Contains(group.Group):
-                if (group.Group.Parent is { } parent)
-                {
-                    FocusKey(parent);
-                }
+            case FileRow file when _collapsed.Contains(file.Source):
+                break;
 
+            case FileRow file:
+                _collapsed.Add(file.Source);
+                RebuildRows();
+                break;
+
+            case GroupRow group when _collapsed.Contains(group.Group):
+                object owner = group.Group.Parent is { } parent ? parent : group.Group.Source;
+                FocusKey(owner);
                 break;
 
             case GroupRow group:
@@ -963,10 +1001,16 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
-    /// <summary>Right: expands a collapsed group header; the focus stays on it. Otherwise nothing.</summary>
+    /// <summary>Right: expands a collapsed file or group header; the focus stays on it. Otherwise nothing.</summary>
     private void ExpandHeader(ListRow? focused)
     {
-        if (focused is GroupRow group && _collapsed.Remove(group.Group))
+        object? key = focused switch
+        {
+            FileRow file => file.Source,
+            GroupRow group => group.Group,
+            _ => null,
+        };
+        if (key is not null && _collapsed.Remove(key))
         {
             RebuildRows();
         }
@@ -976,19 +1020,19 @@ internal sealed class MainController : IDisposable, IListSearchHost
     internal ISearchTarget ListSearch => _listSearch;
 
     /// <summary>
-    /// Collapses again the groups that the list search expanded, except those that hold the focused row, and forgets them. Groups the
-    /// user collapsed or expanded in the meantime need nothing: collapsing a collapsed group changes nothing.
+    /// Collapses again the files and groups that the list search expanded, except those that hold the focused row, and forgets them.
+    /// Those the user collapsed or expanded in the meantime need nothing: collapsing a collapsed one changes nothing.
     /// </summary>
     internal void RestoreSearchCollapsed()
     {
-        ItemEntry? focused = FocusedRow is { } row ? TreeRows.ItemOf(row) : null;
+        ListRow? focused = FocusedRow;
         bool changed = false;
-        foreach (GroupEntry group in _searchExpanded)
+        foreach (object key in _searchExpanded)
         {
-            bool holdsFocus = focused?.Parent is { } parent && GroupTree.IsSelfOrDescendant(parent, group);
-            if (!holdsFocus && _session.AllGroups.Any(existing => ReferenceEquals(existing, group)))
+            bool exists = key is ConfigSource || _session.AllGroups.Any(existing => ReferenceEquals(existing, key));
+            if (!HoldsFocus(key, focused) && exists)
             {
-                changed |= _collapsed.Add(group);
+                changed |= _collapsed.Add(key);
             }
         }
 
@@ -997,6 +1041,31 @@ internal sealed class MainController : IDisposable, IListSearchHost
         {
             RebuildRows();
         }
+    }
+
+    /// <summary>
+    /// Whether the focused row is in the file or group with the key: the file row itself, or an item of that file, or a group or command
+    /// below that group.
+    /// </summary>
+    private static bool HoldsFocus(object key, ListRow? focused)
+    {
+        if (focused is null)
+        {
+            return false;
+        }
+
+        if (focused is FileRow focusedFile)
+        {
+            return ReferenceEquals(focusedFile.Source, key);
+        }
+
+        ItemEntry item = TreeRows.ItemOf(focused);
+        if (key is ConfigSource file)
+        {
+            return ReferenceEquals(item.Source, file);
+        }
+
+        return item.Parent is { } parent && GroupTree.IsSelfOrDescendant(parent, (GroupEntry)key);
     }
 
     #region Search
@@ -1293,19 +1362,22 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>Every row of the session, including those inside collapsed groups.</summary>
     IReadOnlyList<ListRow> IListSearchHost.AllRows => _session.BuildRows();
 
-    /// <summary>The item of the focused row, or null when no row is focused.</summary>
-    ItemEntry? IListSearchHost.FocusedItem => FocusedRow is { } row ? TreeRows.ItemOf(row) : null;
+    /// <summary>The key of the focused row (see <see cref="TreeRows.KeyOf"/>), or null when no row is focused.</summary>
+    object? IListSearchHost.FocusedKey => KeyOf(FocusedRow);
 
-    /// <summary>Expands the collapsed groups above the item, remembering them for <see cref="RestoreSearchCollapsed"/>, then focuses it.</summary>
-    void IListSearchHost.Reveal(ItemEntry item)
+    /// <summary>
+    /// Expands the collapsed file and groups above the item (its file, then its groups), remembering them for
+    /// <see cref="RestoreSearchCollapsed"/>, then focuses the row. A file row is always shown, so it expands nothing.
+    /// </summary>
+    void IListSearchHost.Reveal(object key)
     {
         bool removed = false;
-        for (GroupEntry? ancestor = item.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        if (key is ItemEntry item)
         {
-            if (_collapsed.Remove(ancestor))
+            removed |= RevealCollapsed(item.Source);
+            for (GroupEntry? ancestor = item.Parent; ancestor is not null; ancestor = ancestor.Parent)
             {
-                _searchExpanded.Add(ancestor);
-                removed = true;
+                removed |= RevealCollapsed(ancestor);
             }
         }
 
@@ -1317,7 +1389,19 @@ internal sealed class MainController : IDisposable, IListSearchHost
             _window.Layout();
         }
 
-        FocusKey(item);
+        FocusKey(key);
+    }
+
+    /// <summary>Expands a collapsed file or group for the search, remembering it for <see cref="RestoreSearchCollapsed"/>. True when it was collapsed.</summary>
+    private bool RevealCollapsed(object key)
+    {
+        if (!_collapsed.Remove(key))
+        {
+            return false;
+        }
+
+        _searchExpanded.Add(key);
+        return true;
     }
 
     /// <summary>Redraws the command list.</summary>
@@ -1690,8 +1774,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>Ctrl+N: a command in the focused row's group. Without groups there is nowhere to put it.</summary>
     private void AddCommand(ListRow? focused)
     {
-        // Without a focused row the command goes to the first group of the opened file. A focused base group is refused.
-        GroupEntry? group = focused is null ? GroupTree.Editable(_session.Groups).FirstOrDefault() : GroupOf(focused);
+        // Without a focused row (or with a file row focused) the command goes to the first group of the opened file. A focused base group is refused.
+        GroupEntry? group = focused is null or FileRow ? GroupTree.Editable(_session.Groups).FirstOrDefault() : GroupOf(focused);
         if (group is null)
         {
             ShowMessage("Create a group first (Ctrl+G)");
@@ -1972,8 +2056,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>
     /// The command keys that the focused pane acts on, in the order the bar shows them, or null when it acts on none of them.
     /// The list on a command row acts on all six. The list on a group row acts on Ctrl+C, F5, Ctrl+A (on the whole group) and Del
-    /// (clears the output of the whole group), not Space or L, which only a command row takes. The list with no row, and no pane
-    /// focused, act on none. The info and output panes act on Ctrl+C, F5, L and Del for the shown command alone, when a command is
+    /// (clears the output of the whole group), not Space or L, which only a command row takes. The list with no row, a file row, and no
+    /// pane focused, act on none. The info and output panes act on Ctrl+C, F5, L and Del for the shown command alone, when a command is
     /// shown, and never Space or Ctrl+A.
     /// </summary>
     private static Hint? CommandKeysOf(CopyPane pane, ListRow? focused)
@@ -2070,15 +2154,16 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// The edit-mode hint: "Enter Edit" and "Del Delete" when the focused row (the list) or the shown command (the info pane) can be
-    /// edited; in the list, "^N Command", "^G Group" and, with a row focused, "Alt+↑↓ Move"; the c hint; "^S Save"; and "^E Run".
+    /// The edit-mode hint: "Enter Edit" and "Del Delete" when the focused group or command row (the list) or the shown command (the info
+    /// pane) can be edited; in the list, "^N Command", "^G Group" and, with a group or command row focused, "Alt+↑↓ Move"; the c hint;
+    /// "^S Save"; and "^E Run". A file row has none of the row hints.
     /// </summary>
     private Hint EditHintLeft(CopyPane pane, string? copy)
     {
         bool onList = pane == CopyPane.List;
         bool canEdit = pane switch
         {
-            CopyPane.List => FocusedRow is not null,
+            CopyPane.List => FocusedRow is GroupRow or CommandRow,
             CopyPane.Details or CopyPane.Output => ShownRow is not null,
             _ => false,
         };

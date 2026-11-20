@@ -11,13 +11,14 @@ This repository also contains **logvu**, a terminal viewer for rotated applicati
 
 ```
 ╭┤cmdr.json├───────────────────╮╭┤servers / web├─────────────────────────────╮
-│▾ build  [sequential]         ││$ pnpm start                                │
-│  ✓ restore                   ││cwd: /home/me/project/web                   │
-│    10:40:02  exit 0 · 0:04   ││FORCE_COLOR=1                               │
-│  ✗ build                     ││                                            │
-│    10:40:06  exit 1 · 0:11   ││                                            │
-│▾ servers  [parallel]         ││                                            │
-│  ● web                       ││                                            │
+│▾ cmdr.json                   ││                                            │
+│  ▾ build  [sequential]       ││$ pnpm start                                │
+│    ✓ restore                 ││cwd: /home/me/project/web                   │
+│      10:40:02  exit 0 · 0:04 ││FORCE_COLOR=1                               │
+│    ✗ build                   ││                                            │
+│      10:40:06  exit 1 · 0:11 ││                                            │
+│  ▾ servers  [parallel]       ││                                            │
+│    ● web                     ││                                            │
 ╰──────────────────────────────╯╰────────────────────────────────────────────╯
 ── Output — following ────────────────────────────────────────────────────────
 > web@1.0.0 start
@@ -235,7 +236,7 @@ base file does not set it. Names that are not listed are not imported.
 
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,
-but not edited, and their header shows the file they come from. Ctrl+S saves only the opened file.
+but not edited, and their file's row in the list is marked `(base)`. Ctrl+S saves only the opened file.
 Saving keeps the file's permissions and group, and a config opened through a symbolic link is saved to the link's target.
 On Linux, saving a file owned by another user (that you can write) replaces it with a file owned by you; set
 `CMDR_KEEP_OWNER=1` to write such files in place instead, which keeps their owner but is not crash-safe.
@@ -308,6 +309,12 @@ matches `busy`, e.g. on a rebuild. `busy` is optional.
 
 ## Screen and keys
 
+The list starts with a file row for each config file of the chain, in chain order: the base files first, the opened
+file last. A file row shows the file's path (`▾`, or `▸` when collapsed), and a base file's row ends with a faint
+`(base)`. The file's groups and commands are listed below its row, one level deeper. A file row collapses and expands
+like a group header (← / →, or a click on its `▾` / `▸`); a file without groups still has its row. Its info pane shows the
+file's `base`, `bufferLines`, `logsDir`, `baseEnv`, `envScript` and `secret` as written, and the environment it sets.
+
 The top row has the groups and commands on the left and the focused item's info (command line, working
 directory, environment, description) on the right. In run mode its height follows the list, up to 60% of the window,
 and is at least five rows, and below it, across the full width, is the output of the focused command. Edit mode has
@@ -321,18 +328,20 @@ In run mode, commands act on the marked commands, or the focused command if none
 act on everything in the group. Marks are limited to one group, and switching to edit mode clears them. In the info and
 output panes, Enter, Ctrl+C, F5, L and Del act on the command the panes show (the focused command) alone, ignoring marks; on a
 group header they do nothing there. In edit mode, Enter, F2 and Del in the info pane act on the command it shows.
+On a file row the list's command keys (Enter, Ctrl+C, F5, L, Del, Space, Ctrl+A, F2, c and Alt+↑↓) do nothing, without a
+message; Ctrl+N and Ctrl+G add a command or a top-level group to the opened file, as they do with no row focused.
 
 A key of the other mode does nothing but say which mode it needs (Ctrl+E switches).
 
-The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing. The bottom row shows only the keys that do something in the focused pane, for the current mode: in run mode Space and L only on a command row of the list, Ctrl+A only in the list, the command keys in the info or output pane only when a command is shown there, and Ctrl+S only when there are unsaved changes.
+The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing. The bottom row shows only the keys that do something in the focused pane, for the current mode: in run mode Space and L only on a command row of the list, Ctrl+A only in the list on a group or command row, the command keys in the info or output pane only when a command is shown there, and Ctrl+S only when there are unsaved changes.
 
 Both modes:
 
 | Key | Action |
 |---|---|
 | Ctrl+E | Switch between run mode and edit mode. Switching to edit mode is refused while commands are running or have leftover processes, a sequence runs, or a restart is pending |
-| ← / → | Collapse / expand a group |
-| Click the ▾ / ▸ of a group header | Collapse / expand the group |
+| ← / → | Collapse / expand a file or group |
+| Click the ▾ / ▸ of a file or group header | Collapse / expand it |
 | Tab / Shift+Tab | Move focus: list → info → output (edit mode: list → info) |
 | c | Copy: the command line, with its directory and environment (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output). The status line names what c copies |
 | / or Ctrl+F | Search the focused pane (see below) |
@@ -375,7 +384,7 @@ escape (OSC 52); Windows Terminal, iTerm2, kitty and most modern terminals suppo
 and commands in the list, the info pane's text, or the output (every retained line, partial lines included). Search only
 highlights; it does not filter. All matches are highlighted in yellow, and the current match in cyan, scrolled into view.
 In the output pane, moving to a match pauses following (End resumes it). In the list it focuses that row, expanding
-collapsed groups when the match is inside one.
+collapsed files and groups when the match is inside one. A file row matches on its path.
 
 The bar shows the query, three options and the match count (`3 of 17`). An option that is on is highlighted in cyan.
 While the query field has the focus the status line lists the keys of the search; once the focus is back in a pane, the
@@ -398,7 +407,7 @@ the search (the last 50, without duplicates).
 
 While the bar has the focus it takes every key except Ctrl+Q and Ctrl+S. The mouse wheel still scrolls the panes, and a
 click moves the focus to a pane. Moving the focus to another pane moves the search there. Esc in a pane clears its
-selection first and then closes the search. Closing removes the highlights and collapses again the groups the search
+selection first and then closes the search. Closing removes the highlights and collapses again the files and groups the search
 expanded, except the ones that hold the focused row. F3 with the bar closed brings back the last search (the last
 non-empty query, even after Esc cleared it).
 

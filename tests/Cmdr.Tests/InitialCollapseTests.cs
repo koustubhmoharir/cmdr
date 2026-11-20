@@ -78,11 +78,12 @@ public sealed class InitialCollapseTests : IDisposable
     public void Initial_rows_hide_what_is_below_a_collapsed_group_and_keep_top_level_headers_visible()
     {
         using CmdrSession session = OpenSample();
-        var collapsed = new HashSet<GroupEntry>(TreeRows.InitiallyCollapsed(session.AllGroups), ReferenceEqualityComparer.Instance);
+        var collapsed = new HashSet<object>(TreeRows.InitiallyCollapsed(session.AllGroups), ReferenceEqualityComparer.Instance);
 
         IReadOnlyList<ListRow> shown = TreeRows.Visible(session.BuildRows(), collapsed);
 
-        Assert.Equal(new[] { "shared", "top", "open", "o1" }, shown.Select(row => TreeRows.ItemOf(row).Name));
-        Assert.Null(TreeRows.ItemOf(shown[0]).Parent);
+        // Both file rows stay shown (the base file first); the groups hidden under "shared" and "top" are gone.
+        Assert.Equal(new[] { "shared/base.json", "shared", "cmdr.json", "top", "open", "o1" }, shown.Select(TreeRows.SearchTextOf));
+        Assert.Null(((GroupRow)shown[1]).Group.Parent);
     }
 }

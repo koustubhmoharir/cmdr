@@ -525,21 +525,32 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>
-    /// The rows of the command list: each group header followed by its items, depth-first in file order. Nested groups
-    /// are shown as rows too (indentation is a UI concern).
+    /// The rows of the command list. Each file of <see cref="Sources"/> starts with its <see cref="FileRow"/> (every file, also one
+    /// without groups), followed by the groups and commands of that file, each group header followed by its items, depth-first in
+    /// file order. Nested groups are shown as rows too (indentation is a UI concern).
     /// </summary>
     public IReadOnlyList<ListRow> BuildRows()
     {
         var rows = new List<ListRow>();
-        foreach (ItemEntry item in Walk(_groups))
+        IReadOnlyList<ItemEntry> items = Walk(_groups).ToList();
+        foreach (ConfigSource source in Sources)
         {
-            if (item is GroupEntry group)
+            rows.Add(new FileRow(source));
+            foreach (ItemEntry item in items)
             {
-                rows.Add(new GroupRow(group));
-            }
-            else
-            {
-                rows.Add(new CommandRow((CommandEntry)item));
+                if (!ReferenceEquals(item.Source, source))
+                {
+                    continue;
+                }
+
+                if (item is GroupEntry group)
+                {
+                    rows.Add(new GroupRow(group));
+                }
+                else
+                {
+                    rows.Add(new CommandRow((CommandEntry)item));
+                }
             }
         }
 

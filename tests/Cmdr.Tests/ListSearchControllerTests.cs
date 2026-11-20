@@ -125,8 +125,9 @@ public sealed class ListSearchControllerTests
         using TempSession temp = TempSession.Open(
             new GroupSpec { Name = "ab", Items = { Command("xab ab"), Command("other") } });
 
-        // Rows: the header "ab", then "xab ab" (its main line and its detail line "not started"), then "other". The header
-        // is drawn at column 2, the name "xab ab" at column 4, so its matches are at columns 5-6 and 8-9.
+        // Rows: the file row, then the header "ab", then "xab ab" (its main line and its detail line "not started"), then "other".
+        // The header is at list depth 1: its name is at column 4. The name "xab ab" is at column 6, so its matches are at columns 7-8
+        // and 10-11. The file row has no match.
         IReadOnlyList<Painted[][]> frames = Frames(
             temp,
             40,
@@ -137,15 +138,15 @@ public sealed class ListSearchControllerTests
             controller => controller.ListSearch.Find(backward: false, inclusive: false));
 
         Painted[][] plain = frames[0];
-        var headerMatches = new HashSet<(int Row, int Column)> { (0, 2), (0, 3) };
-        var commandMatches = new HashSet<(int Row, int Column)> { (1, 5), (1, 6), (1, 8), (1, 9) };
+        var headerMatches = new HashSet<(int Row, int Column)> { (1, 4), (1, 5) };
+        var commandMatches = new HashSet<(int Row, int Column)> { (2, 7), (2, 8), (2, 10), (2, 11) };
 
         // The search is on, nothing is active yet: every match is in the match color, and the detail line of a command keeps its cells.
         AssertHighlight(plain, frames[1], headerMatches.Concat(commandMatches), active: Array.Empty<(int, int)>());
 
         // The first find takes the header's match (the first one in list order from the top), the second the command's first match.
         AssertHighlight(plain, frames[2], commandMatches, active: headerMatches);
-        AssertHighlight(plain, frames[3], headerMatches.Concat(new[] { (1, 8), (1, 9) }), active: new[] { (1, 5), (1, 6) });
+        AssertHighlight(plain, frames[3], headerMatches.Concat(new[] { (2, 10), (2, 11) }), active: new[] { (2, 7), (2, 8) });
     }
 
     /// <summary>
@@ -182,24 +183,25 @@ public sealed class ListSearchControllerTests
         }
     }
 
-    /// <summary>The names of the rows the source shows, in order.</summary>
-    private static IEnumerable<string> Names(CommandListSource source) => source.Rows.Select(row => TreeRows.ItemOf(row).Name);
+    /// <summary>The names of the group and command rows the source shows, in order. File rows are left out.</summary>
+    private static IEnumerable<string> Names(CommandListSource source) =>
+        source.Rows.Where(row => row is not FileRow).Select(row => TreeRows.ItemOf(row).Name);
 
-    /// <summary>The name of the focused row, read from the list's selection.</summary>
+    /// <summary>The text of the focused row (its name, or the display path of a file row), read from the list's selection.</summary>
     private static string? FocusedName(MainController controller)
     {
         CommandListView list = Field<CommandListView>(controller, "_list");
         CommandListSource source = Field<CommandListSource>(controller, "_source");
         int row = list.SelectedItem is { } line ? source.Lines.LineToRow(line) : -1;
-        return row >= 0 ? TreeRows.ItemOf(source.Rows[row]).Name : null;
+        return row >= 0 ? TreeRows.SearchTextOf(source.Rows[row]) : null;
     }
 
-    /// <summary>Focuses the shown row with the given name, through the list's selection.</summary>
+    /// <summary>Focuses the shown row with the given text (its name, or the display path of a file row), through the list's selection.</summary>
     private static void FocusRowNamed(MainController controller, string name)
     {
         CommandListView list = Field<CommandListView>(controller, "_list");
         CommandListSource source = Field<CommandListSource>(controller, "_source");
-        int row = Enumerable.Range(0, source.Rows.Count).Single(i => TreeRows.ItemOf(source.Rows[i]).Name == name);
+        int row = Enumerable.Range(0, source.Rows.Count).Single(i => TreeRows.SearchTextOf(source.Rows[i]) == name);
         list.SelectedItem = source.Lines.RowToLine(row);
     }
 

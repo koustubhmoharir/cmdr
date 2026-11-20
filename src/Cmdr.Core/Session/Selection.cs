@@ -92,13 +92,17 @@ public sealed class Selection
     /// <summary>
     /// What an action applies to. A group header means the whole group. A command means the marked commands
     /// when the focused command is in the marked group and something is marked; otherwise just the focused command.
+    /// A file row has no target: null.
     /// </summary>
-    public ActionTarget Targets(ListRow focused)
+    public ActionTarget? Targets(ListRow focused)
     {
         ArgumentNullException.ThrowIfNull(focused);
 
         switch (focused)
         {
+            case FileRow:
+                return null;
+
             case GroupRow header:
                 return new GroupTarget(header.Group);
 

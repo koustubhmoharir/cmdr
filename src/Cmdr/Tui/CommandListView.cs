@@ -39,6 +39,13 @@ internal sealed class CommandListView : ListView
             return;
         }
 
+        // Not laid out yet: there is no height to reveal in, and a reveal against the height of one would scroll the top
+        // of the list out of view (the first focus is on a line below the file row). The first layout keeps the top.
+        if (Viewport.Height <= 0)
+        {
+            return;
+        }
+
         int row = Lines.LineToRow(line);
         int first = Lines.RowToLine(row);
         int last = Lines.LastLineOfRow(row);
@@ -147,7 +154,7 @@ internal sealed class CommandListView : ListView
         return Lines.LineToRow(Viewport.Y + position.Y);
     }
 
-    /// <summary>The group header row under a mouse position when that position is its ▾ or ▸ cell, or -1.</summary>
+    /// <summary>The file or group header row under a mouse position when that position is its ▾ or ▸ cell, or -1.</summary>
     private int GroupGlyphRowAt(Mouse mouse)
     {
         if (mouse.Position is not { } position)
@@ -156,12 +163,19 @@ internal sealed class CommandListView : ListView
         }
 
         int row = RowAt(mouse);
-        if (row < 0 || row >= _source.Rows.Count || _source.Rows[row] is not GroupRow group)
+        if (row < 0 || row >= _source.Rows.Count)
         {
             return -1;
         }
 
-        return position.X == RowLayout.GroupGlyphColumn(group.Group.Depth) ? row : -1;
+        // A file row is at depth 0, the list's top level; a group header at its list depth (see TreeRows.ListDepth).
+        int glyphColumn = _source.Rows[row] switch
+        {
+            FileRow => RowLayout.GroupGlyphColumn(0),
+            GroupRow group => RowLayout.GroupGlyphColumn(TreeRows.ListDepth(group.Group)),
+            _ => -1,
+        };
+        return glyphColumn >= 0 && position.X == glyphColumn ? row : -1;
     }
 
     /// <summary>Up, Down, PageUp, PageDown, Home and End over the main lines. Returns true when the key was handled.</summary>

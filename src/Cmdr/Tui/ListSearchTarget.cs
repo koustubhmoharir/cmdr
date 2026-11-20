@@ -10,27 +10,27 @@ internal interface IListSearchHost
     /// <summary>Every row of the session, including those inside collapsed groups, in list order.</summary>
     IReadOnlyList<ListRow> AllRows { get; }
 
-    /// <summary>The item of the focused row, or null when no row is focused.</summary>
-    ItemEntry? FocusedItem { get; }
+    /// <summary>The key (see <see cref="TreeRows.KeyOf"/>) of the focused row, or null when no row is focused.</summary>
+    object? FocusedKey { get; }
 
-    /// <summary>Expands the collapsed groups that hide the item and focuses its row.</summary>
-    void Reveal(ItemEntry item);
+    /// <summary>Expands the collapsed files and groups that hide the row with the key, and focuses that row.</summary>
+    void Reveal(object key);
 
     /// <summary>Redraws the command list.</summary>
     void RedrawList();
 }
 
 /// <summary>
-/// The search of the command list. The searched text of each row is the name of its item (a group or a command), and every row
-/// of the session is searched, including those hidden in collapsed groups. Going to a match reveals it through the host. Matches
-/// are highlighted by the list source. UI thread only.
+/// The search of the command list. The searched text of each row is its name (a group or a command), or the display path of
+/// its file (a file row), and every row of the session is searched, including those hidden in collapsed files and groups. Going
+/// to a match reveals it through the host. Matches are highlighted by the list source. UI thread only.
 /// </summary>
 internal sealed class ListSearchTarget : ISearchTarget
 {
     private readonly IListSearchHost _host;
     private readonly CommandListSource _source;
     private SearchPattern? _search;
-    private (ItemEntry Item, int Start, int Length)? _active;
+    private (object Key, int Start, int Length)? _active;
 
     /// <param name="host">The controller, which supplies the rows and reveals the matches.</param>
     /// <param name="source">The list source, which draws the highlights.</param>
@@ -73,13 +73,13 @@ internal sealed class ListSearchTarget : ISearchTarget
         }
 
         int last = rows.Count - 1;
-        IReadOnlyList<IReadOnlyList<SearchMatch>> matches = rows.Select(row => pattern.Matches(NameOf(row))).ToList();
+        IReadOnlyList<IReadOnlyList<SearchMatch>> matches = rows.Select(row => pattern.Matches(TreeRows.SearchTextOf(row))).ToList();
 
         int originRow;
         int originStart;
         bool originInclusive;
-        int activeRow = _active is { } active ? IndexOfItem(rows, active.Item) : -1;
-        int focusRow = _host.FocusedItem is { } focused ? IndexOfItem(rows, focused) : -1;
+        int activeRow = _active is { } active ? IndexOfKey(rows, active.Key) : -1;
+        int focusRow = _host.FocusedKey is { } focused ? IndexOfKey(rows, focused) : -1;
         if (_active is { } current && activeRow >= 0)
         {
             originRow = activeRow;
@@ -121,10 +121,10 @@ internal sealed class ListSearchTarget : ISearchTarget
             return SearchResult.NotFound;
         }
 
-        ItemEntry item = TreeRows.ItemOf(rows[target.Row]);
-        _active = (item, target.Match.Start, target.Match.Length);
+        object key = TreeRows.KeyOf(rows[target.Row]);
+        _active = (key, target.Match.Start, target.Match.Length);
         _source.ActiveMatch = _active;
-        _host.Reveal(item);
+        _host.Reveal(key);
         _host.RedrawList();
         return wrapped ? SearchResult.Wrapped : SearchResult.Found;
     }
@@ -145,9 +145,9 @@ internal sealed class ListSearchTarget : ISearchTarget
         int active = 0;
         foreach (ListRow row in _host.AllRows)
         {
-            ItemEntry item = TreeRows.ItemOf(row);
-            IReadOnlyList<SearchMatch> matches = pattern.Matches(item.Name);
-            if (active == 0 && _active is { } current && ReferenceEquals(current.Item, item))
+            object key = TreeRows.KeyOf(row);
+            IReadOnlyList<SearchMatch> matches = pattern.Matches(TreeRows.SearchTextOf(row));
+            if (active == 0 && _active is { } current && ReferenceEquals(current.Key, key))
             {
                 int index = IndexOfMatch(matches, current.Start, current.Length);
                 if (index >= 0)
@@ -162,15 +162,12 @@ internal sealed class ListSearchTarget : ISearchTarget
         return new SearchStatus(count, active);
     }
 
-    /// <summary>The text a row is searched by: the name of its item.</summary>
-    private static string NameOf(ListRow row) => TreeRows.ItemOf(row).Name;
-
-    /// <summary>The index of the row whose item is the given one (compared by reference), or -1.</summary>
-    private static int IndexOfItem(IReadOnlyList<ListRow> rows, ItemEntry item)
+    /// <summary>The index of the row with the given key (compared by reference, see <see cref="TreeRows.KeyOf"/>), or -1.</summary>
+    private static int IndexOfKey(IReadOnlyList<ListRow> rows, object key)
     {
         for (int i = 0; i < rows.Count; i++)
         {
-            if (ReferenceEquals(TreeRows.ItemOf(rows[i]), item))
+            if (ReferenceEquals(TreeRows.KeyOf(rows[i]), key))
             {
                 return i;
             }

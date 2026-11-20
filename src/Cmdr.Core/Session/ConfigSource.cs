@@ -20,6 +20,7 @@ public sealed class ConfigSource
         IsBase = file.IsBase;
         BufferLines = file.Config.BufferLines;
         LogsDirSetting = file.Config.LogsDir;
+        BaseSetting = file.Config.Base;
         Env = file.Config.Env is null ? null : new Dictionary<string, string?>(file.Config.Env);
         _envScript = file.Config.EnvScript?.Clone();
         BaseEnv = file.Config.BaseEnv is null ? null : new List<string>(file.Config.BaseEnv);
@@ -82,6 +83,9 @@ public sealed class ConfigSource
 
     /// <summary>The file's <c>logsDir</c> value as written (null when not set).</summary>
     public string? LogsDirSetting { get; }
+
+    /// <summary>The file's <c>base</c> value as written (null when it imports no file).</summary>
+    public string? BaseSetting { get; }
 
     /// <summary>Resolved directory for the log files of this file's commands.</summary>
     public string LogsDir { get; }

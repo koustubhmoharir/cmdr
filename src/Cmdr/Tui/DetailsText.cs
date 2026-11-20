@@ -15,11 +15,14 @@ internal readonly record struct DetailsScroll(int Offset, int Height, int Total)
 /// </summary>
 internal static class DetailsText
 {
-    /// <summary>The title: the full path of the focused item, e.g. "go-apps / nav / build". Empty without a row.</summary>
+    /// <summary>
+    /// The title: the full path of the focused item, e.g. "go-apps / nav / build", or the display path of a file row. Empty without a row.
+    /// </summary>
     public static string Title(ListRow? row) => row switch
     {
         CommandRow command => GroupTree.PathText(command.Entry, " / "),
         GroupRow group => GroupTree.PathText(group.Group, " / "),
+        FileRow file => file.Source.DisplayPath,
         _ => string.Empty,
     };
 
@@ -253,6 +256,63 @@ internal static class DetailsText
     }
 
     /// <summary>
+    /// The lines of a file row: its path, its <c>base</c> setting as written (when it imports one), its <c>bufferLines</c> and
+    /// resolved <c>logsDir</c>, whether it is read-only, its <c>baseEnv</c>, <c>envScript</c> and <c>secret</c> when set, then the
+    /// environment its own level adds (see <see cref="EnvLines"/>).
+    /// </summary>
+    /// <param name="environment">The process environment the values are applied to (see <see cref="EnvLines"/>).</param>
+    /// <param name="windows">The platform, as for <see cref="EnvLines"/>.</param>
+    /// <param name="pathSeparator">The path separator of the platform, as for <see cref="EnvLines"/>.</param>
+    public static IReadOnlyList<DetailsLine> FileLines(
+        ConfigSource source,
+        IReadOnlyDictionary<string, string?> environment,
+        bool windows,
+        char pathSeparator)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var lines = new List<DetailsLine>
+        {
+            Line(new DetailsSpan("file: ", DetailsStyle.Label), new DetailsSpan(source.Path, DetailsStyle.Path)),
+        };
+
+        if (source.BaseSetting is { } baseSetting && !string.IsNullOrWhiteSpace(baseSetting))
+        {
+            lines.Add(Line(new DetailsSpan("base: ", DetailsStyle.Label), new DetailsSpan(baseSetting, DetailsStyle.Path)));
+        }
+
+        lines.Add(Line(
+            new DetailsSpan("bufferLines: ", DetailsStyle.Label),
+            new DetailsSpan(source.BufferLines.ToString(CultureInfo.InvariantCulture), DetailsStyle.Normal)));
+        lines.Add(Line(new DetailsSpan("logsDir: ", DetailsStyle.Label), new DetailsSpan(source.LogsDir, DetailsStyle.Path)));
+
+        if (source.IsBase)
+        {
+            lines.Add(Line(new DetailsSpan("read-only (base file)", DetailsStyle.Faint)));
+        }
+
+        if (source.BaseEnv is { Count: > 0 } baseEnv)
+        {
+            lines.Add(Line(new DetailsSpan("baseEnv: ", DetailsStyle.Label), new DetailsSpan(string.Join(", ", baseEnv), DetailsStyle.Normal)));
+        }
+
+        if (source.EnvScript is { } envScript)
+        {
+            string command = string.Join(" ", new[] { envScript.Program }.Concat(envScript.Args));
+            lines.Add(Line(new DetailsSpan("envScript: ", DetailsStyle.Label), new DetailsSpan(command, DetailsStyle.Normal)));
+        }
+
+        if (source.Secret is { Count: > 0 } secret)
+        {
+            lines.Add(Line(new DetailsSpan("secret: ", DetailsStyle.Label), new DetailsSpan(string.Join(", ", secret), DetailsStyle.Normal)));
+        }
+
+        lines.AddRange(EnvLines(source.EnvLevels, source.Dir, environment, windows, pathSeparator));
+        return lines;
+    }
+
+    /// <summary>
     /// The directory that the relative paths of a row resolve against: the directory of the file the item comes from, so that a
     /// base item uses its own directory. <paramref name="fallback"/> when there is no row.
     /// </summary>
@@ -264,6 +324,7 @@ internal static class DetailsText
         {
             CommandRow command => command.Entry.Source.Dir,
             GroupRow group => group.Group.Source.Dir,
+            FileRow file => file.Source.Dir,
             _ => fallback,
         };
     }

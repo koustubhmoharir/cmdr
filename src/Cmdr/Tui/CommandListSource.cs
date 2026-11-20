@@ -16,16 +16,16 @@ namespace Cmdr.Tui;
 /// </summary>
 internal sealed class CommandListSource : IListDataSource
 {
-    /// <summary>Columns from the indent of a group header to its name: the "▾ " or "▸ " before it.</summary>
+    /// <summary>Columns from the indent of a group or file header to its name: the "▾ " or "▸ " before it.</summary>
     private const int HeaderNameOffset = 2;
 
-    private readonly IReadOnlySet<GroupEntry> _collapsed;
+    private readonly IReadOnlySet<object> _collapsed;
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private DisplayLines _lines = DisplayLines.Build(Array.Empty<ListRow>());
 
     /// <param name="selection">The marks shown on command rows.</param>
-    /// <param name="collapsed">The groups whose headers show a summary. Owned by the caller; read at draw time.</param>
-    public CommandListSource(Selection selection, IReadOnlySet<GroupEntry> collapsed)
+    /// <param name="collapsed">The collapsed files and groups (their keys, see <see cref="TreeRows.KeyOf"/>). Owned by the caller; read at draw time.</param>
+    public CommandListSource(Selection selection, IReadOnlySet<object> collapsed)
     {
         Selection = selection;
         _collapsed = collapsed;
@@ -38,10 +38,10 @@ internal sealed class CommandListSource : IListDataSource
     public SearchPattern? Search { get; set; }
 
     /// <summary>
-    /// The active match, drawn in its own color: its item (compared by reference), and its range in the item's name. Null when there
-    /// is none.
+    /// The active match, drawn in its own color: the key of its row (see <see cref="TreeRows.KeyOf"/>, compared by reference), and its
+    /// range in the row's search text. Null when there is none.
     /// </summary>
-    public (ItemEntry Item, int Start, int Length)? ActiveMatch { get; set; }
+    public (object Key, int Start, int Length)? ActiveMatch { get; set; }
 
     /// <summary>The display lines of the rows shown. Changes with <see cref="Rows"/>.</summary>
     public DisplayLines Lines => _lines;
@@ -110,6 +110,10 @@ internal sealed class CommandListSource : IListDataSource
 
         switch (_rows[line.RowIndex])
         {
+            case FileRow file:
+                RenderFile(listView, baseAttr, file.Source, col, row, width);
+                break;
+
             case GroupRow group:
                 RenderGroup(listView, baseAttr, group.Group, col, row, width);
                 break;
@@ -117,13 +121,13 @@ internal sealed class CommandListSource : IListDataSource
             case CommandRow command when line.IsDetail:
                 StatusText detailStatus = StatusOf(command.Entry);
                 listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
-                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.CommandDetailIndent(command.Entry.Group.Depth), detailStatus));
+                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.CommandDetailIndent(TreeRows.ListDepth(command.Entry.Group)), detailStatus));
                 break;
 
             case CommandRow command:
                 CommandEntry entry = command.Entry;
                 StatusText status = StatusOf(entry);
-                CommandMainText text = RowLayout.FormatCommandMain(width, Selection.IsMarked(entry), status.Glyph, entry.Spec.Name, entry.Group.Depth);
+                CommandMainText text = RowLayout.FormatCommandMain(width, Selection.IsMarked(entry), status.Glyph, entry.Spec.Name, TreeRows.ListDepth(entry.Group));
 
                 listView.AddStr(text.Text);
                 if (text.GlyphColumn >= 0)
@@ -156,32 +160,46 @@ internal sealed class CommandListSource : IListDataSource
             ? GroupSummary.Compose(group.AllCommands.Select(command => StatusOf(command).Kind))
             : string.Empty;
 
-        // A top-level group of a base file names that file, faint, after the header. Nested groups inherit it visibly.
-        string? sourceLabel = group.Parent is null && group.IsReadOnly ? group.Source.DisplayPath : null;
-        GroupHeaderText header = RowLayout.FormatGroupHeader(
-            width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, group.Depth, sourceLabel);
+        int depth = TreeRows.ListDepth(group);
+        var headerAttr = new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold);
+        listView.SetAttribute(headerAttr);
+        listView.AddStr(RowLayout.FormatGroupRow(width, group.Name, group.Mode, group.IsSequenceRunning, collapsed, summary, depth));
+
+        // The name follows the "▾ " or "▸ " after the indent, and is cut to the width after that.
+        int shift = RowLayout.IndentOf(depth);
+        DrawMatches(listView, headerAttr, group, group.Name, col + shift + HeaderNameOffset, row, width - shift - HeaderNameOffset);
+    }
+
+    /// <summary>
+    /// Draws a file row like a group header: the "▾ " or "▸ " and the display path, bold, and the faint " (base)" marker after the
+    /// path when the file is a base file. The matches are cut before the marker.
+    /// </summary>
+    private void RenderFile(ListView listView, Attribute baseAttr, ConfigSource source, int col, int row, int width)
+    {
+        bool collapsed = _collapsed.Contains(source);
+        FileHeaderText header = RowLayout.FormatFileRow(width, source.DisplayPath, collapsed, source.IsBase);
 
         var headerAttr = new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Bold);
         listView.SetAttribute(headerAttr);
         listView.AddStr(header.Text);
-        if (header.SourceColumn >= 0)
+        if (header.BaseColumn >= 0)
         {
-            listView.Move(col + header.SourceColumn, row);
+            listView.Move(col + header.BaseColumn, row);
             listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
-            listView.AddStr(header.SourceText);
+            listView.AddStr(header.BaseText);
         }
 
-        // The name follows the "▾ " or "▸ " after the indent, and is cut to the width after that.
-        int shift = RowLayout.IndentOf(group.Depth);
-        DrawMatches(listView, headerAttr, group, group.Name, col + shift + HeaderNameOffset, row, width - shift - HeaderNameOffset);
+        int end = header.BaseColumn >= 0 ? header.BaseColumn : width;
+        DrawMatches(listView, headerAttr, source, source.DisplayPath, col + HeaderNameOffset, row, end - HeaderNameOffset);
     }
 
     /// <summary>
     /// Draws the matches of <see cref="Search"/> in a name over the text already drawn there, in the match color, or in the active
     /// color for <see cref="ActiveMatch"/>. Only the part of a match within the <paramref name="visible"/> columns from
     /// <paramref name="column"/> is drawn, the rest of the name being cut. The matched text keeps the style of <paramref name="attr"/>.
+    /// <paramref name="key"/> identifies the row (see <see cref="TreeRows.KeyOf"/>) for the active match.
     /// </summary>
-    private void DrawMatches(ListView listView, Attribute attr, ItemEntry item, string name, int column, int row, int visible)
+    private void DrawMatches(ListView listView, Attribute attr, object key, string name, int column, int row, int visible)
     {
         if (Search is not { } pattern || visible <= 0)
         {
@@ -198,7 +216,7 @@ internal sealed class CommandListSource : IListDataSource
             }
 
             bool active = ActiveMatch is { } current
-                && ReferenceEquals(current.Item, item)
+                && ReferenceEquals(current.Key, key)
                 && current.Start == match.Start
                 && current.Length == match.Length;
             listView.Move(column + offset, row);

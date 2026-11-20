@@ -78,7 +78,7 @@ public sealed class MainLayoutTests
     }
 
     [Fact]
-    public void Top_row_is_at_least_five_rows_when_the_list_is_empty()
+    public void Top_row_is_at_least_five_rows_when_there_are_no_groups_or_commands()
     {
         using TempSession temp = TempSession.Open();
 
@@ -88,7 +88,8 @@ public sealed class MainLayoutTests
             OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
             OutputView output = Field<OutputView>(controller, "_output");
 
-            Assert.Equal(0, Field<CommandListSource>(controller, "_source").Count);
+            // The file row of the opened file is the only line: the list has no group or command.
+            Assert.Equal(1, Field<CommandListSource>(controller, "_source").Count);
             Assert.Equal(5, details.Frame.Height);
             Assert.Equal(5, header.Frame.Y);
             Assert.Equal(6, output.Frame.Y);

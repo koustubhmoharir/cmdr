@@ -343,9 +343,14 @@ acting, or captures a snapshot and acts only on that.
 ## UI
 
 - **Command list** (`CommandListView` over `CommandListSource`): items are display lines
-  (`DisplayLines`: one per group header, two per command); the selection only rests on main lines.
-  `RowLayout` builds the text: a command whose group is at depth d has the mark (`→`) at column 0, the
-  status glyph at 2d+2 (under a sibling group's `▾`/`▸`) and the name at 2d+4. `CommandListSource.Render`
+  (`DisplayLines`: one per file or group header, two per command); the selection only rests on main lines.
+  The rows are a `FileRow` per config file (in chain order, before the file's groups and commands, see `Session.BuildRows`),
+  then the groups and commands of each file. Files and groups share one set of collapsed keys (`TreeRows.KeyOf`: the
+  `ConfigSource` or the `GroupEntry`), so a collapsed file hides everything below it, and the same focus rules apply.
+  A file row has no action target (`Selection.Targets` gives null), so its command keys do nothing.
+  `RowLayout` builds the text: a group or command whose group is at list depth d (a top-level group is at 1, one below its
+  file row) has the mark (`→`) at column 0, the status glyph at 2d+2 (under a sibling group's `▾`/`▸`) and the name at 2d+4.
+  `CommandListSource.Render`
   restores the attribute it found, because ListView fills the rows below the last item with the
   attribute it last set itself. Status glyph colors come from `StatusColors`: a bright and a dark
   variant per status, whichever has the higher WCAG contrast against the row's background (bright when
@@ -391,7 +396,7 @@ acting, or captures a snapshot and acts only on that.
   timeout, after which the pattern is abandoned (no matches, `TimedOut`, the bar says "pattern too slow") so a pathological regex
   costs one timeout, not one per line. A short timeout fired under CPU load on plain literals and silently gave partial counts. Each pane implements `ISearchTarget`
   (`SetSearch`, `Find(backward, inclusive)`, `SearchStatus`); the list's is `ListSearchTarget`, which searches every row
-  (`Session.BuildRows`, collapsed groups included) and reveals a match through the controller, which remembers the groups it
+  (`Session.BuildRows`, collapsed groups included) and reveals a match through the controller, which remembers the files and groups it
   expanded and collapses them again on close unless they hold the focused row. Matches are UTF-16 ranges in the plain text; the
   output pane maps them to cells through `OutputWrap.Cell.Offset/Length`, the info pane through its logical lines (a match may
   cross a wrap). An active match is a position (line, start, length); it is highlighted, and counted, only while an identical match

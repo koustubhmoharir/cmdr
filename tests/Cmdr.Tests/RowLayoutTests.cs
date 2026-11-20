@@ -142,10 +142,10 @@ public sealed class RowLayoutTests
         // A command in a group at depth d is a sibling of the groups at depth d + 1, whose ▾ and name it lines up with.
         const string groupName = "grp";
         CommandMainText command = RowLayout.FormatCommandMain(40, marked: false, "↻", "web", depth);
-        GroupHeaderText header = RowLayout.FormatGroupHeader(40, groupName, GroupMode.Parallel, false, false, string.Empty, depth + 1);
+        string header = RowLayout.FormatGroupRow(40, groupName, GroupMode.Parallel, false, false, string.Empty, depth + 1);
 
-        int markerColumn = header.Text.IndexOf('▾');
-        int nameColumn = header.Text.IndexOf(groupName, StringComparison.Ordinal);
+        int markerColumn = header.IndexOf('▾');
+        int nameColumn = header.IndexOf(groupName, StringComparison.Ordinal);
 
         Assert.True(markerColumn >= 0 && nameColumn >= 0);
         Assert.Equal(markerColumn, command.GlyphColumn);

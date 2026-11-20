@@ -1,105 +1,79 @@
-using Cmdr.Core.Config;
 using Cmdr.Tui;
 using Shared.Tui;
 
 namespace Cmdr.Tests;
 
-/// <summary>The source label of a top-level base group, drawn after the group header and dropped first when narrow.</summary>
+/// <summary>
+/// The file row of a configuration file: its display path after the ▾ or ▸, and the faint " (base)" marker after the path of a base
+/// file. The marker is kept when the path is cut, and dropped only when the line is too narrow for it.
+/// </summary>
 public sealed class RowLayoutSourceTests
 {
-    private const string Label = "shared/base.json";
-
-    private static GroupHeaderText Header(int width, string? label = Label, int depth = 0, bool collapsed = false, string summary = "") =>
-        RowLayout.FormatGroupHeader(width, "shared", GroupMode.Parallel, sequenceRunning: false, collapsed, summary, depth, label);
+    private const string BasePath = "shared/base.json";
+    private const string Marker = " (base)";
 
     [Fact]
-    public void Label_follows_the_header_after_two_spaces()
+    public void Base_file_row_is_the_glyph_and_path_followed_by_the_marker()
     {
-        GroupHeaderText header = Header(60);
+        FileHeaderText row = RowLayout.FormatFileRow(40, BasePath, collapsed: false, isBase: true);
 
-        Assert.Equal("▾ shared  [parallel]  " + Label, header.Text.TrimEnd());
-        Assert.Equal(Label, header.SourceText);
-        Assert.Equal(TextWidth.Columns("▾ shared  [parallel]  "), header.SourceColumn);
-        Assert.Equal(Label, header.Text.Substring(header.SourceColumn, Label.Length));
+        Assert.Equal("▾ " + BasePath + Marker, row.Text.TrimEnd());
+        Assert.Equal(Marker, row.BaseText);
+        Assert.Equal(TextWidth.Columns("▾ " + BasePath), row.BaseColumn);
+        Assert.Equal(Marker, row.Text.Substring(row.BaseColumn, Marker.Length));
     }
 
     [Fact]
-    public void Header_is_exactly_the_requested_width()
+    public void Main_file_row_has_no_marker()
     {
-        GroupHeaderText header = Header(60);
+        FileHeaderText row = RowLayout.FormatFileRow(40, "cmdr.json", collapsed: false, isBase: false);
 
-        Assert.Equal(60, TextWidth.Columns(header.Text));
+        Assert.Equal("▾ cmdr.json", row.Text.TrimEnd());
+        Assert.Equal(-1, row.BaseColumn);
+        Assert.Equal(string.Empty, row.BaseText);
     }
 
     [Fact]
-    public void Label_is_dropped_before_the_header_is_truncated()
+    public void Collapsed_file_row_shows_the_collapsed_glyph_and_the_marker()
     {
-        // "▾ shared  [parallel]" is 20 columns; with the label it needs 20 + 2 + 16 = 38.
-        GroupHeaderText header = Header(37);
+        FileHeaderText row = RowLayout.FormatFileRow(40, BasePath, collapsed: true, isBase: true);
 
-        Assert.Equal(-1, header.SourceColumn);
-        Assert.Equal(string.Empty, header.SourceText);
-        Assert.Equal(RowLayout.FormatGroupRow(37, "shared", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: string.Empty), header.Text);
-        Assert.Equal("▾ shared  [parallel]", header.Text.TrimEnd());
-    }
-
-    [Fact]
-    public void Label_is_shown_at_the_exact_width_it_needs()
-    {
-        GroupHeaderText header = Header(38);
-
-        Assert.Equal(Label, header.SourceText);
-        Assert.Equal(38, TextWidth.Columns(header.Text));
-    }
-
-    [Fact]
-    public void Without_a_label_the_header_is_unchanged()
-    {
-        string plain = RowLayout.FormatGroupRow(60, "shared", GroupMode.Parallel, sequenceRunning: false, collapsed: false, summary: string.Empty);
-        GroupHeaderText header = Header(60, label: null);
-
-        Assert.Equal(plain, header.Text);
-        Assert.Equal(-1, header.SourceColumn);
-    }
-
-    [Fact]
-    public void Empty_label_is_no_label()
-    {
-        GroupHeaderText header = Header(60, label: string.Empty);
-
-        Assert.Equal(-1, header.SourceColumn);
-        Assert.Equal(string.Empty, header.SourceText);
-    }
-
-    [Fact]
-    public void Label_column_moves_with_the_depth_indent()
-    {
-        GroupHeaderText header = Header(70, depth: 2);
-
-        Assert.Equal(4 + TextWidth.Columns("▾ shared  [parallel]  "), header.SourceColumn);
-        Assert.Equal(Label, header.Text.Substring(header.SourceColumn, Label.Length));
-    }
-
-    [Fact]
-    public void Label_comes_after_the_collapsed_summary_and_the_sequence_marker()
-    {
-        GroupHeaderText header = RowLayout.FormatGroupHeader(
-            80, "shared", GroupMode.Sequential, sequenceRunning: true, collapsed: true, summary: "1 running", sourceLabel: Label);
-
-        Assert.Equal(Label, header.SourceText);
-        Assert.True(header.Text.IndexOf("▶ sequence running", StringComparison.Ordinal) < header.SourceColumn);
-        Assert.Equal(80, TextWidth.Columns(header.Text));
+        Assert.Equal("▸ " + BasePath + Marker, row.Text.TrimEnd());
+        Assert.Equal(Marker, row.BaseText);
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(5)]
-    public void Narrow_widths_never_throw_and_never_exceed_the_width(int width)
+    [InlineData(7)]
+    [InlineData(12)]
+    [InlineData(60)]
+    public void File_row_is_exactly_the_requested_width_and_never_throws(int width)
     {
-        GroupHeaderText header = Header(width);
+        FileHeaderText row = RowLayout.FormatFileRow(width, BasePath, collapsed: false, isBase: true);
 
-        Assert.Equal(width, TextWidth.Columns(header.Text));
-        Assert.True(header.SourceColumn < width);
+        Assert.Equal(width, TextWidth.Columns(row.Text));
+        Assert.True(row.BaseColumn < width);
+    }
+
+    [Fact]
+    public void The_marker_is_kept_and_the_path_is_cut_before_it_when_the_line_is_narrow()
+    {
+        FileHeaderText row = RowLayout.FormatFileRow(20, "shared/a-very-long-name.json", collapsed: false, isBase: true);
+
+        Assert.Equal(20, TextWidth.Columns(row.Text));
+        Assert.Equal(20 - Marker.Length, row.BaseColumn);
+        Assert.EndsWith(Marker, row.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_marker_is_dropped_when_the_line_is_no_wider_than_it()
+    {
+        FileHeaderText row = RowLayout.FormatFileRow(Marker.Length, BasePath, collapsed: false, isBase: true);
+
+        Assert.Equal(-1, row.BaseColumn);
+        Assert.Equal(string.Empty, row.BaseText);
+        Assert.Equal(Marker.Length, TextWidth.Columns(row.Text));
     }
 }

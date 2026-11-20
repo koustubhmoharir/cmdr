@@ -305,13 +305,15 @@ public class SessionEditingTests
 
         IReadOnlyList<ListRow> rows = session.BuildRows();
 
-        Assert.Equal(5, rows.Count);
-        Assert.IsType<GroupRow>(rows[0]);
-        Assert.Equal("g1", ((GroupRow)rows[0]).Group.Name);
-        Assert.Equal("a", ((CommandRow)rows[1]).Entry.Spec.Name);
-        Assert.Equal("b", ((CommandRow)rows[2]).Entry.Spec.Name);
-        Assert.Equal("g2", ((GroupRow)rows[3]).Group.Name);
-        Assert.Equal("c", ((CommandRow)rows[4]).Entry.Spec.Name);
+        // Row 0 is the file row of the opened file, then each group header followed by its commands.
+        Assert.Equal(6, rows.Count);
+        Assert.IsType<FileRow>(rows[0]);
+        Assert.IsType<GroupRow>(rows[1]);
+        Assert.Equal("g1", ((GroupRow)rows[1]).Group.Name);
+        Assert.Equal("a", ((CommandRow)rows[2]).Entry.Spec.Name);
+        Assert.Equal("b", ((CommandRow)rows[3]).Entry.Spec.Name);
+        Assert.Equal("g2", ((GroupRow)rows[4]).Group.Name);
+        Assert.Equal("c", ((CommandRow)rows[5]).Entry.Spec.Name);
     }
 
     [Fact]

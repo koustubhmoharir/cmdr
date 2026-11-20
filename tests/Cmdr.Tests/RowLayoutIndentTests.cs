@@ -52,10 +52,10 @@ public sealed class RowLayoutIndentTests
     {
         foreach (bool collapsed in new[] { false, true })
         {
-            GroupHeaderText header = RowLayout.FormatGroupHeader(60, "grp", GroupMode.Parallel, false, collapsed, string.Empty, depth);
+            string header = RowLayout.FormatGroupRow(60, "grp", GroupMode.Parallel, false, collapsed, string.Empty, depth);
             string glyph = collapsed ? "▸" : "▾";
 
-            Assert.Equal(RowLayout.GroupGlyphColumn(depth), header.Text.IndexOf(glyph, StringComparison.Ordinal));
+            Assert.Equal(RowLayout.GroupGlyphColumn(depth), header.IndexOf(glyph, StringComparison.Ordinal));
         }
 
         CommandMainText command = RowLayout.FormatCommandMain(60, marked: false, "↻", "web", depth);

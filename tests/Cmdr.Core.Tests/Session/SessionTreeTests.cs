@@ -101,15 +101,17 @@ public class SessionTreeTests
 
         using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
+        // The file row of the opened file comes first; the groups and commands follow it, depth-first.
         string[] labels = session.BuildRows()
             .Select(row => row switch
             {
+                FileRow file => "F:" + file.Source.DisplayPath,
                 GroupRow group => "G:" + group.Group.Name,
                 CommandRow command => "C:" + command.Entry.Name,
                 _ => "?",
             })
             .ToArray();
-        Assert.Equal(new[] { "G:top", "C:first", "G:mid", "C:m1", "G:deep", "C:d1", "C:last" }, labels);
+        Assert.Equal(new[] { "F:cmdr.json", "G:top", "C:first", "G:mid", "C:m1", "G:deep", "C:d1", "C:last" }, labels);
     }
 
     [Fact]

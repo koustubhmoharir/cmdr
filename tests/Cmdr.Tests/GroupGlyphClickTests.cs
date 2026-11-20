@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
+using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -8,19 +9,19 @@ using Terminal.Gui.ViewBase;
 
 namespace Cmdr.Tests;
 
-/// <summary>A plain click on the ▾ or ▸ of a group header toggles the group; a click anywhere else, and Ctrl+click, do not.</summary>
+/// <summary>A plain click on the ▾ or ▸ of a file row or a group header toggles it; a click anywhere else, and Ctrl+click, do not.</summary>
 [Collection("Terminal GUI")]
 public sealed class GroupGlyphClickTests
 {
     private const int Width = 120;
     private const int Height = 40;
 
-    // The sample tree's rows, in order: top (depth 0), first, mid (depth 1), m1, deep (depth 2), d1, last, other (depth 0), oc.
-    private const int TopRow = 0;
-    private const int MidRow = 2;
-    private const int DeepRow = 4;
-    private const int FirstRow = 1;
-    private const int OtherRow = 7;
+    // The glyph columns of the sample tree (see RowLayout.GroupGlyphColumn): the file row's is column 0, and each list depth adds two.
+    // top and other are at list depth 1 (glyph in column 2), mid at depth 2 (column 4), deep at depth 3 (column 6).
+    private const int FileGlyphColumn = 0;
+    private const int TopGlyphColumn = 2;
+    private const int MidGlyphColumn = 4;
+    private const int DeepGlyphColumn = 6;
 
     [Fact]
     public void A_plain_press_on_the_glyph_of_an_expanded_header_collapses_its_group_and_focuses_the_header()
@@ -29,7 +30,7 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            Click(app, controller, TopRow, 0);
+            Click(app, controller, Row(controller, "top"), TopGlyphColumn);
 
             Assert.Equal(new[] { "top", "other", "oc" }, Names(controller));
             Assert.Equal("top", FocusedName(controller));
@@ -43,8 +44,8 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            Click(app, controller, TopRow, 0);
-            Click(app, controller, TopRow, 0);
+            Click(app, controller, Row(controller, "top"), TopGlyphColumn);
+            Click(app, controller, Row(controller, "top"), TopGlyphColumn);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
             Assert.Equal("top", FocusedName(controller));
@@ -58,7 +59,8 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            Click(app, controller, OtherRow, 2);
+            // The name of other starts two columns after its glyph.
+            Click(app, controller, Row(controller, "other"), TopGlyphColumn + 2);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
             Assert.Equal("other", FocusedName(controller));
@@ -72,7 +74,7 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            Click(app, controller, MidRow, 0);
+            Click(app, controller, Row(controller, "mid"), 0);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
         });
@@ -85,14 +87,13 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            // mid is at depth 1, so its glyph is at column 2; deep is at depth 2, so its glyph is at column 4.
-            Click(app, controller, MidRow, 2);
+            Click(app, controller, Row(controller, "mid"), MidGlyphColumn);
 
             Assert.Equal(new[] { "top", "first", "mid", "last", "other", "oc" }, Names(controller));
             Assert.Equal("mid", FocusedName(controller));
 
-            Click(app, controller, MidRow, 2);
-            Click(app, controller, DeepRow, 4);
+            Click(app, controller, Row(controller, "mid"), MidGlyphColumn);
+            Click(app, controller, Row(controller, "deep"), DeepGlyphColumn);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "last", "other", "oc" }, Names(controller));
             Assert.Equal("deep", FocusedName(controller));
@@ -106,8 +107,8 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            // The command "first" is in top (depth 0), so its glyph is at column 2, where a header one deeper would have its glyph.
-            Click(app, controller, FirstRow, 2);
+            // The command "first" is in top (list depth 1), so its glyph is at column 4: the glyph column of its sibling mid.
+            Click(app, controller, Row(controller, "first"), MidGlyphColumn);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
             Assert.Equal("first", FocusedName(controller));
@@ -121,7 +122,63 @@ public sealed class GroupGlyphClickTests
 
         RunLaidOut(temp, (app, controller) =>
         {
-            Click(app, controller, TopRow, 0, MouseFlags.Ctrl);
+            Click(app, controller, Row(controller, "top"), TopGlyphColumn, MouseFlags.Ctrl);
+
+            Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
+        });
+    }
+
+    [Fact]
+    public void A_plain_press_on_the_glyph_of_a_file_row_collapses_the_file_and_hides_all_its_rows()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, (app, controller) =>
+        {
+            Click(app, controller, Row(controller, temp.Session.MainSource.DisplayPath), FileGlyphColumn);
+
+            Assert.Empty(Names(controller));
+            Assert.Equal(temp.Session.MainSource.DisplayPath, FocusedName(controller));
+        });
+    }
+
+    [Fact]
+    public void A_plain_press_on_the_glyph_of_a_collapsed_file_row_expands_it()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, (app, controller) =>
+        {
+            Click(app, controller, Row(controller, temp.Session.MainSource.DisplayPath), FileGlyphColumn);
+            Click(app, controller, Row(controller, temp.Session.MainSource.DisplayPath), FileGlyphColumn);
+
+            Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
+            Assert.Equal(temp.Session.MainSource.DisplayPath, FocusedName(controller));
+        });
+    }
+
+    [Fact]
+    public void A_press_on_the_name_of_a_file_row_does_not_toggle_it()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, (app, controller) =>
+        {
+            Click(app, controller, Row(controller, temp.Session.MainSource.DisplayPath), 2);
+
+            Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
+            Assert.Equal(temp.Session.MainSource.DisplayPath, FocusedName(controller));
+        });
+    }
+
+    [Fact]
+    public void Ctrl_click_on_the_glyph_of_a_file_row_does_not_toggle_it()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, (app, controller) =>
+        {
+            Click(app, controller, Row(controller, temp.Session.MainSource.DisplayPath), FileGlyphColumn, MouseFlags.Ctrl);
 
             Assert.Equal(new[] { "top", "first", "mid", "m1", "deep", "d1", "last", "other", "oc" }, Names(controller));
         });
@@ -143,20 +200,37 @@ public sealed class GroupGlyphClickTests
         app.LayoutAndDraw();
     }
 
-    /// <summary>The names of the rows the list shows, in order.</summary>
+    /// <summary>The index of the shown row whose text is <paramref name="text"/> (see <see cref="TreeRows.SearchTextOf"/>). The row must be shown.</summary>
+    private static int Row(MainController controller, string text)
+    {
+        CommandListSource source = Field<CommandListSource>(controller, "_source");
+        int index = -1;
+        for (int i = 0; i < source.Rows.Count && index < 0; i++)
+        {
+            if (TreeRows.SearchTextOf(source.Rows[i]) == text)
+            {
+                index = i;
+            }
+        }
+
+        Assert.True(index >= 0, $"No shown row '{text}'.");
+        return index;
+    }
+
+    /// <summary>The names of the group and command rows the list shows, in order. File rows are left out.</summary>
     private static IEnumerable<string> Names(MainController controller)
     {
         CommandListSource source = Field<CommandListSource>(controller, "_source");
-        return source.Rows.Select(row => TreeRows.ItemOf(row).Name).ToArray();
+        return source.Rows.Where(row => row is not FileRow).Select(row => TreeRows.ItemOf(row).Name).ToArray();
     }
 
-    /// <summary>The name of the focused row, read from the list's selection.</summary>
+    /// <summary>The text of the focused row (its name, or the display path of a file row), read from the list's selection.</summary>
     private static string? FocusedName(MainController controller)
     {
         CommandListView list = Field<CommandListView>(controller, "_list");
         CommandListSource source = Field<CommandListSource>(controller, "_source");
         int row = list.SelectedItem is { } line ? source.Lines.LineToRow(line) : -1;
-        return row >= 0 ? TreeRows.ItemOf(source.Rows[row]).Name : null;
+        return row >= 0 ? TreeRows.SearchTextOf(source.Rows[row]) : null;
     }
 
     /// <summary>The value of a private field of the controller, read by reflection.</summary>
