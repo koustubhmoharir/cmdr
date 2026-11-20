@@ -79,7 +79,8 @@ cmdr --version
 cannot be edited. `cmdr --edit <config.json>` (or `cmdr <config.json> --edit`) opens it in edit mode: groups and
 commands can be added, changed, moved and removed, and nothing can be started. Ctrl+E switches between the two modes
 in the window. Switching to edit mode is refused, with a message, while commands are running or have leftover
-processes, while a sequence runs, or while a restart is pending; stop them (Ctrl+C) and try again.
+processes, while a sequence runs, while a restart is pending, or while environment scripts run before a start; stop
+them (Ctrl+C) and try again.
 
 If the config file does not exist, `cmdr <config.json>` asks whether to create it. Yes opens an empty list in edit
 mode, and the first save (Ctrl+S) creates the file. No returns to the list of recent files when it has any, and
@@ -339,7 +340,7 @@ Both modes:
 
 | Key | Action |
 |---|---|
-| Ctrl+E | Switch between run mode and edit mode. Switching to edit mode is refused while commands are running or have leftover processes, a sequence runs, or a restart is pending |
+| Ctrl+E | Switch between run mode and edit mode. Switching to edit mode is refused while commands are running or have leftover processes, a sequence runs, a restart is pending, or environment scripts run before a start |
 | ← / → | Collapse / expand a file or group |
 | Click the ▾ / ▸ of a file or group header | Collapse / expand it |
 | Tab / Shift+Tab | Move focus: list → info → output (edit mode: list → info) |
@@ -354,7 +355,7 @@ Run mode:
 | Key | Action |
 |---|---|
 | Enter | Start (or force-kill what is stopping or left over) |
-| Ctrl+C | Stop gracefully |
+| Ctrl+C | Stop gracefully (cancels a start that is still running environment scripts) |
 | F5 | Restart, with confirmation. Pressed again while that restart still waits for the command to stop, it asks: keep waiting (Enter), or force kill now so the restart goes ahead |
 | Space, Shift+↑/↓, Ctrl+click | Mark commands |
 | Ctrl+A | Mark / unmark all in the group |

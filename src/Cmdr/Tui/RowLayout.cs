@@ -42,6 +42,9 @@ internal static class RowLayout
     private const string Unmarked = " ";
     private const string NoValue = "—";
     private const string NotStartedText = "not started";
+
+    /// <summary>The detail of a command whose environment scripts are running before its start (see <see cref="FormatCommandDetail"/>).</summary>
+    public const string PreparingText = "preparing env…";
     private const string BaseMarker = " (base)";
 
     /// <summary>Columns of indentation per nesting depth. Depth 0 (a file row) has none; a top-level group is at depth 1 (see <see cref="TreeRows.ListDepth"/>).</summary>
@@ -93,9 +96,11 @@ internal static class RowLayout
 
     /// <summary>
     /// Formats the detail line of a command: the start time and the detail text, separated by two spaces, indented by
-    /// <paramref name="indent"/> columns. A command that was never started reads "not started". Exactly <paramref name="width"/> wide.
+    /// <paramref name="indent"/> columns. A command that was never started reads "not started". While its environment scripts
+    /// run (<paramref name="preparing"/>), the detail text reads "preparing env…" in place of the status's detail, and the
+    /// "not started" text does not apply. Exactly <paramref name="width"/> wide.
     /// </summary>
-    public static string FormatCommandDetail(int width, int indent, StatusText status)
+    public static string FormatCommandDetail(int width, int indent, StatusText status, bool preparing = false)
     {
         if (width <= 0)
         {
@@ -104,7 +109,7 @@ internal static class RowLayout
 
         int shift = Math.Clamp(indent, 0, width);
         int room = width - shift;
-        string body = room > 0 ? TextWidth.Fit(DetailBody(status), room) : string.Empty;
+        string body = room > 0 ? TextWidth.Fit(DetailBody(status, preparing), room) : string.Empty;
         return new string(' ', shift) + body;
     }
 
@@ -160,10 +165,13 @@ internal static class RowLayout
         return new FileHeaderText(TextWidth.Fit(shown + BaseMarker, width), TextWidth.Columns(shown), BaseMarker);
     }
 
-    /// <summary>The detail text without indent: the start time and detail when there are any, otherwise the kind's own text.</summary>
-    private static string DetailBody(StatusText status)
+    /// <summary>
+    /// The detail text without indent: the start time and detail when there are any, otherwise the kind's own text. While preparing,
+    /// the detail is <see cref="PreparingText"/> and the kind's own text does not apply.
+    /// </summary>
+    private static string DetailBody(StatusText status, bool preparing)
     {
-        if (status.Kind == StatusKind.Idle)
+        if (!preparing && status.Kind == StatusKind.Idle)
         {
             return NotStartedText;
         }
@@ -174,9 +182,10 @@ internal static class RowLayout
             parts.Add(status.Started);
         }
 
-        if (!string.IsNullOrEmpty(status.Detail))
+        string detail = preparing ? PreparingText : status.Detail;
+        if (!string.IsNullOrEmpty(detail))
         {
-            parts.Add(status.Detail);
+            parts.Add(detail);
         }
 
         return string.Join("  ", parts);

@@ -34,6 +34,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
     private static readonly Hint ToRunHint = KeyHints.Bound(Key.E.WithCtrl, "^E Run");
     private const string EditOnlyMessage = "Press Ctrl+E for edit mode to change groups and commands.";
     private const string RunOnlyMessage = "Press Ctrl+E for run mode to start or stop commands.";
+    private const string AlreadyPreparingMessage = "Environment scripts are already running for this start";
+    private const string PreparingRefusal = "Cannot switch to edit mode: environment scripts are running.";
+    private const string StartCancelledMessage = "Start cancelled";
     private static readonly Hint NewCommandHint = KeyHints.Bound(Key.N.WithCtrl, "^N Command");
     private static readonly Hint NewGroupHint = KeyHints.Bound(Key.G.WithCtrl, "^G Group");
     private static readonly Hint MoveHint = KeyHints.Concat(
@@ -51,6 +54,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
     private readonly int _uiThreadId = Environment.CurrentManagedThreadId;
     private readonly Selection _selection = new();
     private readonly CommandListSource _source;
+
+    // The environment script preparations in progress, UI thread only (see StartPreparation). Several may run at once.
+    private readonly List<ActivePreparation> _preparations = new();
     private int _refreshPending;
     private volatile bool _closed;
     private bool _loadErrorsShown;
@@ -94,7 +100,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
     {
         _app = app;
         _session = session;
-        _source = new CommandListSource(_selection, _collapsed);
+        _source = new CommandListSource(_selection, _collapsed, IsPreparing);
     }
 
     /// <summary>The main window. Valid after construction.</summary>
@@ -160,10 +166,15 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _list.SetFocus();
     }
 
-    /// <summary>Unsubscribes from the session and stops marshalling to the UI. Call before the application is disposed.</summary>
+    /// <summary>
+    /// Cancels the environment script preparations in progress, unsubscribes from the session and stops marshalling to the UI. Call before the
+    /// application is disposed. Their completions are ignored from now on.
+    /// </summary>
     public void Dispose()
     {
         _closed = true;
+        CancelAllPreparations();
+        _preparations.Clear();
         _session.EntryChanged -= OnEntryChanged;
         _session.StructureChanged -= OnStructureChanged;
     }
@@ -270,8 +281,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// Ctrl+E. In run mode, switches to edit mode unless <see cref="Session.SwitchToEdit"/> refuses (the refusal is shown and nothing
-    /// changes). Entering edit mode clears the marks, restores the output when it was maximized, and moves the focus off the output
+    /// Ctrl+E. In run mode, switches to edit mode unless environment scripts are running for a start or <see cref="Session.SwitchToEdit"/>
+    /// refuses (the refusal is shown and nothing changes). Entering edit mode clears the marks, restores the output when it was maximized, and moves the focus off the output
     /// pane, which is hidden there, to the list. The open search follows the focus to the list. In edit mode, switches to run mode and
     /// keeps the focus where it is. Either way the layout, the title and the hints follow the mode.
     /// </summary>
@@ -283,6 +294,13 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
         else
         {
+            // A start still running its environment scripts keeps the session in run mode: its completion starts the commands.
+            if (_preparations.Count > 0)
+            {
+                ShowMessage(PreparingRefusal);
+                return;
+            }
+
             string? refusal = _session.SwitchToEdit();
             if (refusal is not null)
             {
@@ -1451,11 +1469,21 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
-    /// <summary>Enter: starts the target, or force-kills what is stopping or left over. A null target does nothing.</summary>
+    /// <summary>
+    /// Enter: starts the target, or force-kills what is stopping or left over. A null target does nothing. When the start needs environment
+    /// scripts, they run in the background first (see <see cref="StartPreparation"/>) and the start follows their completion. Nothing new is
+    /// prepared for commands whose scripts are already running.
+    /// </summary>
     private void Activate(ActionTarget? target)
     {
         if (target is null || CommandsOf(target).Count == 0)
         {
+            return;
+        }
+
+        if (AnyPreparing(CommandsOf(target)))
+        {
+            ShowMessage(AlreadyPreparingMessage);
             return;
         }
 
@@ -1483,17 +1511,158 @@ internal sealed class MainController : IDisposable, IListSearchHost
                 }
             }
 
-            string? message = _session.Activate(prepared, inputs);
-            if (message is not null)
+            // A refused start runs no script (it only reports why), and a start that needs none is made at once, as before.
+            if (!prepared.Refused && _session.NeedsEnvScripts(prepared.Startable))
             {
-                ShowMessage(message);
+                StartPreparation(PreparationKind.Activation, prepared.Startable, inputs, values => ActivateWith(prepared, inputs, values));
+                return;
             }
+
+            ActivateWith(prepared, inputs, null);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             ShowMessage(ex.Message);
         }
     }
+
+    /// <summary>Carries out an activation with the input and script values, and shows the session's message when it has one.</summary>
+    private void ActivateWith(PreparedActivation prepared, IReadOnlyDictionary<string, string>? inputs, ScriptValues? values)
+    {
+        string? message = _session.Activate(prepared, inputs, values);
+        if (message is not null)
+        {
+            ShowMessage(message);
+        }
+    }
+
+    /// <summary>
+    /// Runs the environment scripts of the commands in the background, so that the UI keeps running. The preparation is listed until it
+    /// completes, which is handled on the UI thread (see <see cref="CompletePreparation"/>): <paramref name="onReady"/> gets the values when
+    /// every script succeeded. While it is listed, its commands show "preparing env…" and Enter, F5, Ctrl+C and the mode switch see it.
+    /// </summary>
+    /// <param name="kind">What the preparation is for.</param>
+    /// <param name="commands">The commands the start is about to start.</param>
+    /// <param name="inputs">The input values the scripts' arguments and environment use, as the session's preparation takes them.</param>
+    /// <param name="onReady">Carries out the start, on the UI thread, with the script values.</param>
+    private void StartPreparation(PreparationKind kind, IReadOnlyList<CommandEntry> commands, IReadOnlyDictionary<string, string>? inputs, Action<ScriptValues> onReady)
+    {
+        var cancel = new CancellationTokenSource();
+        Task<EnvPreparation> task = _session.PrepareEnvAsync(commands, inputs, cancel.Token);
+        var preparation = new ActivePreparation(kind, commands, cancel);
+        _preparations.Add(preparation);
+        _list.SetNeedsDraw();
+        _ = WaitForPreparation(preparation, task, onReady);
+    }
+
+    /// <summary>Waits for the preparation off the UI thread, then hands its outcome to the UI thread.</summary>
+    private async Task WaitForPreparation(ActivePreparation preparation, Task<EnvPreparation> task, Action<ScriptValues> onReady)
+    {
+        EnvPreparation? result = null;
+        Exception? failure = null;
+        try
+        {
+            result = await task.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+
+        Invoke(() => CompletePreparation(preparation, result, failure, onReady));
+    }
+
+    /// <summary>
+    /// The outcome of a preparation, on the UI thread. Cancelled (by Ctrl+C, quit or the controller's close): "Start cancelled", and nothing
+    /// starts. A failed script: its message, and nothing starts; the session has written the failure into the commands' output. Success:
+    /// <paramref name="onReady"/>. A preparation cancelled after its scripts finished is treated as cancelled, so that nothing starts after
+    /// the user asked for it. Ignored once the controller is closed.
+    /// </summary>
+    private void CompletePreparation(ActivePreparation preparation, EnvPreparation? result, Exception? failure, Action<ScriptValues> onReady)
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        _preparations.Remove(preparation);
+        _list.SetNeedsDraw();
+        bool cancelled = preparation.Cancel.IsCancellationRequested || failure is OperationCanceledException;
+        preparation.Cancel.Dispose();
+        if (cancelled)
+        {
+            ShowMessage(StartCancelledMessage);
+            return;
+        }
+
+        if (failure is not null)
+        {
+            ShowMessage(failure is InvalidOperationException ? failure.Message : "Start failed: " + failure.Message);
+            return;
+        }
+
+        if (result is null)
+        {
+            return;
+        }
+
+        if (!result.Succeeded)
+        {
+            ShowMessage($"env script of {result.FailedOwnerLabel} failed: {result.Error}");
+            return;
+        }
+
+        try
+        {
+            onReady(result.Values);
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            ShowMessage(ex.Message);
+        }
+    }
+
+    /// <summary>Cancels the preparations that contain any of the commands. Their completions show "Start cancelled". True when one was cancelled.</summary>
+    private bool CancelPreparationsOf(IReadOnlyList<CommandEntry> commands)
+    {
+        bool cancelled = false;
+        foreach (ActivePreparation preparation in _preparations)
+        {
+            if (preparation.Commands.Any(command => commands.Contains(command)))
+            {
+                preparation.Cancel.Cancel();
+                cancelled = true;
+            }
+        }
+
+        return cancelled;
+    }
+
+    /// <summary>Cancels every preparation in progress. Their completions are ignored when the controller is closed.</summary>
+    private void CancelAllPreparations()
+    {
+        foreach (ActivePreparation preparation in _preparations)
+        {
+            preparation.Cancel.Cancel();
+        }
+    }
+
+    /// <summary>True when any of the commands is in a preparation in progress (see <see cref="StartPreparation"/>).</summary>
+    private bool AnyPreparing(IReadOnlyList<CommandEntry> commands) =>
+        _preparations.Any(preparation => preparation.Commands.Any(command => commands.Contains(command)));
+
+    /// <summary>True when the command's environment scripts are running before its start. The list shows it in the command's detail line.</summary>
+    private bool IsPreparing(CommandEntry entry) => _preparations.Any(preparation => preparation.Commands.Contains(entry));
+
+    /// <summary>What an environment script preparation is for: an Enter start, or the start of an F5 restart.</summary>
+    private enum PreparationKind
+    {
+        Activation,
+        Restart,
+    }
+
+    /// <summary>An environment script preparation in progress: what it is for, the commands it prepares for, and its cancellation.</summary>
+    private sealed record ActivePreparation(PreparationKind Kind, IReadOnlyList<CommandEntry> Commands, CancellationTokenSource Cancel);
 
     /// <summary>What an input dialog is about: the group's path, the command's name, or "N commands".</summary>
     private static string TargetTitle(ActionTarget target) => target switch
@@ -1503,10 +1672,18 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _ => CommandsOf(target).Count + " commands",
     };
 
-    /// <summary>Ctrl+C: gracefully stops the running commands of the target, without asking. A null target does nothing.</summary>
+    /// <summary>
+    /// Ctrl+C: gracefully stops the running commands of the target, without asking. When a command of the target is waiting for its environment
+    /// scripts before a start, cancels those preparations instead, and stops nothing. A null target does nothing.
+    /// </summary>
     private void StopTargets(ActionTarget? target)
     {
         if (target is null)
+        {
+            return;
+        }
+
+        if (CancelPreparationsOf(CommandsOf(target)))
         {
             return;
         }
@@ -1549,6 +1726,13 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return;
         }
 
+        // The scripts of a start of these commands are running: a restart now would start them again on top of it.
+        if (AnyPreparing(targetCommands))
+        {
+            ShowMessage(AlreadyPreparingMessage);
+            return;
+        }
+
         // A second F5 while a restart of these commands is still waiting: most likely impatience or a slip, so ask rather
         // than start another restart or cancel the pending one.
         if (AskAboutPendingRestart(targetCommands))
@@ -1562,7 +1746,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
 
         IReadOnlyDictionary<string, string>? inputs = null;
-        PreparedRestart prepared;
+        IReadOnlyList<CommandEntry> starts;
         try
         {
             IReadOnlyList<InputRequest> requests = target switch
@@ -1580,11 +1764,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
                 }
             }
 
-            // Registered here, on the UI thread, before the background task exists: a Stop, StopAll or quit that runs before
-            // the task starts revokes it, so it starts nothing.
-            prepared = target is GroupTarget preparedGroup
-                ? _session.PrepareRestart(preparedGroup.Group, inputs)
-                : _session.PrepareRestart(((CommandsTarget)target).Commands, inputs);
+            starts = target is GroupTarget startsGroup
+                ? _session.RestartStarts(startsGroup.Group)
+                : _session.RestartStarts(((CommandsTarget)target).Commands);
         }
         catch (ArgumentException ex)
         {
@@ -1592,6 +1774,43 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return;
         }
 
+        // The scripts run before anything is stopped, so a failing script leaves the running commands as they are.
+        if (_session.NeedsEnvScripts(starts))
+        {
+            StartPreparation(PreparationKind.Restart, starts, inputs, values => RestartWith(target, inputs, values));
+            return;
+        }
+
+        RestartWith(target, inputs, null);
+    }
+
+    /// <summary>
+    /// Registers the restart of the target with its input and script values, on the UI thread, and runs it (see <see cref="RunRestart"/>).
+    /// A refusal of the registration is shown.
+    /// </summary>
+    private void RestartWith(ActionTarget target, IReadOnlyDictionary<string, string>? inputs, ScriptValues? values)
+    {
+        PreparedRestart prepared;
+        try
+        {
+            // Registered here, on the UI thread, before the background task exists: a Stop, StopAll or quit that runs before
+            // the task starts revokes it, so it starts nothing.
+            prepared = target is GroupTarget preparedGroup
+                ? _session.PrepareRestart(preparedGroup.Group, inputs, values)
+                : _session.PrepareRestart(((CommandsTarget)target).Commands, inputs, values);
+        }
+        catch (ArgumentException ex)
+        {
+            ShowMessage(ex.Message);
+            return;
+        }
+
+        RunRestart(prepared);
+    }
+
+    /// <summary>Runs a prepared restart in the background, and shows its message when it completes.</summary>
+    private void RunRestart(PreparedRestart prepared)
+    {
         // Restart waits for processes to exit; it runs off the UI thread and reports back when it completes.
         _ = Task.Run(async () =>
         {
@@ -1740,6 +1959,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     private void RequestQuit()
     {
+        // A start still waiting for its environment scripts is cancelled before the quit steps: one that completed during them would start commands.
+        CancelAllPreparations();
         var quit = new QuitFlow(_app, _session, Save);
         if (quit.Run())
         {

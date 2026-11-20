@@ -20,15 +20,21 @@ internal sealed class CommandListSource : IListDataSource
     private const int HeaderNameOffset = 2;
 
     private readonly IReadOnlySet<object> _collapsed;
+    private readonly Func<CommandEntry, bool> _isPreparing;
     private IReadOnlyList<ListRow> _rows = Array.Empty<ListRow>();
     private DisplayLines _lines = DisplayLines.Build(Array.Empty<ListRow>());
 
     /// <param name="selection">The marks shown on command rows.</param>
     /// <param name="collapsed">The collapsed files and groups (their keys, see <see cref="TreeRows.KeyOf"/>). Owned by the caller; read at draw time.</param>
-    public CommandListSource(Selection selection, IReadOnlySet<object> collapsed)
+    /// <param name="isPreparing">
+    /// True for a command whose environment scripts are running before its start: its detail line reads "preparing env…". Read at draw
+    /// time. Null means none is preparing.
+    /// </param>
+    public CommandListSource(Selection selection, IReadOnlySet<object> collapsed, Func<CommandEntry, bool>? isPreparing = null)
     {
         Selection = selection;
         _collapsed = collapsed;
+        _isPreparing = isPreparing ?? (_ => false);
     }
 
     /// <summary>The marks shown on command rows.</summary>
@@ -120,8 +126,13 @@ internal sealed class CommandListSource : IListDataSource
 
             case CommandRow command when line.IsDetail:
                 StatusText detailStatus = StatusOf(command.Entry);
+                bool preparing = _isPreparing(command.Entry);
                 listView.SetAttribute(new Attribute(baseAttr.Foreground, baseAttr.Background, TextStyle.Faint));
-                listView.AddStr(RowLayout.FormatCommandDetail(width, RowLayout.CommandDetailIndent(TreeRows.ListDepth(command.Entry.Group)), detailStatus));
+                listView.AddStr(RowLayout.FormatCommandDetail(
+                    width,
+                    RowLayout.CommandDetailIndent(TreeRows.ListDepth(command.Entry.Group)),
+                    detailStatus,
+                    preparing));
                 break;
 
             case CommandRow command:
