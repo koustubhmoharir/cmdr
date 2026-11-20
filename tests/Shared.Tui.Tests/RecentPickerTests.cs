@@ -233,6 +233,69 @@ public sealed class RecentPickerTests
     }
 
     [Fact]
+    public void The_alternate_key_opens_the_selected_row_with_its_loader_and_records_it_at_the_front()
+    {
+        using var f = new Fixture("a.json", "b.json", "c.json");
+        var alternateLoads = new List<string>();
+        f.UseAlternate(new PickerOpen<FakeConfig>(Key.F2, path =>
+        {
+            alternateLoads.Add(path);
+            return (new FakeConfig(path), null);
+        }));
+
+        f.Picker.NewKeyDownEvent('2');
+        Assert.True(Press(f, Key.F2));
+
+        Assert.Equal(new[] { f.Path("b.json") }, alternateLoads);
+        Assert.Empty(f.Loads);
+        Assert.Equal(f.Path("b.json"), f.Picker.OpenedPath);
+        Assert.Equal(new[] { f.Path("b.json"), f.Path("a.json"), f.Path("c.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void A_config_the_alternate_loader_does_not_open_shows_its_error_and_the_picker_stays_open()
+    {
+        using var f = new Fixture("a.json", "b.json");
+        f.UseAlternate(new PickerOpen<FakeConfig>(Key.F2, path => (null, $"edit failed {System.IO.Path.GetFileName(path)}")));
+
+        f.Picker.NewKeyDownEvent(Key.F2);
+
+        Assert.Equal(new[] { "edit failed a.json" }, f.Errors);
+        Assert.Null(f.Picker.Opened);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("b.json") }, f.Saved());
+    }
+
+    [Fact]
+    public void A_load_the_user_cancelled_shows_no_error_changes_nothing_and_the_picker_stays()
+    {
+        using var f = new Fixture("a.json", "b.json");
+        f.Cancelled.Add(f.Path("b.json"));
+        f.Picker.NewKeyDownEvent('2');
+
+        // Press returns false when the picker did not stop itself: it is still running when the loop times out.
+        Assert.False(Press(f, Key.Enter));
+
+        Assert.Empty(f.Errors);
+        Assert.Null(f.Picker.Opened);
+        Assert.Null(f.Picker.OpenedPath);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("b.json") }, f.Saved());
+        Assert.Equal(1, f.Picker.Rows.SelectedItem);
+    }
+
+    [Fact]
+    public void A_cancelled_alternate_load_shows_no_error_and_changes_nothing()
+    {
+        using var f = new Fixture("a.json", "b.json");
+        f.UseAlternate(new PickerOpen<FakeConfig>(Key.F2, _ => (null, null)));
+
+        Assert.False(Press(f, Key.F2));
+
+        Assert.Empty(f.Errors);
+        Assert.Null(f.Picker.Opened);
+        Assert.Equal(new[] { f.Path("a.json"), f.Path("b.json") }, f.Saved());
+    }
+
+    [Fact]
     public void The_open_keys_do_nothing_without_the_open_file_action()
     {
         using var f = new Fixture(openFile: false, "a.json");
@@ -590,7 +653,23 @@ public sealed class RecentPickerTests
 
         public IApplication App => _app;
 
-        /// <summary>Replaces the picker with one that shows the real file dialog.</summary>
+        /// <summary>Replaces the picker with one that has the alternate open (and no Open file action).</summary>
+    public void UseAlternate(PickerOpen<FakeConfig> alternate)
+    {
+        Picker.Dispose();
+        Picker = new RecentPicker<FakeConfig>(
+            _app,
+            RecentFiles.Load(StorePath),
+            TryOpen,
+            "Recent configs",
+            PickerHint,
+            openFile: false,
+            showError: message => Errors.Add(message),
+            pickFile: () => null,
+            alternate);
+    }
+
+    /// <summary>Replaces the picker with one that shows the real file dialog.</summary>
         public void UseRealDialog()
         {
             Picker.Dispose();
@@ -604,6 +683,12 @@ public sealed class RecentPickerTests
 
         /// <summary>The paths (as given) that fail to open.</summary>
         public HashSet<string> Invalid { get; } = new();
+
+        /// <summary>The paths (as given) whose load the user cancels: the loader returns neither a value nor an error.</summary>
+        public HashSet<string> Cancelled { get; } = new();
+
+        /// <summary>The paths the picker's own loader was asked to load, in order.</summary>
+        public List<string> Loads { get; } = new();
 
         /// <summary>The number of times the file dialog was shown.</summary>
         public int Dialogs { get; set; }
@@ -626,6 +711,12 @@ public sealed class RecentPickerTests
 
         private (FakeConfig? Value, string? Error) TryOpen(string path)
         {
+            Loads.Add(path);
+            if (Cancelled.Contains(path))
+            {
+                return (null, null);
+            }
+
             if (Invalid.Contains(path))
             {
                 return (null, $"bad {System.IO.Path.GetFileName(path)}");

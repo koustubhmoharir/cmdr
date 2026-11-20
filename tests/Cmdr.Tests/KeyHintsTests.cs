@@ -1,7 +1,6 @@
 using System.Reflection;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
-using StatusLine = Cmdr.Tui.StatusLine;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
@@ -159,8 +158,8 @@ public sealed class KeyHintsTests
     /// <summary>The text of the bar: the left hint and the right one, as the status line shows them.</summary>
     private static string Bar(MainController controller)
     {
-        Hint left = Field<StatusLine>(controller, "_status").Shown;
-        Hint right = Field<StatusLine>(controller, "_status").ShownRight;
+        Hint left = Field<HintsLine>(controller, "_status").Shown;
+        Hint right = Field<HintsLine>(controller, "_status").ShownRight;
         return left.Text + right.Text;
     }
 
@@ -170,7 +169,7 @@ public sealed class KeyHintsTests
     /// </summary>
     private static void AssertLabelsPerformTheirKeys(MainController controller)
     {
-        StatusLine status = Field<StatusLine>(controller, "_status");
+        HintsLine status = Field<HintsLine>(controller, "_status");
         Hint[] hints = { status.Shown, status.ShownRight };
         // A label can name one key in one state of the bar only: "↓" is the search's next and the edit bar's Alt+Down.
         (string Label, Key Key)[] expected =

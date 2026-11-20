@@ -3,7 +3,6 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
-using StatusLine = Cmdr.Tui.StatusLine;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -375,7 +374,7 @@ public sealed class MainModeTests
     /// <summary>The left and right parts of the bar, as the status line shows them.</summary>
     private static string Bar(MainController controller)
     {
-        StatusLine status = Field<StatusLine>(controller, "_status");
+        HintsLine status = Field<HintsLine>(controller, "_status");
         return status.Shown.Text + status.ShownRight.Text;
     }
 

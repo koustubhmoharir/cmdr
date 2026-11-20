@@ -121,4 +121,4 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M12. Refactoring round (after logvu is done)
 
-- [ ] Replace cmdr's copies with the shared components; generalize where the two apps differ. Includes the M0 copies of Osc52, TextSelection and SearchSeed. (`cmdr:` / `core:`)
+- [x] Replace cmdr's copies with the shared components; generalize where the two apps differ. Includes the M0 copies of Osc52, TextSelection and SearchSeed. (`cmdr:` / `core:`) Done: Cmdr.Core uses Shared.Core; cmdr's UI uses Shared.Tui, including HintsLine (now with a right part and messages; one bar style, BarColors, in both apps) and RecentPicker<T> (now with an alternate open key and a cancelled load). Left in cmdr: SelectionText (output-pane selection, no shared equivalent) and the process-control natives.

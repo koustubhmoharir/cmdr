@@ -42,13 +42,16 @@ A missing file in run mode is not loaded before the TUI starts: `TuiHost.RunMiss
 (Yes loads it in edit mode, No shows the picker when there are recent files). `TuiHost` owns the session on every path
 and disposes it when the main window closes. In the main window Ctrl+E switches modes (`MainController.SwitchMode`);
 `ApplyLayout` is the one place that lays the window out for the mode (edit mode hides the output header and output, and
-the top row fills the window), the maximize state and the search bar. The hint bar is built per mode.
+the top row fills the window), the maximize state and the search bar. The hint bar (`HintsLine` in Shared.Tui) is built per mode
+and is drawn in `BarColors`, the one bar style that cmdr and logvu share.
 
-`cmdr` with no arguments shows the recent-configs picker (`RecentPicker`, rows from `RecentRows`, digit
-selection in `NumberTyping`). The picker and the main window run one after the other on the same
-`IApplication` (`TuiHost.RunPicker`): the picker loads the chosen session itself (Enter in run mode, F2 in edit mode; Enter on a
-missing file asks whether to create it, in edit mode), so a load error is shown there and the picker stays; on success it calls `RequestStop` and the main window runs next. The
-list's type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
+`cmdr` with no arguments shows the recent-configs picker (`RecentPicker<Session>` in Shared.Tui, built by
+`TuiHost.CreatePicker`; rows from `RecentRows`, digit selection in `NumberTyping`). The picker and the main window run one
+after the other on the same `IApplication` (`TuiHost.RunPicker`). Enter loads the selected config in run mode and F2 in edit
+mode, through the picker's alternate open (`PickerOpen`). Enter on a missing file asks whether to create it (No stays in the
+picker, Yes loads it in edit mode); F2 opens it without asking. A load error is shown there and the picker stays, and a load
+the user cancels shows nothing. The picker records the file it opens and stops, and the main window runs next. The list's
+type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
 
 `RecentFiles` (Shared.Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
 recent first, at most 20, full paths compared like base-file paths. Every successful load is recorded

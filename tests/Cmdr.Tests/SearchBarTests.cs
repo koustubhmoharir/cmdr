@@ -4,7 +4,6 @@ using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
-using StatusLine = Cmdr.Tui.StatusLine;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -33,7 +32,7 @@ public sealed class SearchBarTests
         RunLaidOut(temp, Width, Height, (app, controller) =>
         {
             SearchBar bar = Field<SearchBar>(controller, "_searchBar");
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             OutputView output = Field<OutputView>(controller, "_output");
             CommandListView list = Field<CommandListView>(controller, "_list");
             list.SetFocus();
@@ -167,7 +166,7 @@ public sealed class SearchBarTests
             Press(app, Key.F3);
 
             Assert.Equal("1 of 3", bar.Status);
-            Assert.Equal("Search wrapped", StatusText(Field<StatusLine>(controller, "_status")));
+            Assert.Equal("Search wrapped", StatusText(Field<HintsLine>(controller, "_status")));
         });
     }
 
@@ -486,7 +485,7 @@ public sealed class SearchBarTests
 
         RunLaidOut(temp, Width, Height, (app, controller) =>
         {
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             SearchBar bar = Field<SearchBar>(controller, "_searchBar");
             Field<CommandListView>(controller, "_list").SetFocus();
             app.LayoutAndDraw();
@@ -535,7 +534,7 @@ public sealed class SearchBarTests
         {
             SearchBar bar = Field<SearchBar>(controller, "_searchBar");
             OutputView output = Field<OutputView>(controller, "_output");
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             TypeHitInOutput(temp, app, controller);
             Assert.Equal("1 of 3", bar.Status);
 
@@ -873,8 +872,8 @@ public sealed class SearchBarTests
         typeof(MainController).GetMethod("OnFastTick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(controller, null);
 
     /// <summary>The text the status line shows.</summary>
-    private static string StatusText(Cmdr.Tui.StatusLine status) =>
-        (string)typeof(Cmdr.Tui.StatusLine).GetField("_text", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(status)!;
+    private static string StatusText(HintsLine status) =>
+        (string)typeof(HintsLine).GetField("_text", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(status)!;
 
     /// <summary>The characters drawn on one row of the screen, left to right.</summary>
     private static string ScreenRow(IApplication app, int row, int width)

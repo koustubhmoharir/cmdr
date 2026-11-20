@@ -86,7 +86,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
     private CommandListView _list = null!;
     private DetailsView _details = null!;
     private OutputView _output = null!;
-    private StatusLine _status = null!;
+    private HintsLine _status = null!;
     private SearchBar _searchBar = null!;
 
     public MainController(IApplication app, Session session)
@@ -126,7 +126,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _outputHeader = new OutputHeader(() => _output.SetFocus()) { HeaderTitle = "Output", X = 0, Y = Pos.Bottom(_detailsFrame), Width = Dim.Fill(), Height = 1 };
         _output = new OutputView(this) { X = 0, Y = Pos.Bottom(_outputHeader), Width = Dim.Fill(), Height = Dim.Fill(1) };
 
-        _status = new StatusLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
+        _status = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
 
         // The search bar sits above the status line and is shown only while a search is open (see SetSearchBarOpen).
         _searchBar = new SearchBar { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1, Visible = false };

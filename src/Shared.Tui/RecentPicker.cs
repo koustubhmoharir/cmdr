@@ -9,6 +9,15 @@ using Terminal.Gui.Views;
 namespace Shared.Tui;
 
 /// <summary>
+/// An alternate way to open the selected row of a <see cref="RecentPicker{T}"/>: the key that opens it, with the loader it uses. The
+/// loader works as the picker's <c>tryOpen</c> does (see <see cref="RecentPicker{T}"/>).
+/// </summary>
+/// <typeparam name="T">The loaded config.</typeparam>
+/// <param name="Key">The key that, pressed in the list, opens the selected row with <paramref name="TryOpen"/>.</param>
+/// <param name="TryOpen">Loads the config at a path, as the picker's <c>tryOpen</c> does.</param>
+public sealed record PickerOpen<T>(Key Key, Func<string, (T? Value, string? Error)> TryOpen);
+
+/// <summary>
 /// The screen shown by an application with no arguments: the recently opened config files, numbered. Enter opens the selected
 /// one (<see cref="Opened"/> is then set and the window stops); Esc or Ctrl+Q quits with nothing opened. With
 /// <paramref name="openFile"/>, <c>o</c> and Ctrl+O open a file chosen in a file dialog, and the picker shows even when the
@@ -21,6 +30,7 @@ public sealed class RecentPicker<T> : Window
     private readonly IApplication _app;
     private readonly RecentFiles? _recent;
     private readonly Func<string, (T? Value, string? Error)> _tryOpen;
+    private readonly PickerOpen<T>? _alternate;
     private readonly bool _openFile;
     private readonly Action<string> _showError;
     private readonly Func<string?> _pickFile;
@@ -39,7 +49,9 @@ public sealed class RecentPicker<T> : Window
     /// <param name="recent">The recent list, or null when there is no store.</param>
     /// <param name="tryOpen">
     /// Loads the config at a path. Returns the loaded value with a null error when the config opened, or a null value with the
-    /// message to show when it did not. The value is kept as <see cref="Opened"/>, so it is not loaded twice.
+    /// message to show when it did not. The value is kept as <see cref="Opened"/>, so it is not loaded twice. Returns a null value
+    /// with a null error when the user cancelled inside the load (for example by declining a question): the picker then stays as it
+    /// is, with the list unchanged and no error shown.
     /// </param>
     /// <param name="title">The title of the frame around the list.</param>
     /// <param name="hint">
@@ -47,14 +59,19 @@ public sealed class RecentPicker<T> : Window
     /// <paramref name="openFile"/> is set.
     /// </param>
     /// <param name="openFile">Whether the Open file action is enabled: <c>o</c> and Ctrl+O show a file dialog for a <c>.json</c> file.</param>
+    /// <param name="alternate">
+    /// An alternate way to open the selected row, or null for none. Its key opens the row with its loader, as Enter opens it with
+    /// <paramref name="tryOpen"/>: the file is recorded at the front of the list when it opens, and an error or a cancel is handled the same way.
+    /// </param>
     public RecentPicker(
         IApplication app,
         RecentFiles? recent,
         Func<string, (T? Value, string? Error)> tryOpen,
         string title,
         Hint hint,
-        bool openFile)
-        : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null)
+        bool openFile,
+        PickerOpen<T>? alternate = null)
+        : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null, alternate)
     {
     }
 
@@ -64,6 +81,7 @@ public sealed class RecentPicker<T> : Window
     /// </summary>
     /// <param name="showError">Shows an error message. Null shows it in an error dialog.</param>
     /// <param name="pickFile">Returns the path chosen in the file dialog, or null when cancelled. Null shows the file dialog.</param>
+    /// <param name="alternate">The alternate way to open the selected row, or null for none. See the public constructor.</param>
     internal RecentPicker(
         IApplication app,
         RecentFiles? recent,
@@ -72,7 +90,8 @@ public sealed class RecentPicker<T> : Window
         Hint hint,
         bool openFile,
         Action<string>? showError,
-        Func<string?>? pickFile)
+        Func<string?>? pickFile,
+        PickerOpen<T>? alternate = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(tryOpen);
@@ -82,6 +101,7 @@ public sealed class RecentPicker<T> : Window
         _app = app;
         _recent = recent;
         _tryOpen = tryOpen;
+        _alternate = alternate;
         _openFile = openFile;
         _showError = showError ?? (message => MessageBox.ErrorQuery(app, "Configuration", message, "_OK"));
         _pickFile = pickFile ?? (() => ShowOpenDialog(app));
@@ -102,7 +122,7 @@ public sealed class RecentPicker<T> : Window
         _list.Accepting += (_, e) =>
         {
             e.Handled = true;
-            OpenSelected();
+            OpenSelected(_tryOpen);
         };
 
         _empty = new Label
@@ -182,6 +202,12 @@ public sealed class RecentPicker<T> : Window
             return true;
         }
 
+        if (_alternate is { } alternate && key == alternate.Key)
+        {
+            OpenSelected(alternate.TryOpen);
+            return true;
+        }
+
         if (_openFile && IsOpenKey(key))
         {
             // The dialog runs after this key is handled, so it is not nested in the key dispatch that asked for it.
@@ -192,14 +218,15 @@ public sealed class RecentPicker<T> : Window
         return false;
     }
 
-    private void OpenSelected()
+    // Opens the selected row with the loader.
+    private void OpenSelected(Func<string, (T? Value, string? Error)> tryOpen)
     {
         if (_list.SelectedItem is not int row || row < 0 || row >= Entries.Count)
         {
             return;
         }
 
-        OpenPath(Entries[row]);
+        OpenPath(Entries[row], tryOpen);
     }
 
     private void OpenFile()
@@ -210,17 +237,23 @@ public sealed class RecentPicker<T> : Window
             return;
         }
 
-        OpenPath(path);
+        OpenPath(path, _tryOpen);
     }
 
-    // Loads the config at the path. A config that does not open shows its error and the picker stays. One that opens is
-    // moved to the front of the recent list (saved) and the picker stops with it as the result.
-    private void OpenPath(string path)
+    // Loads the config at the path. A config that does not open shows its error and the picker stays. A load the user cancelled
+    // (no value, no error) leaves the picker as it is, with no error. One that opens is moved to the front of the recent list
+    // (saved) and the picker stops with it as the result.
+    private void OpenPath(string path, Func<string, (T? Value, string? Error)> tryOpen)
     {
-        (T? value, string? error) = _tryOpen(path);
+        (T? value, string? error) = tryOpen(path);
         if (value is null)
         {
-            _showError(error ?? "The config could not be opened.");
+            if (error is null)
+            {
+                return;
+            }
+
+            _showError(error);
             Rebuild(Math.Clamp(_list.SelectedItem ?? 0, 0, Math.Max(0, Entries.Count - 1)));
             return;
         }

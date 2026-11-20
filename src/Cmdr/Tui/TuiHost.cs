@@ -3,6 +3,7 @@ using Cmdr.Core.Session;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
+using Terminal.Gui.Input;
 using Terminal.Gui.Views;
 
 namespace Cmdr.Tui;
@@ -39,6 +40,42 @@ internal static class TuiHost
         {
             WithApp(app => ShowMain(app, session));
         }
+    }
+
+    /// <summary>
+    /// The key hints of the recent-configs picker's bottom row. Each label's key is a click target.
+    /// </summary>
+    internal static readonly Hint PickerHints = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.F2, "F2 Edit"),
+        KeyHints.Bound(Key.Delete, "Del Remove"),
+        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Concat(
+            KeyHints.Bound(Key.Esc, "Esc"),
+            KeyHints.Plain("/"),
+            KeyHints.Bound(Key.Q.WithCtrl, "^Q"),
+            KeyHints.Plain(" Quit")));
+
+    /// <summary>
+    /// The recent-configs picker as cmdr shows it. Enter opens the selected config in run mode; a file that does not exist is first
+    /// offered for creation (No stays in the picker, Yes opens it in edit mode). F2 opens the selected config in edit mode, without
+    /// asking for a missing file, which opens with an empty list. The picker records the file it opens in the recent list.
+    /// </summary>
+    /// <param name="app">The running application, for the creation question and the error dialog.</param>
+    /// <param name="recent">The recent list. Opened files and removals are saved to its store.</param>
+    internal static RecentPicker<Session> CreatePicker(IApplication app, RecentFiles recent)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentNullException.ThrowIfNull(recent);
+
+        return new RecentPicker<Session>(
+            app,
+            recent,
+            path => OpenInRunMode(app, path),
+            "Recent configs",
+            PickerHints,
+            openFile: false,
+            new PickerOpen<Session>(Key.F2, path => TryLoad(path, SessionMode.Edit)));
     }
 
     /// <summary>
@@ -114,10 +151,10 @@ internal static class TuiHost
     private static void ShowPicker(IApplication app, RecentFiles recent)
     {
         Session? session;
-        using (var picker = new RecentPicker(app, recent))
+        using (var picker = CreatePicker(app, recent))
         {
             app.Run(picker);
-            session = picker.Session;
+            session = picker.Opened;
         }
 
         if (session is null)
@@ -128,6 +165,37 @@ internal static class TuiHost
         using (session)
         {
             ShowMain(app, session);
+        }
+    }
+
+    // Enter in the picker: a file that does not exist is first offered for creation, and a No leaves the picker as it is (no value, no
+    // error). Otherwise the file is loaded in run mode.
+    private static (Session? Value, string? Error) OpenInRunMode(IApplication app, string path)
+    {
+        SessionMode mode = SessionMode.Run;
+        if (!File.Exists(path))
+        {
+            if (!AskCreate(app, path))
+            {
+                return (null, null);
+            }
+
+            mode = SessionMode.Edit;
+        }
+
+        return TryLoad(path, mode);
+    }
+
+    // Loads the config in the mode. An invalid config gives its message, which the picker shows.
+    private static (Session? Value, string? Error) TryLoad(string path, SessionMode mode)
+    {
+        try
+        {
+            return (Session.Load(path, mode), null);
+        }
+        catch (ConfigException ex)
+        {
+            return (null, ex.Message);
         }
     }
 

@@ -5,7 +5,6 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
-using StatusLine = Cmdr.Tui.StatusLine;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -32,7 +31,7 @@ public sealed class MainLayoutTests
             FrameView details = Field<FrameView>(controller, "_detailsFrame");
             OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
             OutputView output = Field<OutputView>(controller, "_output");
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             CommandListSource source = Field<CommandListSource>(controller, "_source");
 
             int expectedHeight = Math.Min(Math.Max(5, source.Count + 2), Height * 60 / 100);
@@ -259,7 +258,7 @@ public sealed class MainLayoutTests
             FrameView details = Field<FrameView>(controller, "_detailsFrame");
             OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
             OutputView output = Field<OutputView>(controller, "_output");
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             CommandListView listView = Field<CommandListView>(controller, "_list");
             listView.SetFocus();
             app.LayoutAndDraw();
@@ -425,7 +424,7 @@ public sealed class MainLayoutTests
                 Assert.True(header.Visible);
                 Assert.Equal(normalHeader, header.Frame);
                 Assert.Equal(list.Frame.Height, details.Frame.Height);
-                Assert.Contains("Cannot switch to edit mode", Field<StatusLine>(controller, "_status").Shown.Text);
+                Assert.Contains("Cannot switch to edit mode", Field<HintsLine>(controller, "_status").Shown.Text);
             });
         }
         finally

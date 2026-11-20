@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Shared.Tui.Tests" />
+    <InternalsVisibleTo Include="Cmdr.Tests" />
   </ItemGroup>
 
   <PropertyGroup>

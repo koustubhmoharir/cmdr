@@ -4,7 +4,6 @@ using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
-using StatusLine = Cmdr.Tui.StatusLine;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
@@ -56,7 +55,7 @@ public sealed class HintsLineClickTests
 
             Click(app, controller, "c Copy command");
 
-            StatusLine status = Field<StatusLine>(controller, "_status");
+            HintsLine status = Field<HintsLine>(controller, "_status");
             Assert.StartsWith("Copied command line", status.Shown.Text, StringComparison.Ordinal);
             Assert.True(list.HasFocus);
         });
@@ -187,7 +186,7 @@ public sealed class HintsLineClickTests
             ClickColumn(app, column);
 
             Assert.False(Field<Selection>(controller, "_selection").IsMarked(build));
-            Assert.Equal("Something happened", Field<StatusLine>(controller, "_status").Shown.Text);
+            Assert.Equal("Something happened", Field<HintsLine>(controller, "_status").Shown.Text);
             Assert.True(list.HasFocus);
         });
     }
@@ -200,7 +199,7 @@ public sealed class HintsLineClickTests
         RunLaidOut(temp, (app, controller) =>
         {
             FocusCommand(app, controller);
-            Hint shown = Field<StatusLine>(controller, "_status").Shown;
+            Hint shown = Field<HintsLine>(controller, "_status").Shown;
             int row = Height - 1;
 
             Assert.Equal(shown.Text, ScreenRow(app, row, shown.Text.Length));
@@ -227,7 +226,7 @@ public sealed class HintsLineClickTests
                 bar ??= cell;
                 Assert.Equal(bar.Value.Background, cell.Background);
                 Assert.Equal(bar.Value.Foreground, cell.Foreground);
-                Assert.False(cell.Background.Equals(HintColors.TargetBackground), $"column {i} is drawn as a button");
+                Assert.False(cell.Background.Equals(BarColors.TargetBackground), $"column {i} is drawn as a button");
             }
         });
     }
@@ -283,7 +282,7 @@ public sealed class HintsLineClickTests
             {
                 Attribute cell = CellAt(app, row, column);
                 Assert.Equal(TextStyle.Bold, cell.Style);
-                Assert.False(cell.Background.Equals(HintColors.TargetBackground));
+                Assert.False(cell.Background.Equals(BarColors.TargetBackground));
             }
         });
     }
@@ -328,7 +327,7 @@ public sealed class HintsLineClickTests
     /// <summary>The display column of the label's first character in the bar, on the left text or the right part.</summary>
     private static int ColumnOf(MainController controller, string label)
     {
-        StatusLine status = Field<StatusLine>(controller, "_status");
+        HintsLine status = Field<HintsLine>(controller, "_status");
         int index = status.Shown.Text.IndexOf(label, StringComparison.Ordinal);
         if (index >= 0)
         {
@@ -353,8 +352,8 @@ public sealed class HintsLineClickTests
     private static void AssertButton(IApplication app, int row, int column)
     {
         Attribute cell = CellAt(app, row, column);
-        Assert.True(cell.Background.Equals(HintColors.TargetBackground), $"column {column} background");
-        Assert.True(cell.Foreground.Equals(HintColors.TargetText), $"column {column} text");
+        Assert.True(cell.Background.Equals(BarColors.TargetBackground), $"column {column} background");
+        Assert.True(cell.Foreground.Equals(BarColors.TargetText), $"column {column} text");
     }
 
     /// <summary>The attribute of a cell of the screen.</summary>
