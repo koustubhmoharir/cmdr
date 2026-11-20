@@ -494,6 +494,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return RunOnly(() => ToggleLog(focused));
         }
 
+        if (key == Key.R.WithCtrl)
+        {
+            return RunOnly(() => RerunEnvScripts(focused));
+        }
+
         return false;
     }
 
@@ -502,13 +507,36 @@ internal sealed class MainController : IDisposable, IListSearchHost
         key == Key.Space || key == Key.CursorUp.WithShift || key == Key.CursorDown.WithShift || key == Key.A.WithCtrl;
 
     /// <summary>
-    /// The keys a file row takes and does nothing with: Enter, F2, Del, Space, Ctrl+A, Ctrl+C, c, F5, L and Alt+Up/Down. Ctrl+N and
+    /// Runs the environment scripts of the focused group or command again at the next start (Ctrl+R): they are forgotten, so the next
+    /// start runs them again. Says whether any script applies. Does nothing without a group or command row.
+    /// </summary>
+    private void RerunEnvScripts(ListRow? row)
+    {
+        ItemEntry? item = row switch
+        {
+            GroupRow group => group.Group,
+            CommandRow command => command.Entry,
+            _ => null,
+        };
+        if (item is null)
+        {
+            return;
+        }
+
+        bool any = _session.EnvScriptOwnersOf(item).Count > 0;
+        _session.RefreshEnvScripts(item);
+        ShowMessage(any ? "Environment scripts will run again at the next start" : "No environment scripts apply here");
+    }
+
+    /// <summary>
+    /// The keys a file row takes and does nothing with: Enter, F2, Del, Space, Ctrl+A, Ctrl+C, c, F5, L, Ctrl+R and Alt+Up/Down. Ctrl+N and
     /// Ctrl+G are not among them: they add a command or a group whatever row is focused. Left, Right, Up, Down and Shift+Up/Down are
     /// not among them either.
     /// </summary>
     private static bool IsIgnoredOnFile(Key key) =>
         key == Key.Enter || key == Key.F2 || key == Key.Delete || key == Key.Space || key == Key.A.WithCtrl || key == Key.C
-        || key == Key.C.WithCtrl || key == Key.F5 || key == Key.CursorUp.WithAlt || key == Key.CursorDown.WithAlt || IsLogKey(key);
+        || key == Key.C.WithCtrl || key == Key.F5 || key == Key.CursorUp.WithAlt || key == Key.CursorDown.WithAlt || IsLogKey(key)
+        || key == Key.R.WithCtrl;
 
     /// <summary>
     /// Runs an edit-mode action in edit mode. In run mode it shows the message that says how to reach edit mode. Always handled.
@@ -546,7 +574,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// The command keys of the info and output panes: Enter starts (edits in edit mode), Ctrl+C stops, F5 restarts, L toggles the
-    /// log, F2 edits, and Del deletes in edit mode or clears the output in run mode. They act on the command the panes show (the
+    /// log, Ctrl+R runs its environment scripts again at the next start, F2 edits, and Del deletes in edit mode or clears the output in
+    /// run mode. They act on the command the panes show (the
     /// focused row, when it is a command) and on that command alone: marks are ignored. A group header shows no command, so these
     /// keys do nothing there. Returns true for these keys, even when nothing is done; the panes handle their own keys first and
     /// call this for the rest.
@@ -580,6 +609,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
         if (IsLogKey(key))
         {
             return RunOnly(() => ToggleLog(ShownRow));
+        }
+
+        if (key == Key.R.WithCtrl)
+        {
+            return RunOnly(() => RerunEnvScripts(ShownRow));
         }
 
         if (key == Key.F2)
@@ -1901,7 +1935,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
         UpdateFocusedViews();
     }
 
-    /// <summary>Copies the command line of a command row: POSIX sh quoting, or PowerShell quoting on Windows. Group rows do nothing. Used by the list and the details strip.</summary>
+    /// <summary>
+    /// Copies the command line of a command row: POSIX sh quoting, or PowerShell quoting on Windows. The copy carries the environment
+    /// script values that are known (see <see cref="KnownEnvironmentOf"/>); when a script has not run, the message says it is not
+    /// included. Group rows do nothing. Used by the list and the details strip.
+    /// </summary>
     public void CopyCommandLine(ListRow? focused)
     {
         if (focused is not CommandRow command)
@@ -1910,9 +1948,34 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
 
         bool windows = OperatingSystem.IsWindows();
-        string line = CommandLineFormatter.ForCopy(command.Entry, windows, EffectiveEnv.Process(), Path.PathSeparator);
-        CopyToClipboard(line, windows ? "Copied command line (PowerShell)" : "Copied command line");
+        string line = CommandLineFormatter.ForCopy(
+            command.Entry,
+            windows,
+            EffectiveEnv.Process(),
+            Path.PathSeparator,
+            KnownEnvironmentOf(command.Entry));
+        string message = windows ? "Copied command line (PowerShell)" : "Copied command line";
+        if (EnvScriptsNotRunFor(command.Entry).Count > 0)
+        {
+            message = "Copied; variables of env scripts without a successful run are not included";
+        }
+
+        CopyToClipboard(line, message);
     }
+
+    /// <summary>The file levels and group values a command's launch is built from, with the environment script values that are known (see <see cref="Session.KnownLaunchEnvironment"/>).</summary>
+    internal (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownEnvironmentOf(CommandEntry entry) =>
+        _session.KnownLaunchEnvironment(entry);
+
+    /// <summary>The labels of the environment scripts of an item that have no successful run, in run order. Empty when all of them have run.</summary>
+    internal IReadOnlyList<string> EnvScriptsNotRunFor(ItemEntry item) =>
+        _session.EnvScriptOwnersOf(item)
+            .Where(owner => _session.LastEnvScriptRun(owner.Owner) is not { Result.Succeeded: true })
+            .Select(owner => owner.Label)
+            .ToList();
+
+    /// <summary>The last run of an environment script, by its owner (a file or a group), or null when it has not run (see <see cref="Session.LastEnvScriptRun"/>).</summary>
+    internal (DateTimeOffset FinishedAt, EnvScriptResult Result)? LastEnvScriptRunOf(object owner) => _session.LastEnvScriptRun(owner);
 
     /// <summary>
     /// Writes the text to the system clipboard with OSC 52 and shows <paramref name="successMessage"/>. Text over
@@ -2279,36 +2342,53 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// The list on a command row acts on all six. The list on a group row acts on Ctrl+C, F5, Ctrl+A (on the whole group) and Del
     /// (clears the output of the whole group), not Space or L, which only a command row takes. The list with no row, a file row, and no
     /// pane focused, act on none. The info and output panes act on Ctrl+C, F5, L and Del for the shown command alone, when a command is
-    /// shown, and never Space or Ctrl+A.
+    /// shown, and never Space or Ctrl+A. Ctrl+R (run the environment scripts again) is shown last, when the row or the shown command has
+    /// environment scripts (<paramref name="hasEnvScripts"/>).
     /// </summary>
-    private static Hint? CommandKeysOf(CopyPane pane, ListRow? focused)
+    private static Hint? CommandKeysOf(CopyPane pane, ListRow? focused, bool hasEnvScripts)
     {
+        var keys = new List<Hint>();
         switch (pane)
         {
             case CopyPane.List when focused is CommandRow:
-                return KeyHints.Join(
-                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
-                    KeyHints.Bound(Key.F5, "F5 Restart"),
-                    KeyHints.Bound(Key.Space, "Space Mark"),
-                    KeyHints.Bound(Key.A.WithCtrl, "^A All"),
-                    KeyHints.Bound(Key.L, "L Log"),
-                    KeyHints.Bound(Key.Delete, "Del Clear"));
+                keys.Add(KeyHints.Bound(Key.C.WithCtrl, "^C Stop"));
+                keys.Add(KeyHints.Bound(Key.F5, "F5 Restart"));
+                keys.Add(KeyHints.Bound(Key.Space, "Space Mark"));
+                keys.Add(KeyHints.Bound(Key.A.WithCtrl, "^A All"));
+                keys.Add(KeyHints.Bound(Key.L, "L Log"));
+                keys.Add(KeyHints.Bound(Key.Delete, "Del Clear"));
+                break;
             case CopyPane.List when focused is GroupRow:
-                return KeyHints.Join(
-                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
-                    KeyHints.Bound(Key.F5, "F5 Restart"),
-                    KeyHints.Bound(Key.A.WithCtrl, "^A All"),
-                    KeyHints.Bound(Key.Delete, "Del Clear"));
+                keys.Add(KeyHints.Bound(Key.C.WithCtrl, "^C Stop"));
+                keys.Add(KeyHints.Bound(Key.F5, "F5 Restart"));
+                keys.Add(KeyHints.Bound(Key.A.WithCtrl, "^A All"));
+                keys.Add(KeyHints.Bound(Key.Delete, "Del Clear"));
+                break;
             case CopyPane.Details or CopyPane.Output when focused is CommandRow:
-                return KeyHints.Join(
-                    KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
-                    KeyHints.Bound(Key.F5, "F5 Restart"),
-                    KeyHints.Bound(Key.L, "L Log"),
-                    KeyHints.Bound(Key.Delete, "Del Clear"));
+                keys.Add(KeyHints.Bound(Key.C.WithCtrl, "^C Stop"));
+                keys.Add(KeyHints.Bound(Key.F5, "F5 Restart"));
+                keys.Add(KeyHints.Bound(Key.L, "L Log"));
+                keys.Add(KeyHints.Bound(Key.Delete, "Del Clear"));
+                break;
             default:
                 return null;
         }
+
+        if (hasEnvScripts)
+        {
+            keys.Add(KeyHints.Bound(Key.R.WithCtrl, "^R Env"));
+        }
+
+        return KeyHints.Join([.. keys]);
     }
+
+    /// <summary>True when an environment script applies to the row: a group or a command row with one (see <see cref="Session.EnvScriptOwnersOf"/>).</summary>
+    private bool EnvScriptsApplyTo(ListRow? row) => row switch
+    {
+        GroupRow group => _session.EnvScriptOwnersOf(group.Group).Count > 0,
+        CommandRow command => _session.EnvScriptOwnersOf(command.Entry).Count > 0,
+        _ => false,
+    };
 
     /// <summary>
     /// The hint left of "^Q Quit", with its click targets. While the find field has the focus, the search keys (see <see cref="SearchHint"/>).
@@ -2347,7 +2427,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
         bool sequenceRunning = hintGroup is { Mode: GroupMode.Sequential, IsSequenceRunning: true };
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
-        Hint? commands = CommandKeysOf(pane, FocusedRow);
+        bool envScripts = EnvScriptsApplyTo(pane == CopyPane.List ? FocusedRow : ShownRow);
+        Hint? commands = CommandKeysOf(pane, FocusedRow, envScripts);
         var parts = new List<Hint>();
         if (enter is not null)
         {

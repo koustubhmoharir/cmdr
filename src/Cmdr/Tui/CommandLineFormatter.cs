@@ -59,7 +59,16 @@ internal static class CommandLineFormatter
     /// <param name="powerShell">The platform: POSIX sh, or PowerShell on Windows.</param>
     /// <param name="environment">The process environment the values are applied to.</param>
     /// <param name="pathSeparator">The value of <c>${pathsep}</c>.</param>
-    public static string ForCopy(CommandEntry entry, bool powerShell, IReadOnlyDictionary<string, string?> environment, char pathSeparator)
+    /// <param name="known">
+    /// The file levels and group values of the launch, with the environment scripts' values that are known (see
+    /// <see cref="Cmdr.Core.Session.Session.KnownLaunchEnvironment"/>). Null uses the file's levels without any script's values.
+    /// </param>
+    public static string ForCopy(
+        CommandEntry entry,
+        bool powerShell,
+        IReadOnlyDictionary<string, string?> environment,
+        char pathSeparator,
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentNullException.ThrowIfNull(environment);
@@ -67,14 +76,14 @@ internal static class CommandLineFormatter
         LaunchSpec spec;
         try
         {
-            spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
+            spec = LaunchOf(entry, known);
         }
         catch (Exception ex) when (DetailsText.IsPathError(ex))
         {
             return ForEntry(entry, powerShell);
         }
 
-        // The arguments are expanded against the final environment, with input placeholders kept as written (no values are known).
+        // The arguments are expanded against the final environment, with input placeholders kept as written (no input values are known).
         IReadOnlyDictionary<string, string?> applied = EffectiveEnv.Applied(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
         spec = spec with
         {
@@ -202,6 +211,17 @@ internal static class CommandLineFormatter
         }
 
         return Format(program, args, powerShell);
+    }
+
+    /// <summary>The launch of a command from its groups, its file's levels and, when given, the known script values (see <see cref="ForCopy"/>).</summary>
+    private static LaunchSpec LaunchOf(
+        CommandEntry entry,
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known)
+    {
+        IReadOnlyList<GroupSpec> groups = GroupTree.SpecChain(entry.Group);
+        return known is { } values
+            ? LaunchSpec.From(groups, entry.Spec, entry.Source.Dir, values.FileLevels, values.GroupValues)
+            : LaunchSpec.From(groups, entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
     }
 
     /// <summary>The cmd.exe command of a batch-file command that needs it (see <see cref="WindowsBatchCommandLine"/>), or null.</summary>

@@ -3,6 +3,7 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Shared.Tui;
+using CmdrSession = Cmdr.Core.Session.Session;
 
 namespace Cmdr.Tui;
 
@@ -117,12 +118,19 @@ internal static class DetailsText
     /// </summary>
     /// <param name="environment">The process environment the values are applied to (see <see cref="EnvLines"/>).</param>
     /// <param name="windows">The platform: quoting of the command line, the prompt and the key comparison.</param>
+    /// <param name="known">
+    /// The file levels and group values the launch is built from (see <see cref="CmdrSession.KnownLaunchEnvironment"/>). Null uses
+    /// the file's levels without any environment script's values.
+    /// </param>
+    /// <param name="notRunLabels">The labels of the environment scripts of the command that have no successful run, one line each. Null for none.</param>
     public static IReadOnlyList<DetailsLine> CommandLines(
         CommandEntry entry,
         string configDir,
         bool windows,
         IReadOnlyDictionary<string, string?> environment,
-        char pathSeparator)
+        char pathSeparator,
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null,
+        IReadOnlyList<string>? notRunLabels = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
@@ -147,7 +155,9 @@ internal static class DetailsText
         LaunchSpec? launch = null;
         try
         {
-            launch = LaunchSpec.From(ancestors, spec, configDir, entry.Source.EnvLevels);
+            launch = known is { } values
+                ? LaunchSpec.From(ancestors, spec, configDir, values.FileLevels, values.GroupValues)
+                : LaunchSpec.From(ancestors, spec, configDir, entry.Source.EnvLevels);
         }
         catch (Exception ex) when (IsPathError(ex))
         {
@@ -158,6 +168,11 @@ internal static class DetailsText
         {
             lines.Add(Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(launch.WorkingDirectory, DetailsStyle.Path)));
             lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
+        }
+
+        foreach (string label in notRunLabels ?? Array.Empty<string>())
+        {
+            lines.Add(Line(new DetailsSpan($"env script of {label} has no successful run yet; its variables are not shown", DetailsStyle.Faint)));
         }
 
         // The default (pipe) is not shown: only the setting that changes how the command runs.
@@ -202,9 +217,14 @@ internal static class DetailsText
 
     /// <summary>
     /// The lines of a group: its mode, its working directory (the setting and the resolved path, or only the resolved path
-    /// when no setting is given), one line per environment entry, then the description.
+    /// when no setting is given), one line per environment entry, its environment script when it has one (see
+    /// <see cref="EnvScriptLines"/>), then the description.
     /// </summary>
-    public static IReadOnlyList<DetailsLine> GroupLines(GroupEntry group, string configDir)
+    /// <param name="lastRun">The last run of the group's script (see <see cref="CmdrSession.LastEnvScriptRun"/>), or null when it has not run.</param>
+    public static IReadOnlyList<DetailsLine> GroupLines(
+        GroupEntry group,
+        string configDir,
+        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
@@ -251,6 +271,11 @@ internal static class DetailsText
             }
         }
 
+        if (group.EnvScript is { } envScript)
+        {
+            lines.AddRange(EnvScriptLines(envScript, lastRun));
+        }
+
         lines.AddRange(DescriptionLines(group.Description));
         return lines;
     }
@@ -263,11 +288,13 @@ internal static class DetailsText
     /// <param name="environment">The process environment the values are applied to (see <see cref="EnvLines"/>).</param>
     /// <param name="windows">The platform, as for <see cref="EnvLines"/>.</param>
     /// <param name="pathSeparator">The path separator of the platform, as for <see cref="EnvLines"/>.</param>
+    /// <param name="lastRun">The last run of the file's script (see <see cref="EnvScriptLines"/>), or null when it has not run.</param>
     public static IReadOnlyList<DetailsLine> FileLines(
         ConfigSource source,
         IReadOnlyDictionary<string, string?> environment,
         bool windows,
-        char pathSeparator)
+        char pathSeparator,
+        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(environment);
@@ -299,8 +326,7 @@ internal static class DetailsText
 
         if (source.EnvScript is { } envScript)
         {
-            string command = string.Join(" ", new[] { envScript.Program }.Concat(envScript.Args));
-            lines.Add(Line(new DetailsSpan("envScript: ", DetailsStyle.Label), new DetailsSpan(command, DetailsStyle.Normal)));
+            lines.AddRange(EnvScriptLines(envScript, lastRun));
         }
 
         if (source.Secret is { Count: > 0 } secret)
@@ -357,6 +383,44 @@ internal static class DetailsText
         }
 
         lines.AddRange(text.Split('\n').Select(part => Line(new DetailsSpan(part, DetailsStyle.Normal))));
+        return lines;
+    }
+
+    /// <summary>
+    /// The lines of an environment script: its command as written, then the status of its last run: when it ran, the time it finished
+    /// and how long it took, and how many variables it produced, followed by one <c>KEY=value</c> line per variable in its output order
+    /// (<c>KEY (unset)</c> for a removal); when it failed, the time and the error; or <c>not run yet</c> when it has not run.
+    /// </summary>
+    private static List<DetailsLine> EnvScriptLines(EnvScriptSpec script, (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun)
+    {
+        string command = string.Join(" ", new[] { script.Program }.Concat(script.Args));
+        var lines = new List<DetailsLine>
+        {
+            Line(new DetailsSpan("envScript: ", DetailsStyle.Label), new DetailsSpan(command, DetailsStyle.Normal)),
+        };
+
+        if (lastRun is not { } run)
+        {
+            lines.Add(Line(new DetailsSpan("not run yet", DetailsStyle.Faint)));
+            return lines;
+        }
+
+        string time = run.FinishedAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        if (!run.Result.Succeeded)
+        {
+            string error = run.Result.Error ?? "the script failed";
+            lines.Add(Line(new DetailsSpan($"last run {time} failed: {error}", DetailsStyle.Unset)));
+            return lines;
+        }
+
+        IReadOnlyDictionary<string, string?> values = run.Result.Values!;
+        string seconds = run.Result.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture);
+        lines.Add(Line(new DetailsSpan($"last run {time} ({seconds} s): {values.Count} {(values.Count == 1 ? "variable" : "variables")}", DetailsStyle.Normal)));
+        foreach (KeyValuePair<string, string?> entry in values)
+        {
+            lines.Add(EnvLine(entry.Key, entry.Value));
+        }
+
         return lines;
     }
 

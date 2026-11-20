@@ -11,9 +11,9 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace Cmdr.Tui;
 
 /// <summary>
-/// The details strip for the focused row: a command shows its command line, working directory, environment, pid and log,
-/// and description; a group shows its mode, working directory, environment and description; a file row shows its path and
-/// settings (see <see cref="DetailsText"/>).
+/// The details strip for the focused row: a command shows its command line, working directory, environment (with the environment
+/// script values that are known), pid and log, and description; a group shows its mode, working directory, environment, environment
+/// script status and description; a file row shows its path and settings, and its script status (see <see cref="DetailsText"/>).
 /// The lines are wrapped to the width and scroll when they do not fit. The process state is read at draw time. UI thread only.
 /// </summary>
 /// <remarks>
@@ -850,13 +850,16 @@ internal sealed class DetailsView : View, ISearchTarget
             _configDir,
             OperatingSystem.IsWindows(),
             EffectiveEnv.Process(),
-            Path.PathSeparator),
-        GroupRow group => DetailsText.GroupLines(group.Group, _configDir),
+            Path.PathSeparator,
+            _controller.KnownEnvironmentOf(command.Entry),
+            _controller.EnvScriptsNotRunFor(command.Entry)),
+        GroupRow group => DetailsText.GroupLines(group.Group, _configDir, _controller.LastEnvScriptRunOf(group.Group)),
         FileRow file => DetailsText.FileLines(
             file.Source,
             EffectiveEnv.Process(),
             OperatingSystem.IsWindows(),
-            Path.PathSeparator),
+            Path.PathSeparator,
+            _controller.LastEnvScriptRunOf(file.Source)),
         _ => Array.Empty<DetailsLine>(),
     };
 

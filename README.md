@@ -329,7 +329,7 @@ In run mode, commands act on the marked commands, or the focused command if none
 act on everything in the group. Marks are limited to one group, and switching to edit mode clears them. In the info and
 output panes, Enter, Ctrl+C, F5, L and Del act on the command the panes show (the focused command) alone, ignoring marks; on a
 group header they do nothing there. In edit mode, Enter, F2 and Del in the info pane act on the command it shows.
-On a file row the list's command keys (Enter, Ctrl+C, F5, L, Del, Space, Ctrl+A, F2, c and Alt+↑↓) do nothing, without a
+On a file row the list's command keys (Enter, Ctrl+C, F5, L, Del, Ctrl+R, Space, Ctrl+A, F2, c and Alt+↑↓) do nothing, without a
 message; Ctrl+N and Ctrl+G add a command or a top-level group to the opened file, as they do with no row focused.
 
 A key of the other mode does nothing but say which mode it needs (Ctrl+E switches).
@@ -361,6 +361,7 @@ Run mode:
 | Ctrl+A | Mark / unmark all in the group |
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
 | L | Turn the log file on or off for the focused command |
+| Ctrl+R | Run the environment scripts again at the next start (see [Environment scripts](#environment-scripts)) |
 | Del | Clear the output (the log file is not affected) |
 
 Edit mode:

@@ -384,4 +384,93 @@ public class SessionEnvScriptsTests
         Assert.False(last.Value.result.Succeeded);
         Assert.True(last.Value.finishedAt <= DateTimeOffset.UtcNow);
     }
+
+    [Fact]
+    public void EnvScriptOwnersOf_ListsTheOwnersOfACommandInRunOrderWithTheirLabels()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenImporting(
+            dir,
+            Script("true"),
+            baseEnv: new List<string> { "X" },
+            mainScript: Script("true"),
+            G("outer", Script("true"), G("inner", Script("true"), Sh("cmd", "true"))));
+
+        IReadOnlyList<(object Owner, string Label)> owners = session.EnvScriptOwnersOf(Cmd(session, "cmd"));
+
+        Assert.Equal(4, owners.Count);
+        Assert.Same(session.MainSource.BaseSource, owners[0].Owner);
+        Assert.Equal($"file '{session.MainSource.BaseSource!.DisplayPath}'", owners[0].Label);
+        Assert.Same(session.MainSource, owners[1].Owner);
+        Assert.Equal($"file '{session.MainSource.DisplayPath}'", owners[1].Label);
+        Assert.Same(session.AllGroups.Single(g => g.Name == "outer"), owners[2].Owner);
+        Assert.Equal("group 'outer'", owners[2].Label);
+        Assert.Same(session.AllGroups.Single(g => g.Name == "inner"), owners[3].Owner);
+        Assert.Equal("group 'outer › inner'", owners[3].Label);
+    }
+
+    [Fact]
+    public void EnvScriptOwnersOf_IsEmptyWhenNoScriptApplies()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = Open(dir, new CmdrConfig
+        {
+            Groups = new List<GroupSpec> { G("g", null, Sh("cmd", "true")) },
+        });
+
+        Assert.Empty(session.EnvScriptOwnersOf(Cmd(session, "cmd")));
+        Assert.Empty(session.EnvScriptOwnersOf(session.AllGroups.Single()));
+    }
+
+    [Fact]
+    public async Task KnownEnvScriptValues_AreEmptyBeforeARun_AndHoldTheValuesOfASuccessfulRun()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        using CmdrSession session = Open(dir, new CmdrConfig
+        {
+            Groups = new List<GroupSpec> { G("g", Script("printf '%s' '{\"GREETING\":\"hello\"}'"), Sh("cmd", "true")) },
+        });
+        CommandEntry cmd = Cmd(session, "cmd");
+        GroupEntry group = session.AllGroups.Single();
+
+        Assert.False(session.KnownEnvScriptValues(cmd).TryGet(group, out _));
+        Assert.Null(session.KnownLaunchEnvironment(cmd).GroupValues[0]);
+
+        EnvPreparation prep = await session.PrepareEnvAsync(new[] { cmd }, null, CancellationToken.None);
+
+        Assert.True(prep.Succeeded, prep.Error);
+        Assert.True(session.KnownEnvScriptValues(cmd).TryGet(group, out IReadOnlyDictionary<string, string?>? values));
+        Assert.Equal("hello", values!["GREETING"]);
+        Assert.Equal("hello", session.KnownLaunchEnvironment(cmd).GroupValues[0]!["GREETING"]);
+    }
+
+    [Fact]
+    public async Task KnownEnvScriptValues_AreAbsentAfterAFailedRerun()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string gate = dir.File("gate.txt");
+        EnvScriptSpec script = Script(
+            "if [ -f '" + gate + "' ]; then exit 3; fi; printf '%s' '{\"A\":\"1\"}'",
+            EnvScriptRerun.EachStart);
+        using CmdrSession session = Open(dir, new CmdrConfig
+        {
+            Groups = new List<GroupSpec> { G("g", script, Sh("cmd", "true")) },
+        });
+        CommandEntry cmd = Cmd(session, "cmd");
+        GroupEntry group = session.AllGroups.Single();
+        IReadOnlyList<CommandEntry> commands = new[] { cmd };
+
+        Assert.True((await session.PrepareEnvAsync(commands, null, CancellationToken.None)).Succeeded);
+        Assert.True(session.KnownEnvScriptValues(cmd).TryGet(group, out _));
+
+        File.WriteAllText(gate, string.Empty);
+        Assert.False((await session.PrepareEnvAsync(commands, null, CancellationToken.None)).Succeeded);
+
+        Assert.False(session.KnownEnvScriptValues(cmd).TryGet(group, out _));
+        Assert.False(session.LastEnvScriptRun(group)!.Value.Result.Succeeded);
+    }
 }

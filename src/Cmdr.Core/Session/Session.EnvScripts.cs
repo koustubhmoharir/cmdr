@@ -128,6 +128,63 @@ public sealed partial class Session
     }
 
     /// <summary>
+    /// The environment scripts that the item needs, each once, in the order they run (the same owners that <see cref="RefreshEnvScripts"/>
+    /// and <see cref="PrepareEnvAsync"/> use): the owner, a <see cref="ConfigSource"/> or a <see cref="GroupEntry"/>, and the label used in
+    /// messages. Empty when no script applies.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
+    public IReadOnlyList<(object Owner, string Label)> EnvScriptOwnersOf(ItemEntry item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        lock (_sync)
+        {
+            return OwnersOf(new[] { item }).Select(owner => (owner.Reference, owner.Label)).ToList();
+        }
+    }
+
+    /// <summary>
+    /// The values that the item's environment scripts last produced, for display and copy only: for each owner (see
+    /// <see cref="EnvScriptOwnersOf"/>) whose last run succeeded, that run's values. An owner whose last run failed, or that has not run,
+    /// is absent. Runs nothing, and nothing is started with these values.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="item"/> is null.</exception>
+    public ScriptValues KnownEnvScriptValues(ItemEntry item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+
+        lock (_sync)
+        {
+            ScriptValues values = ScriptValues.Empty;
+            foreach (ScriptOwner owner in OwnersOf(new[] { item }))
+            {
+                if (_envCache.LastRun(owner.Reference) is { Result.Succeeded: true } last)
+                {
+                    values = values.With(owner.Reference, last.Result.Values!);
+                }
+            }
+
+            return values;
+        }
+    }
+
+    /// <summary>
+    /// The file levels and group values that a command's launch is built from, with the values <see cref="KnownEnvScriptValues"/> knows:
+    /// what the launch would use if it started now with those values (the inputs of <c>LaunchSpec.From</c>). For display and copy only.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="entry"/> is null.</exception>
+    public (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownLaunchEnvironment(
+        CommandEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        lock (_sync)
+        {
+            return EnvironmentFor(entry, KnownEnvScriptValues(entry));
+        }
+    }
+
+    /// <summary>
     /// The levels <paramref name="owner"/>'s script runs in, given the values produced so far, and the directory its <c>cwd</c> is relative
     /// to. A file's script sees its base's levels only; a group's script sees the file's levels and the groups above it, not its own <c>env</c>.
     /// </summary>

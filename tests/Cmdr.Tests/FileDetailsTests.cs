@@ -68,6 +68,7 @@ public sealed class FileDetailsTests : IDisposable
                 "logsDir: " + main.LogsDir,
                 "baseEnv: BASE_VAR",
                 "envScript: setup.sh --mode x",
+                "not run yet",
                 "secret: API_KEY",
                 "BASE_VAR=from-base",
                 "MAIN_VAR=main",
