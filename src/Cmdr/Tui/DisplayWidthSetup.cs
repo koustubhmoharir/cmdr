@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Diagnostics.CodeAnalysis;
-using Cmdr.Core.Output;
+using Shared.Core;
 using Terminal.Gui.Text;
 
 namespace Cmdr.Tui;

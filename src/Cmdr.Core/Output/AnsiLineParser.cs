@@ -1,3 +1,5 @@
+using Shared.Core;
+
 namespace Cmdr.Core.Output;
 
 /// <summary>

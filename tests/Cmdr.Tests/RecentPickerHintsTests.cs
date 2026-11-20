@@ -4,6 +4,7 @@ using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.Testing;

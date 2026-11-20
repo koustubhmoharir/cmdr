@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Cmdr.Core.Output;
+using Shared.Core;
 
 namespace Cmdr.Tui;
 

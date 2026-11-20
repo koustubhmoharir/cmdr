@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Cmdr.Core.Output;
+using Shared.Core;
 using static Cmdr.Core.Tests.Output.OutputTestHelpers;
 
 namespace Cmdr.Core.Tests.Output;

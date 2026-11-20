@@ -50,7 +50,7 @@ selection in `NumberTyping`). The picker and the main window run one after the o
 missing file asks whether to create it, in edit mode), so a load error is shown there and the picker stays; on success it calls `RequestStop` and the main window runs next. The
 list's type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
 
-`RecentFiles` (Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
+`RecentFiles` (Shared.Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
 recent first, at most 20, full paths compared like base-file paths. Every successful load is recorded
 (`cmdr <path>` and the picker), including files that don't exist yet. Reading never fails (a bad store
 reads as empty) and a failed save is ignored: the list is a convenience and must never stop cmdr from
@@ -285,7 +285,7 @@ acting, or captures a snapshot and acts only on that.
 - ANSI parser: SGR (16/256/24-bit colors, bold, dim, italic, underline, inverse, reset) is rendered;
   all other escape sequences (CSI, OSC, etc.) are dropped. Bare `\r` (not followed by `\n`) resets the
   current line, so progress bars overwrite in place. A tab pads to the next multiple of 8 display columns.
-- Display width (`DisplayWidth`, Core): measured per grapheme cluster (`StringInfo` text element), with a
+- Display width (`DisplayWidth`, Shared.Core): measured per grapheme cluster (`StringInfo` text element), with a
   pluggable per-grapheme measure. Core's default is a small table (zero-width marks/format characters,
   East Asian wide and emoji ranges); the UI assembly's module initializer (`DisplayWidthSetup`) plugs in
   Terminal.Gui's measure, so tab expansion, wrapping, truncation, selection and drawing all agree with what

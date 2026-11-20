@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Shared.Core;
 
 namespace Cmdr.Core.Config;
 
@@ -63,7 +64,7 @@ public static class ConfigStore
         {
             throw new ConfigException($"Invalid configuration path '{path}': {ex.Message}", ex);
         }
-        StringComparer comparer = PathComparer;
+        StringComparer comparer = PathComparison.Comparer;
         var chain = new List<ConfigFile>();
         var visited = new List<string>();
 
@@ -147,7 +148,7 @@ public static class ConfigStore
     /// Finds log path conflicts among all commands of a chain, whether or not their logs are enabled. Two commands conflict when their
     /// resolved log paths are equal, when both name one existing file (hard links, see <see cref="FileIdentity"/>), or when one log
     /// path is a folder of the other (the other path starts with it and a directory separator). Paths are compared with
-    /// <see cref="PathComparer"/> after resolving symbolic links, so paths that reach one file through a link conflict too. Each file's
+    /// <see cref="PathComparison"/> after resolving symbolic links, so paths that reach one file through a link conflict too. Each file's
     /// logs directory is used for its own commands. Commands whose paths cannot be resolved are skipped here.
     /// </summary>
     /// <param name="chain">The files of the chain; the opened file is the last entry.</param>
@@ -193,7 +194,7 @@ public static class ConfigStore
         // the unit of the folder check. Targets that name one existing file (a hard link is another name for it) share a group key,
         // which is the file's identity when it has one and the path otherwise. Messages show the path as configured (that of the
         // first command of the group).
-        StringComparer comparer = PathComparer;
+        StringComparer comparer = PathComparison.Comparer;
         var byPath = new Dictionary<string, List<LogTarget>>(comparer);
         var paths = new List<string>();
         var byFile = new Dictionary<string, List<LogTarget>>(comparer);
@@ -353,10 +354,6 @@ public static class ConfigStore
             ? string.Join("", items)
             : $"{string.Join(", ", items[..^1])} and {items[^1]}";
     }
-
-    // Paths are compared case-insensitively where the file system usually is.
-    internal static StringComparer PathComparer =>
-        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     // Parses an existing file. Shared by Load (the opened file) and LoadChain (base files).
     private static CmdrConfig Parse(string path)

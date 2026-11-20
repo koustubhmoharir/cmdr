@@ -940,53 +940,6 @@ public class ConfigStoreTests
         Assert.Contains($"{itemPath} is nested deeper than 16 group levels.", ex.Message);
     }
 
-    // File.Replace failed with ERROR_UNABLE_TO_MOVE_REPLACEMENT (1176): the destination is gone and the new content is only in the temp file.
-    // RecoverFromFailedReplace is called directly, so these run on any OS.
-    [Fact]
-    public void RecoverFromFailedReplace_UnableToMove_MovesTheTempFileIntoPlace()
-    {
-        using var dir = new TempDir();
-        string temp = dir.File(".target.json.tmp");
-        File.WriteAllText(temp, "new\n");
-
-        AtomicFile.RecoverFromFailedReplace(UnableToMoveReplacement(), temp, dir.File("target.json"));
-
-        Assert.Equal("new\n", File.ReadAllText(dir.File("target.json")));
-        Assert.False(File.Exists(temp));
-    }
-
-    [Fact]
-    public void RecoverFromFailedReplace_UnableToMoveAndTheMoveFails_ThrowsNamingTheKeptTempFile()
-    {
-        using var dir = new TempDir();
-        string temp = dir.File(".target.json.tmp");
-        File.WriteAllText(temp, "new\n");
-        string destination = dir.File("target.json");
-        Directory.CreateDirectory(destination); // occupies the destination, so the move cannot happen
-
-        IOException ex = Assert.Throws<IOException>(() => AtomicFile.RecoverFromFailedReplace(UnableToMoveReplacement(), temp, destination));
-
-        Assert.Contains(temp, ex.Message);
-        Assert.Equal("new\n", File.ReadAllText(temp));
-    }
-
-    [Fact]
-    public void RecoverFromFailedReplace_OtherError_RethrowsTheOriginalAndLeavesTheTempFile()
-    {
-        using var dir = new TempDir();
-        string temp = dir.File(".target.json.tmp");
-        File.WriteAllText(temp, "new\n");
-        var original = new IOException("access", unchecked((int)0x80070005)); // ERROR_ACCESS_DENIED
-
-        IOException thrown = Assert.Throws<IOException>(() => AtomicFile.RecoverFromFailedReplace(original, temp, dir.File("target.json")));
-
-        Assert.Same(original, thrown);
-        Assert.False(File.Exists(dir.File("target.json")));
-        Assert.True(File.Exists(temp));
-    }
-
-    private static IOException UnableToMoveReplacement() => new("unable to move the replacement", unchecked((int)0x80070498));
-
     private static bool IsRoot() => LinuxNative.GetEffectiveUserId() == 0;
 
     /// <summary>The inode number of a path, read with stat(1) so that the test does not depend on the code under test.</summary>

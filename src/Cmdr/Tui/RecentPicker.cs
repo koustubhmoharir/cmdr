@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Cmdr.Core.Config;
+using Shared.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;

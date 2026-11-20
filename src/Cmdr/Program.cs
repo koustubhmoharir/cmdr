@@ -4,6 +4,7 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Core;
 
 return Run(args);
 
@@ -90,7 +91,7 @@ static int Usage()
 // The recent list, or null when there is no store location.
 static RecentFiles? LoadRecent()
 {
-    string? store = RecentFiles.DefaultStorePath;
+    string? store = RecentFiles.DefaultStorePathFor("cmdr");
     return store is null ? null : RecentFiles.Load(store);
 }
 

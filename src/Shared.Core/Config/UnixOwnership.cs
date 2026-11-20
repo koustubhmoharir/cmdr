@@ -11,7 +11,7 @@ namespace Shared.Core;
 /// Only new items are changed, and a failure to change the owner is ignored. CreateDirectory and GiveNewFileAway may be called on any
 /// OS; the other members are Unix-only.
 /// </summary>
-internal static class UnixOwnership
+public static class UnixOwnership
 {
     private const int AtFdcwd = -100;
     private const uint StatxTypeModeUidGid = 0x1 | 0x2 | 0x8 | 0x10; // STATX_TYPE | STATX_MODE | STATX_UID | STATX_GID
@@ -33,7 +33,7 @@ internal static class UnixOwnership
     /// directories are not changed. Otherwise this is <see cref="Directory.CreateDirectory(string)"/>.
     /// </summary>
     /// <exception cref="IOException">The directory cannot be created.</exception>
-    internal static void CreateDirectory(string directory)
+    public static void CreateDirectory(string directory)
     {
         if (!OperatingSystem.IsLinux() || !IsRoot)
         {
@@ -72,7 +72,7 @@ internal static class UnixOwnership
     /// Gives a file that this process has just created in <paramref name="directory"/> to the owner that
     /// <see cref="OwnerForNewItem"/> picks, through its open handle. Does nothing unless this process is root on Linux. Failures are ignored.
     /// </summary>
-    internal static void GiveNewFileAway(SafeFileHandle handle, string directory)
+    public static void GiveNewFileAway(SafeFileHandle handle, string directory)
     {
         if (!OperatingSystem.IsLinux() || !IsRoot)
         {

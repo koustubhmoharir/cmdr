@@ -35,7 +35,7 @@ namespace Shared.Core;
 /// <item>The temp file is deleted on failure, if it can be. A failed delete does not hide the error that caused it.</item>
 /// </list>
 /// </summary>
-internal static class AtomicFile
+public static class AtomicFile
 {
     private const string KeepOwnerVariable = "CMDR_KEEP_OWNER";
 

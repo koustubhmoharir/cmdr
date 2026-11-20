@@ -14,7 +14,7 @@ namespace Shared.Core;
 /// keeps going past a missing component, where a later <c>..</c> would then skip back over it. <see cref="ResolveExisting"/> is for
 /// a path that is about to be opened, and rejects such a path instead.
 /// </remarks>
-internal static class PhysicalPath
+public static class PhysicalPath
 {
     /// <summary>The most links followed for one path, as Linux allows (ELOOP).</summary>
     private const int MaxLinks = 40;
