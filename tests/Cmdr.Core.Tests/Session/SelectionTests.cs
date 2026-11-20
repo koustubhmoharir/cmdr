@@ -14,7 +14,7 @@ public class SelectionTests
 
         public Fixture()
         {
-            Session = OpenEmpty(_dir);
+            Session = OpenEmpty(_dir, SessionMode.Edit);
             G1 = Session.AddGroup(null, Settings("g1", GroupMode.Parallel));
             A = Session.AddCommand(G1, Sh("a", "true"));
             B = Session.AddCommand(G1, Sh("b", "true"));

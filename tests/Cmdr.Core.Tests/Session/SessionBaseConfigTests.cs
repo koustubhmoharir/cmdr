@@ -17,7 +17,7 @@ public class SessionBaseConfigTests
     /// cmdr.json (bufferLines 50) imports shared/base.json (bufferLines 7, logsDir base-logs). Base group "b" holds "bcmd", which
     /// runs in shared/work and echoes ${configDir}. Main groups are "m1" (command "m1cmd") and "m2" (command "m2cmd").
     /// </summary>
-    private static CmdrSession OpenStandard(TempDir dir)
+    private static CmdrSession OpenStandard(TempDir dir, SessionMode mode)
     {
         Directory.CreateDirectory(dir.File(Path.Combine("shared", "work")));
         CommandSpec bcmd = Sh("bcmd", "pwd; echo \"where=$WHERE\"");
@@ -40,7 +40,7 @@ public class SessionBaseConfigTests
             },
         }, dir.File("cmdr.json"));
 
-        return CmdrSession.Load(dir.File("cmdr.json"));
+        return CmdrSession.Load(dir.File("cmdr.json"), mode);
     }
 
     private static void AssertRefused(Action action, string name)
@@ -57,7 +57,7 @@ public class SessionBaseConfigTests
         ConfigStore.Save(new CmdrConfig { Base = "base2.json", Groups = { Group("b", GroupMode.Parallel, Sh("y", "true")) } }, dir.File(BaseRel));
         ConfigStore.Save(new CmdrConfig { Base = BaseRel, Groups = { Group("m", GroupMode.Parallel, Sh("z", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
 
         Assert.Equal(new[] { "c2", "b", "m" }, session.Groups.Select(g => g.Name));
         Assert.Equal(new[] { Path.Combine("shared", "base2.json"), BaseRel, "cmdr.json" }, session.Sources.Select(s => s.DisplayPath));
@@ -84,7 +84,7 @@ public class SessionBaseConfigTests
         ConfigStore.Save(new CmdrConfig { Groups = { Group("shared", GroupMode.Parallel, Sh("a", "true")) } }, dir.File(BaseRel));
         ConfigStore.Save(new CmdrConfig { Base = BaseRel, Groups = { Group("shared", GroupMode.Parallel, Sh("c", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
 
         Assert.Equal(2, session.Groups.Count);
         Assert.Empty(session.LoadErrors);
@@ -97,7 +97,7 @@ public class SessionBaseConfigTests
         ConfigStore.Save(new CmdrConfig { Groups = { Group("b", GroupMode.Parallel, Sh("a", "true"), Sh("A", "true")) } }, dir.File(BaseRel));
         ConfigStore.Save(new CmdrConfig { Base = BaseRel, Groups = { Group("m", GroupMode.Parallel, Sh("c", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
 
         Assert.Contains(session.LoadErrors, e => e.StartsWith(BaseRel + ": ", StringComparison.Ordinal) && e.Contains("duplicate name 'a'", StringComparison.Ordinal));
         Assert.All(session.LoadErrors, e => Assert.StartsWith(BaseRel + ": ", e, StringComparison.Ordinal));
@@ -109,7 +109,7 @@ public class SessionBaseConfigTests
         using var dir = new TempDir();
         ConfigStore.Save(new CmdrConfig { Base = "missing.json" }, dir.File("cmdr.json"));
 
-        Assert.Throws<ConfigException>(() => CmdrSession.Load(dir.File("cmdr.json")));
+        Assert.Throws<ConfigException>(() => CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run));
     }
 
     [Fact]
@@ -118,7 +118,7 @@ public class SessionBaseConfigTests
         using var dir = new TempDir();
         ConfigStore.Save(new CmdrConfig { LogsDir = "bad\0logs" }, dir.File("cmdr.json"));
 
-        ConfigException ex = Assert.Throws<ConfigException>(() => CmdrSession.Load(dir.File("cmdr.json")));
+        ConfigException ex = Assert.Throws<ConfigException>(() => CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run));
 
         Assert.Contains("logsDir", ex.Message);
         Assert.Contains(dir.File("cmdr.json"), ex.Message);
@@ -128,7 +128,7 @@ public class SessionBaseConfigTests
     public void Buffer_FollowsBufferLinesOfTheFileTheCommandCameFrom()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenStandard(dir);
+        using CmdrSession session = OpenStandard(dir, SessionMode.Run);
 
         Assert.Equal(7, session.Groups[0].Commands[0].Process.Output.Buffer.Capacity);
         Assert.Equal(50, session.Groups[1].Commands[0].Process.Output.Buffer.Capacity);
@@ -143,7 +143,7 @@ public class SessionBaseConfigTests
         ConfigStore.Save(new CmdrConfig { BufferLines = 0, Groups = { Group("b", GroupMode.Parallel, Sh("a", "true")) } }, dir.File(BaseRel));
         ConfigStore.Save(new CmdrConfig { Base = BaseRel, Groups = { Group("m", GroupMode.Parallel, Sh("c", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
 
         Assert.Contains(session.LoadErrors, e => e.StartsWith(BaseRel + ": ", StringComparison.Ordinal) && e.Contains("bufferLines", StringComparison.Ordinal));
         Assert.Equal(1, session.Groups[0].Commands[0].Process.Output.Buffer.Capacity);
@@ -154,7 +154,7 @@ public class SessionBaseConfigTests
     public void Log_DefaultPath_UsesLogsDirOfTheFileTheCommandCameFrom()
     {
         using var dir = new TempDir();
-        CmdrSession session = OpenStandard(dir);
+        CmdrSession session = OpenStandard(dir, SessionMode.Run);
         try
         {
             CommandEntry baseEntry = session.Groups[0].Commands[0];
@@ -180,7 +180,7 @@ public class SessionBaseConfigTests
         if (!OperatingSystem.IsLinux()) return;
 
         using var dir = new TempDir();
-        CmdrSession session = OpenStandard(dir);
+        CmdrSession session = OpenStandard(dir, SessionMode.Run);
         try
         {
             CommandEntry entry = session.Groups[0].Commands[0];
@@ -203,7 +203,7 @@ public class SessionBaseConfigTests
     public void ReadOnly_EditsOfBaseItemsAreRefused_NamingTheItemAndItsFile()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenStandard(dir);
+        using CmdrSession session = OpenStandard(dir, SessionMode.Edit);
         GroupEntry b = session.Groups[0];
         CommandEntry bcmd = b.Commands[0];
         GroupEntry m1 = session.Groups[1];
@@ -232,7 +232,7 @@ public class SessionBaseConfigTests
     public void MoveItem_TopLevel_MainGroupNeverMovesAboveBaseGroups()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenStandard(dir);
+        using CmdrSession session = OpenStandard(dir, SessionMode.Edit);
         GroupEntry m1 = session.Groups[1];
         GroupEntry m2 = session.Groups[2];
 
@@ -249,7 +249,7 @@ public class SessionBaseConfigTests
     public void MainItems_EditsStillWork_WithBaseGroupsPresent()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenStandard(dir);
+        using CmdrSession session = OpenStandard(dir, SessionMode.Edit);
         GroupEntry m1 = session.Groups[1];
 
         GroupEntry added = session.AddGroup(null, Settings("new"));
@@ -272,7 +272,7 @@ public class SessionBaseConfigTests
     public void Save_WritesOnlyOpenedFileGroups_KeepsBase_AndLeavesBaseFilesUntouched()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenStandard(dir);
+        using CmdrSession session = OpenStandard(dir, SessionMode.Edit);
         string basePath = dir.File(BaseRel);
         byte[] baseBytes = File.ReadAllBytes(basePath);
         CmdrConfig built = session.BuildConfig();
@@ -293,7 +293,7 @@ public class SessionBaseConfigTests
         Assert.Equal(new[] { "m1", "m2", "new" }, reloaded.Groups.Select(g => g.Name));
         Assert.Equal(new[] { "m1cmd", "m1extra" }, reloaded.Groups[0].Items.Select(i => i.Name));
 
-        using CmdrSession reopened = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession reopened = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Edit);
         Assert.Empty(reopened.LoadErrors);
         Assert.Equal(new[] { "b", "m1", "m2", "new" }, reopened.Groups.Select(g => g.Name));
     }

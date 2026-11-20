@@ -47,11 +47,12 @@ public class SessionOwnershipTests
     public void CommandListActionsRejectRemovedTargets()
     {
         using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("removed", "echo never")));
+        CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel, Sh("removed", "echo never")));
         try
         {
             CommandEntry removed = session.Groups[0].Commands[0];
             session.RemoveCommand(removed);
+            session.SwitchToRun();
 
             Assert.Throws<ArgumentException>(() => session.Activate(new[] { removed }));
             Assert.Throws<ArgumentException>(() => session.Stop(new[] { removed }));

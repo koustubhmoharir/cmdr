@@ -69,19 +69,28 @@ The version is set by hand in `Directory.Build.props`.
 ## Usage
 
 ```sh
-cmdr <config.json>
+cmdr [--edit] <config.json>
 cmdr
 cmdr --version
 ```
 
-If the config file does not exist, cmdr starts with an empty list and the first save (Ctrl+S) creates it.
+`cmdr <config.json>` opens the config in run mode: commands can be started, stopped and restarted, and the tree
+cannot be edited. `cmdr --edit <config.json>` (or `cmdr <config.json> --edit`) opens it in edit mode: groups and
+commands can be added, changed, moved and removed, and nothing can be started. Ctrl+E switches between the two modes
+in the window. Switching to edit mode is refused, with a message, while commands are running or have leftover
+processes, while a sequence runs, or while a restart is pending; stop them (Ctrl+C) and try again.
+
+If the config file does not exist, `cmdr <config.json>` asks whether to create it. Yes opens an empty list in edit
+mode, and the first save (Ctrl+S) creates the file. No returns to the list of recent files when it has any, and
+otherwise cmdr exits. `cmdr --edit` with a missing file starts with an empty list, without asking.
 
 Every config opened is added to a list of recently used files (the last 20), kept in
 `%LOCALAPPDATA%\cmdr\recent.json` on Windows and `~/.local/share/cmdr/recent.json` on Linux
 (`$XDG_DATA_HOME/cmdr/recent.json` when set). `cmdr` with no arguments shows that list, numbered: type a
-number to select an entry, Enter to open it, Del to remove it from the list, Esc or Ctrl+Q to quit. Files
-that no longer exist are marked `(not found)`; opening one starts with an empty list, as above. With no
-recent files, `cmdr` prints the usage. Commands and groups can be added and edited in the UI or in the file.
+number to select an entry, Enter to open it in run mode, F2 to open it in edit mode, Del to remove it from the
+list, Esc or Ctrl+Q to quit. Files that no longer exist are marked `(not found)`. Enter on one asks whether to
+create it, as above; F2 opens it in edit mode with an empty list. With no recent files, `cmdr` prints the usage.
+Commands and groups can be added and edited in the UI (in edit mode) or in the file.
 Changes made in the UI are saved only on Ctrl+S; unsaved changes are marked with `*` in the title.
 In the edit dialogs, arguments are one per line and environment variables `KEY=VALUE` lines; when an
 argument or a value contains a line break, that field is read-only (edit it in the file) and is kept as it is.
@@ -282,19 +291,38 @@ matches `busy`, e.g. on a rebuild. `busy` is optional.
 ## Screen and keys
 
 The top row has the groups and commands on the left and the focused item's info (command line, working
-directory, environment, description) on the right. Its height follows the list, up to 60% of the window,
-and is at least five rows. Below it, across the full width, is the output of the focused command. The info
-pane and the output pane can be scrolled, and text in them can be selected with the mouse.
+directory, environment, description) on the right. In run mode its height follows the list, up to 60% of the window,
+and is at least five rows, and below it, across the full width, is the output of the focused command. Edit mode has
+no output pane: the list and the info pane fill the window, and the list's title shows `[edit]`. The info pane and the
+output pane can be scrolled, and text in them can be selected with the mouse.
 
 `+` or `=` maximizes the output pane over the whole screen and hides the list and the info pane. The same
 key brings the layout back.
 
-Commands act on the marked commands, or the focused command if none is marked. On a group header they
-act on everything in the group. Marks are limited to one group. In the info and output panes, Enter, Ctrl+C,
-F5, L, F2 and Del act on the command the panes show (the focused command) alone, ignoring marks; on a group
-header they do nothing there.
+In run mode, commands act on the marked commands, or the focused command if none is marked. On a group header they
+act on everything in the group. Marks are limited to one group, and switching to edit mode clears them. In the info and
+output panes, Enter, Ctrl+C, F5 and L act on the command the panes show (the focused command) alone, ignoring marks; on a
+group header they do nothing there. In edit mode, Enter, F2 and Del in the info pane act on the command it shows.
 
-The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing. The bottom row shows only the keys that do something in the focused pane: Space and L only on a command row of the list, Ctrl+A only in the list, and the command keys in the info or output pane only when a command is shown there.
+A key of the other mode does nothing but say which mode it needs (Ctrl+E switches).
+
+The key labels on the bottom row are buttons: a click on one performs its key, as if it were typed, and a click elsewhere on the row does nothing. The bottom row shows only the keys that do something in the focused pane, for the current mode: in run mode Space and L only on a command row of the list, Ctrl+A only in the list, the command keys in the info or output pane only when a command is shown there, and Ctrl+S only when there are unsaved changes.
+
+Both modes:
+
+| Key | Action |
+|---|---|
+| Ctrl+E | Switch between run mode and edit mode. Switching to edit mode is refused while commands are running or have leftover processes, a sequence runs, or a restart is pending |
+| ← / → | Collapse / expand a group |
+| Click the ▾ / ▸ of a group header | Collapse / expand the group |
+| Tab / Shift+Tab | Move focus: list → info → output (edit mode: list → info) |
+| c | Copy: the command line, with its directory and environment (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output). The status line names what c copies |
+| / or Ctrl+F | Search the focused pane (see below) |
+| F3 / Shift+F3 | Next / previous match |
+| Ctrl+S | Save |
+| Ctrl+Q | Quit |
+
+Run mode:
 
 | Key | Action |
 |---|---|
@@ -303,21 +331,18 @@ The key labels on the bottom row are buttons: a click on one performs its key, a
 | F5 | Restart, with confirmation. Pressed again while that restart still waits for the command to stop, it asks: keep waiting (Enter), or force kill now so the restart goes ahead |
 | Space, Shift+↑/↓, Ctrl+click | Mark commands |
 | Ctrl+A | Mark / unmark all in the group |
-| ← / → | Collapse / expand a group |
-| Click the ▾ / ▸ of a group header | Collapse / expand the group |
-| Alt+↑ / Alt+↓ | Move a command or group among its siblings |
-| Tab / Shift+Tab | Move focus: list → info → output |
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
-| c | Copy: the command line, with its directory and environment (list; PowerShell syntax on Windows — see below); the selection, else the command line (info); the selection, else the current line (output). The status line names what c copies |
 | L | Turn the log file on or off for the focused command |
-| / or Ctrl+F | Search the focused pane (see below) |
-| F3 / Shift+F3 | Next / previous match |
+
+Edit mode:
+
+| Key | Action |
+|---|---|
+| Enter, F2 | Edit the focused command or group |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |
-| F2 | Edit the focused command or group |
 | Del | Delete the focused command or group, with confirmation |
-| Ctrl+S | Save |
-| Ctrl+Q | Quit |
+| Alt+↑ / Alt+↓ | Move a command or group among its siblings |
 
 In the output pane, ↑/↓, PgUp/PgDn and Home move the cursor line, and End goes back to following new
 output. The mouse wheel scrolls; at the bottom it moves the cursor down, and following resumes when the

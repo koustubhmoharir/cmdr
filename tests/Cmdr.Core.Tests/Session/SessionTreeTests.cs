@@ -42,7 +42,7 @@ public class SessionTreeTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { ThreeLevelTree() } }, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         Assert.Empty(session.LoadErrors);
         GroupEntry top = Assert.Single(session.Groups);
@@ -69,7 +69,7 @@ public class SessionTreeTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { ThreeLevelTree() } }, path);
 
-        using (CmdrSession session = CmdrSession.Load(path))
+        using (CmdrSession session = CmdrSession.Load(path, SessionMode.Run))
         {
             GroupSpec built = Assert.Single(session.BuildConfig().Groups);
             Assert.Equal(new[] { "first", "mid", "last" }, built.Items.Select(i => i.Name));
@@ -99,7 +99,7 @@ public class SessionTreeTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { ThreeLevelTree() } }, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         string[] labels = session.BuildRows()
             .Select(row => row switch
@@ -119,7 +119,7 @@ public class SessionTreeTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { ThreeLevelTree() } }, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         Assert.Equal(new[] { "first", "m1", "d1", "last" }, session.AllEntries.Select(e => e.Name));
         Assert.Equal(new[] { "top", "mid", "deep" }, session.AllGroups.Select(g => g.Name));
@@ -144,7 +144,7 @@ public class SessionTreeTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { outer } }, path);
 
-        CmdrSession session = CmdrSession.Load(path);
+        CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
         try
         {
             CommandEntry entry = session.AllEntries.Single();

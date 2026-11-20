@@ -21,7 +21,7 @@ public class SessionExpandedTests
             path,
             """{ "groups": [ { "name": "outer", "expanded": false, "items": [ { "name": "inner", "expanded": false, "items": [] } ] }, { "name": "open" } ] }""");
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         Assert.False(session.Groups[0].Expanded);
         Assert.False(session.Groups[0].Groups[0].Expanded);
@@ -37,7 +37,7 @@ public class SessionExpandedTests
             path,
             """{ "groups": [ { "name": "a", "expanded": true, "items": [ { "name": "inner", "expanded": false, "items": [] } ] }, { "name": "b", "expanded": false } ] }""");
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
         CmdrConfig config = session.BuildConfig();
 
         Assert.Null(config.Groups[0].Expanded);
@@ -52,7 +52,7 @@ public class SessionExpandedTests
         string path = dir.File("cmdr.json");
         File.WriteAllText(path, """{ "groups": [ { "name": "a", "expanded": true, "items": [] } ] }""");
 
-        using (CmdrSession session = CmdrSession.Load(path))
+        using (CmdrSession session = CmdrSession.Load(path, SessionMode.Edit))
         {
             session.UpdateGroup(session.Groups[0], Settings("a", expanded: true), parent: null);
             session.Save();
@@ -65,7 +65,7 @@ public class SessionExpandedTests
     public void AddGroup_keeps_the_expanded_setting()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenEmpty(dir);
+        using CmdrSession session = OpenEmpty(dir, SessionMode.Edit);
 
         GroupEntry group = session.AddGroup(null, Settings("g", expanded: false));
 
@@ -77,7 +77,7 @@ public class SessionExpandedTests
     public void UpdateGroup_changes_the_setting_and_marks_the_session_dirty()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel));
         GroupEntry group = session.Groups[0];
         Assert.True(group.Expanded);
         Assert.False(session.IsDirty);
@@ -101,7 +101,7 @@ public class SessionExpandedTests
         string path = dir.File("cmdr.json");
         File.WriteAllText(path, """{ "groups": [ { "name": "a", "expanded": false, "items": [] } ] }""");
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         Assert.False(session.Groups[0].Expanded);
         Assert.False(session.IsDirty);

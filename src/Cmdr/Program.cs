@@ -1,4 +1,5 @@
 using System.Globalization;
+using Cmdr;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
@@ -25,33 +26,48 @@ static int Run(string[] args)
         return CtrlCHelper.Run(pid);
     }
 
-    if (args is ["--version"])
+    CommandLineRequest request = CommandLine.Parse(args);
+    switch (request.Action)
     {
-        Console.WriteLine("cmdr " + Version());
-        return 0;
-    }
+        case CommandLineAction.Version:
+            Console.WriteLine("cmdr " + Version());
+            return 0;
 
-    if (args is [])
-    {
-        RecentFiles? recent = LoadRecent();
-        if (recent is null || recent.Files.Count == 0)
+        case CommandLineAction.Picker:
         {
-            return Usage();
+            RecentFiles? recent = LoadRecent();
+            if (recent is null || recent.Files.Count == 0)
+            {
+                return Usage();
+            }
+
+            TuiHost.RunPicker(recent);
+            return 0;
         }
 
-        TuiHost.RunPicker(recent);
-        return 0;
-    }
+        case CommandLineAction.Open:
+            return OpenConfig(request.Path!, request.Mode);
 
-    if (args is not [var configPath] || configPath.Length == 0)
+        default:
+            return Usage();
+    }
+}
+
+// Opens a config from the command line. A missing file in run mode is offered for creation in the TUI; any other load error is
+// printed before the TUI starts.
+static int OpenConfig(string configPath, SessionMode mode)
+{
+    RecentFiles? recent = LoadRecent();
+    if (mode == SessionMode.Run && !File.Exists(configPath))
     {
-        return Usage();
+        TuiHost.RunMissingConfig(configPath, recent);
+        return 0;
     }
 
     Session session;
     try
     {
-        session = Session.Load(configPath);
+        session = TuiHost.LoadAndRecord(configPath, mode, recent);
     }
     catch (ConfigException ex)
     {
@@ -59,19 +75,13 @@ static int Run(string[] args)
         return 1;
     }
 
-    RecordRecent(configPath);
-
-    using (session)
-    {
-        TuiHost.Run(session);
-    }
-
+    TuiHost.RunMain(session);
     return 0;
 }
 
 static int Usage()
 {
-    Console.Error.WriteLine("usage: cmdr <config.json>");
+    Console.Error.WriteLine("usage: cmdr [--edit] <config.json>");
     Console.Error.WriteLine("       cmdr               pick a recently used config");
     Console.Error.WriteLine("       cmdr --version");
     return 2;
@@ -82,19 +92,6 @@ static RecentFiles? LoadRecent()
 {
     string? store = RecentFiles.DefaultStorePath;
     return store is null ? null : RecentFiles.Load(store);
-}
-
-// Moves an opened config to the front of the recent list. Skipped without a store; a failed save is ignored.
-static void RecordRecent(string configPath)
-{
-    RecentFiles? recent = LoadRecent();
-    if (recent is null)
-    {
-        return;
-    }
-
-    recent.Add(configPath);
-    recent.TrySave();
 }
 
 // The version set in Directory.Build.props.

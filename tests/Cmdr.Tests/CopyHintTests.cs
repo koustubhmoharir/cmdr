@@ -119,15 +119,15 @@ public sealed class CopyHintTests
 
         // The list is focused on a command row.
         Field<CommandListView>(controller, "_list").SetFocus();
-        Assert.Contains("L Log  c Copy command  ^S Save  + Max", HintLeft(controller));
+        Assert.Contains("L Log  c Copy command  + Max  ^E Edit", HintLeft(controller));
 
         // The output pane has a line to copy.
         Field<OutputView>(controller, "_output").SetFocus();
-        Assert.Contains("L Log  c Copy line  ^S Save  + Max", HintLeft(controller));
+        Assert.Contains("L Log  c Copy line  + Max  ^E Edit", HintLeft(controller));
 
         // The info pane shows the command.
         Field<DetailsView>(controller, "_details").SetFocus();
-        Assert.Contains("L Log  c Copy command  ^S Save  + Max", HintLeft(controller));
+        Assert.Contains("L Log  c Copy command  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed class CopyHintTests
         Field<OutputView>(controller, "_output").SetFocus();
         string text = HintLeft(controller);
         Assert.DoesNotContain("c Copy", text);
-        Assert.Contains("L Log  ^S Save  + Max", text);
+        Assert.Contains("L Log  + Max  ^E Edit", text);
 
         // No gap is doubled where the hint is left out: the separators are two spaces, never more.
         Assert.DoesNotContain("   ", text);
@@ -164,7 +164,7 @@ public sealed class CopyHintTests
         Field<CommandListView>(controller, "_list").SetFocus();
         string text = HintLeft(controller);
         Assert.DoesNotContain("c Copy", text);
-        Assert.Contains("F5 Restart  ^A All  ^S Save  + Max", text);
+        Assert.Contains("F5 Restart  ^A All  + Max  ^E Edit", text);
     }
 
     private static CommandRow FirstCommandRow(TempSession temp) => temp.Session.BuildRows().OfType<CommandRow>().First();

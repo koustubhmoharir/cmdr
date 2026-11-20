@@ -6,12 +6,15 @@ using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using Session = Cmdr.Core.Session.Session;
+using SessionMode = Cmdr.Core.Session.SessionMode;
 
 namespace Cmdr.Tui;
 
 /// <summary>
 /// The screen shown by <c>cmdr</c> with no arguments: the recently opened config files, numbered. Enter opens the selected
-/// one (<see cref="Session"/> is then set and the window stops); Esc or Ctrl+Q quits with no session.
+/// one in run mode and F2 in edit mode (<see cref="Session"/> is then set and the window stops). Enter on a file that does not
+/// exist asks whether to create it, and Yes opens it in edit mode; F2 opens it in edit mode with an empty list, without asking.
+/// Esc or Ctrl+Q quits with no session.
 /// </summary>
 internal sealed class RecentPicker : Window
 {
@@ -19,6 +22,7 @@ internal sealed class RecentPicker : Window
     // Esc is the window's default Quit, so its label performs Esc; "^Q Quit" is handled by OnKeyDown.
     private static readonly Hint HintsLeft = KeyHints.Join(
         KeyHints.Bound(Key.Enter, "Enter Open"),
+        KeyHints.Bound(Key.F2, "F2 Edit"),
         KeyHints.Bound(Key.Delete, "Del Remove"),
         KeyHints.Plain("0-9 Select by number"),
         KeyHints.Concat(
@@ -57,7 +61,7 @@ internal sealed class RecentPicker : Window
         _list.Accepting += (_, e) =>
         {
             e.Handled = true;
-            Open();
+            OpenSelected(edit: false);
         };
 
         _frame = new FrameView { Title = "Recent configs", X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(1) };
@@ -86,7 +90,7 @@ internal sealed class RecentPicker : Window
         return base.OnKeyDown(key);
     }
 
-    // Digits select a row; Del removes it. Any other key ends a number being typed.
+    // Digits select a row; Del removes it; F2 opens the selected row in edit mode. Any other key ends a number being typed.
     private bool OnListKey(Key key)
     {
         if (DigitOf(key) is char digit)
@@ -107,10 +111,18 @@ internal sealed class RecentPicker : Window
             return true;
         }
 
+        if (key == Key.F2)
+        {
+            OpenSelected(edit: true);
+            return true;
+        }
+
         return false;
     }
 
-    private void Open()
+    // Opens the selected row: in edit mode when edit is set, otherwise in run mode. A missing file opened in run mode is first
+    // offered for creation (Yes opens it in edit mode, No stays in the picker). Records the file when it opens.
+    private void OpenSelected(bool edit)
     {
         if (_list.SelectedItem is not int row || row < 0 || row >= _recent.Files.Count)
         {
@@ -118,10 +130,21 @@ internal sealed class RecentPicker : Window
         }
 
         string path = _recent.Files[row];
+        SessionMode mode = edit ? SessionMode.Edit : SessionMode.Run;
+        if (mode == SessionMode.Run && !File.Exists(path))
+        {
+            if (!TuiHost.AskCreate(_app, path))
+            {
+                return;
+            }
+
+            mode = SessionMode.Edit;
+        }
+
         Session session;
         try
         {
-            session = Session.Load(path);
+            session = TuiHost.LoadAndRecord(path, mode, _recent);
         }
         catch (ConfigException ex)
         {
@@ -129,8 +152,6 @@ internal sealed class RecentPicker : Window
             return;
         }
 
-        _recent.Add(path);
-        _recent.TrySave();
         Session = session;
         _app.RequestStop(this);
     }

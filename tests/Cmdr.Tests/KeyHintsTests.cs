@@ -83,7 +83,7 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
         Assert.Equal(
-            "Enter Start  ^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  ^S Save  + Max  ^Q Quit",
+            "Enter Start  ^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  + Max  ^E Edit  ^Q Quit",
             Bar(controller));
         AssertLabelsPerformTheirKeys(controller);
 
@@ -92,9 +92,65 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
         string group = Bar(controller);
-        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  ^A All  ^S Save  + Max", group, StringComparison.Ordinal);
+        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  ^A All  + Max  ^E Edit", group, StringComparison.Ordinal);
         Assert.DoesNotContain("c Copy", group, StringComparison.Ordinal);
         AssertLabelsPerformTheirKeys(controller);
+    }
+
+    [Fact]
+    public void The_bar_texts_of_the_edit_mode_states_and_every_label_performs_its_key()
+    {
+        using TempSession temp = TempSession.Sample(SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = new MainController(app, temp.Session);
+        controller.Build();
+        CommandEntry first = temp.Session.AllEntries.First();
+
+        // A command focused in the list: Enter and Del act on it, c copies it, Alt+Up/Down move it, and Save and Run always show.
+        Focus(controller, first);
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Tick(controller);
+        Assert.Equal(
+            "Enter Edit  ^N Command  ^G Group  Del Delete  Alt+↑↓ Move  c Copy command  ^S Save  ^E Run  ^Q Quit",
+            Bar(controller));
+        AssertLabelsPerformTheirKeys(controller);
+
+        // A group header: no command, so no c hint.
+        Focus(controller, temp.Session.Groups.First());
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Tick(controller);
+        Assert.Equal(
+            "Enter Edit  ^N Command  ^G Group  Del Delete  Alt+↑↓ Move  ^S Save  ^E Run  ^Q Quit",
+            Bar(controller));
+        AssertLabelsPerformTheirKeys(controller);
+
+        // The info pane shows the command: Enter and Del act on it; there is no move and no add.
+        Focus(controller, first);
+        Field<DetailsView>(controller, "_details").SetFocus();
+        Tick(controller);
+        Assert.Equal("Enter Edit  Del Delete  c Copy command  ^S Save  ^E Run  ^Q Quit", Bar(controller));
+        AssertLabelsPerformTheirKeys(controller);
+
+        // The info pane on a group header: nothing to edit there.
+        Focus(controller, temp.Session.Groups.First());
+        Field<DetailsView>(controller, "_details").SetFocus();
+        Tick(controller);
+        Assert.Equal("^S Save  ^E Run  ^Q Quit", Bar(controller));
+    }
+
+    [Fact]
+    public void The_edit_mode_bar_with_no_row_offers_only_the_adds_Save_and_Run()
+    {
+        using TempSession temp = TempSession.Open(SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = new MainController(app, temp.Session);
+        controller.Build();
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Tick(controller);
+
+        Assert.Equal("^N Command  ^G Group  ^S Save  ^E Run  ^Q Quit", Bar(controller));
     }
 
     [Fact]
@@ -137,38 +193,47 @@ public sealed class KeyHintsTests
     {
         StatusLine status = Field<StatusLine>(controller, "_status");
         Hint[] hints = { status.Shown, status.ShownRight };
-        var expected = new Dictionary<string, Key>
+        // A label can name one key in one state of the bar only: "↓" is the search's next and the edit bar's Alt+Down.
+        (string Label, Key Key)[] expected =
         {
-            ["Enter Start"] = Key.Enter,
-            ["Enter Kill"] = Key.Enter,
-            ["^C Stop"] = Key.C.WithCtrl,
-            ["F5 Restart"] = Key.F5,
-            ["Space Mark"] = Key.Space,
-            ["^A All"] = Key.A.WithCtrl,
-            ["L Log"] = Key.L,
-            ["c Copy command"] = (Key)'c',
-            ["c Copy selection"] = (Key)'c',
-            ["c Copy line"] = (Key)'c',
-            ["^S Save"] = Key.S.WithCtrl,
-            ["+ Max"] = (Key)'+',
-            ["^Q Quit"] = Key.Q.WithCtrl,
-            ["F3 Next"] = Key.F3,
-            ["⇧F3 Prev"] = Key.F3.WithShift,
-            ["↑"] = Key.CursorUp,
-            ["↓"] = Key.CursorDown,
-            ["Alt+C Case"] = Key.C.WithAlt,
-            ["Alt+W Word"] = Key.W.WithAlt,
-            ["Alt+R Regex"] = Key.R.WithAlt,
-            ["Enter Pane"] = Key.Enter,
-            ["Esc Clear"] = Key.Esc,
-            ["Esc Close"] = Key.Esc,
+            ("Enter Start", Key.Enter),
+            ("Enter Kill", Key.Enter),
+            ("Enter Edit", Key.Enter),
+            ("^C Stop", Key.C.WithCtrl),
+            ("F5 Restart", Key.F5),
+            ("Space Mark", Key.Space),
+            ("^A All", Key.A.WithCtrl),
+            ("L Log", Key.L),
+            ("c Copy command", (Key)'c'),
+            ("c Copy selection", (Key)'c'),
+            ("c Copy line", (Key)'c'),
+            ("^S Save", Key.S.WithCtrl),
+            ("+ Max", (Key)'+'),
+            ("^E Edit", Key.E.WithCtrl),
+            ("^E Run", Key.E.WithCtrl),
+            ("^N Command", Key.N.WithCtrl),
+            ("^G Group", Key.G.WithCtrl),
+            ("Del Delete", Key.Delete),
+            ("Alt+↑", Key.CursorUp.WithAlt),
+            ("↓", Key.CursorDown.WithAlt),
+            ("^Q Quit", Key.Q.WithCtrl),
+            ("F3 Next", Key.F3),
+            ("⇧F3 Prev", Key.F3.WithShift),
+            ("↑", Key.CursorUp),
+            ("↓", Key.CursorDown),
+            ("Alt+C Case", Key.C.WithAlt),
+            ("Alt+W Word", Key.W.WithAlt),
+            ("Alt+R Regex", Key.R.WithAlt),
+            ("Enter Pane", Key.Enter),
+            ("Esc Clear", Key.Esc),
+            ("Esc Close", Key.Esc),
         };
         foreach (Hint hint in hints)
         {
             foreach ((string label, Key key) in Labels(hint))
             {
-                Assert.True(expected.ContainsKey(label), $"'{label}' is a target but has no expected key");
-                Assert.Equal(expected[label], key);
+                Assert.True(expected.Any(e => e.Label == label), $"'{label}' is a target but has no expected key");
+                Assert.Contains(expected, e => e.Label == label && e.Key == key);
             }
         }
     }

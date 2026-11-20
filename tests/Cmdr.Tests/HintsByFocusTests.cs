@@ -9,7 +9,7 @@ namespace Cmdr.Tests;
 
 /// <summary>
 /// The command keys of the bar's left hint depend on the focused pane: the list shows all of them, and the info and output panes
-/// show Ctrl+C, F5 and L only for a shown command, never Space or Ctrl+A. Save and Max always show. Covers the hint text itself.
+/// show Ctrl+C, F5 and L only for a shown command, never Space or Ctrl+A. Save shows only with unsaved changes; Max and Edit always show. Covers the hint text itself.
 /// </summary>
 [Collection("Terminal GUI")]
 public sealed class HintsByFocusTests
@@ -27,7 +27,7 @@ public sealed class HintsByFocusTests
         FocusKey(controller, temp.Session.AllEntries.First());
         Field<DetailsView>(controller, "_details").SetFocus();
 
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  c Copy command  ^S Save  + Max", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  c Copy command  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -42,11 +42,11 @@ public sealed class HintsByFocusTests
         Field<OutputView>(controller, "_output").SetFocus();
 
         // No output lines yet, so c copies nothing and has no hint.
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  ^S Save  + Max", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
-    public void Info_pane_with_a_group_row_shows_only_Save_and_Max()
+    public void Info_pane_with_a_group_row_shows_only_Max_and_Edit()
     {
         using TempSession temp = TempSession.Sample();
         using IApplication app = Application.Create();
@@ -56,11 +56,11 @@ public sealed class HintsByFocusTests
         FocusKey(controller, Group(temp));
         Field<DetailsView>(controller, "_details").SetFocus();
 
-        Assert.Equal("^S Save  + Max", HintLeft(controller));
+        Assert.Equal("+ Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
-    public void Output_pane_with_a_group_row_shows_only_Save_and_Max()
+    public void Output_pane_with_a_group_row_shows_only_Max_and_Edit()
     {
         using TempSession temp = TempSession.Sample();
         using IApplication app = Application.Create();
@@ -70,7 +70,7 @@ public sealed class HintsByFocusTests
         FocusKey(controller, Group(temp));
         Field<OutputView>(controller, "_output").SetFocus();
 
-        Assert.Equal("^S Save  + Max", HintLeft(controller));
+        Assert.Equal("+ Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -84,11 +84,11 @@ public sealed class HintsByFocusTests
         FocusKey(controller, temp.Session.AllEntries.First());
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Contains("^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  ^S Save  + Max", HintLeft(controller), StringComparison.Ordinal);
+        Assert.Contains("^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  + Max  ^E Edit", HintLeft(controller), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void No_pane_focused_shows_no_command_keys_and_ends_with_Save_and_Max()
+    public void No_pane_focused_shows_no_command_keys_and_ends_with_Max_and_Edit()
     {
         using TempSession temp = TempSession.Sample();
         using IApplication app = Application.Create();
@@ -101,7 +101,7 @@ public sealed class HintsByFocusTests
         Assert.False(Field<OutputView>(controller, "_output").HasFocus);
 
         // Enter does not reach the list with no pane focused, so neither Enter nor the command keys show, even for a focused command.
-        Assert.Equal("^S Save  + Max", HintLeft(controller));
+        Assert.Equal("+ Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -115,11 +115,11 @@ public sealed class HintsByFocusTests
         FocusKey(controller, Group(temp));
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  ^A All  ^S Save  + Max", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  ^A All  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
-    public void List_with_no_row_shows_only_Save_and_Max()
+    public void List_with_no_row_shows_only_Max_and_Edit()
     {
         using TempSession temp = TempSession.Open();
         using IApplication app = Application.Create();
@@ -128,7 +128,7 @@ public sealed class HintsByFocusTests
         controller.Build();
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Equal("^S Save  + Max", HintLeft(controller));
+        Assert.Equal("+ Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]

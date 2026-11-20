@@ -6,7 +6,7 @@ namespace Cmdr.Tests;
 /// <summary>The refusal text for base items (ItemEntry.ReadOnlyMessage), and the filter of groups that can be edited.</summary>
 public sealed class ReadOnlyItemsTests : IDisposable
 {
-    private readonly TempChain _chain = TempChain.Open();
+    private readonly TempChain _chain = TempChain.Open(SessionMode.Edit);
 
     public void Dispose() => _chain.Dispose();
 

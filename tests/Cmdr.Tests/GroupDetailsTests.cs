@@ -7,7 +7,7 @@ namespace Cmdr.Tests;
 
 public sealed class GroupDetailsTests : IDisposable
 {
-    private readonly TempSession _temp = TempSession.Sample();
+    private readonly TempSession _temp = TempSession.Sample(SessionMode.Edit);
 
     public void Dispose() => _temp.Dispose();
 

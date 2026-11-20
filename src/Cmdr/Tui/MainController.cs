@@ -22,14 +22,22 @@ namespace Cmdr.Tui;
 internal sealed class MainController : IDisposable, IListSearchHost
 {
     private static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(5);
-    // The hint bar shows the keys for using commands. The Enter part depends on the targets (see HintLeft).
+    // The hint bar shows the keys that act on the focused pane and row, for the session's mode (see HintLeftHint).
     // "^Q Quit" stays visible at the right edge when the bar is narrow.
-    // The command keys depend on the focused pane (see CommandKeysOf). The c hint is left out when c copies nothing (see CopyHint).
     // While the search bar's find field has the focus, the search keys replace all parts (see SearchHint).
     // Each label is a click target that performs its key (see KeyHints).
-    private static readonly Hint HintsAfterCopy = KeyHints.Join(
-        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
-        KeyHints.Bound((Key)'+', "+ Max"));
+    private static readonly Hint SaveHint = KeyHints.Bound(Key.S.WithCtrl, "^S Save");
+    private static readonly Hint MaxHint = KeyHints.Bound((Key)'+', "+ Max");
+    private static readonly Hint ToEditHint = KeyHints.Bound(Key.E.WithCtrl, "^E Edit");
+    private static readonly Hint ToRunHint = KeyHints.Bound(Key.E.WithCtrl, "^E Run");
+    private const string EditOnlyMessage = "Press Ctrl+E for edit mode to change groups and commands.";
+    private const string RunOnlyMessage = "Press Ctrl+E for run mode to start or stop commands.";
+    private static readonly Hint NewCommandHint = KeyHints.Bound(Key.N.WithCtrl, "^N Command");
+    private static readonly Hint NewGroupHint = KeyHints.Bound(Key.G.WithCtrl, "^G Group");
+    private static readonly Hint MoveHint = KeyHints.Concat(
+        KeyHints.Bound(Key.CursorUp.WithAlt, "Alt+↑"),
+        KeyHints.Bound(Key.CursorDown.WithAlt, "↓"),
+        KeyHints.Plain(" Move"));
     private static readonly Hint HintsRight = KeyHints.Concat(
         KeyHints.Plain(KeyHints.Separator),
         KeyHints.Bound(Key.Q.WithCtrl, "^Q Quit"));
@@ -104,14 +112,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         _details = new DetailsView(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
 
-        // The top row (list and info pane) is as tall as the list needs, see TopRowHeight. Both frames take it from the function.
+        // The frames' heights come from ApplyLayout: the top row is as tall as the list needs (see TopRowHeight) in run mode.
         _listFrame = new FrameView { Title = BuildTitle(), X = 0, Y = 0 };
         _listFrame.Width = Dim.Func(view => Math.Max(32, (view?.SuperView?.Viewport.Width ?? 0) * 40 / 100), _listFrame);
-        _listFrame.Height = Dim.Func(TopRowHeight, _listFrame);
         _listFrame.Add(_list);
 
         _detailsFrame = new FrameView { Title = string.Empty, X = Pos.Right(_listFrame), Y = 0, Width = Dim.Fill() };
-        _detailsFrame.Height = Dim.Func(TopRowHeight, _detailsFrame);
         _detailsFrame.Add(_details);
 
         // The output has no box: a one-row header line stands above it, and the output takes the rows below.
@@ -130,6 +136,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         _window = new MainWindow(this) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _window.Add(_listFrame, _detailsFrame, _outputHeader, _output, _status, _searchBar);
+        ApplyLayout();
 
         // Groups marked expanded: false start collapsed. Only here, at load; the list's state is not written back.
         foreach (GroupEntry group in TreeRows.InitiallyCollapsed(_session.AllGroups))
@@ -173,6 +180,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return true;
         }
 
+        if (key == Key.E.WithCtrl)
+        {
+            SwitchMode();
+            return true;
+        }
+
         if (IsMaximizeKey(key))
         {
             ToggleMaximized();
@@ -209,30 +222,101 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// Shows the output pane over the whole area above the status line and hides the list and the info pane, or restores
-    /// the normal layout. Focus on a hidden pane moves to the output first; otherwise it stays where it is.
+    /// the normal layout. Focus on a hidden pane moves to the output first; otherwise it stays where it is. There is no output
+    /// pane in edit mode, so the key does nothing there.
     /// </summary>
     private void ToggleMaximized()
     {
+        if (IsEditMode)
+        {
+            return;
+        }
+
         if (!_maximized && (_list.HasFocus || _details.HasFocus))
         {
             _output.SetFocus();
         }
 
         _maximized = !_maximized;
+        ApplyLayout();
+    }
+
+    /// <summary>
+    /// Lays out the main window for the session's mode, the maximize state and the search bar. Run mode: the top row (list and info
+    /// pane) is as tall as the list needs, with the output header and the output below it; maximized, the output alone takes the
+    /// area. Edit mode: no output pane, and the top row fills the area above the status line, or above the search bar while it is open.
+    /// Every change of these calls this, so the layout is decided here.
+    /// </summary>
+    private void ApplyLayout()
+    {
+        bool edit = IsEditMode;
+        int rowsBelowTop = _searchBar.Visible ? 2 : 1;
+
         _listFrame.Visible = !_maximized;
         _detailsFrame.Visible = !_maximized;
-        // The header moves; the output sits one row below it in both layouts.
+        _listFrame.Height = edit ? Dim.Fill(rowsBelowTop) : Dim.Func(TopRowHeight, _listFrame);
+        _detailsFrame.Height = edit ? Dim.Fill(rowsBelowTop) : Dim.Func(TopRowHeight, _detailsFrame);
+
+        _outputHeader.Visible = !edit;
+        _output.Visible = !edit;
+        // The header moves when the top row is hidden; the output sits one row below it in both layouts.
         _outputHeader.Y = _maximized ? 0 : Pos.Bottom(_detailsFrame);
+        _output.Height = Dim.Fill(rowsBelowTop);
 
         _window.SetNeedsLayout();
     }
 
     /// <summary>
+    /// Ctrl+E. In run mode, switches to edit mode unless <see cref="Session.SwitchToEdit"/> refuses (the refusal is shown and nothing
+    /// changes). Entering edit mode clears the marks, restores the output when it was maximized, and moves the focus off the output
+    /// pane, which is hidden there, to the list. The open search follows the focus to the list. In edit mode, switches to run mode and
+    /// keeps the focus where it is. Either way the layout, the title and the hints follow the mode.
+    /// </summary>
+    private void SwitchMode()
+    {
+        if (IsEditMode)
+        {
+            _session.SwitchToRun();
+        }
+        else
+        {
+            string? refusal = _session.SwitchToEdit();
+            if (refusal is not null)
+            {
+                ShowMessage(refusal);
+                return;
+            }
+
+            _selection.Clear();
+            _maximized = false;
+            if (_output.HasFocus)
+            {
+                _list.SetFocus();
+            }
+
+            if (_searchPane is { } pane && !ReferenceEquals(pane, _list) && !ReferenceEquals(pane, _details))
+            {
+                RetargetSearch(_list);
+            }
+        }
+
+        _list.SetNeedsDraw();
+        _details.SetNeedsDraw();
+        ApplyLayout();
+        _listFrame.Title = BuildTitle();
+        RefreshHints();
+    }
+
+    /// <summary>True in edit mode: groups and commands can be changed, and nothing can be started (see <see cref="SwitchMode"/>).</summary>
+    private bool IsEditMode => _session.Mode == SessionMode.Edit;
+
+    /// <summary>
     /// Keys of the command list. Returns true when handled. Esc is always handled, so it never quits, and it does nothing else.
     /// </summary>
     /// <remarks>
-    /// Enter, Ctrl+C, F5, L, F2 and Del act on the marks or the focused row here. The info and output panes take the same keys
-    /// for the shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and collapsing are list-only.
+    /// In run mode, Enter, Ctrl+C, F5 and L act on the marks or the focused row here. In edit mode Enter and F2 edit the focused
+    /// row, Del deletes it, and Ctrl+N, Ctrl+G and Alt+Up/Down add and move. The info and output panes take the same keys for the
+    /// shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and collapsing are list-only.
     /// </remarks>
     public bool OnListKey(Key key)
     {
@@ -246,6 +330,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
         if (key == Key.Tab || key == Key.Tab.WithShift)
         {
             CycleFocusPane(backward: key == Key.Tab.WithShift);
+            return true;
+        }
+
+        // Marks are for run mode. In edit mode their keys are consumed and do nothing, so the list's own keys do not get them either.
+        if (IsEditMode && IsMarkKey(key))
+        {
             return true;
         }
 
@@ -299,33 +389,48 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return true;
         }
 
+        // The edit keys act in edit mode and say how to get there in run mode.
         if (key == Key.N.WithCtrl)
         {
-            AddCommand(focused);
-            return true;
+            return EditOnly(() => AddCommand(focused));
         }
 
         if (key == Key.G.WithCtrl)
         {
-            AddGroup(focused);
-            return true;
+            return EditOnly(() => AddGroup(focused));
         }
 
         if (key == Key.F2)
         {
-            EditFocused(focused);
-            return true;
+            return EditOnly(() => EditFocused(focused));
         }
 
         if (key == Key.Delete)
         {
-            DeleteFocused(focused);
-            return true;
+            return EditOnly(() => DeleteFocused(focused));
+        }
+
+        if (key == Key.CursorUp.WithAlt)
+        {
+            return EditOnly(() => MoveItem(focused, -1));
+        }
+
+        if (key == Key.CursorDown.WithAlt)
+        {
+            return EditOnly(() => MoveItem(focused, 1));
         }
 
         if (key == Key.Enter)
         {
-            Activate(TargetOf(focused));
+            if (IsEditMode)
+            {
+                EditFocused(focused);
+            }
+            else
+            {
+                Activate(TargetOf(focused));
+            }
+
             return true;
         }
 
@@ -335,81 +440,108 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return OnPaneEscape();
         }
 
+        // The run keys act in run mode and say how to get there in edit mode.
         if (key == Key.C.WithCtrl)
         {
-            StopTargets(TargetOf(focused));
-            return true;
+            return RunOnly(() => StopTargets(TargetOf(focused)));
         }
 
         if (key == Key.F5)
         {
-            RestartTargets(TargetOf(focused));
-            return true;
+            return RunOnly(() => RestartTargets(TargetOf(focused)));
         }
 
         if (IsLogKey(key))
         {
-            ToggleLog(focused);
-            return true;
-        }
-
-        if (key == Key.CursorUp.WithAlt)
-        {
-            MoveItem(focused, -1);
-            return true;
-        }
-
-        if (key == Key.CursorDown.WithAlt)
-        {
-            MoveItem(focused, 1);
-            return true;
+            return RunOnly(() => ToggleLog(focused));
         }
 
         return false;
     }
 
+    /// <summary>Space, Shift+Up and Shift+Down (extend the marks) and Ctrl+A (mark all in the group). Ctrl+click is a mouse action, see <see cref="OnCtrlClick"/>.</summary>
+    private static bool IsMarkKey(Key key) =>
+        key == Key.Space || key == Key.CursorUp.WithShift || key == Key.CursorDown.WithShift || key == Key.A.WithCtrl;
+
     /// <summary>
-    /// The command keys of the info and output panes: Enter starts, Ctrl+C stops, F5 restarts, L toggles the log, F2 edits and
-    /// Del deletes. They act on the command the panes show (the focused row, when it is a command) and on that command alone:
-    /// marks are ignored. A group header shows no command, so these keys do nothing there. Returns true for these keys, even
-    /// when nothing is done; the panes handle their own keys first and call this for the rest.
+    /// Runs an edit-mode action in edit mode. In run mode it shows the message that says how to reach edit mode. Always handled.
+    /// </summary>
+    private bool EditOnly(Action action)
+    {
+        if (IsEditMode)
+        {
+            action();
+        }
+        else
+        {
+            ShowMessage(EditOnlyMessage);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Runs a run-mode action in run mode. In edit mode it shows the message that says how to reach run mode. Always handled.
+    /// </summary>
+    private bool RunOnly(Action action)
+    {
+        if (IsEditMode)
+        {
+            ShowMessage(RunOnlyMessage);
+        }
+        else
+        {
+            action();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The command keys of the info and output panes: Enter starts (edits in edit mode), Ctrl+C stops, F5 restarts, L toggles the
+    /// log, F2 edits and Del deletes. They act on the command the panes show (the focused row, when it is a command) and on that
+    /// command alone: marks are ignored. A group header shows no command, so these keys do nothing there. Returns true for these
+    /// keys, even when nothing is done; the panes handle their own keys first and call this for the rest.
     /// </summary>
     public bool OnShownCommandKey(Key key)
     {
         if (key == Key.Enter)
         {
-            Activate(ShownTarget());
+            if (IsEditMode)
+            {
+                EditFocused(ShownRow);
+            }
+            else
+            {
+                Activate(ShownTarget());
+            }
+
             return true;
         }
 
         if (key == Key.C.WithCtrl)
         {
-            StopTargets(ShownTarget());
-            return true;
+            return RunOnly(() => StopTargets(ShownTarget()));
         }
 
         if (key == Key.F5)
         {
-            RestartTargets(ShownTarget());
-            return true;
+            return RunOnly(() => RestartTargets(ShownTarget()));
         }
 
         if (IsLogKey(key))
         {
-            ToggleLog(ShownRow);
-            return true;
+            return RunOnly(() => ToggleLog(ShownRow));
         }
 
         if (key == Key.F2)
         {
-            EditFocused(ShownRow);
-            return true;
+            return EditOnly(() => EditFocused(ShownRow));
         }
 
         if (key == Key.Delete)
         {
-            DeleteFocused(ShownRow);
-            return true;
+            return EditOnly(() => DeleteFocused(ShownRow));
         }
 
         return false;
@@ -426,12 +558,15 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// Tab moves the focus through the list, the details strip and the output, and Shift+Tab backward. Handled here rather
-    /// than by Terminal.Gui's focus traversal, which did not move focus between these views in this setup.
+    /// than by Terminal.Gui's focus traversal, which did not move focus between these views in this setup. In edit mode the
+    /// output is hidden, so the focus moves between the list and the details strip only.
     /// </summary>
     public void CycleFocusPane(bool backward)
     {
         // While the output is maximized, the other panes are hidden and must not get the focus.
-        View[] panes = _maximized ? new View[] { _output } : new View[] { _list, _details, _output };
+        View[] panes = IsEditMode ? new View[] { _list, _details }
+            : _maximized ? new View[] { _output }
+            : new View[] { _list, _details, _output };
         panes[FocusCycle.Next(Array.FindIndex(panes, pane => pane.HasFocus), panes.Length, backward)].SetFocus();
     }
 
@@ -440,10 +575,15 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// Ctrl+click toggles the mark of the row clicked (an index into the shown rows). Without a row, the focused row is used.
-    /// Group headers have no mark.
+    /// Group headers have no mark. Marks are for run mode: in edit mode the click does nothing.
     /// </summary>
     public void OnCtrlClick(int rowIndex)
     {
+        if (IsEditMode)
+        {
+            return;
+        }
+
         int index = rowIndex >= 0 ? rowIndex : FocusedIndex;
         if (index >= 0 && index < _rows.Count && _rows[index] is CommandRow command)
         {
@@ -766,8 +906,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
         _outputHeader.PaneFocused = hasFocus;
     }
 
+    /// <summary>The list's title: the file name, " [edit]" in edit mode, and " *" when there are unsaved changes.</summary>
     private string BuildTitle() =>
-        Path.GetFileName(_session.ConfigPath) + (_session.IsDirty ? " *" : string.Empty);
+        Path.GetFileName(_session.ConfigPath)
+        + (IsEditMode ? " [edit]" : string.Empty)
+        + (_session.IsDirty ? " *" : string.Empty);
 
     /// <summary>
     /// Left: on a command, collapses its group (the focus moves to the header). On an expanded header, collapses it. On a
@@ -1047,12 +1190,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
         SetSearchBarOpen(false);
     }
 
-    /// <summary>Shows or hides the bar. The output pane is one row shorter while the bar is shown.</summary>
+    /// <summary>Shows or hides the bar. The panes above it are one row shorter while the bar is shown (see <see cref="ApplyLayout"/>).</summary>
     private void SetSearchBarOpen(bool open)
     {
         _searchBar.Visible = open;
-        _output.Height = Dim.Fill(open ? 2 : 1);
-        _window.SetNeedsLayout();
+        ApplyLayout();
     }
 
     /// <summary>Moves the focus from the bar back to the target pane; the bar stays open.</summary>
@@ -1464,8 +1606,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// Alt+Up/Down: moves a command or a group (with everything below it) among its siblings. The session refuses without
-    /// saying why; at either end nothing happens, otherwise the refusal is because a sequence is running.
+    /// Alt+Up/Down in edit mode: moves a command or a group (with everything below it) among its siblings. At either end, the
+    /// session returns false and nothing happens. The structure change rebuilds the rows and keeps focus on the same entry.
     /// </summary>
     private void MoveItem(ListRow? focused, int delta)
     {
@@ -1480,30 +1622,14 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return;
         }
 
-        // The structure change rebuilds the rows and keeps focus on the same entry.
         try
         {
-            if (_session.MoveItem(item, delta))
-            {
-                return;
-            }
+            _session.MoveItem(item, delta);
         }
         catch (InvalidOperationException ex)
         {
             ShowMessage(ex.Message);
-            return;
         }
-
-        // At top level, only the groups of the opened file count: moves stop at its first group, as the session does.
-        IReadOnlyList<ItemEntry> siblings = item.Parent is { } parent ? parent.Items : GroupTree.Editable(_session.Groups);
-        int index = siblings.ToList().IndexOf(item);
-        if (!TreeRows.CanMoveWithin(index, siblings.Count, delta))
-        {
-            return;
-        }
-
-        string kind = item is GroupEntry ? "groups" : "commands";
-        ShowMessage($"Cannot move {kind} while a sequence they belong to is running.");
     }
 
     private void RequestQuit()
@@ -1659,14 +1785,9 @@ internal sealed class MainController : IDisposable, IListSearchHost
                 }
             });
 
-        bool running = entry.IsActive;
         if (RunDialog(dialog))
         {
             FocusKey(entry);
-            if (running)
-            {
-                ShowMessage("Changes apply on next start.");
-            }
         }
     }
 
@@ -1698,7 +1819,7 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
-    /// <summary>Delete: asks first. The session refuses to remove running, queued or sequenced commands; that is shown as an error.</summary>
+    /// <summary>Delete, in edit mode: asks first. A base item is refused before that; a refusal from the session is shown as an error.</summary>
     private void DeleteFocused(ListRow? focused)
     {
         if (focused is not null && RefuseReadOnly(TreeRows.ItemOf(focused)))
@@ -1841,8 +1962,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// The hint left of "^Q Quit", with its click targets. While the find field has the focus, the search keys (see <see cref="SearchHint"/>).
-    /// Otherwise the parts that apply, joined by the separator: "Enter Start" / "Enter Kill" for the current targets, when Enter does
-    /// something; the command keys of the focused pane (see <see cref="CommandKeysOf"/>); the c hint; and "^S Save  + Max".
+    /// Otherwise the parts that apply to the focused pane and row, joined by the separator, for the session's mode (see <see cref="RunHintLeft"/>
+    /// and <see cref="EditHintLeft"/>).
     /// </summary>
     private Hint HintLeftHint()
     {
@@ -1851,6 +1972,17 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return SearchHint.Build(_searchBar.Query.Text.Length > 0);
         }
 
+        CopyPane pane = FocusedCopyPane();
+        string? copy = CopyHint.Describe(pane, hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
+        return IsEditMode ? EditHintLeft(pane, copy) : RunHintLeft(pane, copy);
+    }
+
+    /// <summary>
+    /// The run-mode hint: "Enter Start" / "Enter Kill" for the current targets, when Enter does something; the command keys of the focused
+    /// pane (see <see cref="CommandKeysOf"/>); the c hint; "^S Save" while there are unsaved changes; "+ Max"; and "^E Edit".
+    /// </summary>
+    private Hint RunHintLeft(CopyPane pane, string? copy)
+    {
         ActionTarget? target = HintTarget();
         IReadOnlyList<CommandEntry> targets = target is null ? Array.Empty<CommandEntry>() : CommandsOf(target);
         var enterTargets = targets
@@ -1865,8 +1997,6 @@ internal sealed class MainController : IDisposable, IListSearchHost
         bool sequenceRunning = hintGroup is { Mode: GroupMode.Sequential, IsSequenceRunning: true };
 
         string? enter = EnterHint.Describe(enterTargets, sequenceRunning);
-        CopyPane pane = FocusedCopyPane();
-        string? copy = CopyHint.Describe(pane, hasSelection: SelectionToCopy(), hasCommand: ShownRow is not null, hasLine: _output.HasLines);
         Hint? commands = CommandKeysOf(pane, FocusedRow);
         var parts = new List<Hint>();
         if (enter is not null)
@@ -1884,8 +2014,71 @@ internal sealed class MainController : IDisposable, IListSearchHost
             parts.Add(KeyHints.Bound(Key.C, copy));
         }
 
-        parts.Add(HintsAfterCopy);
+        if (_session.IsDirty)
+        {
+            parts.Add(SaveHint);
+        }
+
+        parts.Add(MaxHint);
+        parts.Add(ToEditHint);
         return KeyHints.Join([.. parts]);
+    }
+
+    /// <summary>
+    /// The edit-mode hint: "Enter Edit" and "Del Delete" when the focused row (the list) or the shown command (the info pane) can be
+    /// edited; in the list, "^N Command", "^G Group" and, with a row focused, "Alt+↑↓ Move"; the c hint; "^S Save"; and "^E Run".
+    /// </summary>
+    private Hint EditHintLeft(CopyPane pane, string? copy)
+    {
+        bool onList = pane == CopyPane.List;
+        bool canEdit = pane switch
+        {
+            CopyPane.List => FocusedRow is not null,
+            CopyPane.Details or CopyPane.Output => ShownRow is not null,
+            _ => false,
+        };
+
+        var parts = new List<Hint>();
+        if (canEdit)
+        {
+            parts.Add(KeyHints.Bound(Key.Enter, "Enter Edit"));
+        }
+
+        if (onList)
+        {
+            parts.Add(NewCommandHint);
+            parts.Add(NewGroupHint);
+        }
+
+        if (canEdit)
+        {
+            parts.Add(KeyHints.Bound(Key.Delete, "Del Delete"));
+        }
+
+        if (onList && canEdit)
+        {
+            parts.Add(MoveHint);
+        }
+
+        if (copy is not null)
+        {
+            parts.Add(KeyHints.Bound(Key.C, copy));
+        }
+
+        parts.Add(SaveHint);
+        parts.Add(ToRunHint);
+        return KeyHints.Join([.. parts]);
+    }
+
+    /// <summary>
+    /// Shows the hints of the new mode after a switch. A message still shown is dropped: it was about the mode that was left (for
+    /// example an earlier refusal to switch), and the bar must show the keys of the new mode at once.
+    /// </summary>
+    private void RefreshHints()
+    {
+        _message = null;
+        _shownHints = null;
+        ShowHints();
     }
 
     /// <summary>The pane that c acts on: the focused one, or None when neither the list nor the info or output pane has the focus.</summary>

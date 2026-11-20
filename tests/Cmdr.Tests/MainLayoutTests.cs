@@ -2,6 +2,8 @@ using System.Drawing;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
+using Cmdr.Core.Processes;
+using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -242,6 +244,193 @@ public sealed class MainLayoutTests
             Assert.False(list.Visible);
             Assert.False(details.Visible);
         });
+    }
+
+    [Fact]
+    public void Edit_mode_hides_the_output_and_the_top_row_fills_the_height_above_the_status_line()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            FrameView list = Field<FrameView>(controller, "_listFrame");
+            FrameView details = Field<FrameView>(controller, "_detailsFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
+            StatusLine status = Field<StatusLine>(controller, "_status");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            app.LayoutAndDraw();
+
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+
+            Assert.Equal(SessionMode.Edit, temp.Session.Mode);
+            Assert.Equal(new Rectangle(0, 0, list.Frame.Width, Height - 1), list.Frame);
+            Assert.Equal(new Rectangle(list.Frame.Right, 0, Width - list.Frame.Right, Height - 1), details.Frame);
+            Assert.False(header.Visible);
+            Assert.False(output.Visible);
+            Assert.True(status.Visible);
+            Assert.Equal(Height - 1, status.Frame.Y);
+        });
+    }
+
+    [Fact]
+    public void Edit_mode_top_row_stops_above_the_search_bar_while_it_is_open()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            FrameView list = Field<FrameView>(controller, "_listFrame");
+            FrameView details = Field<FrameView>(controller, "_detailsFrame");
+            SearchBar bar = Field<SearchBar>(controller, "_searchBar");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            app.LayoutAndDraw();
+
+            Assert.True(controller.OnGlobalKey((Key)'/'));
+            app.LayoutAndDraw();
+            // Tab-like move of the focus off the find field, so the bar stays open on the list.
+            listView.SetFocus();
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+
+            Assert.True(bar.Visible);
+            Assert.Equal(Height - 2, list.Frame.Height);
+            Assert.Equal(Height - 2, details.Frame.Height);
+            Assert.Equal(Height - 2, bar.Frame.Y);
+        });
+    }
+
+    [Fact]
+    public void Edit_mode_ignores_the_maximize_key_and_keeps_the_layout()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            FrameView list = Field<FrameView>(controller, "_listFrame");
+            OutputView output = Field<OutputView>(controller, "_output");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+            Rectangle listFrame = list.Frame;
+
+            Assert.True(controller.OnGlobalKey((Key)'='));
+            app.LayoutAndDraw();
+
+            Assert.Equal(listFrame, list.Frame);
+            Assert.True(list.Visible);
+            Assert.False(output.Visible);
+            Assert.True(listView.HasFocus);
+        });
+    }
+
+    [Fact]
+    public void Edit_then_run_restores_the_top_row_header_and_output()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            FrameView list = Field<FrameView>(controller, "_listFrame");
+            FrameView details = Field<FrameView>(controller, "_detailsFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            app.LayoutAndDraw();
+            Rectangle normalList = list.Frame;
+            Rectangle normalDetails = details.Frame;
+            Rectangle normalHeader = header.Frame;
+            Rectangle normalOutput = output.Frame;
+
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+
+            Assert.Equal(SessionMode.Run, temp.Session.Mode);
+            Assert.Equal(normalList, list.Frame);
+            Assert.Equal(normalDetails, details.Frame);
+            Assert.True(header.Visible);
+            Assert.True(output.Visible);
+            Assert.Equal(normalHeader, header.Frame);
+            Assert.Equal(normalOutput, output.Frame);
+            Assert.True(listView.HasFocus, "Switching back to run mode keeps the focus where it was.");
+        });
+    }
+
+    [Fact]
+    public void Entering_edit_from_maximized_output_restores_the_top_row_and_moves_focus_to_the_list()
+    {
+        using TempSession temp = TempSession.Sample();
+
+        RunLaidOut(temp, Width, Height, (app, controller) =>
+        {
+            FrameView list = Field<FrameView>(controller, "_listFrame");
+            OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+            OutputView output = Field<OutputView>(controller, "_output");
+            CommandListView listView = Field<CommandListView>(controller, "_list");
+            listView.SetFocus();
+            Assert.True(controller.OnGlobalKey((Key)'='));
+            app.LayoutAndDraw();
+            Assert.True(output.HasFocus);
+
+            Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+            app.LayoutAndDraw();
+
+            Assert.True(list.Visible);
+            Assert.True(listView.HasFocus);
+            Assert.False(output.HasFocus);
+            Assert.False(output.Visible);
+            Assert.False(header.Visible);
+            Assert.Equal(Height - 1, list.Frame.Height);
+        });
+    }
+
+    [Fact]
+    public void Edit_switch_refused_while_a_command_runs_keeps_the_run_layout()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        using TempSession temp = TempSession.Open(new GroupSpec { Name = "g", Items = { new CommandSpec { Name = "a", Program = "sleep", Args = { "30" } } } });
+        CommandEntry entry = temp.Session.AllEntries.Single();
+        Assert.Null(temp.Session.Activate(new[] { entry }));
+        try
+        {
+            RunLaidOut(temp, Width, Height, (app, controller) =>
+            {
+                FrameView list = Field<FrameView>(controller, "_listFrame");
+                FrameView details = Field<FrameView>(controller, "_detailsFrame");
+                OutputHeader header = Field<OutputHeader>(controller, "_outputHeader");
+                OutputView output = Field<OutputView>(controller, "_output");
+                CommandListView listView = Field<CommandListView>(controller, "_list");
+                listView.SetFocus();
+                app.LayoutAndDraw();
+                Rectangle normalHeader = header.Frame;
+
+                Assert.True(controller.OnGlobalKey(Key.E.WithCtrl));
+                app.LayoutAndDraw();
+
+                Assert.Equal(SessionMode.Run, temp.Session.Mode);
+                Assert.True(output.Visible);
+                Assert.True(header.Visible);
+                Assert.Equal(normalHeader, header.Frame);
+                Assert.Equal(list.Frame.Height, details.Frame.Height);
+                Assert.Contains("Cannot switch to edit mode", Field<StatusLine>(controller, "_status").Shown.Text);
+            });
+        }
+        finally
+        {
+            entry.Process.ForceKill();
+            Assert.True(entry.Process.WaitForExitAsync().Wait(TimeSpan.FromSeconds(10)), "The command did not exit.");
+        }
     }
 
     /// <summary>Builds the controller at the given size, lays it out and runs <paramref name="check"/> on the UI loop.</summary>

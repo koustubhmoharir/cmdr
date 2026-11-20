@@ -60,16 +60,6 @@ internal static class TreeRows
     }
 
     /// <summary>
-    /// Whether an item at <paramref name="index"/> among <paramref name="count"/> siblings can move by <paramref name="delta"/>
-    /// without leaving the list. False for a zero delta and at either end.
-    /// </summary>
-    public static bool CanMoveWithin(int index, int count, int delta)
-    {
-        int target = index + delta;
-        return delta != 0 && index >= 0 && index < count && target >= 0 && target < count;
-    }
-
-    /// <summary>
     /// The parent offered by default for a new group: the parent of the focused header's group, or of the focused command's group.
     /// Null (top level) when nothing is focused.
     /// </summary>

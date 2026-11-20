@@ -36,13 +36,18 @@ without the source-revision suffix).
 
 ## CLI
 
-`cmdr <config.json>`, `cmdr --version`. `cmdr --send-ctrl-c <pid>` is an internal helper mode
-(Windows only, see Process supervision).
+`cmdr [--edit] <config.json>`, `cmdr --version` (parsed by `CommandLine`, pure). `cmdr --send-ctrl-c <pid>` is an
+internal helper mode (Windows only, see Process supervision). A config opens in run mode, or in edit mode with `--edit`.
+A missing file in run mode is not loaded before the TUI starts: `TuiHost.RunMissingConfig` asks whether to create it
+(Yes loads it in edit mode, No shows the picker when there are recent files). `TuiHost` owns the session on every path
+and disposes it when the main window closes. In the main window Ctrl+E switches modes (`MainController.SwitchMode`);
+`ApplyLayout` is the one place that lays the window out for the mode (edit mode hides the output header and output, and
+the top row fills the window), the maximize state and the search bar. The hint bar is built per mode.
 
 `cmdr` with no arguments shows the recent-configs picker (`RecentPicker`, rows from `RecentRows`, digit
 selection in `NumberTyping`). The picker and the main window run one after the other on the same
-`IApplication` (`TuiHost.RunPicker`): the picker loads the chosen session itself, so a load error is
-shown there and the picker stays; on success it calls `RequestStop` and the main window runs next. The
+`IApplication` (`TuiHost.RunPicker`): the picker loads the chosen session itself (Enter in run mode, F2 in edit mode; Enter on a
+missing file asks whether to create it, in edit mode), so a load error is shown there and the picker stays; on success it calls `RequestStop` and the main window runs next. The
 list's type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
 
 `RecentFiles` (Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
@@ -143,12 +148,9 @@ is set: the status shows `? left`, a `leftover check failed: …, retrying` line
 streak, and the command counts as having leftovers (`HasLeftovers`: no start, quit waits, Enter kills)
 until a count succeeds. With `leftovers: detach`, detaching waits for that first successful count. Restart = graceful stop, wait for exit, start.
 A pending restart is a `RestartOperation` tracked by the session: Stop/ForceKill of an overlapping command,
-StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. A restart is stale when it was revoked,
-its caller cancelled it, its group was removed, a target of a restart of commands was moved out of the group or removed,
-or a command of a group restart was moved out of the group's subtree or removed. Staleness is checked under the tree
-lock before every launch, and once more after a batch; when it fails, what the batch started is stopped again (a graceful
-stop is sent in the background, never waited for) and the restart throws. A group restart starts only the commands the
-group had when it was called; commands added meanwhile are ignored. A restart that hands a sequence over to a run keeps
+StopAll, ForceKillAll and Dispose revoke it, and so does the caller's token. A revoked restart starts nothing. Revocation
+is checked under the tree lock before every launch, and once more after a batch; when it fails, what the batch started is
+stopped again (a graceful stop is sent in the background, never waited for) and the restart throws. A restart that hands a sequence over to a run keeps
 the caller's token in force until the sequence's first command launches: the run's own launch decision (taken under its
 lock, right before the command starts) ends that watch, and the restart waits for that decision before it returns, so a
 cancellation before the launch throws and starts nothing. After the first launch, stopping the sequence is Stop's or
@@ -241,9 +243,13 @@ returns a notice that is written to the output.
   On a command, it cancels the innermost run containing it (which then fails upward) and stops the
   command if it is running; on a queued command, whatever that run is currently running keeps going.
   F5 on a group stops everything below, waits for leaders, then runs the group.
-- Edits on a group (mode change, move, reparent, remove) and moves/removal of items are refused while
-  the affected item or anything below it is part of a run. Reparenting into itself or a descendant is
-  refused.
+- Two modes (`SessionMode`), set by `Session.Load(path, mode)`. Run mode: start, restart, log toggle; the tree
+  cannot be edited. Edit mode: groups and commands can be added, changed, moved and removed; nothing can be started.
+  Stop, ForceKill, StopAll, ForceKillAll, Save, Validate, BuildConfig, Dispose and queries work in both. Each operation
+  checks the mode under `_sync` before it changes anything and throws `InvalidOperationException` otherwise.
+  `SwitchToEdit` is refused, with a message and no change, while a command is running, stopping or has leftover processes,
+  a command is queued, a sequence run is active, or a restart is pending. `SwitchToRun` is always allowed and keeps
+  unsaved changes and `IsDirty`. Reparenting into itself or a descendant is still refused.
 
 ## Threading and ownership
 
@@ -254,7 +260,7 @@ belongs to. The rules below say who owns what and which identity must travel wit
 | State | Owner and guard | Identity carried across delays |
 |---|---|---|
 | Views, dialogs, controller fields | UI thread only; background work reports back with `app.Invoke` | — |
-| Session tree (items, groups, membership, editing) | `Session._sync` | Tree membership is re-checked under the lock at every launch |
+| Session tree (items, groups, membership, editing) | `Session._sync`; `Mode` is read and changed under it | The tree is read under the lock at every launch; edits happen only in edit mode, when nothing runs |
 | Pending restarts | `Session._sync` (`_restarts`); registered synchronously (`PrepareRestart`) before any background step | `RestartOperation`; `PendingRestart` also names the waited-for run |
 | Enter decisions | Taken when Enter is pressed (`PrepareActivate`), before the input dialog | `PreparedActivation` (the start or kill set) |
 | Sequence runs | Each run's own lock; registered on its group under `Session._sync` | `SequenceRun`; its `Result` completes only after it left its group |

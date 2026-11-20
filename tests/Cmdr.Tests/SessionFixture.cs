@@ -1,4 +1,5 @@
 using Cmdr.Core.Config;
+using Cmdr.Core.Session;
 using CmdrSession = Cmdr.Core.Session.Session;
 
 namespace Cmdr.Tests;
@@ -16,17 +17,20 @@ internal sealed class TempSession : IDisposable
 
     public CmdrSession Session { get; }
 
-    /// <summary>Writes the groups to a configuration file and loads it, so the session starts clean.</summary>
-    public static TempSession Open(params GroupSpec[] groups)
+    /// <summary>Writes the groups to a configuration file and loads it in run mode, so the session starts clean.</summary>
+    public static TempSession Open(params GroupSpec[] groups) => Open(SessionMode.Run, groups);
+
+    /// <summary>Writes the groups to a configuration file and loads it in <paramref name="mode"/>, so the session starts clean.</summary>
+    public static TempSession Open(SessionMode mode, params GroupSpec[] groups)
     {
         string dir = Directory.CreateTempSubdirectory("cmdr-tui-tests-").FullName;
         string path = Path.Combine(dir, "cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = groups.ToList() }, path);
-        return new TempSession(dir, CmdrSession.Load(path));
+        return new TempSession(dir, CmdrSession.Load(path, mode));
     }
 
-    /// <summary>The sample tree of <see cref="SampleTree"/>.</summary>
-    public static TempSession Sample() => Open(SampleTree.Groups());
+    /// <summary>The sample tree of <see cref="SampleTree"/>, loaded in <paramref name="mode"/>.</summary>
+    public static TempSession Sample(SessionMode mode = SessionMode.Run) => Open(mode, SampleTree.Groups());
 
     public void Dispose()
     {

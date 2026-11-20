@@ -490,7 +490,7 @@ public sealed class SearchBarTests
             app.LayoutAndDraw();
             Tick(controller);
             string paneHints = StatusText(status);
-            Assert.Contains("^S Save", paneHints);
+            Assert.Contains("+ Max  ^E Edit", paneHints);
 
             Press(app, (Key)'/');
             Tick(controller);

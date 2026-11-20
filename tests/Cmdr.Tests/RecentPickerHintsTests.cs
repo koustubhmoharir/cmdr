@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
+using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
@@ -28,7 +29,7 @@ public sealed class RecentPickerHintsTests
 
         f.Run((app, picker) =>
         {
-            Assert.Equal("Enter Open  Del Remove  0-9 Select by number  Esc/^Q Quit", Status(picker).Shown.Text);
+            Assert.Equal("Enter Open  F2 Edit  Del Remove  0-9 Select by number  Esc/^Q Quit", Status(picker).Shown.Text);
             Assert.Equal(string.Empty, Status(picker).ShownRight.Text);
             app.RequestStop(picker);
         });
@@ -47,6 +48,25 @@ public sealed class RecentPickerHintsTests
         });
 
         Assert.NotNull(f.Picker.Session);
+        Assert.Equal(SessionMode.Run, f.Picker.Session!.Mode);
+        Assert.Equal(f.Alpha, f.Saved()[0]);
+        f.Picker.Session!.Dispose();
+    }
+
+    [Fact]
+    public void Clicking_F2_Edit_opens_the_selected_row_in_edit_mode_and_moves_it_to_the_front_of_the_list()
+    {
+        using var f = new Fixture();
+
+        f.Run((app, picker) =>
+        {
+            Assert.Equal(0, List(picker).SelectedItem);
+
+            Click(app, picker, "F2 Edit");
+        });
+
+        Assert.NotNull(f.Picker.Session);
+        Assert.Equal(SessionMode.Edit, f.Picker.Session!.Mode);
         Assert.Equal(f.Alpha, f.Saved()[0]);
         f.Picker.Session!.Dispose();
     }

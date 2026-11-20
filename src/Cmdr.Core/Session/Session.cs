@@ -6,7 +6,8 @@ namespace Cmdr.Core.Session;
 /// <summary>
 /// The UI-independent state of a cmdr session: the loaded configuration as a tree of groups and commands, one
 /// <see cref="CommandEntry"/> per command with its process supervisor, editing with dirty tracking, and process actions
-/// (see the partial files for those).
+/// (see the partial files for those). Editing is allowed only in <see cref="SessionMode.Edit"/>, starting only in
+/// <see cref="SessionMode.Run"/>.
 /// </summary>
 /// <remarks>
 /// Editing and process actions are called from the UI thread. Sequences run on background tasks and
@@ -31,9 +32,11 @@ public sealed partial class Session : IDisposable
     private readonly string? _base;
     private bool _isDirty;
     private volatile bool _disposed;
+    private volatile SessionMode _mode;
 
-    private Session(IReadOnlyList<ConfigFile> chain)
+    private Session(IReadOnlyList<ConfigFile> chain, SessionMode mode)
     {
+        _mode = mode;
         string openedDir = chain[^1].Dir;
         var sources = chain.Select(file => new ConfigSource(file, openedDir)).ToList();
         Sources = sources;
@@ -96,19 +99,72 @@ public sealed partial class Session : IDisposable
     /// <summary>True when there are unsaved changes.</summary>
     public bool IsDirty => _isDirty;
 
+    /// <summary>
+    /// The mode the session is in. Set by <see cref="Load"/>, then changed by <see cref="SwitchToEdit"/> and <see cref="SwitchToRun"/>.
+    /// Edit and run operations check it; see the <c>Exception</c> sections of the methods.
+    /// </summary>
+    public SessionMode Mode => _mode;
+
     /// <summary>Validation errors of the configuration as loaded. Empty when it is valid.</summary>
     public IReadOnlyList<string> LoadErrors { get; }
 
     /// <summary>
     /// Loads the configuration file and the base files it imports (see <see cref="ConfigStore.LoadChain"/>). A missing file
-    /// yields an empty session. Problems are reported in <see cref="LoadErrors"/>.
+    /// yields an empty session. Problems are reported in <see cref="LoadErrors"/>. The session starts in <paramref name="mode"/>.
     /// </summary>
     /// <exception cref="ConfigException">A file is malformed, a base file is missing, or the imports form a cycle.</exception>
-    public static Session Load(string configPath)
+    public static Session Load(string configPath, SessionMode mode)
     {
         ArgumentException.ThrowIfNullOrEmpty(configPath);
 
-        return new Session(ConfigStore.LoadChain(configPath));
+        return new Session(ConfigStore.LoadChain(configPath), mode);
+    }
+
+    /// <summary>
+    /// Switches to edit mode. Refused, and nothing changes, while any command is running, stopping or has leftover processes,
+    /// while a command is queued or a sequence run is active, or while a restart is pending. Does nothing when already in edit mode.
+    /// </summary>
+    /// <returns>The reason it was refused, or null when the session is now in edit mode.</returns>
+    public string? SwitchToEdit()
+    {
+        lock (_sync)
+        {
+            if (_mode == SessionMode.Edit)
+            {
+                return null;
+            }
+
+            List<CommandEntry> entries = Walk(_groups).OfType<CommandEntry>().ToList();
+            int active = entries.Count(e => e.IsActive);
+            if (active > 0)
+            {
+                return $"Cannot switch to edit mode: {active} command(s) are running or have leftover processes.";
+            }
+
+            if (entries.Any(e => e.IsQueued) || ActiveRuns().Count > 0)
+            {
+                return "Cannot switch to edit mode: a sequence is running.";
+            }
+
+            if (_restarts.Count > 0)
+            {
+                return "Cannot switch to edit mode: a restart is pending.";
+            }
+
+            _mode = SessionMode.Edit;
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Switches to run mode. Always allowed. Unsaved changes are kept, and so is <see cref="IsDirty"/>.
+    /// </summary>
+    public void SwitchToRun()
+    {
+        lock (_sync)
+        {
+            _mode = SessionMode.Run;
+        }
     }
 
     /// <summary>
@@ -116,7 +172,7 @@ public sealed partial class Session : IDisposable
     /// The group belongs to the file of its parent (the opened file at the top level).
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// <paramref name="parent"/> comes from a base file; or the new group would be deeper than <see cref="CmdrConfig.MaxGroupDepth"/> levels.
+    /// The session is in run mode; <paramref name="parent"/> comes from a base file; or the new group would be deeper than <see cref="CmdrConfig.MaxGroupDepth"/> levels.
     /// </exception>
     public GroupEntry AddGroup(GroupEntry? parent, GroupSettings settings)
     {
@@ -126,6 +182,7 @@ public sealed partial class Session : IDisposable
         GroupEntry group;
         lock (_sync)
         {
+            EnsureEditMode();
             if (parent is not null)
             {
                 EnsureOwned(parent);
@@ -151,15 +208,15 @@ public sealed partial class Session : IDisposable
     /// end of the new parent's items (or of the top level when <paramref name="parent"/> is null).
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The group comes from a base file; the group would be moved into a group of a base file; the group would be moved into
-    /// itself or one of its descendants; the group and the groups below it would be deeper than <see cref="CmdrConfig.MaxGroupDepth"/>
-    /// levels at the new place; or its mode changes or it moves while the group or anything below it is part of a run.
-    /// Nothing changes when an exception is thrown.
+    /// The session is in run mode; the group comes from a base file; the group would be moved into a group of a base file; the group
+    /// would be moved into itself or one of its descendants; or the group and the groups below it would be deeper than
+    /// <see cref="CmdrConfig.MaxGroupDepth"/> levels at the new place. Nothing changes when an exception is thrown.
     /// </exception>
     public void UpdateGroup(GroupEntry group, GroupSettings settings, GroupEntry? parent)
     {
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(group);
             EnsureEditable(group);
             ArgumentNullException.ThrowIfNull(settings);
@@ -189,11 +246,6 @@ public sealed partial class Session : IDisposable
                 }
             }
 
-            if ((reparent || settings.Mode != group.Mode) && IsBusyGroup(group))
-            {
-                throw new InvalidOperationException($"Cannot change the mode or move group '{group.Name}' while it or something inside it is part of a run.");
-            }
-
             if (reparent)
             {
                 Unplace(group);
@@ -213,30 +265,17 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>Removes a group with everything below it and disposes their processes.</summary>
-    /// <exception cref="InvalidOperationException">
-    /// The group comes from a base file; or something below the group is running, has leftover processes, or is part of a run.
-    /// </exception>
+    /// <exception cref="InvalidOperationException">The session is in run mode, or the group comes from a base file.</exception>
     public void RemoveGroup(GroupEntry group)
     {
         var removedCommands = new List<CommandEntry>();
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(group);
             EnsureEditable(group);
 
-            if (IsBusyGroup(group))
-            {
-                throw new InvalidOperationException($"Cannot remove group '{group.Name}' while it or something inside it is part of a run.");
-            }
-
-            List<CommandEntry> commands = group.AllCommands.ToList();
-            int active = commands.Count(c => c.IsActive);
-            if (active > 0)
-            {
-                throw new InvalidOperationException($"Cannot remove group '{group.Name}': {active} command(s) are running or have leftover processes.");
-            }
-
-            foreach (CommandEntry entry in commands)
+            foreach (CommandEntry entry in group.AllCommands)
             {
                 MarkCommandRemoved(entry);
                 removedCommands.Add(entry);
@@ -256,12 +295,13 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>Adds a command at the end of a group. The spec is copied.</summary>
-    /// <exception cref="InvalidOperationException">The group comes from a base file.</exception>
+    /// <exception cref="InvalidOperationException">The session is in run mode, or the group comes from a base file.</exception>
     public CommandEntry AddCommand(GroupEntry group, CommandSpec spec)
     {
         CommandEntry entry;
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(group);
             EnsureEditable(group);
             ArgumentNullException.ThrowIfNull(spec);
@@ -276,16 +316,16 @@ public sealed partial class Session : IDisposable
 
     /// <summary>
     /// Replaces the spec of a command (the spec is copied). If <paramref name="target"/> differs from the current group,
-    /// the command moves to the end of it (any group in the tree). A running process is not affected; changes apply on next start.
+    /// the command moves to the end of it (any group in the tree).
     /// </summary>
     /// <exception cref="InvalidOperationException">
-    /// The command comes from a base file; the command would move into a group of a base file; or the command is queued or
-    /// part of a running sequence, and would move.
+    /// The session is in run mode; the command comes from a base file; or the command would move into a group of a base file.
     /// </exception>
     public void UpdateCommand(CommandEntry entry, CommandSpec spec, GroupEntry target)
     {
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(entry);
             EnsureOwned(target);
             EnsureEditable(entry);
@@ -293,11 +333,6 @@ public sealed partial class Session : IDisposable
             ArgumentNullException.ThrowIfNull(spec);
 
             bool moving = !ReferenceEquals(target, entry.Group);
-            if (moving && IsBusyCommand(entry))
-            {
-                throw new InvalidOperationException($"Cannot move '{entry.Spec.Name}' while it is queued or part of a running sequence.");
-            }
-
             entry.Spec = spec.Clone();
 
             if (moving)
@@ -313,20 +348,14 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>Removes a command and disposes its process.</summary>
-    /// <exception cref="InvalidOperationException">
-    /// The command comes from a base file; or the command is active, queued, or part of a running sequence.
-    /// </exception>
+    /// <exception cref="InvalidOperationException">The session is in run mode, or the command comes from a base file.</exception>
     public void RemoveCommand(CommandEntry entry)
     {
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(entry);
             EnsureEditable(entry);
-
-            if (entry.IsActive || IsBusyCommand(entry))
-            {
-                throw new InvalidOperationException($"Cannot remove '{entry.Spec.Name}' while it is running, queued or leftover processes remain.");
-            }
 
             entry.Group.Detach(entry);
             MarkCommandRemoved(entry);
@@ -342,14 +371,15 @@ public sealed partial class Session : IDisposable
     /// parent, or among the top-level groups.
     /// </summary>
     /// <returns>
-    /// False, with no change, when <paramref name="delta"/> is zero, at the boundary, or when the item or its parent is part of a run.
+    /// False, with no change, when <paramref name="delta"/> is zero or at the boundary.
     /// At the top level, a group of the opened file never moves above the first group of the opened file, so base groups stay first.
     /// </returns>
-    /// <exception cref="InvalidOperationException">The item comes from a base file.</exception>
+    /// <exception cref="InvalidOperationException">The session is in run mode, or the item comes from a base file.</exception>
     public bool MoveItem(ItemEntry item, int delta)
     {
         lock (_sync)
         {
+            EnsureEditMode();
             EnsureOwned(item);
             EnsureEditable(item);
 
@@ -359,12 +389,6 @@ public sealed partial class Session : IDisposable
             }
 
             GroupEntry? parent = item.Parent;
-            bool busy = item is GroupEntry group ? IsBusyGroup(group) : IsBusyCommand((CommandEntry)item);
-            if (busy || (parent is not null && IsBusyGroup(parent)))
-            {
-                return false;
-            }
-
             if (parent is null)
             {
                 int from = _groups.IndexOf((GroupEntry)item);
@@ -397,6 +421,7 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>Moves a command within its group by <paramref name="delta"/> positions. See <see cref="MoveItem"/>.</summary>
+    /// <exception cref="InvalidOperationException">The session is in run mode, or the command comes from a base file.</exception>
     public bool MoveCommand(CommandEntry entry, int delta) => MoveItem(entry, delta);
 
     /// <summary>
@@ -697,6 +722,26 @@ public sealed partial class Session : IDisposable
         else
         {
             EnsureOwned((CommandEntry)item);
+        }
+    }
+
+    /// <summary>Refuses a change of the tree unless the session is in edit mode. Caller holds <c>_sync</c>.</summary>
+    /// <exception cref="InvalidOperationException">The session is in run mode.</exception>
+    private void EnsureEditMode()
+    {
+        if (_mode != SessionMode.Edit)
+        {
+            throw new InvalidOperationException("Groups and commands can only be changed in edit mode.");
+        }
+    }
+
+    /// <summary>Refuses a start, restart or log toggle unless the session is in run mode. Caller holds <c>_sync</c>.</summary>
+    /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
+    private void EnsureRunMode(string message = "Commands can only be started in run mode.")
+    {
+        if (_mode != SessionMode.Run)
+        {
+            throw new InvalidOperationException(message);
         }
     }
 

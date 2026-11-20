@@ -24,16 +24,19 @@ internal static class SessionTestHelpers
     public static GroupSpec Group(string name, GroupMode mode, params CommandSpec[] commands) =>
         new() { Name = name, Mode = mode, Items = commands.Cast<ItemSpec>().ToList() };
 
-    /// <summary>Writes a configuration into the temp directory and loads it, so the session starts clean (not dirty).</summary>
-    public static CmdrSession OpenWith(TempDir dir, params GroupSpec[] groups)
+    /// <summary>Writes a configuration into the temp directory and loads it in run mode, so the session starts clean (not dirty).</summary>
+    public static CmdrSession OpenWith(TempDir dir, params GroupSpec[] groups) => OpenWith(dir, SessionMode.Run, groups);
+
+    /// <summary>Writes a configuration into the temp directory and loads it in <paramref name="mode"/>, so the session starts clean (not dirty).</summary>
+    public static CmdrSession OpenWith(TempDir dir, SessionMode mode, params GroupSpec[] groups)
     {
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = groups.ToList() }, path);
-        return CmdrSession.Load(path);
+        return CmdrSession.Load(path, mode);
     }
 
-    /// <summary>Loads a session from a configuration file that does not exist (an empty session).</summary>
-    public static CmdrSession OpenEmpty(TempDir dir) => CmdrSession.Load(dir.File("cmdr.json"));
+    /// <summary>Loads a session from a configuration file that does not exist (an empty session), in <paramref name="mode"/>.</summary>
+    public static CmdrSession OpenEmpty(TempDir dir, SessionMode mode = SessionMode.Run) => CmdrSession.Load(dir.File("cmdr.json"), mode);
 
     /// <summary>
     /// Force-kills everything still active and disposes the session. Callers use it in finally blocks, so it disposes first

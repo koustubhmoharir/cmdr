@@ -55,7 +55,7 @@ public class SessionEditingTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(config, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
         CmdrConfig built = session.BuildConfig();
 
         Assert.Equal(500, built.BufferLines);
@@ -94,7 +94,7 @@ public class SessionEditingTests
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { BufferLines = 0, Groups = new List<GroupSpec> { Group("g", GroupMode.Parallel) } }, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Edit);
 
         Assert.Contains(session.LoadErrors, e => e.Contains("bufferLines", StringComparison.Ordinal));
         CommandEntry entry = session.AddCommand(session.Groups[0], Sh("a", "true"));
@@ -115,7 +115,7 @@ public class SessionEditingTests
             },
         }, path);
 
-        using CmdrSession session = CmdrSession.Load(path);
+        using CmdrSession session = CmdrSession.Load(path, SessionMode.Run);
 
         Assert.Contains(session.LoadErrors, e => e.Contains("duplicate name 'a'", StringComparison.Ordinal));
         Assert.Contains(session.LoadErrors, e => e.Contains("Duplicate group name 'g'", StringComparison.Ordinal));
@@ -128,14 +128,14 @@ public class SessionEditingTests
         string path = dir.File("cmdr.json");
         File.WriteAllText(path, "{ not json");
 
-        Assert.Throws<ConfigException>(() => CmdrSession.Load(path));
+        Assert.Throws<ConfigException>(() => CmdrSession.Load(path, SessionMode.Run));
     }
 
     [Fact]
     public void AddGroup_AppendsMarksDirty_AndRaisesStructureChanged()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenEmpty(dir);
+        using CmdrSession session = OpenEmpty(dir, SessionMode.Edit);
         int changes = 0;
         session.StructureChanged += () => changes++;
 
@@ -153,7 +153,7 @@ public class SessionEditingTests
     public void UpdateGroup_ChangesSettings()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("build", GroupMode.Parallel));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("build", GroupMode.Parallel));
         GroupEntry group = session.Groups[0];
 
         session.UpdateGroup(group, Settings("release", GroupMode.Sequential), null);
@@ -168,7 +168,7 @@ public class SessionEditingTests
     public void AddCommand_CopiesSpec()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel));
         CommandSpec spec = Sh("a", "true");
 
         CommandEntry entry = session.AddCommand(session.Groups[0], spec);
@@ -185,7 +185,7 @@ public class SessionEditingTests
     public void UpdateCommand_ReplacesSpecWithCopy()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("a", "true")));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel, Sh("a", "true")));
         CommandEntry entry = session.Groups[0].Commands[0];
         CommandSpec spec = Sh("renamed", "false");
 
@@ -203,6 +203,7 @@ public class SessionEditingTests
         using var dir = new TempDir();
         using CmdrSession session = OpenWith(
             dir,
+            SessionMode.Edit,
             Group("g1", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true")),
             Group("g2", GroupMode.Parallel, Sh("x", "true")));
         GroupEntry g1 = session.Groups[0];
@@ -220,7 +221,7 @@ public class SessionEditingTests
     public void MoveCommand_SwapsWithinGroup_AndRefusesAtBoundaries()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true"), Sh("c", "true")));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true"), Sh("c", "true")));
         IReadOnlyList<CommandEntry> commands = session.Groups[0].Commands;
 
         Assert.False(session.MoveCommand(commands[0], -1));
@@ -236,7 +237,7 @@ public class SessionEditingTests
     public void RemoveCommand_RemovesFromGroup()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true")));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true")));
         CommandEntry a = session.Groups[0].Commands[0];
 
         session.RemoveCommand(a);
@@ -246,54 +247,10 @@ public class SessionEditingTests
     }
 
     [Fact]
-    public void RemoveCommand_RefusedWhileRunning()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sleeper("loop")));
-        try
-        {
-            CommandEntry loop = session.Groups[0].Commands[0];
-            session.Activate(new[] { loop });
-            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
-
-            Assert.Throws<InvalidOperationException>(() => session.RemoveCommand(loop));
-            Assert.Single(session.Groups[0].Commands);
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
-    public void RemoveGroup_RefusedWhileCommandRunning()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sleeper("loop")));
-        try
-        {
-            GroupEntry group = session.Groups[0];
-            session.Activate(new[] { group.Commands[0] });
-            WaitUntil(() => group.Commands[0].Process.Snapshot.State == ProcessState.Running, "loop running", group.Commands[0].Process);
-
-            Assert.Throws<InvalidOperationException>(() => session.RemoveGroup(group));
-            Assert.Single(session.Groups);
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
     public void RemoveGroup_WhenIdle_RemovesGroupAndCommands()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g1", GroupMode.Parallel, Sh("a", "true")), Group("g2", GroupMode.Parallel));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g1", GroupMode.Parallel, Sh("a", "true")), Group("g2", GroupMode.Parallel));
 
         session.RemoveGroup(session.Groups[0]);
 
@@ -302,59 +259,10 @@ public class SessionEditingTests
     }
 
     [Fact]
-    public void UpdateGroup_ModeChangeRefusedWhileSequenceRunning()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, Group("g", GroupMode.Sequential, Sleeper("loop")));
-        try
-        {
-            GroupEntry group = session.Groups[0];
-            Assert.Null(session.Activate(group.Commands));
-            WaitUntil(() => group.Commands[0].Process.Snapshot.State == ProcessState.Running, "loop running", group.Commands[0].Process);
-
-            Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(group, Settings("g", GroupMode.Parallel), null));
-            session.UpdateGroup(group, Settings("renamed", GroupMode.Sequential), null);
-            Assert.Equal("renamed", group.Name);
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
-    public void UpdateCommand_QueuedCommandToOtherGroup_Throws()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(
-            dir,
-            Group("seq", GroupMode.Sequential, Sleeper("loop"), Sh("next", "true")),
-            Group("other", GroupMode.Parallel));
-        try
-        {
-            GroupEntry seq = session.Groups[0];
-            CommandEntry next = seq.Commands[1];
-            Assert.Null(session.Activate(seq.Commands));
-            WaitUntil(() => next.IsQueued, "next queued");
-
-            Assert.Throws<InvalidOperationException>(() => session.UpdateCommand(next, next.Spec, session.Groups[1]));
-            Assert.Same(seq, next.Group);
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
     public void Save_WritesFile_ClearsDirty_AndRaisesStructureChanged()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenEmpty(dir);
+        using CmdrSession session = OpenEmpty(dir, SessionMode.Edit);
         session.AddGroup(null, Settings("build", GroupMode.Sequential));
         session.AddCommand(session.Groups[0], Sh("restore", "true"));
         int changes = 0;
@@ -374,7 +282,7 @@ public class SessionEditingTests
     public void Save_WithValidationErrors_ThrowsAndStaysDirty()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenEmpty(dir);
+        using CmdrSession session = OpenEmpty(dir, SessionMode.Edit);
         session.AddGroup(null, Settings("build", GroupMode.Parallel));
         session.AddCommand(session.Groups[0], new CommandSpec { Name = "bad", Program = "" });
 
@@ -391,6 +299,7 @@ public class SessionEditingTests
         using var dir = new TempDir();
         using CmdrSession session = OpenWith(
             dir,
+            SessionMode.Edit,
             Group("g1", GroupMode.Parallel, Sh("a", "true"), Sh("b", "true")),
             Group("g2", GroupMode.Parallel, Sh("c", "true")));
 
@@ -435,7 +344,7 @@ public class SessionEditingTests
     public void AddingCommandWhoseLogCollidesWithSibling_ValidateReportsAndSaveRefuses()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, Group("g", GroupMode.Parallel, Sh("a b", "true")));
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, Group("g", GroupMode.Parallel, Sh("a b", "true")));
         string before = File.ReadAllText(dir.File("cmdr.json"));
 
         session.AddCommand(session.Groups[0], Sh("a_b", "true"));
@@ -455,7 +364,7 @@ public class SessionEditingTests
         ConfigStore.Save(new CmdrConfig { Groups = { Group("g", GroupMode.Parallel, Sh("a b", "true"), Sh("a_b", "true")) } }, dir.File(baseRel));
         ConfigStore.Save(new CmdrConfig { Base = baseRel, Groups = { Group("h", GroupMode.Parallel, Sh("m", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Edit);
         session.AddCommand(session.Groups[^1], Sh("n", "true"));
 
         // The base conflict is still reported on load, but it is not the opened file's error.
@@ -474,7 +383,7 @@ public class SessionEditingTests
         ConfigStore.Save(new CmdrConfig { Groups = { Group("g", GroupMode.Parallel, Sh("a b", "true")) } }, dir.File(baseRel));
         ConfigStore.Save(new CmdrConfig { Base = baseRel, Groups = { Group("g", GroupMode.Parallel, Sh("m", "true")) } }, dir.File("cmdr.json"));
 
-        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Edit);
         session.AddCommand(session.Groups[^1], Sh("a_b", "true"));
 
         Assert.Single(session.Validate());

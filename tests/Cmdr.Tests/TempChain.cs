@@ -1,3 +1,4 @@
+using Cmdr.Core.Session;
 using CmdrSession = Cmdr.Core.Session.Session;
 
 namespace Cmdr.Tests;
@@ -27,7 +28,7 @@ internal sealed class TempChain : IDisposable
     /// The opened file has group "main" with command "mine"; the base file has group "shared" with command "tool" (cwd "bin",
     /// env OWN = ${configDir}) and a top-level command-less group "extra".
     /// </summary>
-    public static TempChain Open()
+    public static TempChain Open(SessionMode mode = SessionMode.Run)
     {
         string dir = Directory.CreateTempSubdirectory("cmdr-tui-chain-").FullName;
         File.WriteAllText(
@@ -44,7 +45,7 @@ internal sealed class TempChain : IDisposable
               { "name": "extra" }
             ] }
             """);
-        return new TempChain(dir, CmdrSession.Load(Path.Combine(dir, "cmdr.json")));
+        return new TempChain(dir, CmdrSession.Load(Path.Combine(dir, "cmdr.json"), mode));
     }
 
     public void Dispose()

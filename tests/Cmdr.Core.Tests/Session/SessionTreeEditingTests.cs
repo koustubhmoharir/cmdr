@@ -8,18 +8,14 @@ using CmdrSession = Cmdr.Core.Session.Session;
 
 namespace Cmdr.Core.Tests.Session;
 
-/// <summary>Editing the group tree: nested add, reparent, removal, moves, and the refusals that keep runs consistent.</summary>
+/// <summary>Editing the group tree in edit mode: nested add, reparent, removal, moves, and their refusals.</summary>
 public class SessionTreeEditingTests
 {
-    private static GroupSpec Par(string name, params ItemSpec[] items) => new() { Name = name, Mode = GroupMode.Parallel, Items = items.ToList() };
-
-    private static GroupSpec Seq(string name, params ItemSpec[] items) => new() { Name = name, Mode = GroupMode.Sequential, Items = items.ToList() };
-
     [Fact]
     public void AddGroup_Nested_AppendsToParent_AndSavesTheTree()
     {
         using var dir = new TempDir();
-        using (CmdrSession session = OpenEmpty(dir))
+        using (CmdrSession session = OpenEmpty(dir, SessionMode.Edit))
         {
             GroupEntry outer = session.AddGroup(null, Settings("outer"));
             GroupEntry inner = session.AddGroup(outer, Settings("inner", GroupMode.Sequential));
@@ -48,6 +44,7 @@ public class SessionTreeEditingTests
         using var dir = new TempDir();
         using CmdrSession session = OpenWith(
             dir,
+            SessionMode.Edit,
             new GroupSpec
             {
                 Name = "g1",
@@ -72,7 +69,7 @@ public class SessionTreeEditingTests
     public void UpdateGroup_MoveIntoItselfOrDescendant_Throws()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, new GroupSpec
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, new GroupSpec
         {
             Name = "outer",
             Items = { new GroupSpec { Name = "mid", Items = { new GroupSpec { Name = "leaf" } } } },
@@ -88,38 +85,10 @@ public class SessionTreeEditingTests
     }
 
     [Fact]
-    public void UpdateGroup_ModeOrMoveRefused_WhileSubtreeIsRunning_RenameStillAllowed()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, Par("outer", Seq("inner", Sleeper("loop"))));
-        try
-        {
-            GroupEntry outer = session.Groups[0];
-            GroupEntry inner = outer.Groups[0];
-            CommandEntry loop = inner.Commands[0];
-            Assert.Null(session.Activate(inner));
-            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
-
-            Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(outer, Settings("outer", GroupMode.Sequential), null));
-            Assert.Throws<InvalidOperationException>(() => session.UpdateGroup(inner, Settings("inner", GroupMode.Sequential), null));
-            session.UpdateGroup(outer, Settings("renamed"), null);
-
-            Assert.Equal("renamed", outer.Name);
-            Assert.Same(outer, session.Groups.Single());
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
     public void RemoveGroup_IsRecursive()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, new GroupSpec
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, new GroupSpec
         {
             Name = "outer",
             Items = { new GroupSpec { Name = "inner", Items = { Sh("a", "true") } }, Sh("b", "true") },
@@ -134,39 +103,12 @@ public class SessionTreeEditingTests
     }
 
     [Fact]
-    public void RemoveGroup_RefusedWhileDescendantCommandRuns()
-    {
-        if (!OperatingSystem.IsLinux()) return;
-
-        using var dir = new TempDir();
-        CmdrSession session = OpenWith(dir, new GroupSpec
-        {
-            Name = "outer",
-            Items = { new GroupSpec { Name = "inner", Items = { Sleeper("loop") } } },
-        });
-        try
-        {
-            GroupEntry outer = session.Groups[0];
-            CommandEntry loop = outer.Groups[0].Commands[0];
-            Assert.Null(session.Activate(new[] { loop }));
-            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
-
-            Assert.Throws<InvalidOperationException>(() => session.RemoveGroup(outer));
-            Assert.Same(outer, Assert.Single(session.Groups));
-            Assert.Single(session.AllEntries);
-        }
-        finally
-        {
-            Cleanup(session);
-        }
-    }
-
-    [Fact]
     public void MoveItem_AmongMixedSiblings_AndRefusesAtBoundaries()
     {
         using var dir = new TempDir();
         using CmdrSession session = OpenWith(
             dir,
+            SessionMode.Edit,
             new GroupSpec
             {
                 Name = "g",
@@ -205,7 +147,7 @@ public class SessionTreeEditingTests
     public void UpdateCommand_MovesIntoNestedGroup_AtEnd()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenWith(dir, new GroupSpec
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, new GroupSpec
         {
             Name = "g",
             Items = { Sh("c", "true"), new GroupSpec { Name = "inner", Items = { Sh("i1", "true") } } },
@@ -255,7 +197,7 @@ public class SessionTreeEditingTests
     public void AddGroup_SixteenLevels_Allowed_SeventeenthRefused_NothingChanged()
     {
         using var dir = new TempDir();
-        using CmdrSession session = OpenEmpty(dir);
+        using CmdrSession session = OpenEmpty(dir, SessionMode.Edit);
         GroupEntry deepest = AddChain(session, CmdrConfig.MaxGroupDepth);
         Assert.Equal(CmdrConfig.MaxGroupDepth - 1, deepest.Depth);
         string[] namesBefore = session.AllGroups.Select(g => g.Name).ToArray();
@@ -273,7 +215,7 @@ public class SessionTreeEditingTests
     public void Save_SixteenLevelSession_Succeeds_AndLoadsBackWithSixteenLevels()
     {
         using var dir = new TempDir();
-        using (CmdrSession session = OpenEmpty(dir))
+        using (CmdrSession session = OpenEmpty(dir, SessionMode.Edit))
         {
             AddChain(session, CmdrConfig.MaxGroupDepth);
 
@@ -298,6 +240,7 @@ public class SessionTreeEditingTests
         using var dir = new TempDir();
         using CmdrSession session = OpenWith(
             dir,
+            SessionMode.Edit,
             SpecChain(CmdrConfig.MaxGroupDepth - 1),
             new GroupSpec { Name = "sub", Items = { new GroupSpec { Name = "subchild" } } });
         GroupEntry sub = session.Groups[1];

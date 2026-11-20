@@ -17,13 +17,11 @@ internal sealed class RestartOperation
 
     /// <param name="group">The group the restart starts in.</param>
     /// <param name="commands">The commands the restart stops and starts.</param>
-    /// <param name="commandsMustStayInGroup">True for a restart of commands, which must all still be in <paramref name="group"/> when it starts.</param>
     /// <param name="callerToken">The caller's token; cancelling it cancels <see cref="Token"/>.</param>
-    internal RestartOperation(GroupEntry group, IReadOnlySet<CommandEntry> commands, bool commandsMustStayInGroup, CancellationToken callerToken)
+    internal RestartOperation(GroupEntry group, IReadOnlySet<CommandEntry> commands, CancellationToken callerToken)
     {
         Group = group;
         Commands = commands;
-        CommandsMustStayInGroup = commandsMustStayInGroup;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(callerToken);
         Token = _cts.Token;
     }
@@ -31,14 +29,8 @@ internal sealed class RestartOperation
     /// <summary>The group the restart starts in: the targets' group, or the restarted group.</summary>
     internal GroupEntry Group { get; }
 
-    /// <summary>
-    /// The commands involved: the targets, or every command of the group when the restart was started. A group restart starts
-    /// only these, so a command added to the group while it waits is not started.
-    /// </summary>
+    /// <summary>The commands involved: the targets, or every command of the group when the restart was started.</summary>
     internal IReadOnlySet<CommandEntry> Commands { get; }
-
-    /// <summary>True when every one of <see cref="Commands"/> must still be in <see cref="Group"/> for the restart to start them.</summary>
-    internal bool CommandsMustStayInGroup { get; }
 
     /// <summary>Cancelled when the operation is revoked or the caller's token is cancelled.</summary>
     internal CancellationToken Token { get; }

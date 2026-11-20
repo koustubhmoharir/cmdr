@@ -52,7 +52,7 @@ public sealed class InitialCollapseTests : IDisposable
               { "name": "open", "items": [ { "name": "o1", "program": "p" } ] }
             ] }
             """);
-        return CmdrSession.Load(Path.Combine(_dir, "cmdr.json"));
+        return CmdrSession.Load(Path.Combine(_dir, "cmdr.json"), SessionMode.Run);
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public sealed class InitialCollapseTests : IDisposable
     public void Nothing_is_initially_collapsed_when_every_group_is_expanded()
     {
         File.WriteAllText(Path.Combine(_dir, "cmdr.json"), """{ "groups": [ { "name": "a", "expanded": true, "items": [ { "name": "b", "items": [] } ] } ] }""");
-        using CmdrSession session = CmdrSession.Load(Path.Combine(_dir, "cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(Path.Combine(_dir, "cmdr.json"), SessionMode.Run);
 
         Assert.Empty(TreeRows.InitiallyCollapsed(session.AllGroups));
     }

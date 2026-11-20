@@ -112,20 +112,6 @@ public sealed class TreeRowsTests : IDisposable
         Assert.Null(TreeRows.FocusHeaderFor(Command("oc"), new HashSet<GroupEntry>()));
     }
 
-    [Theory]
-    [InlineData(0, 3, -1, false)]
-    [InlineData(0, 3, 1, true)]
-    [InlineData(1, 3, 1, true)]
-    [InlineData(2, 3, 1, false)]
-    [InlineData(2, 3, -1, true)]
-    [InlineData(1, 3, 0, false)]
-    [InlineData(-1, 3, 1, false)]
-    [InlineData(0, 1, 1, false)]
-    public void Items_move_only_within_their_siblings(int index, int count, int delta, bool expected)
-    {
-        Assert.Equal(expected, TreeRows.CanMoveWithin(index, count, delta));
-    }
-
     [Fact]
     public void Default_parent_of_a_focused_group_is_its_parent()
     {
