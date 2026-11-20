@@ -28,7 +28,7 @@ public sealed class HintsByFocusTests
         FocusKey(controller, temp.Session.AllEntries.First());
         Field<DetailsView>(controller, "_details").SetFocus();
 
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  c Copy command  + Max  ^E Edit", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  Del Clear  c Copy command  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class HintsByFocusTests
         Field<OutputView>(controller, "_output").SetFocus();
 
         // No output lines yet, so c copies nothing and has no hint.
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  + Max  ^E Edit", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  L Log  Del Clear  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class HintsByFocusTests
         FocusKey(controller, temp.Session.AllEntries.First());
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Contains("^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  + Max  ^E Edit", HintLeft(controller), StringComparison.Ordinal);
+        Assert.Contains("^C Stop  F5 Restart  Space Mark  ^A All  L Log  Del Clear  c Copy command  + Max  ^E Edit", HintLeft(controller), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public sealed class HintsByFocusTests
         FocusKey(controller, Group(temp));
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Equal("Enter Start  ^C Stop  F5 Restart  ^A All  + Max  ^E Edit", HintLeft(controller));
+        Assert.Equal("Enter Start  ^C Stop  F5 Restart  ^A All  Del Clear  + Max  ^E Edit", HintLeft(controller));
     }
 
     [Fact]

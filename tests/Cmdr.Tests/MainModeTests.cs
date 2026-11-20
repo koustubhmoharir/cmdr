@@ -181,17 +181,17 @@ public sealed class MainModeTests
         Field<CommandListView>(controller, "_list").SetFocus();
         int before = temp.Session.AllEntries.Count;
 
-        foreach (Key key in new[] { Key.F2, Key.Delete, Key.N.WithCtrl, Key.G.WithCtrl, Key.CursorUp.WithAlt, Key.CursorDown.WithAlt })
+        foreach (Key key in new[] { Key.F2, Key.N.WithCtrl, Key.G.WithCtrl, Key.CursorUp.WithAlt, Key.CursorDown.WithAlt })
         {
             ClearMessage(controller);
             Assert.True(controller.OnListKey(key), $"{key} in the list");
             Assert.Equal(EditOnlyMessage, Message(controller));
         }
 
-        // The info pane takes F2 and Del too, and shows the same message.
+        // The info pane takes F2 too, and shows the same message.
         DetailsView details = Field<DetailsView>(controller, "_details");
         details.SetFocus();
-        foreach (Key key in new[] { Key.F2, Key.Delete })
+        foreach (Key key in new[] { Key.F2 })
         {
             ClearMessage(controller);
             Assert.True(details.NewKeyDownEvent(key), $"{key} in the info pane");

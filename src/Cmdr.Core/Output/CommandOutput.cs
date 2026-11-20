@@ -115,6 +115,24 @@ public sealed partial class CommandOutput : IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops the retained completed lines (the output shown), keeping the partial lines, the run and the log. Lines already
+    /// given to the log are still written; if logging is turned on later, the cleared lines are not replayed. Adds no system
+    /// line. Does nothing after <see cref="Dispose"/>.
+    /// </summary>
+    public void ClearOutput()
+    {
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _buffer.ClearCompleted();
+        }
+    }
+
     /// <summary>Writes a chunk of standard output for the current run.</summary>
     public void WriteStdOut(ReadOnlySpan<char> chunk) => WriteProcessChunk(null, OutputSource.StdOut, chunk);
 

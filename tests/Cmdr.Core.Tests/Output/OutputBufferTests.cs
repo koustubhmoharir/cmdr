@@ -235,6 +235,63 @@ public class OutputBufferTests
     }
 
     [Fact]
+    public void ClearCompletedDropsCompletedLinesAndKeepsBothPartials()
+    {
+        var buffer = new OutputBuffer(5);
+        buffer.Append(new[] { Line("a"), Line("b") });
+        buffer.SetPartial(OutputSource.StdOut, Line("out"));
+        buffer.SetPartial(OutputSource.StdErr, Line("err"));
+
+        buffer.ClearCompleted();
+
+        Assert.Equal(new[] { "out", "err" }, BufferTexts(buffer));
+        Assert.Equal(2, buffer.Count);
+        Assert.Empty(buffer.GetCompletedLinesFrom(0));
+        Assert.Equal(2, buffer.FirstLineNumber);
+        Assert.Equal(2, buffer.NextLineNumber);
+    }
+
+    [Fact]
+    public void ClearCompletedIncrementsVersionOnce()
+    {
+        var buffer = new OutputBuffer(5);
+        buffer.Append(new[] { Line("a") });
+        long before = buffer.Version;
+
+        buffer.ClearCompleted();
+
+        Assert.Equal(before + 1, buffer.Version);
+    }
+
+    [Fact]
+    public void ClearCompletedThenAppendContinuesNumbering()
+    {
+        var buffer = new OutputBuffer(3);
+        buffer.Append(new[] { Line("a"), Line("b"), Line("c"), Line("d") });
+        buffer.SetPartial(OutputSource.StdOut, Line("p"));
+
+        buffer.ClearCompleted();
+        buffer.Append(new[] { Line("e"), Line("f") });
+
+        Assert.Equal(new[] { "e", "f", "p" }, BufferTexts(buffer));
+        Assert.Equal(4, buffer.FirstLineNumber);
+        Assert.Equal(6, buffer.NextLineNumber);
+        Assert.Equal(new[] { "e", "f" }, Texts(buffer.GetCompletedLinesFrom(0)));
+    }
+
+    [Fact]
+    public void ClearCompletedOnBufferWithOnlyPartialsKeepsFirstLineNumber()
+    {
+        var buffer = new OutputBuffer(3);
+        buffer.SetPartial(OutputSource.StdOut, Line("p"));
+
+        buffer.ClearCompleted();
+
+        Assert.Equal(0, buffer.FirstLineNumber);
+        Assert.Equal(new[] { "p" }, BufferTexts(buffer));
+    }
+
+    [Fact]
     public void AppendOfEmptyListDoesNotChangeVersion()
     {
         var buffer = new OutputBuffer(3);

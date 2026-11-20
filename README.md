@@ -301,7 +301,7 @@ key brings the layout back.
 
 In run mode, commands act on the marked commands, or the focused command if none is marked. On a group header they
 act on everything in the group. Marks are limited to one group, and switching to edit mode clears them. In the info and
-output panes, Enter, Ctrl+C, F5 and L act on the command the panes show (the focused command) alone, ignoring marks; on a
+output panes, Enter, Ctrl+C, F5, L and Del act on the command the panes show (the focused command) alone, ignoring marks; on a
 group header they do nothing there. In edit mode, Enter, F2 and Del in the info pane act on the command it shows.
 
 A key of the other mode does nothing but say which mode it needs (Ctrl+E switches).
@@ -333,6 +333,7 @@ Run mode:
 | Ctrl+A | Mark / unmark all in the group |
 | + / = | Maximize the output pane, or restore the layout (hides the list and the info pane while maximized) |
 | L | Turn the log file on or off for the focused command |
+| Del | Clear the output (the log file is not affected) |
 
 Edit mode:
 

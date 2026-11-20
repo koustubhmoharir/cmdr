@@ -221,6 +221,19 @@ public sealed class OutputBuffer
         }
     }
 
+    /// <summary>Drops all completed lines, keeping the partial lines. <see cref="FirstLineNumber"/> becomes <see cref="NextLineNumber"/>.</summary>
+    public void ClearCompleted()
+    {
+        lock (_sync)
+        {
+            _firstLineNumber += _completedCount;
+            Array.Clear(_ring);
+            _head = 0;
+            _completedCount = 0;
+            _version++;
+        }
+    }
+
     private void AppendLocked(IReadOnlyList<OutputLine> lines)
     {
         foreach (OutputLine line in lines)

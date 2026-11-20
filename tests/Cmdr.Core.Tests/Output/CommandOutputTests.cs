@@ -319,6 +319,89 @@ public class CommandOutputTests : IDisposable
     }
 
     [Fact]
+    public void ClearOutputDropsCompletedLinesAndKeepsThePartial()
+    {
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\nb\npar");
+
+        _output.ClearOutput();
+
+        Assert.Equal(new[] { "par" }, BufferTexts(_output.Buffer));
+        Assert.Equal(_output.Buffer.NextLineNumber, _output.Buffer.FirstLineNumber);
+    }
+
+    [Fact]
+    public void ClearOutputKeepsRunStateSoPartialCompletesAndEndRunStillMarks()
+    {
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\npar");
+        _output.WriteStdErr("err");
+        _output.ClearOutput();
+
+        _output.WriteStdOut("tial\nnext\n");
+        Assert.Equal(new[] { "partial", "next", "err" }, BufferTexts(_output.Buffer));
+
+        _output.EndRun("exit 0");
+        Assert.Equal(new[] { "partial", "next", "err", "=== exit 0 ===" }, BufferTexts(_output.Buffer));
+    }
+
+    [Fact]
+    public void ClearOutputAddsNoSystemLine()
+    {
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\n");
+
+        _output.ClearOutput();
+
+        Assert.Empty(_output.Buffer.GetCompletedLinesFrom(0));
+        Assert.Equal(0, _output.Buffer.Count);
+    }
+
+    [Fact]
+    public void ClearOutputAfterDisposeChangesNothing()
+    {
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\n");
+        long version = _output.Buffer.Version;
+        _output.Dispose();
+
+        _output.ClearOutput();
+
+        Assert.Equal(version, _output.Buffer.Version);
+        Assert.Equal(new[] { StartMarker(Start), "a" }, Texts(_output.Buffer.GetCompletedLinesFrom(0)));
+    }
+
+    [Fact]
+    public void ClearOutputWithLoggingOnKeepsWritingLiveLinesToTheLog()
+    {
+        string path = _temp.File("clear-live.log");
+        _output.BeginRun(Start);
+        _output.EnableLog(path);
+        _output.WriteStdOut("a\n");
+
+        _output.ClearOutput();
+        _output.WriteStdOut("b\n");
+
+        Assert.Equal(Lines(StartMarker(Start), "a", "b"), ReadLog(path));
+        Assert.Equal(new[] { "b" }, BufferTexts(_output.Buffer));
+    }
+
+    [Fact]
+    public void EnablingLogAfterClearDoesNotReplayClearedLines()
+    {
+        string path = _temp.File("clear-replay.log");
+        _output.BeginRun(Start);
+        _output.WriteStdOut("a\nb\n");
+        _output.ClearOutput();
+
+        _output.EnableLog(path);
+        Assert.Equal(string.Empty, ReadLog(path));
+
+        _output.WriteStdOut("c\n");
+        Assert.Equal(Lines("c"), ReadLog(path));
+    }
+
+    [Fact]
     public void EnableLogMidRunWritesCurrentRunThenLiveLines()
     {
         string path = _temp.File("midrun.log");

@@ -61,7 +61,7 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
         Assert.Equal(
-            "Enter Start  ^C Stop  F5 Restart  Space Mark  ^A All  L Log  c Copy command  + Max  ^E Edit  ^Q Quit",
+            "Enter Start  ^C Stop  F5 Restart  Space Mark  ^A All  L Log  Del Clear  c Copy command  + Max  ^E Edit  ^Q Quit",
             Bar(controller));
         AssertLabelsPerformTheirKeys(controller);
 
@@ -70,7 +70,7 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
         string group = Bar(controller);
-        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  ^A All  + Max  ^E Edit", group, StringComparison.Ordinal);
+        Assert.StartsWith("Enter Start  ^C Stop  F5 Restart  ^A All  Del Clear  + Max  ^E Edit", group, StringComparison.Ordinal);
         Assert.DoesNotContain("c Copy", group, StringComparison.Ordinal);
         AssertLabelsPerformTheirKeys(controller);
     }
@@ -182,6 +182,7 @@ public sealed class KeyHintsTests
             ("Space Mark", Key.Space),
             ("^A All", Key.A.WithCtrl),
             ("L Log", Key.L),
+            ("Del Clear", Key.Delete),
             ("c Copy command", (Key)'c'),
             ("c Copy selection", (Key)'c'),
             ("c Copy line", (Key)'c'),

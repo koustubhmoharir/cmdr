@@ -316,9 +316,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// Keys of the command list. Returns true when handled. Esc is always handled, so it never quits, and it does nothing else.
     /// </summary>
     /// <remarks>
-    /// In run mode, Enter, Ctrl+C, F5 and L act on the marks or the focused row here. In edit mode Enter and F2 edit the focused
-    /// row, Del deletes it, and Ctrl+N, Ctrl+G and Alt+Up/Down add and move. The info and output panes take the same keys for the
-    /// shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and collapsing are list-only.
+    /// In run mode, Enter, Ctrl+C, F5, L and Del act on the marks or the focused row here (Del clears their output). In edit mode
+    /// Enter and F2 edit the focused row, Del deletes it, and Ctrl+N, Ctrl+G and Alt+Up/Down add and move. The info and output
+    /// panes take the same keys for the shown command alone (<see cref="OnShownCommandKey"/>). Marking, moving, adding and
+    /// collapsing are list-only.
     /// </remarks>
     public bool OnListKey(Key key)
     {
@@ -409,7 +410,16 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         if (key == Key.Delete)
         {
-            return EditOnly(() => DeleteFocused(focused));
+            if (IsEditMode)
+            {
+                DeleteFocused(focused);
+            }
+            else
+            {
+                ClearOutputs(TargetOf(focused));
+            }
+
+            return true;
         }
 
         if (key == Key.CursorUp.WithAlt)
@@ -501,9 +511,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// The command keys of the info and output panes: Enter starts (edits in edit mode), Ctrl+C stops, F5 restarts, L toggles the
-    /// log, F2 edits and Del deletes. They act on the command the panes show (the focused row, when it is a command) and on that
-    /// command alone: marks are ignored. A group header shows no command, so these keys do nothing there. Returns true for these
-    /// keys, even when nothing is done; the panes handle their own keys first and call this for the rest.
+    /// log, F2 edits, and Del deletes in edit mode or clears the output in run mode. They act on the command the panes show (the
+    /// focused row, when it is a command) and on that command alone: marks are ignored. A group header shows no command, so these
+    /// keys do nothing there. Returns true for these keys, even when nothing is done; the panes handle their own keys first and
+    /// call this for the rest.
     /// </summary>
     public bool OnShownCommandKey(Key key)
     {
@@ -543,7 +554,16 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
         if (key == Key.Delete)
         {
-            return EditOnly(() => DeleteFocused(ShownRow));
+            if (IsEditMode)
+            {
+                DeleteFocused(ShownRow);
+            }
+            else
+            {
+                ClearOutputs(ShownTarget());
+            }
+
+            return true;
         }
 
         return false;
@@ -1821,6 +1841,25 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
+    /// <summary>
+    /// Del in run mode: clears the in-memory output of the target's commands (see <see cref="CommandOutput.ClearOutput"/>), keeping
+    /// partial lines, runs and logs. No confirmation, as nothing is lost from the log. A null target does nothing.
+    /// </summary>
+    private void ClearOutputs(ActionTarget? target)
+    {
+        if (target is null)
+        {
+            return;
+        }
+
+        foreach (CommandEntry entry in CommandsOf(target))
+        {
+            entry.Process.Output.ClearOutput();
+        }
+
+        _output.SetNeedsDraw();
+    }
+
     /// <summary>Delete, in edit mode: asks first. A base item is refused before that; a refusal from the session is shown as an error.</summary>
     private void DeleteFocused(ListRow? focused)
     {
@@ -1932,9 +1971,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     /// <summary>
     /// The command keys that the focused pane acts on, in the order the bar shows them, or null when it acts on none of them.
-    /// The list on a command row acts on all five. The list on a group row acts on Ctrl+C, F5 and Ctrl+A (on the whole group), not
-    /// Space or L, which only a command row takes. The list with no row, and no pane focused, act on none. The info and output panes
-    /// act on Ctrl+C, F5 and L for the shown command alone, when a command is shown, and never Space or Ctrl+A.
+    /// The list on a command row acts on all six. The list on a group row acts on Ctrl+C, F5, Ctrl+A (on the whole group) and Del
+    /// (clears the output of the whole group), not Space or L, which only a command row takes. The list with no row, and no pane
+    /// focused, act on none. The info and output panes act on Ctrl+C, F5, L and Del for the shown command alone, when a command is
+    /// shown, and never Space or Ctrl+A.
     /// </summary>
     private static Hint? CommandKeysOf(CopyPane pane, ListRow? focused)
     {
@@ -1946,17 +1986,20 @@ internal sealed class MainController : IDisposable, IListSearchHost
                     KeyHints.Bound(Key.F5, "F5 Restart"),
                     KeyHints.Bound(Key.Space, "Space Mark"),
                     KeyHints.Bound(Key.A.WithCtrl, "^A All"),
-                    KeyHints.Bound(Key.L, "L Log"));
+                    KeyHints.Bound(Key.L, "L Log"),
+                    KeyHints.Bound(Key.Delete, "Del Clear"));
             case CopyPane.List when focused is GroupRow:
                 return KeyHints.Join(
                     KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
                     KeyHints.Bound(Key.F5, "F5 Restart"),
-                    KeyHints.Bound(Key.A.WithCtrl, "^A All"));
+                    KeyHints.Bound(Key.A.WithCtrl, "^A All"),
+                    KeyHints.Bound(Key.Delete, "Del Clear"));
             case CopyPane.Details or CopyPane.Output when focused is CommandRow:
                 return KeyHints.Join(
                     KeyHints.Bound(Key.C.WithCtrl, "^C Stop"),
                     KeyHints.Bound(Key.F5, "F5 Restart"),
-                    KeyHints.Bound(Key.L, "L Log"));
+                    KeyHints.Bound(Key.L, "L Log"),
+                    KeyHints.Bound(Key.Delete, "Del Clear"));
             default:
                 return null;
         }
