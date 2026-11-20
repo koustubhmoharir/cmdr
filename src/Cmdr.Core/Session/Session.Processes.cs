@@ -1294,9 +1294,10 @@ public sealed partial class Session
                     if (refusal is null)
                     {
                         createdRuns?.Add(run);
-                        if (owner is { IsCancelled: true })
+                        // A branch started under a cancelled owner gets the owner's aim: it may already be starting a command.
+                        if (owner is not null && owner.TryGetCancelAim(out IReadOnlyCollection<CommandEntry>? ownerAim))
                         {
-                            run.Cancel(owner.IsForced);
+                            run.Cancel(owner.IsForced, ownerAim);
                         }
 
                         branches.Add(run.Result);
@@ -1688,7 +1689,8 @@ public sealed partial class Session
     /// <summary>
     /// The innermost active run containing each target is cancelled. Innermost is the deepest group among the runs that
     /// contain the target; runs around it fail through their awaited steps. The runs are chosen under the lock and cancelled
-    /// after it is released, since cancelling raises events.
+    /// after it is released, since cancelling raises events. The cancellations are aimed at the targets: a command of those runs
+    /// that is not a target, and is being started at the time, keeps running.
     /// </summary>
     private List<SequenceRun> CancelInnermostRuns(IReadOnlyList<CommandEntry> targets)
     {
@@ -1711,7 +1713,7 @@ public sealed partial class Session
 
         foreach (SequenceRun run in innermost)
         {
-            run.Cancel();
+            run.Cancel(aimedAt: targets);
         }
 
         return innermost;

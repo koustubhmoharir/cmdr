@@ -15,6 +15,12 @@ namespace Cmdr.Core.Session;
 /// </remarks>
 internal sealed class SequenceRun
 {
+    /// <summary>
+    /// Test hook: invoked on the run's thread right after a command has started, before <see cref="StopIfCancelled"/> looks at it.
+    /// Lets a test cancel the run while the command is in the window where it is being started. Null outside tests.
+    /// </summary>
+    internal static Action<CommandEntry>? AfterLaunchForTesting { get; set; }
+
     private readonly Session _session;
     private readonly object _sync = new();
     private readonly List<PlanNode> _pending;
@@ -26,6 +32,11 @@ internal sealed class SequenceRun
     private readonly SequenceRun _root;
     private bool _cancelled;
     private bool _forced;
+
+    // What the cancellations so far were aimed at: the whole run (_aimedAtAll), or the union of the commands they named.
+    private bool _aimedAtAll;
+    private readonly HashSet<CommandEntry> _aimedAt = new();
+
     private PlanNode? _current;
     private SequenceRun? _childRun;
 
@@ -202,20 +213,25 @@ internal sealed class SequenceRun
         return true;
     }
 
-    private void CancelBeforeLaunchByRestartToken() => CancelCore(force: false, beforeLaunch: true, byRestartToken: true);
+    private void CancelBeforeLaunchByRestartToken() => CancelCore(force: false, beforeLaunch: true, byRestartToken: true, aimedAt: null);
 
     /// <summary>
     /// Cancels the run: pending steps are dropped and unqueued, and the wait for the current step ends. A sequential child
     /// run that is the current step is cancelled too. Processes are left alone; the caller decides whether to stop them.
     /// With <paramref name="force"/>, a process the run starts after this call is force-killed instead of stopped.
     /// </summary>
-    internal void Cancel(bool force = false) => CancelCore(force, beforeLaunch: false, byRestartToken: false);
+    /// <param name="aimedAt">
+    /// The commands the cancellation is aimed at, or null for the whole run. A command that is being started when the run is
+    /// cancelled is stopped only if the cancellations so far aimed at it (see <see cref="StopIfCancelled"/>); the others keep running.
+    /// </param>
+    internal void Cancel(bool force = false, IReadOnlyCollection<CommandEntry>? aimedAt = null) =>
+        CancelCore(force, beforeLaunch: false, byRestartToken: false, aimedAt);
 
     /// <summary>
-    /// The cancellation behind <see cref="Cancel(bool)"/>. With <paramref name="beforeLaunch"/>, does nothing once the first command
-    /// of the run tree has launched; <paramref name="byRestartToken"/> records that the restart's token did it.
+    /// The cancellation behind <see cref="Cancel(bool, IReadOnlyCollection{CommandEntry}?)"/>. With <paramref name="beforeLaunch"/>, does
+    /// nothing once the first command of the run tree has launched; <paramref name="byRestartToken"/> records that the restart's token did it.
     /// </summary>
-    private void CancelCore(bool force, bool beforeLaunch, bool byRestartToken)
+    private void CancelCore(bool force, bool beforeLaunch, bool byRestartToken, IReadOnlyCollection<CommandEntry>? aimedAt)
     {
         var unqueued = new List<CommandEntry>();
         SequenceRun? child;
@@ -232,6 +248,7 @@ internal sealed class SequenceRun
             }
 
             _forced |= force;
+            RecordAimLocked(aimedAt);
             if (_cancelled)
             {
                 return;
@@ -253,8 +270,41 @@ internal sealed class SequenceRun
         }
 
         _cts.Cancel();
-        child?.Cancel(force);
+        child?.Cancel(force, aimedAt);
         RaiseAll(unqueued);
+    }
+
+    /// <summary>Adds what a cancellation is aimed at to the aim of the run. Caller holds <c>_sync</c>.</summary>
+    private void RecordAimLocked(IReadOnlyCollection<CommandEntry>? aimedAt)
+    {
+        if (aimedAt is null)
+        {
+            _aimedAtAll = true;
+        }
+        else if (!_aimedAtAll)
+        {
+            _aimedAt.UnionWith(aimedAt);
+        }
+    }
+
+    /// <summary>
+    /// The aim of the cancellations so far, as <see cref="Cancel(bool, IReadOnlyCollection{CommandEntry}?)"/> takes it: null for the whole run.
+    /// Caller holds <c>_sync</c>.
+    /// </summary>
+    private IReadOnlyCollection<CommandEntry>? AimLocked() => _aimedAtAll ? null : _aimedAt.ToList();
+
+    /// <summary>
+    /// Returns true if the run is cancelled, and then the aim of its cancellations (null for the whole run). A cancellation of a
+    /// run that is started from this one passes the same aim on, so a command it starts while it is being started is stopped only
+    /// if this run's cancellations aimed at it.
+    /// </summary>
+    internal bool TryGetCancelAim(out IReadOnlyCollection<CommandEntry>? aimedAt)
+    {
+        lock (_sync)
+        {
+            aimedAt = AimLocked();
+            return _cancelled;
+        }
     }
 
     /// <summary>Runs the steps. Called on a background task. Returns true when every step succeeded.</summary>
@@ -277,18 +327,23 @@ internal sealed class SequenceRun
         return completed;
     }
 
-    /// <summary>Stops a command started by this run if the run was cancelled while it was being started.</summary>
+    /// <summary>
+    /// Stops a command started by this run if the run was cancelled while the command was being started, and the cancellation
+    /// was aimed at the whole run or at this command. A command the cancellation was aimed at elsewhere keeps running.
+    /// </summary>
     internal void StopIfCancelled(CommandEntry entry)
     {
         bool cancelled;
         bool forced;
+        bool aimed;
         lock (_sync)
         {
             cancelled = _cancelled;
             forced = _forced;
+            aimed = _aimedAtAll || _aimedAt.Contains(entry);
         }
 
-        if (!cancelled)
+        if (!cancelled || !aimed)
         {
             return;
         }
@@ -356,16 +411,18 @@ internal sealed class SequenceRun
             }
 
             bool cancelledNow;
+            IReadOnlyCollection<CommandEntry>? aim;
             lock (_sync)
             {
                 _childRun = child;
                 cancelledNow = _cancelled;
+                aim = AimLocked();
             }
 
-            // A Cancel that raced with the start did not see the child yet.
+            // A Cancel that raced with the start did not see the child yet; it gets the aim this run was cancelled with.
             if (cancelledNow)
             {
-                child.Cancel();
+                child.Cancel(aimedAt: aim);
             }
 
             return await child.Result.ConfigureAwait(false);
@@ -394,6 +451,7 @@ internal sealed class SequenceRun
             return false;
         }
 
+        AfterLaunchForTesting?.Invoke(entry);
         StopIfCancelled(entry);
 
         await entry.Process.WaitForExitAsync(_cts.Token).ConfigureAwait(false);

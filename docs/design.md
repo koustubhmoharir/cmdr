@@ -292,6 +292,7 @@ and branches included. A command whose owner has no values fails to start (`env 
 - Ctrl+C on a group cancels every run at or below it and gracefully stops everything running below.
   On a command, it cancels the innermost run containing it (which then fails upward) and stops the
   command if it is running; on a queued command, whatever that run is currently running keeps going.
+  A run cancelled while a command is being started stops that command only if the cancellation was aimed at it or at the whole run.
   F5 on a group stops everything below, waits for leaders, then runs the group.
 - Two modes (`SessionMode`), set by `Session.Load(path, mode)`. Run mode: start, restart, log toggle; the tree
   cannot be edited. Edit mode: groups and commands can be added, changed, moved and removed; nothing can be started.
