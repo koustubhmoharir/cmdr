@@ -70,8 +70,8 @@ public class SessionLaunchValuesTests
             Assert.Null(session.Activate(new[] { cmd }, null, prep.Values));
 
             WaitForExited(cmd.Process);
-            Assert.Contains("S=from-group", Text(cmd.Process), StringComparison.Ordinal);
-            Assert.Contains("F=from-file", Text(cmd.Process), StringComparison.Ordinal);
+            WaitForText(cmd.Process, "S=from-group");
+            WaitForText(cmd.Process, "F=from-file");
         }
         finally
         {
@@ -97,7 +97,7 @@ public class SessionLaunchValuesTests
             Assert.Null(session.Activate(new[] { cmd }, null, prep.Values));
 
             WaitForExited(cmd.Process);
-            Assert.Contains("G=script-x-suffix", Text(cmd.Process), StringComparison.Ordinal);
+            WaitForText(cmd.Process, "G=script-x-suffix");
         }
         finally
         {
@@ -127,7 +127,7 @@ public class SessionLaunchValuesTests
             Assert.Null(session.Activate(new[] { cmd }, null, prep.Values));
 
             WaitForExited(cmd.Process);
-            Assert.Contains("X=command", Text(cmd.Process), StringComparison.Ordinal);
+            WaitForText(cmd.Process, "X=command");
             Assert.DoesNotContain("X=script", Text(cmd.Process), StringComparison.Ordinal);
         }
         finally
@@ -166,7 +166,7 @@ public class SessionLaunchValuesTests
             {
                 CommandEntry cmd = Cmd(session, name);
                 WaitForExited(cmd.Process);
-                Assert.Contains("S=seq-value", Text(cmd.Process), StringComparison.Ordinal);
+                WaitForText(cmd.Process, "S=seq-value");
             }
         }
         finally
@@ -195,7 +195,7 @@ public class SessionLaunchValuesTests
             Assert.Null(await session.RunRestartAsync(prepared));
 
             WaitForExited(cmd.Process);
-            Assert.Contains("S=restarted", Text(cmd.Process), StringComparison.Ordinal);
+            WaitForText(cmd.Process, "S=restarted");
         }
         finally
         {
