@@ -270,7 +270,8 @@ requests share one in-flight run. When the last waiter of an unfinished run leav
 is killed. `RefreshEnvScripts` drops an item's owners' results; `LastEnvScriptRun` gives the last outcome for display.
 A failing script stops the preparation: its label (`file 'cmdr.json'` or `group 'a › b'`), error and the last stderr
 lines are written to each command that needs it. The arguments of the owners' scripts are part of the commands' inputs.
-Start paths do not use the values yet.
+The values are prepared before an activation or restart and carried with the inputs (`LaunchValues`) to every launch, sequences
+and branches included. A command whose owner has no values fails to start (`env script of ... has not run`) and launches nothing.
 
 ## Session tree (runtime)
 

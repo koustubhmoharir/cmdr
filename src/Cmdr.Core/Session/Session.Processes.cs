@@ -11,14 +11,18 @@ public sealed partial class Session
     /// sequence of them in file order. The targets must be distinct commands in file order; running commands are left alone.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <param name="scripts">
+    /// The environment script values (see <see cref="PrepareEnvAsync"/>) the started commands see. Null means no values; a started
+    /// command whose script has no values does not start.
+    /// </param>
     /// <returns>A message when something was not done, otherwise null.</returns>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public string? Activate(IReadOnlyList<CommandEntry> targets, IReadOnlyDictionary<string, string>? inputs = null) =>
-        Activate(PrepareActivate(targets), inputs);
+    public string? Activate(IReadOnlyList<CommandEntry> targets, IReadOnlyDictionary<string, string>? inputs = null, ScriptValues? scripts = null) =>
+        Activate(PrepareActivate(targets), inputs, scripts);
 
     /// <summary>
-    /// Decides what Enter on these command rows does, as <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/>
+    /// Decides what Enter on these command rows does, as <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?)"/>
     /// would, and the inputs it needs. If any target is stopping or has leftover processes, the decision is to kill those; otherwise
     /// it is to start the targets that can start now. Nothing is stopped, started or killed here.
     /// </summary>
@@ -62,7 +66,7 @@ public sealed partial class Session
         }
 
         IReadOnlyList<InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
-        return new PreparedActivation(this, group, isGroup: false, targets.ToList(), Array.Empty<CommandEntry>(), startable, requests);
+        return new PreparedActivation(this, group, isGroup: false, targets.ToList(), Array.Empty<CommandEntry>(), startable, requests, refused);
     }
 
     /// <summary>
@@ -70,13 +74,14 @@ public sealed partial class Session
     /// that were killable when it was prepared, if they still are, and starts nothing. A start decision starts only the commands it
     /// named that can still start: commands that became startable since then are not started, and their inputs are not needed.
     /// Refusals (a running sequence, a busy command, a command of a sequential group still running) are checked now, as
-    /// <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> does.
+    /// <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?)"/> does.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <returns>A message when something was not done, otherwise null.</returns>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The prepared activation was made by another session, or its targets or group have since been removed.</exception>
-    public string? Activate(PreparedActivation prepared, IReadOnlyDictionary<string, string>? inputs = null)
+    public string? Activate(PreparedActivation prepared, IReadOnlyDictionary<string, string>? inputs = null, ScriptValues? scripts = null)
     {
         ArgumentNullException.ThrowIfNull(prepared);
         lock (_sync)
@@ -112,7 +117,7 @@ public sealed partial class Session
                 return null;
             }
 
-            return StartGroup(group, Freeze(inputs), only: new HashSet<CommandEntry>(prepared.Startable));
+            return StartGroup(group, FreezeLaunch(inputs, scripts), only: new HashSet<CommandEntry>(prepared.Startable));
         }
 
         GroupEntry? targetsGroup = GroupOf(prepared.Targets);
@@ -127,7 +132,7 @@ public sealed partial class Session
             return null;
         }
 
-        return StartCommands(targetsGroup, startableNow, Freeze(inputs));
+        return StartCommands(targetsGroup, startableNow, FreezeLaunch(inputs, scripts));
     }
 
     /// <summary>
@@ -137,17 +142,18 @@ public sealed partial class Session
     /// cannot start are skipped, and groups left with nothing to start are dropped.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <returns>
     /// A message when the group could not be started because it overlaps a running sequence, or a sequential group at or above a
     /// part of it has a command that is still running or stopping; otherwise null.
     /// </returns>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null) =>
-        Activate(PrepareActivate(group), inputs);
+    public string? Activate(GroupEntry group, IReadOnlyDictionary<string, string>? inputs = null, ScriptValues? scripts = null) =>
+        Activate(PrepareActivate(group), inputs, scripts);
 
     /// <summary>
-    /// Decides what Enter on a group does, as <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/> would, and the
+    /// Decides what Enter on a group does, as <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?)"/> would, and the
     /// inputs it needs: if anything below the group is stopping or has leftover processes, the decision is to kill those; otherwise
     /// it is to start the group's startable commands, in the group's plan. Nothing is stopped, started or killed here.
     /// </summary>
@@ -193,7 +199,7 @@ public sealed partial class Session
         }
 
         IReadOnlyList<InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
-        return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), startable, requests);
+        return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), startable, requests, refused);
     }
 
     /// <summary>
@@ -335,10 +341,11 @@ public sealed partial class Session
     /// <summary>
     /// F5 on command rows: cancels the innermost runs containing the targets (and waits for the runs around them to end),
     /// stops the running or stopping targets and waits for their leaders to exit, then starts the targets that can start.
-    /// Same as <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// Same as <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
     /// followed by <see cref="RunRestartAsync"/>.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <returns>A message naming targets that could not start, or the reason a sequence did not start; otherwise null.</returns>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
@@ -350,24 +357,27 @@ public sealed partial class Session
     public async Task<string?> RestartAsync(
         IReadOnlyList<CommandEntry> targets,
         IReadOnlyDictionary<string, string>? inputs = null,
+        ScriptValues? scripts = null,
         CancellationToken ct = default)
     {
-        return await RunRestartAsync(PrepareRestart(targets, inputs, ct));
+        return await RunRestartAsync(PrepareRestart(targets, inputs, scripts, ct));
     }
 
     /// <summary>
-    /// First half of <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>:
+    /// First half of <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>:
     /// registers a restart of the targets as pending, without stopping or starting anything. From then on, Stop, ForceKill,
     /// StopAll, ForceKillAll and Dispose revoke it until <see cref="RunRestartAsync"/> runs it. Does not raise events, wait
     /// or touch processes, so it is cheap enough to call on a UI thread. Returns a restart with nothing to do when the targets
     /// are empty; running that returns null.
     /// </summary>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was already cancelled.</exception>
     public PreparedRestart PrepareRestart(
         IReadOnlyList<CommandEntry> targets,
         IReadOnlyDictionary<string, string>? inputs = null,
+        ScriptValues? scripts = null,
         CancellationToken ct = default)
     {
         lock (_sync)
@@ -378,11 +388,11 @@ public sealed partial class Session
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
-            return new PreparedRestart(this, null, null, Array.Empty<SequenceRun>(), NoInputs);
+            return new PreparedRestart(this, null, null, Array.Empty<SequenceRun>(), LaunchValues.Empty);
         }
 
         ct.ThrowIfCancellationRequested();
-        IReadOnlyDictionary<string, string> values = Freeze(inputs);
+        LaunchValues values = FreezeLaunch(inputs, scripts);
         List<CommandEntry> targetList = targets.ToList();
 
         lock (_sync)
@@ -397,10 +407,11 @@ public sealed partial class Session
     /// F5 on a group: cancels the runs at or below it and the enclosing runs that contain it, stops everything running below
     /// it and waits for the leaders to exit, then runs the group as Enter does (without the kill step). The restart covers the
     /// group's commands as they are when it is called.
-    /// Same as <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// Same as <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
     /// followed by <see cref="RunRestartAsync"/>.
     /// </summary>
     /// <param name="inputs">Values for the input placeholders of the started commands. Null means no values.</param>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <returns>Messages about refused or blocked starts, or null.</returns>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
@@ -412,22 +423,25 @@ public sealed partial class Session
     public async Task<string?> RestartAsync(
         GroupEntry group,
         IReadOnlyDictionary<string, string>? inputs = null,
+        ScriptValues? scripts = null,
         CancellationToken ct = default)
     {
-        return await RunRestartAsync(PrepareRestart(group, inputs, ct));
+        return await RunRestartAsync(PrepareRestart(group, inputs, scripts, ct));
     }
 
     /// <summary>
-    /// First half of <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>: registers a
+    /// First half of <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>: registers a
     /// restart of the group's commands as they are now, as pending, without stopping or starting anything. Revocation works
-    /// as for <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>.
+    /// as for <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>.
     /// </summary>
+    /// <param name="scripts">The environment script values the started commands see. Null means no values.</param>
     /// <exception cref="InvalidOperationException">The session is in edit mode.</exception>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="ct"/> was already cancelled.</exception>
     public PreparedRestart PrepareRestart(
         GroupEntry group,
         IReadOnlyDictionary<string, string>? inputs = null,
+        ScriptValues? scripts = null,
         CancellationToken ct = default)
     {
         lock (_sync)
@@ -437,7 +451,7 @@ public sealed partial class Session
 
         EnsureOwned(group);
         ct.ThrowIfCancellationRequested();
-        IReadOnlyDictionary<string, string> values = Freeze(inputs);
+        LaunchValues values = FreezeLaunch(inputs, scripts);
 
         lock (_sync)
         {
@@ -447,9 +461,9 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Second half of a restart: runs a restart made by <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
-    /// or <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>. Stops what must stop,
-    /// waits for it, and starts what can start, as <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// Second half of a restart: runs a restart made by <see cref="PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
+    /// or <see cref="PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>. Stops what must stop,
+    /// waits for it, and starts what can start, as <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
     /// does. Call it once per prepared restart, from any thread, and not on a thread that must not wait.
     /// </summary>
     /// <returns>Messages about refused or blocked starts, or null. Null for a prepared restart with nothing to do.</returns>
@@ -507,7 +521,7 @@ public sealed partial class Session
         RestartOperation op,
         IReadOnlyList<CommandEntry> targets,
         IReadOnlyList<SequenceRun> affected,
-        IReadOnlyDictionary<string, string> values)
+        LaunchValues values)
     {
         CancelInnermostRuns(targets);
         await Task.WhenAll(affected.Select(run => run.Result)).WaitAsync(op.Token);
@@ -539,7 +553,7 @@ public sealed partial class Session
         }
 
         var messages = new List<string>();
-        var starts = new RestartStarts();
+        var starts = new RestartLaunches();
         if (startable.Count > 0)
         {
             string? message = StartCommands(op.Group, startable, values, op, starts);
@@ -560,7 +574,7 @@ public sealed partial class Session
     }
 
     /// <summary>The body of a restart of a group, after it was registered.</summary>
-    private async Task<string?> RunGroupRestartAsync(RestartOperation op, IReadOnlyDictionary<string, string> values)
+    private async Task<string?> RunGroupRestartAsync(RestartOperation op, LaunchValues values)
     {
         GroupEntry group = op.Group;
         List<SequenceRun> cancelled = CancelRunsFor(group);
@@ -586,7 +600,7 @@ public sealed partial class Session
         }
 
         var messages = new List<string>();
-        var starts = new RestartStarts();
+        var starts = new RestartLaunches();
         string? message = StartGroup(group, values, op, starts);
         if (message is not null)
         {
@@ -604,7 +618,7 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// The inputs that <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?)"/> would need for
+    /// The inputs that <see cref="Activate(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?)"/> would need for
     /// these targets: none when it would only kill, or would start nothing. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
@@ -612,7 +626,7 @@ public sealed partial class Session
         PlanActivate(targets).Requests;
 
     /// <summary>
-    /// The inputs that <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/> would need for this group: none
+    /// The inputs that <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?)"/> would need for this group: none
     /// when it would only kill, or would be refused. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
@@ -620,24 +634,57 @@ public sealed partial class Session
         PlanActivate(group).Requests;
 
     /// <summary>
-    /// The inputs that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/>
+    /// The inputs that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
     /// would need for these targets. Restart stops the running targets first, so targets that are running or stopping are
     /// included as if they would start; whether they do depends on their exit. Empty when the restart's start would be refused,
     /// allowing for the runs the restart cancels and the commands it stops. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public IReadOnlyList<InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets)
+    public IReadOnlyList<InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets) =>
+        RequestsFor(RestartStartsOf(targets));
+
+    /// <summary>
+    /// The inputs that <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/> would need for
+    /// this group. Running and stopping commands below it are included as in <see cref="InputsForRestart(IReadOnlyList{CommandEntry})"/>.
+    /// Empty when the restart's start would be refused, allowing for the runs the restart cancels and the commands it stops.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    public IReadOnlyList<InputRequest> InputsForRestart(GroupEntry group) =>
+        RequestsFor(RestartStartsOf(group));
+
+    /// <summary>
+    /// The commands that <see cref="RestartAsync(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>
+    /// would start for these targets, in the given order: those that can start now, and those running or stopping, which it stops first
+    /// (see <see cref="InputsForRestart(IReadOnlyList{CommandEntry})"/>). Empty when the restart's start would be refused, or when the
+    /// targets are empty. Nothing is stopped or started here.
+    /// </summary>
+    /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
+    public IReadOnlyList<CommandEntry> RestartStarts(IReadOnlyList<CommandEntry> targets) => RestartStartsOf(targets);
+
+    /// <summary>
+    /// The commands that <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/> would
+    /// start for this group: the commands below it that can start now, and those running or stopping, as for
+    /// <see cref="RestartStarts(IReadOnlyList{CommandEntry})"/>. Empty when the restart's start would be refused.
+    /// </summary>
+    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
+    public IReadOnlyList<CommandEntry> RestartStarts(GroupEntry group) => RestartStartsOf(group);
+
+    /// <summary>
+    /// The commands a restart of these targets starts, as <see cref="RestartStarts(IReadOnlyList{CommandEntry})"/> reports them: those
+    /// that can start, or are running or stopping, when the start would not be refused. Empty for targets outside a group, or when refused.
+    /// </summary>
+    private IReadOnlyList<CommandEntry> RestartStartsOf(IReadOnlyList<CommandEntry> targets)
     {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
-            return Array.Empty<InputRequest>();
+            return Array.Empty<CommandEntry>();
         }
 
         List<CommandEntry> willStart = targets.Where(WillStartAfterStop).ToList();
         if (willStart.Count == 0)
         {
-            return NoRequests;
+            return Array.Empty<CommandEntry>();
         }
 
         bool refused;
@@ -650,16 +697,14 @@ public sealed partial class Session
             refused = CommandsRefusal(group, willStart, view) is not null;
         }
 
-        return refused ? NoRequests : RequestsFor(willStart);
+        return refused ? Array.Empty<CommandEntry>() : willStart;
     }
 
     /// <summary>
-    /// The inputs that <see cref="RestartAsync(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/> would need for
-    /// this group. Running and stopping commands below it are included as in <see cref="InputsForRestart(IReadOnlyList{CommandEntry})"/>.
-    /// Empty when the restart's start would be refused, allowing for the runs the restart cancels and the commands it stops.
+    /// The commands a restart of <paramref name="group"/> starts, as <see cref="RestartStarts(GroupEntry)"/> reports them. Empty when the
+    /// restart's start would be refused, allowing for the runs the restart cancels and the commands it stops.
     /// </summary>
-    /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public IReadOnlyList<InputRequest> InputsForRestart(GroupEntry group)
+    private IReadOnlyList<CommandEntry> RestartStartsOf(GroupEntry group)
     {
         EnsureOwned(group);
         List<PlanNode> children;
@@ -676,7 +721,7 @@ public sealed partial class Session
             }
         }
 
-        return refused ? NoRequests : RequestsFor(CollectCommands(children));
+        return refused ? Array.Empty<CommandEntry>() : CollectCommands(children);
     }
 
     /// <summary>Toggles the log file of a command. Does not change the spec or the dirty flag.</summary>
@@ -760,12 +805,13 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Starts one command: checks that the input values the arguments and env values need are usable, enables its log file if
-    /// configured, then launches it with the launch spec of its ancestors, which expands the placeholders at launch. Returns false,
-    /// with a system line in the output, if the launch could not be prepared, including when an input has no usable value. Nothing
+    /// Starts one command: checks that the input values the arguments and env values need are usable, and that the environment
+    /// scripts it needs have values in <paramref name="values"/>, enables its log file if configured, then launches it with the launch
+    /// spec of its ancestors and the script values, which expands the placeholders at launch. Returns false, with a system line in the
+    /// output, if the launch could not be prepared, including when an input has no usable value or a script has not run. Nothing
     /// is launched or logged in that case.
     /// </summary>
-    internal bool StartEntry(CommandEntry entry, IReadOnlyDictionary<string, string> inputs)
+    internal bool StartEntry(CommandEntry entry, LaunchValues values)
     {
         try
         {
@@ -776,8 +822,17 @@ public sealed partial class Session
             {
                 CommandSpec spec = entry.Spec;
                 IReadOnlyList<GroupSpec> groups = entry.Group.SpecChain();
+                IReadOnlyDictionary<string, string> inputs = values.Inputs;
+                foreach (ScriptOwner owner in OwnersOf(new[] { entry }))
+                {
+                    if (!values.Scripts.TryGet(owner.Reference, out _))
+                    {
+                        throw new InvalidOperationException($"env script of {owner.Label} has not run");
+                    }
+                }
+
                 (IReadOnlyList<EnvLevel> fileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> groupValues) =
-                    EnvironmentFor(entry, ScriptValues.Empty);
+                    EnvironmentFor(entry, values.Scripts);
                 Placeholders.CheckInputs(LaunchTexts(fileLevels, groups, spec, OwnerArgs(entry)), inputs);
                 launch = LaunchSpec.From(groups, spec, entry.Source.Dir, fileLevels, groupValues) with { Inputs = inputs };
 
@@ -815,13 +870,13 @@ public sealed partial class Session
     private string? StartCommands(
         GroupEntry group,
         IReadOnlyList<CommandEntry> startable,
-        IReadOnlyDictionary<string, string> inputs,
+        LaunchValues values,
         RestartOperation? op = null,
-        RestartStarts? starts = null)
+        RestartLaunches? starts = null)
     {
         if (group.Mode == GroupMode.Sequential)
         {
-            return StartSequence(group, startable, inputs, op, starts);
+            return StartSequence(group, startable, values, op, starts);
         }
 
         lock (_sync)
@@ -844,7 +899,7 @@ public sealed partial class Session
                 break; // FinishRestartStarts stops what was started and throws
             }
 
-            if (StartEntry(entry, inputs))
+            if (StartEntry(entry, values))
             {
                 started.Add(entry);
             }
@@ -865,11 +920,11 @@ public sealed partial class Session
     private string? StartSequence(
         GroupEntry group,
         IReadOnlyList<CommandEntry> entries,
-        IReadOnlyDictionary<string, string> inputs,
+        LaunchValues values,
         RestartOperation? op,
-        RestartStarts? starts)
+        RestartLaunches? starts)
     {
-        var run = new SequenceRun(this, group, entries.Select(e => new PlanNode(e)).ToList(), inputs);
+        var run = new SequenceRun(this, group, entries.Select(e => new PlanNode(e)).ToList(), values);
 
         lock (_sync)
         {
@@ -893,7 +948,7 @@ public sealed partial class Session
     /// (see <see cref="SequenceRun.WatchRestartUntilLaunch"/>), and the restart is given the run to wait for. The run is started
     /// outside the lock.
     /// </summary>
-    private void HandOver(SequenceRun run, RestartOperation? op, RestartStarts? starts)
+    private void HandOver(SequenceRun run, RestartOperation? op, RestartLaunches? starts)
     {
         if (op is not null)
         {
@@ -905,15 +960,15 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Runs a group (see <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?)"/>) without the kill step. Returns a message when
+    /// Runs a group (see <see cref="Activate(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?)"/>) without the kill step. Returns a message when
     /// it is refused. With a restart operation, the restart's revocation is checked before the plan starts, and what it started is recorded in
     /// <paramref name="starts"/>. With <paramref name="only"/>, just those commands may start.
     /// </summary>
     private string? StartGroup(
         GroupEntry group,
-        IReadOnlyDictionary<string, string> inputs,
+        LaunchValues values,
         RestartOperation? op = null,
-        RestartStarts? starts = null,
+        RestartLaunches? starts = null,
         IReadOnlySet<CommandEntry>? only = null)
     {
         SequenceRun? run = null;
@@ -937,7 +992,7 @@ public sealed partial class Session
 
             if (group.Mode == GroupMode.Sequential)
             {
-                run = new SequenceRun(this, group, children, inputs);
+                run = new SequenceRun(this, group, children, values);
                 Register(run);
                 UnregisterRestartLocked(op);
             }
@@ -951,7 +1006,7 @@ public sealed partial class Session
 
         // Untracked: the branches run on their own. A restart waits only for the first launch of the runs it created.
         var createdRuns = new List<SequenceRun>();
-        StartBranches(children, owner: null, inputs, createdRuns, op);
+        StartBranches(children, owner: null, values, createdRuns, op);
         if (op is not null)
         {
             var planned = new List<CommandEntry>();
@@ -1213,7 +1268,7 @@ public sealed partial class Session
     internal List<Task<bool>> StartBranches(
         IReadOnlyList<PlanNode> children,
         SequenceRun? owner,
-        IReadOnlyDictionary<string, string> inputs,
+        LaunchValues values,
         List<SequenceRun>? createdRuns = null,
         RestartOperation? op = null)
     {
@@ -1228,13 +1283,13 @@ public sealed partial class Session
 
             if (child.Command is { } command)
             {
-                branches.Add(StartBranchCommand(command, owner, inputs));
+                branches.Add(StartBranchCommand(command, owner, values));
             }
             else if (child.Group is { } group)
             {
                 if (group.Mode == GroupMode.Sequential)
                 {
-                    var run = new SequenceRun(this, group, child.Children, inputs, owner);
+                    var run = new SequenceRun(this, group, child.Children, values, owner);
                     string? refusal = TryStart(run, op);
                     if (refusal is null)
                     {
@@ -1255,7 +1310,7 @@ public sealed partial class Session
                 }
                 else
                 {
-                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner, inputs, createdRuns, op)));
+                    branches.Add(AllSucceedAsync(StartBranches(child.Children, owner, values, createdRuns, op)));
                 }
             }
         }
@@ -1267,7 +1322,7 @@ public sealed partial class Session
     /// Starts a branch command and completes when its leader exits: true when <see cref="Succeeded"/>. A branch outside any
     /// run (<paramref name="owner"/> is null) writes no "sequence cancelled" line.
     /// </summary>
-    private Task<bool> StartBranchCommand(CommandEntry entry, SequenceRun? owner, IReadOnlyDictionary<string, string> inputs)
+    private Task<bool> StartBranchCommand(CommandEntry entry, SequenceRun? owner, LaunchValues values)
     {
         entry.IsQueued = false;
         if (owner is { IsCancelled: true })
@@ -1290,7 +1345,7 @@ public sealed partial class Session
             return Task.FromResult(false);
         }
 
-        if (!StartEntry(entry, inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
+        if (!StartEntry(entry, values) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
         {
             return Task.FromResult(false);
         }
@@ -1560,7 +1615,7 @@ public sealed partial class Session
     /// restart's token cancelled before that launched nothing; then the restart undoes what it started and throws, as
     /// <see cref="FinishRestartStarts"/> does. Once a first command has launched, the token no longer reaches the run.
     /// </summary>
-    private async Task AwaitFirstLaunchAsync(RestartOperation op, RestartStarts starts)
+    private async Task AwaitFirstLaunchAsync(RestartOperation op, RestartLaunches starts)
     {
         if (starts.Runs.Count == 0)
         {
@@ -1581,7 +1636,7 @@ public sealed partial class Session
     }
 
     /// <summary>What one restart started: the commands of its batch, and the runs it handed over.</summary>
-    private sealed class RestartStarts
+    private sealed class RestartLaunches
     {
         public List<CommandEntry> Commands { get; } = new();
 
@@ -1819,6 +1874,10 @@ public sealed partial class Session
     /// <summary>A private copy of the input values, so that a running action does not see later changes. Null means no values.</summary>
     private static IReadOnlyDictionary<string, string> Freeze(IReadOnlyDictionary<string, string>? inputs) =>
         inputs is null ? NoInputs : new Dictionary<string, string>(inputs);
+
+    /// <summary>The launch values of a start: a private copy of the input values, and the script values (null means none).</summary>
+    private static LaunchValues FreezeLaunch(IReadOnlyDictionary<string, string>? inputs, ScriptValues? scripts) =>
+        new(Freeze(inputs), scripts ?? ScriptValues.Empty);
 
     /// <summary>
     /// The distinct inputs the commands need, in first-seen order: for each command, those of its arguments and of its environment

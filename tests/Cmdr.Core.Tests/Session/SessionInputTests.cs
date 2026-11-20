@@ -285,6 +285,35 @@ public class SessionInputTests
     }
 
     [Fact]
+    public void PrepareActivate_StartRefusedByARunningSequence_IsRefused_AndAsksForNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, Seq(
+            "build",
+            Shell("loop", "sleep 600"),
+            Echo("b", "${input:x}")));
+        try
+        {
+            CommandEntry loop = session.Groups[0].Commands[0];
+            CommandEntry b = session.Groups[0].Commands[1];
+            Assert.False(session.PrepareActivate(new[] { b }).Refused);
+
+            Assert.Null(session.Activate(new[] { loop }));
+            WaitUntil(() => loop.Process.Snapshot.State == ProcessState.Running, "loop running", loop.Process);
+
+            PreparedActivation prepared = session.PrepareActivate(new[] { b });
+            Assert.True(prepared.Refused);
+            Assert.Empty(prepared.Requests);
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
     public void InputsForRestart_CommandBesideActiveRun_AsksForNothing()
     {
         if (!OperatingSystem.IsLinux()) return;

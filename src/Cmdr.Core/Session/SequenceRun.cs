@@ -19,7 +19,7 @@ internal sealed class SequenceRun
     private readonly object _sync = new();
     private readonly List<PlanNode> _pending;
     private readonly List<CommandEntry> _planned;
-    private readonly IReadOnlyDictionary<string, string> _inputs;
+    private readonly LaunchValues _values;
     private readonly CancellationTokenSource _cts = new();
     private readonly TaskCompletionSource<bool> _result = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<bool> _firstLaunch = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -35,19 +35,19 @@ internal sealed class SequenceRun
     private bool _cancelledByRestartToken;
     private CancellationTokenRegistration _restartWatch;
 
-    /// <param name="inputs">The input values of the action that started the run; every command step and sub-run gets them.</param>
+    /// <param name="values">The input and script values of the action that started the run; every command step and sub-run gets them.</param>
     /// <param name="parent">The run this sub-run belongs to, or null for a run started by an action or a restart.</param>
     internal SequenceRun(
         Session session,
         GroupEntry group,
         IReadOnlyList<PlanNode> steps,
-        IReadOnlyDictionary<string, string> inputs,
+        LaunchValues values,
         SequenceRun? parent = null)
     {
         _session = session;
         Group = group;
         _pending = steps.ToList();
-        _inputs = inputs;
+        _values = values;
         _root = parent?._root ?? this;
 
         var planned = new List<CommandEntry>();
@@ -346,7 +346,7 @@ internal sealed class SequenceRun
         GroupEntry group = step.Group!;
         if (group.Mode == GroupMode.Sequential)
         {
-            var child = new SequenceRun(_session, group, step.Children, _inputs, this);
+            var child = new SequenceRun(_session, group, step.Children, _values, this);
             string? refusal = _session.TryStart(child);
             if (refusal is not null)
             {
@@ -372,7 +372,7 @@ internal sealed class SequenceRun
         }
 
         // Parallel: all branches start now; the step fails as soon as one fails, and siblings are not cancelled.
-        List<Task<bool>> branches = _session.StartBranches(step.Children, this, _inputs);
+        List<Task<bool>> branches = _session.StartBranches(step.Children, this, _values);
         return await Session.AllSucceedAsync(branches, _cts.Token).ConfigureAwait(false);
     }
 
@@ -389,7 +389,7 @@ internal sealed class SequenceRun
             return false;
         }
 
-        if (!TryBeginLaunch() || !_session.StartEntry(entry, _inputs) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
+        if (!TryBeginLaunch() || !_session.StartEntry(entry, _values) || entry.Process.Snapshot.State == ProcessState.FailedToStart)
         {
             return false;
         }

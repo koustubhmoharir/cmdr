@@ -2,8 +2,8 @@ namespace Cmdr.Core.Session;
 
 /// <summary>
 /// A restart that is registered with its session but has not started anything yet. Made by
-/// <see cref="Session.PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, CancellationToken)"/> and
-/// <see cref="Session.PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, CancellationToken)"/>, and run by
+/// <see cref="Session.PrepareRestart(IReadOnlyList{CommandEntry}, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/> and
+/// <see cref="Session.PrepareRestart(GroupEntry, IReadOnlyDictionary{string, string}?, ScriptValues?, CancellationToken)"/>, and run by
 /// <see cref="Session.RunRestartAsync"/>.
 /// </summary>
 /// <remarks>
@@ -20,13 +20,13 @@ public sealed class PreparedRestart
     /// <param name="operation">The registered restart, or null when there is nothing to restart.</param>
     /// <param name="targets">The commands of a restart of commands, or null for a restart of a group.</param>
     /// <param name="affected">The active runs that contain the targets when the restart was prepared; empty for a group restart.</param>
-    /// <param name="values">The frozen input values the restart starts commands with.</param>
+    /// <param name="values">The frozen input and script values the restart starts commands with.</param>
     internal PreparedRestart(
         Session owner,
         RestartOperation? operation,
         IReadOnlyList<CommandEntry>? targets,
         IReadOnlyList<SequenceRun> affected,
-        IReadOnlyDictionary<string, string> values)
+        LaunchValues values)
     {
         Owner = owner;
         Operation = operation;
@@ -47,8 +47,8 @@ public sealed class PreparedRestart
     /// <summary>The active runs that contained the targets when the restart was prepared.</summary>
     internal IReadOnlyList<SequenceRun> Affected { get; }
 
-    /// <summary>The input values the restart starts commands with.</summary>
-    internal IReadOnlyDictionary<string, string> Values { get; }
+    /// <summary>The input and script values the restart starts commands with.</summary>
+    internal LaunchValues Values { get; }
 
     /// <summary>Marks the restart as run. Returns false if it already was.</summary>
     internal bool Claim() => Interlocked.Exchange(ref _claimed, 1) == 0;
