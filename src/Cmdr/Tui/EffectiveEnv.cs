@@ -11,8 +11,8 @@ internal static class EffectiveEnv
 {
     /// <summary>
     /// The keys that any level mentions, in first-mention order, each with its final value: the value expanded, or null when the
-    /// variable is removed. The levels are applied to a copy of <paramref name="environment"/> exactly as the launch applies them.
-    /// Empty when no level mentions a key.
+    /// variable is removed. The levels are applied to a copy of <paramref name="environment"/> exactly as the launch applies them
+    /// (see <see cref="Applied"/>). Input placeholders are kept as written. Empty when no level mentions a key.
     /// </summary>
     /// <param name="levels">The environment overlays of the launch, outermost first.</param>
     /// <param name="configDir">The config directory, the value of <c>${configDir}</c>.</param>
@@ -50,13 +50,7 @@ internal static class EffectiveEnv
             return Array.Empty<KeyValuePair<string, string?>>();
         }
 
-        var target = new Dictionary<string, string?>(keys);
-        foreach (KeyValuePair<string, string?> entry in environment)
-        {
-            target[entry.Key] = entry.Value;
-        }
-
-        EnvExpansion.ApplyLevels(target, levels, configDir, pathSeparator);
+        IReadOnlyDictionary<string, string?> target = Applied(levels, configDir, environment, windows, pathSeparator);
 
         var result = new List<KeyValuePair<string, string?>>(mentioned.Count);
         foreach (string key in mentioned)
@@ -65,6 +59,37 @@ internal static class EffectiveEnv
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The whole environment of a launch: <paramref name="environment"/> with the levels applied, as the launch applies them,
+    /// keyed case-insensitively on Windows. Input placeholders are kept as written. This is what <c>${env:NAME}</c> in the
+    /// arguments of a copied command refers to.
+    /// </summary>
+    /// <param name="levels">The environment overlays of the launch, outermost first.</param>
+    /// <param name="configDir">The config directory, the value of <c>${configDir}</c>.</param>
+    /// <param name="environment">The environment the values are applied to.</param>
+    /// <param name="windows">The platform: keys are compared case-insensitively on Windows.</param>
+    /// <param name="pathSeparator">The value of <c>${pathsep}</c>.</param>
+    public static IReadOnlyDictionary<string, string?> Applied(
+        IReadOnlyList<EnvLevel> levels,
+        string configDir,
+        IReadOnlyDictionary<string, string?> environment,
+        bool windows,
+        char pathSeparator)
+    {
+        ArgumentNullException.ThrowIfNull(levels);
+        ArgumentException.ThrowIfNullOrEmpty(configDir);
+        ArgumentNullException.ThrowIfNull(environment);
+
+        var target = new Dictionary<string, string?>(windows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (KeyValuePair<string, string?> entry in environment)
+        {
+            target[entry.Key] = entry.Value;
+        }
+
+        EnvExpansion.ApplyLevels(target, levels, configDir, pathSeparator, inputs: null);
+        return target;
     }
 
     /// <summary>The current process environment.</summary>

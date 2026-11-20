@@ -13,7 +13,7 @@ public class EnvLevelsTests
         entries.ToDictionary(e => e.Key, e => e.Value);
 
     private static void Apply(Dictionary<string, string?> target, params EnvLevel[] levels) =>
-        EnvExpansion.ApplyLevels(target, levels, ConfigDir, ':');
+        EnvExpansion.ApplyLevels(target, levels, ConfigDir, ':', inputs: null);
 
     [Fact]
     public void OuterToInner_InnerOverrides()
@@ -115,4 +115,6 @@ public class EnvLevelsTests
 
         Assert.Equal(OperatingSystem.IsWindows() ? "/bin" : "", target["X"]);
     }
+
+
 }

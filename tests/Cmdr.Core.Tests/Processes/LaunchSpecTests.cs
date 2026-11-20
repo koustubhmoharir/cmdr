@@ -165,4 +165,92 @@ public class LaunchSpecTests
         Assert.Equal(new[] { "x" }, spec.Args);
         Assert.Equal("up", spec.Ready!.Pattern);
     }
+
+    [Fact]
+    public void Inputs_AreAPrivateCopy_AndEmptyByDefault()
+    {
+        using var dir = new TempDir();
+        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path);
+        Assert.Empty(spec.Inputs);
+
+        var values = new Dictionary<string, string> { ["x"] = "1" };
+        LaunchSpec withInputs = spec with { Inputs = values };
+        values["x"] = "changed";
+        values["y"] = "2";
+
+        Assert.Equal("1", withInputs.Inputs["x"]);
+        Assert.False(withInputs.Inputs.ContainsKey("y"));
+    }
+
+    [Fact]
+    public void Inputs_AreNotInToString()
+    {
+        using var dir = new TempDir();
+        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path) with
+        {
+            Inputs = new Dictionary<string, string> { ["secret"] = "hunter2" },
+        };
+
+        string text = spec.ToString();
+
+        Assert.DoesNotContain("hunter2", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpandArgs_ExpandsEnvCwdConfigDirPathsepEscapeAndInputs()
+    {
+        using var dir = new TempDir();
+        var group = new GroupSpec { Name = "g", Cwd = "sub", Env = new Dictionary<string, string?> { ["FOO"] = "group" } };
+        var cmd = new CommandSpec
+        {
+            Name = "c",
+            Program = "p",
+            Args =
+            {
+                "${env:FOO}", "${cwd}", "${configDir}", "a${pathsep}b", "$${env:FOO}", "${input:x}", "${input:y?}", "${env:GONE}",
+            },
+        };
+        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path);
+        var environment = new Dictionary<string, string?> { ["FOO"] = "looked-up" };
+        var inputs = new Dictionary<string, string> { ["x"] = "in", ["y"] = "" };
+
+        string[] args = spec.ExpandArgs(name => environment.TryGetValue(name, out string? value) ? value : null, ':', inputs);
+
+        Assert.Equal(
+            new[]
+            {
+                "looked-up",
+                Path.Combine(Path.GetFullPath(dir.Path), "sub"),
+                Path.GetFullPath(dir.Path),
+                "a:b",
+                "${env:FOO}",
+                "in",
+                "",
+                "",
+            },
+            args);
+    }
+
+    [Fact]
+    public void ExpandArgs_NullInputs_KeepsInputPlaceholdersAsWritten()
+    {
+        using var dir = new TempDir();
+        var cmd = new CommandSpec { Name = "c", Program = "p", Args = { "--db=${input:db}", "${cwd}" } };
+        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path);
+
+        string[] args = spec.ExpandArgs(_ => null, '/', inputs: null);
+
+        Assert.Equal(new[] { "--db=${input:db}", Path.GetFullPath(dir.Path) }, args);
+    }
+
+    [Fact]
+    public void ExpandArgs_MissingInput_Throws()
+    {
+        using var dir = new TempDir();
+        var cmd = new CommandSpec { Name = "c", Program = "p", Args = { "${input:x}" } };
+        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path);
+
+        Assert.Throws<InvalidOperationException>(() => spec.ExpandArgs(_ => null, '/', new Dictionary<string, string>()));
+    }
 }

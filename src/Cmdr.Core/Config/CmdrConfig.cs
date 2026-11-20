@@ -176,8 +176,8 @@ public class CmdrConfig
     }
 
     /// <summary>
-    /// Checks the placeholders of each env value: malformed ones (see <see cref="Placeholders.Errors"/>) and input placeholders, which
-    /// env values do not support yet. Null values (which remove a variable) are not checked.
+    /// Checks the placeholders of each env value: malformed ones (see <see cref="Placeholders.Errors"/>). Null values (which remove a
+    /// variable) are not checked.
     /// </summary>
     private static void ValidateEnvPlaceholders(Dictionary<string, string?>? env, string label, List<string> errors)
     {
@@ -197,11 +197,6 @@ public class CmdrConfig
             foreach (string error in Placeholders.Errors(entry.Value))
             {
                 errors.Add($"{label}: env '{name}': {error}");
-            }
-
-            if (Placeholders.Requests(new[] { entry.Value }).Count > 0)
-            {
-                errors.Add($"{label}: env '{name}': input placeholders are not supported in env values");
             }
         }
     }

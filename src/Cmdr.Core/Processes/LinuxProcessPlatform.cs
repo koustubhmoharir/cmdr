@@ -50,14 +50,20 @@ internal sealed class LinuxProcessPlatform : IProcessPlatform
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
 
+        // The environment first: the arguments may refer to the final environment of the command.
+        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator, spec.Inputs);
+        string[] args = spec.ExpandArgs(
+            name => psi.Environment.TryGetValue(name, out string? value) ? value : null,
+            Path.PathSeparator,
+            spec.Inputs);
+
         psi.ArgumentList.Add("--"); // a program name starting with '-' must not be read as a setsid option
         psi.ArgumentList.Add(spec.Program);
-        foreach (string arg in spec.Args)
+        foreach (string arg in args)
         {
             psi.ArgumentList.Add(arg);
         }
 
-        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator);
         return new PreparedLaunch(psi, InputAfterInterrupt: null);
     }
 

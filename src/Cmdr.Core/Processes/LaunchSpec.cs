@@ -42,6 +42,13 @@ public sealed record LaunchSpec(
     public ReadySpec? Ready { get; init => field = value?.Clone(); } = Ready?.Clone();
 
     /// <summary>
+    /// The values of the input placeholders, which the launch expands in the arguments and in the env values (see
+    /// <see cref="ExpandArgs"/> and <see cref="EnvExpansion.ApplyLevels"/>). A private copy; empty when none were given. Values
+    /// the user typed are not part of <see cref="object.ToString"/>.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Inputs { get; init => field = CopyInputs(value); } = CopyInputs(new Dictionary<string, string>());
+
+    /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
     /// each environment level are resolved against <paramref name="configDir"/>.
     /// </summary>
@@ -78,6 +85,29 @@ public sealed record LaunchSpec(
             spec.Leftovers,
             spec.Stdin,
             spec.Ready);
+    }
+
+    /// <summary>
+    /// The arguments with every placeholder expanded, in one pass per argument: <c>${env:NAME}</c> from <paramref name="env"/>,
+    /// <c>${cwd}</c> as <see cref="WorkingDirectory"/>, <c>${configDir}</c> as <see cref="ConfigDir"/>, <c>${pathsep}</c> as
+    /// <paramref name="pathSeparator"/>, <c>$${</c> as <c>${</c>. An input placeholder is replaced by its value in
+    /// <paramref name="inputs"/>, or kept as written when that is null (for display).
+    /// </summary>
+    /// <param name="env">The final environment of the launch, the value of each variable (null when undefined).</param>
+    /// <param name="pathSeparator">The value of <c>${pathsep}</c>.</param>
+    /// <param name="inputs">The input values, or null to keep input placeholders as written.</param>
+    /// <exception cref="InvalidOperationException">An input has no usable value (see <see cref="Placeholders.Expand"/>).</exception>
+    public string[] ExpandArgs(Func<string, string?> env, char pathSeparator, IReadOnlyDictionary<string, string>? inputs)
+    {
+        ArgumentNullException.ThrowIfNull(env);
+
+        return Args.Select(arg => Placeholders.Expand(arg, env, inputs, WorkingDirectory, ConfigDir, pathSeparator)).ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, string> CopyInputs(IReadOnlyDictionary<string, string> inputs)
+    {
+        ArgumentNullException.ThrowIfNull(inputs);
+        return inputs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
     }
 
     private static string[] CopyArgs(IReadOnlyList<string> args)

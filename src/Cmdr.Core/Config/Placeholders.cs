@@ -144,26 +144,6 @@ public static class Placeholders
     }
 
     /// <summary>
-    /// Replaces the input placeholders of <paramref name="text"/> with their values and copies every other token exactly as written,
-    /// including environment variables, built-ins, escapes and malformed placeholders. Used for command arguments until they are
-    /// expanded by <see cref="Expand"/>.
-    /// </summary>
-    /// <exception cref="InvalidOperationException">An input has no value, or an empty value where it is not allowed.</exception>
-    public static string SubstituteInputs(string text, IReadOnlyDictionary<string, string> inputs)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        ArgumentNullException.ThrowIfNull(inputs);
-
-        var result = new StringBuilder(text.Length);
-        foreach (Token token in Scan(text))
-        {
-            result.Append(token.Kind == TokenKind.Input ? ValueOf(token, inputs) : token.Source);
-        }
-
-        return result.ToString();
-    }
-
-    /// <summary>
     /// Checks that every input the texts use has a value that <see cref="Expand"/> would accept, without expanding anything. Throws
     /// for the first one that does not, in text order.
     /// </summary>

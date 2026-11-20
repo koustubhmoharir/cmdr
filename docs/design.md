@@ -106,6 +106,14 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
   first; each level's values expand against the environment as it was before that level (so `${env:PATH}`
   is the parent's value). `${cwd}` is the effective cwd of the item that defines the value. Expansion is
   `Placeholders.Expand`, the one placeholder syntax (`${env:NAME}`, `${input:NAME}`, built-ins, escape `$${`).
+- Expansion happens at launch, not when the spec is built. `Session.StartEntry` checks the input values
+  the arguments and env values need (`Placeholders.CheckInputs`), then passes them as `LaunchSpec.Inputs`
+  (a private copy, never in `ToString`). The platform's `Prepare` applies the env levels with those inputs,
+  then expands each argument with `LaunchSpec.ExpandArgs` against the final environment (on Windows,
+  case-insensitively), so `${env:NAME}` in an argument sees the command's own `env`. Each text is expanded in
+  one pass: an input value is never scanned again. Display (the info pane's env lines) and the copy pass
+  `inputs: null`, which keeps input placeholders as written; the copy also expands the arguments
+  (`LaunchSpec.ExpandArgs`), the info pane shows them as written.
 - Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log` unless `log.path` is set. Two commands with
   the same log path, or whose log file would be another's folder, are a validation error, whether or not
   their logs are enabled (logs can be toggled at runtime). Paths are compared after resolving symbolic links
@@ -114,9 +122,11 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 
 ### Input placeholders
 
-`Placeholders` (`Errors`, `Requests`, `Expand`, `CheckInputs`, `SubstituteInputs`) scans text for `${input:NAME}` /
+`Placeholders` (`Errors`, `Requests`, `Expand`, `CheckInputs`) scans text for `${input:NAME}` /
 `${input:NAME?}` (escape `$${`). Malformed placeholders (including a bare `${NAME}`) are validation errors and
-copied literally otherwise. `Session.InputsForActivate/
+copied literally otherwise. The texts are the command's arguments and the env values of its ancestor groups and of its own
+(`RequestsFor`, `LaunchTexts`); the values reach the launch as `LaunchSpec.Inputs` and are substituted there in the same single
+pass as the other placeholders, so a missing or empty value fails the start before anything launches. `Session.InputsForActivate/
 InputsForRestart` mirror the real start decisions (kill-instead-of-start, refused starts, startable
 commands) and merge requests by name (required wins over `?`). For restart, the refusal check ignores the runs it
 cancels and the commands it stops. Enter decides first: `Session.PrepareActivate`

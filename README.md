@@ -167,7 +167,7 @@ against the directory of the file.
 | `name` | | Required. Unique (case-insensitive) among its siblings. |
 | `description` | | Shown in the info pane. |
 | `program` | | Required. The executable. On Windows, `.cmd`/`.bat` shims such as `pnpm` work; a program not found in the working directory or on the command's `PATH` fails to start. |
-| `args` | `[]` | Arguments, one per array element (no shell quoting). May contain [input placeholders](#input-placeholders). |
+| `args` | `[]` | Arguments, one per array element (no shell quoting). May contain [input placeholders](#input-placeholders) and `${env:NAME}`, `${cwd}`, `${configDir}`, `${pathsep}` and `$${` (see [Environment](#environment)). |
 | `cwd` | | Working directory; relative to the group's. |
 | `env` | | Environment variables (see [Environment](#environment)). |
 | `stop` | `{ "method": "ctrlC" }` | How to stop gracefully: `ctrlC` (SIGINT on Linux, Ctrl+C on Windows) or `input`, which writes `stop.input` to the command's input (e.g. `"q\n"`). |
@@ -196,8 +196,13 @@ Values can refer to other values:
 
 Any other `$` is literal. A bare `${NAME}`, such as `${PATH}`, is reported as an error (write
 `${env:NAME}`), and so is any other `${...}` that is not in the table above or is malformed (for example
-`${env:}` or an unclosed `${`). Such text is used as written. Input placeholders (`${input:...}`) are not
-supported in env values yet.
+`${env:}` or an unclosed `${`). Such text is used as written. Env values may also contain
+[input placeholders](#input-placeholders).
+
+Arguments take the same placeholders, expanded once when the command starts. `${env:NAME}` in an argument is the
+variable's value in the command's final environment, after all the `env` levels, including its own. `${cwd}` is the
+command's working directory. A value that an input supplies is not expanded again: an input value `${env:X}` is passed as written.
+The info pane shows the arguments as written; the copy (`c`) shows them expanded, with input placeholders as written.
 
 Programs usually turn color off when their output isn't a terminal. To keep colors, set the program's
 variable, e.g. `FORCE_COLOR=1`, `CLICOLOR_FORCE=1` or
@@ -207,11 +212,11 @@ variable, e.g. `FORCE_COLOR=1`, `CLICOLOR_FORCE=1` or
 
 An argument can ask for a value when the command starts: `${input:NAME}` needs a non-empty value,
 `${input:NAME?}` allows an empty one. Placeholders can sit anywhere inside an argument
-(`--db=${input:db-name}`). NAME may use letters, digits, `-`, `_` and `.`. Write `$${` for the
+(`--db=${input:db-name}`) or inside an env value (`"DB_NAME": "${input:db-name}"`). NAME may use letters, digits, `-`, `_` and `.`. Write `$${` for the
 literal text `${`, e.g. `$${input:db-name}`.
 
-Before Enter or F5 starts anything that needs inputs, one dialog asks for every distinct name. A name
-used by several commands of the same start gets one value. Enter starts; Esc cancels and starts nothing.
+Before Enter or F5 starts anything that needs inputs, one dialog asks for every distinct name, in the arguments and
+the env values of the commands and their groups. A name used by several commands of the same start gets one value. Enter starts; Esc cancels and starts nothing.
 Values are not remembered for the next run and are not written to the output or log.
 
 ### Base files

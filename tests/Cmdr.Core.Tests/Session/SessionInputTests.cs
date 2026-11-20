@@ -379,4 +379,92 @@ public class SessionInputTests
             Cleanup(session);
         }
     }
+
+    [Fact]
+    public void InputsForActivate_ListsArgsThenAncestorEnvThenCommandEnv()
+    {
+        using var dir = new TempDir();
+        var command = new CommandSpec
+        {
+            Name = "c",
+            Program = "sh",
+            Args = { "${input:arg}" },
+            Env = new Dictionary<string, string?> { ["C"] = "${input:cmd?}" },
+        };
+        var inner = new GroupSpec
+        {
+            Name = "inner",
+            Env = new Dictionary<string, string?> { ["I"] = "${input:inner}" },
+            Items = new List<ItemSpec> { command },
+        };
+        var outer = new GroupSpec
+        {
+            Name = "outer",
+            Mode = GroupMode.Parallel,
+            Env = new Dictionary<string, string?> { ["O"] = "${input:outer}" },
+            Items = new List<ItemSpec> { inner },
+        };
+        CmdrSession session = OpenWith(dir, outer);
+
+        Assert.Equal(
+            new[] { Required("arg"), Required("outer"), Required("inner"), Optional("cmd") },
+            session.InputsForActivate(session.Groups[0]));
+    }
+
+    [Fact]
+    public void InputInEnvValue_IsPassedToTheStartedCommand()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, new GroupSpec
+        {
+            Name = "g",
+            Mode = GroupMode.Parallel,
+            Env = new Dictionary<string, string?> { ["V"] = "${input:x}" },
+            Items = new List<ItemSpec> { Sh("a", "echo \"v:[$V]\"") },
+        });
+        try
+        {
+            CommandEntry a = session.Groups[0].Commands[0];
+
+            Assert.Null(session.Activate(new[] { a }, new Dictionary<string, string> { ["x"] = "hi" }));
+
+            WaitForExited(a.Process);
+            WaitForText(a.Process, "v:[hi]");
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
+
+    [Fact]
+    public void MissingValue_UsedOnlyInEnvValue_FailsToStart_AndLaunchesNothing()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        CmdrSession session = OpenWith(dir, new GroupSpec
+        {
+            Name = "g",
+            Mode = GroupMode.Parallel,
+            Env = new Dictionary<string, string?> { ["V"] = "${input:x}" },
+            Items = new List<ItemSpec> { Sh("a", "echo ran > ran.txt") },
+        });
+        try
+        {
+            CommandEntry a = session.Groups[0].Commands[0];
+
+            Assert.Null(session.Activate(new[] { a }));
+
+            WaitForText(a.Process, "failed to start: no value for input 'x'");
+            Assert.Equal(ProcessState.NotStarted, a.Process.Snapshot.State);
+            Assert.False(File.Exists(Path.Combine(dir.Path, "ran.txt")));
+        }
+        finally
+        {
+            Cleanup(session);
+        }
+    }
 }

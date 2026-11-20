@@ -44,6 +44,52 @@ public sealed class CopyCommandTests
     }
 
     [Fact]
+    public void Copy_expands_env_placeholders_in_arguments_from_group_env_and_the_base_environment_and_cwd()
+    {
+        using TempSession temp = TempSession.Open(new GroupSpec
+        {
+            Name = "top",
+            Env = new Dictionary<string, string?> { ["TOP"] = "t" },
+            Items =
+            {
+                new CommandSpec
+                {
+                    Name = "run",
+                    Program = "tool",
+                    Args = { "${env:TOP}", "${env:KEEP}", "${env:BASE_ONLY}", "${cwd}", "in${input:x}", "$${env:TOP}" },
+                },
+            },
+        });
+        CommandEntry entry = temp.Session.AllEntries.Single();
+        string dir = Path.GetFullPath(temp.Session.ConfigDir);
+        var environment = new Dictionary<string, string?>(BaseEnvironment) { ["BASE_ONLY"] = "b" };
+
+        string line = CommandLineFormatter.ForCopy(entry, powerShell: false, environment, ':');
+
+        string q = CommandLineFormatter.QuotePosix(dir);
+        Assert.Equal(
+            $"(cd {q} && env TOP=t tool t k b {q} {CommandLineFormatter.QuotePosix("in${input:x}")} {CommandLineFormatter.QuotePosix("${env:TOP}")})",
+            line);
+    }
+
+    [Fact]
+    public void Copy_arguments_read_the_commands_own_env_override()
+    {
+        using TempSession temp = TempSession.Open(new GroupSpec
+        {
+            Name = "top",
+            Env = new Dictionary<string, string?> { ["V"] = "group" },
+            Items = { new CommandSpec { Name = "run", Program = "echo", Args = { "${env:V}" }, Env = new Dictionary<string, string?> { ["V"] = "own" } } },
+        });
+        CommandEntry entry = temp.Session.AllEntries.Single();
+        string dir = Path.GetFullPath(temp.Session.ConfigDir);
+
+        string line = CommandLineFormatter.ForCopy(entry, powerShell: false, BaseEnvironment, ':');
+
+        Assert.Equal($"(cd {CommandLineFormatter.QuotePosix(dir)} && env V=own echo own)", line);
+    }
+
+    [Fact]
     public void Copy_of_a_command_without_environment_only_sets_the_directory()
     {
         using TempSession temp = TempSession.Open(new GroupSpec

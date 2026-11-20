@@ -21,6 +21,8 @@ public static class WindowsBatchCommandLine
     /// not resolve, and for an argument with a line break, which cmd.exe cannot receive: such a command does not start either).
     /// The program is resolved as a launch would resolve it: its working directory, then the PATH of its environment,
     /// with PATHEXT. Arguments are checked first, so the file system is only searched for the few commands that need it.
+    /// The arguments of <paramref name="spec"/> are used as they are: a copy passes the arguments already expanded
+    /// (see <see cref="LaunchSpec.ExpandArgs"/>).
     /// </summary>
     public static string? ForCopy(LaunchSpec spec) => ForCopy(spec, CurrentEnvironment(), File.Exists);
 
@@ -34,7 +36,7 @@ public static class WindowsBatchCommandLine
         }
 
         var environment = new Dictionary<string, string?>(baseEnvironment, StringComparer.OrdinalIgnoreCase);
-        EnvExpansion.ApplyLevels(environment, spec.EnvLevels, spec.ConfigDir, ';');
+        EnvExpansion.ApplyLevels(environment, spec.EnvLevels, spec.ConfigDir, ';', inputs: null);
         environment.TryGetValue("PATH", out string? path);
         environment.TryGetValue("PATHEXT", out string? pathExt);
 

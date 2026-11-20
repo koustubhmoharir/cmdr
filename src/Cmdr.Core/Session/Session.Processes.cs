@@ -760,9 +760,10 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// Starts one command: substitutes the input values into a copy of its arguments, enables its log file if configured, then
-    /// launches it with the launch spec of its ancestors. Returns false, with a system line in the output, if the launch could
-    /// not be prepared, including when an input has no usable value. Nothing is launched or logged in that case.
+    /// Starts one command: checks that the input values the arguments and env values need are usable, enables its log file if
+    /// configured, then launches it with the launch spec of its ancestors, which expands the placeholders at launch. Returns false,
+    /// with a system line in the output, if the launch could not be prepared, including when an input has no usable value. Nothing
+    /// is launched or logged in that case.
     /// </summary>
     internal bool StartEntry(CommandEntry entry, IReadOnlyDictionary<string, string> inputs)
     {
@@ -774,10 +775,9 @@ public sealed partial class Session
             lock (_sync)
             {
                 CommandSpec spec = entry.Spec;
-                launch = LaunchSpec.From(entry.Group.SpecChain(), spec, entry.Source.Dir) with
-                {
-                    Args = spec.Args.Select(arg => Placeholders.SubstituteInputs(arg, inputs)).ToList(),
-                };
+                IReadOnlyList<GroupSpec> groups = entry.Group.SpecChain();
+                Placeholders.CheckInputs(LaunchTexts(groups, spec), inputs);
+                launch = LaunchSpec.From(groups, spec, entry.Source.Dir) with { Inputs = inputs };
 
                 if (spec.Log.Enabled)
                 {
@@ -1818,9 +1818,48 @@ public sealed partial class Session
     private static IReadOnlyDictionary<string, string> Freeze(IReadOnlyDictionary<string, string>? inputs) =>
         inputs is null ? NoInputs : new Dictionary<string, string>(inputs);
 
-    /// <summary>The distinct inputs the commands' arguments need, in first-seen order.</summary>
+    /// <summary>
+    /// The distinct inputs the commands need, in first-seen order: for each command, those of its arguments, then those of the env
+    /// values of its ancestor groups (outermost first) and of its own env (see <see cref="LaunchTexts"/>).
+    /// </summary>
     private static IReadOnlyList<InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
-        Placeholders.Requests(commands.SelectMany(c => c.Spec.Args));
+        Placeholders.Requests(commands.SelectMany(c => LaunchTexts(c.Group.SpecChain(), c.Spec)));
+
+    /// <summary>
+    /// The texts of a launch that are expanded at launch and may use input placeholders: the command's arguments, then the non-null
+    /// env values of each group above it (outermost first), then those of the command's own env.
+    /// </summary>
+    private static IEnumerable<string> LaunchTexts(IReadOnlyList<GroupSpec> groups, CommandSpec command)
+    {
+        foreach (string arg in command.Args)
+        {
+            yield return arg;
+        }
+
+        foreach (GroupSpec group in groups)
+        {
+            if (group.Env is null)
+            {
+                continue;
+            }
+
+            foreach (string? value in group.Env.Values)
+            {
+                if (value is not null)
+                {
+                    yield return value;
+                }
+            }
+        }
+
+        foreach (string? value in command.Env.Values)
+        {
+            if (value is not null)
+            {
+                yield return value;
+            }
+        }
+    }
 
     /// <summary>The commands planned at or below the steps, in order.</summary>
     private static List<CommandEntry> CollectCommands(IEnumerable<PlanNode> steps)

@@ -475,7 +475,7 @@ public class ValidationTests
     }
 
     [Fact]
-    public void InputPlaceholderInEnvValue_IsReported()
+    public void InputPlaceholderInEnvValue_IsValid()
     {
         var config = new CmdrConfig
         {
@@ -489,9 +489,7 @@ public class ValidationTests
             },
         };
 
-        string error = Assert.Single(config.Validate());
-
-        Assert.Equal("Group 'g' › command 'x': env 'Q': input placeholders are not supported in env values", error);
+        Assert.Empty(config.Validate());
     }
 
     [Fact]

@@ -199,6 +199,23 @@ public sealed class DetailsCommandTests : IDisposable
     }
 
     [Fact]
+    public void Info_pane_command_line_shows_arguments_as_written()
+    {
+        using TempSession temp = TempSession.Open(new GroupSpec
+        {
+            Name = "g",
+            Env = new Dictionary<string, string?> { ["V"] = "${input:x}" },
+            Items = { new CommandSpec { Name = "run", Program = "tool", Args = { "${env:KEEP}", "${cwd}" } } },
+        });
+        CommandEntry entry = temp.Session.AllEntries.Single();
+
+        IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.CommandLines(entry, ConfigDir, windows: false, BaseEnvironment, ':'));
+
+        Assert.Equal("$ tool '${env:KEEP}' '${cwd}'", lines[0]);
+        Assert.Contains("V=${input:x}", lines);
+    }
+
+    [Fact]
     public void The_prompt_is_not_part_of_the_copied_command_line()
     {
         string copied = CommandLineFormatter.ForEntry(Run, powerShell: false);

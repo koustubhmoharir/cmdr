@@ -16,7 +16,16 @@ public static class EnvExpansion
     /// environment as it was before that level, so <c>${env:PATH}</c> refers to the value from the outer level. A null value removes
     /// the variable. Key comparison is left to <paramref name="target"/> (Windows environments are case-insensitive).
     /// </summary>
-    public static void ApplyLevels(IDictionary<string, string?> target, IReadOnlyList<EnvLevel> levels, string configDir, char pathSeparator)
+    /// <param name="inputs">
+    /// The values of the input placeholders in the values, or null to keep them as written (for display). A launch passes its inputs.
+    /// </param>
+    /// <exception cref="InvalidOperationException">An input placeholder in a value has no usable value (see <see cref="Placeholders.Expand"/>).</exception>
+    public static void ApplyLevels(
+        IDictionary<string, string?> target,
+        IReadOnlyList<EnvLevel> levels,
+        string configDir,
+        char pathSeparator,
+        IReadOnlyDictionary<string, string>? inputs)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(levels);
@@ -42,7 +51,7 @@ public static class EnvExpansion
                 }
                 else
                 {
-                    target[entry.Key] = Placeholders.Expand(entry.Value, lookup, inputs: null, level.Cwd, configDir, pathSeparator);
+                    target[entry.Key] = Placeholders.Expand(entry.Value, lookup, inputs, level.Cwd, configDir, pathSeparator);
                 }
             }
         }

@@ -85,8 +85,13 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
 
-        // The overlays go first so that PATH, PATHEXT and ComSpec are the effective values of this child.
-        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator);
+        // The overlays go first so that PATH, PATHEXT and ComSpec are the effective values of this child, and the arguments
+        // are expanded against the same final environment (case-insensitively, as Windows variable names are).
+        EnvExpansion.ApplyLevels(psi.Environment, spec.EnvLevels, spec.ConfigDir, Path.PathSeparator, spec.Inputs);
+        string[] args = spec.ExpandArgs(
+            name => FindEnvironmentValue(psi.Environment, name),
+            Path.PathSeparator,
+            spec.Inputs);
 
         string? pathExt = FindEnvironmentValue(psi.Environment, "PATHEXT");
         string? resolved = WindowsCommandResolver.Resolve(
@@ -112,7 +117,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             resolved,
             FindEnvironmentValue(psi.Environment, "ComSpec"),
             Environment.SystemDirectory,
-            spec.Args);
+            args);
 
         psi.FileName = plan.FileName;
         if (plan.Arguments is not null)

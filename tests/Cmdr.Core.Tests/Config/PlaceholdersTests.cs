@@ -182,33 +182,6 @@ public class PlaceholdersTests
     }
 
     [Fact]
-    public void SubstituteInputs_ReplacesOnlyInputs_AndCopiesEverythingElseAsWritten()
-    {
-        string result = Placeholders.SubstituteInputs(
-            "${input:x} ${env:PATH} $${input:y} ${cwd} ${PATH} ${input:z?} ${foo:bar} ${",
-            Values(("x", "1"), ("z", "")));
-
-        Assert.Equal("1 ${env:PATH} $${input:y} ${cwd} ${PATH}  ${foo:bar} ${", result);
-    }
-
-    [Fact]
-    public void SubstituteInputs_ThrowsOnMissingOrEmptyValue()
-    {
-        Assert.Throws<InvalidOperationException>(() => Placeholders.SubstituteInputs("${input:x}", Values()));
-        Assert.Throws<InvalidOperationException>(() => Placeholders.SubstituteInputs("${input:x}", Values(("x", ""))));
-    }
-
-    [Fact]
-    public void SubstituteInputs_ProducesOnePerArgument()
-    {
-        string[] args = { "-c", "echo ${input:x}", "${input:y?}" };
-
-        string[] result = args.Select(a => Placeholders.SubstituteInputs(a, Values(("x", "1"), ("y", "")))).ToArray();
-
-        Assert.Equal(new[] { "-c", "echo 1", "" }, result);
-    }
-
-    [Fact]
     public void CheckInputs_PassesWhenEveryValueIsAcceptable()
     {
         Placeholders.CheckInputs(new[] { "${input:a}", "${input:b?}" }, Values(("a", "x"), ("b", "")));

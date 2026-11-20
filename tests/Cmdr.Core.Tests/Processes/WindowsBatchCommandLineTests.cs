@@ -57,6 +57,19 @@ public class WindowsBatchCommandLineTests
         Assert.Null(ForCopy("missing", "a&b"));
     }
 
+    [Fact]
+    public void ArgumentWithAnEnvPlaceholder_IsCheckedAsItsExpandedValue()
+    {
+        // The copy passes the arguments expanded (LaunchSpec.ExpandArgs); the placeholder text itself needs no cmd.exe form.
+        var spec = new LaunchSpec("pnpm", new[] { "run", "${env:ARG}" }, @"C:\work", Array.Empty<EnvLevel>(), @"C:\work", StopMethod.CtrlC, null);
+        string[] expanded = spec.ExpandArgs(name => name == "ARG" ? "a&b" : null, ';', inputs: null);
+
+        Assert.Null(WindowsBatchCommandLine.ForCopy(spec, Environment, Files.Contains));
+        Assert.Equal(
+            WindowsCmdEscaping.BuildCommand(@"C:\bin\pnpm.CMD", new[] { "run", "a&b" }),
+            WindowsBatchCommandLine.ForCopy(spec with { Args = expanded }, Environment, Files.Contains));
+    }
+
     [Theory]
     [InlineData("a&b\nc")]
     [InlineData("a\rb&")]

@@ -74,6 +74,13 @@ internal static class CommandLineFormatter
             return ForEntry(entry, powerShell);
         }
 
+        // The arguments are expanded against the final environment, with input placeholders kept as written (no values are known).
+        IReadOnlyDictionary<string, string?> applied = EffectiveEnv.Applied(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
+        spec = spec with
+        {
+            Args = spec.ExpandArgs(name => applied.TryGetValue(name, out string? value) ? value : null, pathSeparator, inputs: null),
+        };
+
         IReadOnlyList<KeyValuePair<string, string?>> env =
             EffectiveEnv.Of(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
 
