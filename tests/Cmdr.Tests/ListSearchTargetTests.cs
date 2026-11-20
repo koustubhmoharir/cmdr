@@ -1,6 +1,8 @@
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Core;
+using Shared.Tui;
 using CmdrSession = Cmdr.Core.Session.Session;
 
 namespace Cmdr.Tests;

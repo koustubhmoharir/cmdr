@@ -2,6 +2,7 @@ using System.Globalization;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
+using Shared.Tui;
 
 namespace Cmdr.Tui;
 
@@ -63,7 +64,7 @@ internal static class DetailsText
 
     /// <summary>
     /// The display rows of <see cref="Wrap"/>, each with the logical line it is from and the range of that line's text it shows,
-    /// so that a selection made on the rows can be copied from the logical lines (see <see cref="DetailsSelection"/>).
+    /// so that a selection made on the rows can be copied from the logical lines (see <see cref="TextSelection"/>).
     /// </summary>
     public static IReadOnlyList<DetailsRow> WrapRows(IReadOnlyList<DetailsLine> lines, int width)
     {
@@ -81,6 +82,22 @@ internal static class DetailsText
         }
 
         return rows;
+    }
+
+    /// <summary>The logical text of each line: its cleaned plain text, the same as the displayed text before wrapping.</summary>
+    public static IReadOnlyList<string> LogicalTexts(IReadOnlyList<DetailsLine> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+
+        return lines.Select(line => TextWidth.Clean(line.Text)).ToList();
+    }
+
+    /// <summary>The rows as the selection maps them (see <see cref="TextSelection"/>): the logical line and range of each row, drawn from column 0.</summary>
+    public static IReadOnlyList<SelectionRow> SelectionRows(IReadOnlyList<DetailsRow> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+
+        return rows.Select(row => new SelectionRow(row.LogicalLine, row.Start, row.End)).ToList();
     }
 
     /// <summary>The plain text of each line, without styles.</summary>

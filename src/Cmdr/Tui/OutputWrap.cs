@@ -1,5 +1,6 @@
 using System.Globalization;
 using Cmdr.Core.Output;
+using Shared.Tui;
 
 namespace Cmdr.Tui;
 

@@ -1,4 +1,6 @@
 using Cmdr.Core.Session;
+using Shared.Core;
+using Shared.Tui;
 
 namespace Cmdr.Tui;
 

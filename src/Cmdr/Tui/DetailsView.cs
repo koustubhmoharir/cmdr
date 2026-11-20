@@ -1,5 +1,7 @@
 using System.Text;
 using Cmdr.Core.Session;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -15,7 +17,7 @@ namespace Cmdr.Tui;
 /// </summary>
 /// <remarks>
 /// The text can be selected with the mouse: a press starts a character selection, a drag extends it (dragging past the top or
-/// bottom scrolls), and <c>c</c> copies it. The selection is kept as logical positions (see <see cref="DetailsSelection"/>), so
+/// bottom scrolls), and <c>c</c> copies it. The selection is kept as logical positions (see <see cref="TextSelection"/>), so
 /// it survives redraws and scrolling; it is cleared by Esc and when another row is shown.
 /// The text can also be searched (see <see cref="ISearchTarget"/>): the matches are highlighted in the logical text, so a match
 /// that wraps is highlighted on each of its rows.
@@ -36,18 +38,18 @@ internal sealed class DetailsView : View, ISearchTarget
     private bool _dragging;
 
     // The search: its pattern (null when there is none) and the active match, which is the origin of the next Find. Positions are
-    // logical, as the selection's are (see DetailsSelection), so they are kept across wrapping and scrolling.
+    // logical, as the selection's are (see TextSelection), so they are kept across wrapping and scrolling.
     private SearchPattern? _search;
     private ActiveMatch? _active;
 
     /// <summary>
-    /// The selection between two cells (see <see cref="DetailsSelection.CellAt"/>): the cell the press was on, and the cell under
+    /// The selection between two cells (see <see cref="TextSelection.CellAt"/>): the cell the press was on, and the cell under
     /// the pointer. It selects nothing until a drag has moved the active end (<see cref="Dragged"/>), so a press and release alone
     /// leave none.
     /// </summary>
     private readonly record struct SelectionState(CellPoints Anchor, CellPoints Active, bool Dragged);
 
-    /// <summary>A cell of the logical text: the point before it and the point after it (see <see cref="DetailsSelection.CellAt"/>).</summary>
+    /// <summary>A cell of the logical text: the point before it and the point after it (see <see cref="TextSelection.CellAt"/>).</summary>
     private readonly record struct CellPoints(LogicalPoint Before, LogicalPoint After);
 
     /// <summary>A match of the search: its logical line, and its range in that line's text. The active match is the origin of the next Find.</summary>
@@ -70,7 +72,7 @@ internal sealed class DetailsView : View, ISearchTarget
     private sealed record SearchHighlights(MatchState[]?[] Lines);
 
     /// <summary>The wrapped rows of the content, and the logical text of each line.</summary>
-    private sealed record DetailsLayout(IReadOnlyList<DetailsRow> Rows, IReadOnlyList<string> Texts);
+    private sealed record DetailsLayout(IReadOnlyList<DetailsRow> Rows, IReadOnlyList<string> Texts, IReadOnlyList<SelectionRow> SelectionRows);
 
     public DetailsView(MainController controller)
     {
@@ -237,13 +239,13 @@ internal sealed class DetailsView : View, ISearchTarget
             return null;
         }
 
-        IReadOnlyList<string> texts = DetailsSelection.Texts(Lines());
+        IReadOnlyList<string> texts = DetailsText.LogicalTexts(Lines());
         if (SelectedRange(texts) is not { } range || range.Start.Line != range.End.Line)
         {
             return null;
         }
 
-        string text = DetailsSelection.Extract(texts, range);
+        string text = TextSelection.Extract(texts, range);
         if (text.Length > SeedMaxLength)
         {
             return null;
@@ -430,7 +432,7 @@ internal sealed class DetailsView : View, ISearchTarget
                     && IsSelected(selection, row.LogicalLine, offset + j) == selected
                     && StateAt(highlights, row.LogicalLine, offset + j) == state)
                 {
-                    int length = DetailsSelection.RuneAt(text, j).Length;
+                    int length = TextSelection.RuneAt(text, j).Length;
                     if (!hidden[position + j])
                     {
                         piece.Append(text, j, length);
@@ -685,8 +687,8 @@ internal sealed class DetailsView : View, ISearchTarget
             return true;
         }
 
-        (LogicalPoint before, LogicalPoint after) = DetailsSelection.CellAt(
-            layout.Rows,
+        (LogicalPoint before, LogicalPoint after) = TextSelection.CellAt(
+            layout.SelectionRows,
             layout.Texts,
             Scroll.Offset + (mouse.Position?.Y ?? 0),
             mouse.Position?.X ?? 0);
@@ -729,7 +731,7 @@ internal sealed class DetailsView : View, ISearchTarget
             return;
         }
 
-        (LogicalPoint before, LogicalPoint after) = DetailsSelection.CellAt(layout.Rows, layout.Texts, Scroll.Offset + row, column);
+        (LogicalPoint before, LogicalPoint after) = TextSelection.CellAt(layout.SelectionRows, layout.Texts, Scroll.Offset + row, column);
         _selection = _selection.Value with { Active = new CellPoints(before, after), Dragged = true };
         SetNeedsDraw();
     }
@@ -786,7 +788,7 @@ internal sealed class DetailsView : View, ISearchTarget
         }
 
         LogicalRange cells = CellRange(s);
-        LogicalRange range = DetailsSelection.Clamp(cells.Start, cells.End, texts);
+        LogicalRange range = TextSelection.Clamp(cells.Start, cells.End, texts);
         return range.IsEmpty ? null : range;
     }
 
@@ -805,10 +807,10 @@ internal sealed class DetailsView : View, ISearchTarget
     /// </summary>
     private bool CopySelectionOrCommandLine()
     {
-        IReadOnlyList<string> texts = DetailsSelection.Texts(Lines());
+        IReadOnlyList<string> texts = DetailsText.LogicalTexts(Lines());
         if (SelectedRange(texts) is { } range)
         {
-            string text = DetailsSelection.Extract(texts, range);
+            string text = TextSelection.Extract(texts, range);
             _controller.CopyToClipboard(text, $"Copied {CharacterCount(text)} characters");
             return true;
         }
@@ -832,11 +834,12 @@ internal sealed class DetailsView : View, ISearchTarget
     {
         if (width <= 0)
         {
-            return new DetailsLayout(Array.Empty<DetailsRow>(), Array.Empty<string>());
+            return new DetailsLayout(Array.Empty<DetailsRow>(), Array.Empty<string>(), Array.Empty<SelectionRow>());
         }
 
         IReadOnlyList<DetailsLine> lines = Lines();
-        return new DetailsLayout(DetailsText.WrapRows(lines, width), DetailsSelection.Texts(lines));
+        IReadOnlyList<DetailsRow> rows = DetailsText.WrapRows(lines, width);
+        return new DetailsLayout(rows, DetailsText.LogicalTexts(lines), DetailsText.SelectionRows(rows));
     }
 
     private IReadOnlyList<DetailsLine> Lines() => _row switch

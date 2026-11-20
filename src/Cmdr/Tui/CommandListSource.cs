@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Collections.Specialized;
 using Cmdr.Core.Session;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Views;
 using Attribute = Terminal.Gui.Drawing.Attribute;

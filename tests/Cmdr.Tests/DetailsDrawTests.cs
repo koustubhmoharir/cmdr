@@ -2,6 +2,7 @@ using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Views;
@@ -43,8 +44,8 @@ public sealed class DetailsDrawTests
         const string text = "a​bcdefghijkl";
         IReadOnlyList<DetailsLine> lines = new[] { new DetailsLine(new[] { new DetailsSpan(text, DetailsStyle.Normal) }) };
 
-        string copied = DetailsSelection.Extract(
-            DetailsSelection.Texts(lines),
+        string copied = TextSelection.Extract(
+            DetailsText.LogicalTexts(lines),
             LogicalRange.Between(new LogicalPoint(0, 0), new LogicalPoint(0, text.Length)));
 
         Assert.Equal(text, copied);

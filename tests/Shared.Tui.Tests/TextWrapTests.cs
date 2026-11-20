@@ -1,6 +1,6 @@
-using Cmdr.Tui;
+using Shared.Tui;
 
-namespace Cmdr.Tests;
+namespace Shared.Tui.Tests;
 
 public sealed class TextWrapTests
 {

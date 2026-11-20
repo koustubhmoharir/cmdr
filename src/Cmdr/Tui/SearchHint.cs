@@ -1,3 +1,4 @@
+using Shared.Tui;
 using Terminal.Gui.Input;
 
 namespace Cmdr.Tui;

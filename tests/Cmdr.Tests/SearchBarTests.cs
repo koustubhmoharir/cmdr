@@ -4,6 +4,8 @@ using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using StatusLine = Cmdr.Tui.StatusLine;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -871,8 +873,8 @@ public sealed class SearchBarTests
         typeof(MainController).GetMethod("OnFastTick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(controller, null);
 
     /// <summary>The text the status line shows.</summary>
-    private static string StatusText(StatusLine status) =>
-        (string)typeof(StatusLine).GetField("_text", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(status)!;
+    private static string StatusText(Cmdr.Tui.StatusLine status) =>
+        (string)typeof(Cmdr.Tui.StatusLine).GetField("_text", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(status)!;
 
     /// <summary>The characters drawn on one row of the screen, left to right.</summary>
     private static string ScreenRow(IApplication app, int row, int width)

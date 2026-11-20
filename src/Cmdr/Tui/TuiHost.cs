@@ -1,6 +1,7 @@
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Views;
 

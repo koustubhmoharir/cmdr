@@ -1,15 +1,21 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using Cmdr;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Shared.Core;
+using Shared.Tui;
 
 return Run(args);
 
 static int Run(string[] args)
 {
+    // The width measure of the terminal UI is installed first, before any command output is parsed: the output is laid out by
+    // the widths it gives. Shared.Tui's module initializer would otherwise run only when something from that assembly is used.
+    RuntimeHelpers.RunModuleConstructor(typeof(DisplayWidthSetup).Module.ModuleHandle);
+
     if (args is ["--send-ctrl-c", ..])
     {
         if (!OperatingSystem.IsWindows())

@@ -4,6 +4,8 @@ using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using StatusLine = Cmdr.Tui.StatusLine;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;

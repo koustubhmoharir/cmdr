@@ -1,5 +1,6 @@
 using Cmdr.Core.Output;
 using Cmdr.Tui;
+using Shared.Core;
 
 namespace Cmdr.Tests;
 

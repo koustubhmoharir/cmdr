@@ -1,4 +1,5 @@
 using System.Text;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;

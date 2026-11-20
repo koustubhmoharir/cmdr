@@ -1,5 +1,7 @@
 using System.Reflection;
 using Cmdr.Tui;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 

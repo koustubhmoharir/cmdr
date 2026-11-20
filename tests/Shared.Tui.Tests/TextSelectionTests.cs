@@ -328,4 +328,14 @@ public sealed class TextSelectionTests
             Assert.True(point == before || point == after, $"column {column}");
         }
     }
+
+    [Fact]
+    public void Cell_of_the_first_column_of_a_row_that_starts_mid_line_is_the_row_start()
+    {
+        string[] texts = { "abc def" };
+        SelectionRow[] rows = { new(0, 4, 7) };
+
+        Assert.Equal((P(0, 4), P(0, 5)), TextSelection.CellAt(rows, texts, 0, 0));
+        Assert.Equal((P(0, 5), P(0, 6)), TextSelection.CellAt(rows, texts, 0, 1));
+    }
 }

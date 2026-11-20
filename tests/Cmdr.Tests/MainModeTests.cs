@@ -3,6 +3,8 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using StatusLine = Cmdr.Tui.StatusLine;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;

@@ -1,6 +1,9 @@
 using System.Reflection;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using StatusLine = Cmdr.Tui.StatusLine;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 
@@ -14,30 +17,6 @@ namespace Cmdr.Tests;
 public sealed class KeyHintsTests
 {
     private const BindingFlags Members = BindingFlags.Instance | BindingFlags.NonPublic;
-
-    [Fact]
-    public void Join_separates_the_hints_with_two_spaces_and_moves_each_target_to_its_position()
-    {
-        Hint hint = KeyHints.Join(KeyHints.Bound(Key.F5, "F5 Restart"), KeyHints.Bound(Key.Space, "Space Mark"));
-
-        Assert.Equal("F5 Restart  Space Mark", hint.Text);
-        Assert.Equal(new[] { new HintTarget(0, 10, Key.F5), new HintTarget(12, 10, Key.Space) }, hint.Targets);
-    }
-
-    [Fact]
-    public void Concat_moves_the_targets_of_each_part_by_the_length_of_the_parts_before_it()
-    {
-        Hint hint = KeyHints.Concat(KeyHints.Plain("ab"), KeyHints.Bound(Key.C, "c Copy"), KeyHints.Plain("!"), KeyHints.Bound(Key.L, "L"));
-
-        Assert.Equal("abc Copy!L", hint.Text);
-        Assert.Equal(new[] { new HintTarget(2, 6, Key.C), new HintTarget(9, 1, Key.L) }, hint.Targets);
-    }
-
-    [Fact]
-    public void A_plain_hint_has_no_targets()
-    {
-        Assert.Empty(KeyHints.Plain("Esc Close").Targets);
-    }
 
     [Fact]
     public void Search_labels_map_to_their_keys_and_the_arrows_are_targets_of_their_own()

@@ -1,4 +1,5 @@
 using Cmdr.Core.Session;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;

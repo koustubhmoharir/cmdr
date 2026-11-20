@@ -1,4 +1,6 @@
 using Cmdr.Tui;
+using StatusLine = Cmdr.Tui.StatusLine;
+using Shared.Tui;
 using Terminal.Gui.Input;
 
 namespace Cmdr.Tests;

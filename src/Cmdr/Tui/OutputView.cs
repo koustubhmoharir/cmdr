@@ -1,6 +1,8 @@
 using System.Text;
 using Cmdr.Core.Output;
 using Cmdr.Core.Session;
+using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;

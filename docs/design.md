@@ -18,8 +18,8 @@ tests/Cmdr.Tests/       xUnit tests for the app's pure UI logic
 ```
 
 UI logic that can be tested without a terminal lives in pure static classes (`RowLayout`,
-`OutputWrap`, `OutputScroll`, `DetailsText`, `DetailsSelection`, `StatusColors`, `GroupOptions`,
-`CommandForm`, `InputForm`, …); views only draw and route input.
+`OutputWrap`, `OutputScroll`, `DetailsText`, `StatusColors`, `GroupOptions`,
+`CommandForm`, `InputForm`, …), and the selection of pane text is `TextSelection` in Shared.Tui; views only draw and route input.
 
 ### Publishing
 
@@ -287,7 +287,7 @@ acting, or captures a snapshot and acts only on that.
   current line, so progress bars overwrite in place. A tab pads to the next multiple of 8 display columns.
 - Display width (`DisplayWidth`, Shared.Core): measured per grapheme cluster (`StringInfo` text element), with a
   pluggable per-grapheme measure. Core's default is a small table (zero-width marks/format characters,
-  East Asian wide and emoji ranges); the UI assembly's module initializer (`DisplayWidthSetup`) plugs in
+  East Asian wide and emoji ranges); Shared.Tui's `DisplayWidthSetup` plugs in (its module initializer, which cmdr's `Program` runs first thing, so the measure does not depend on load order)
   Terminal.Gui's measure, so tab expansion, wrapping, truncation, selection and drawing all agree with what
   Terminal.Gui draws. A grapheme is never split by wrapping or selection. The parser's forced break at its
   line-length limit (65,536 UTF-16 units) moves the last grapheme to the next line when the next character

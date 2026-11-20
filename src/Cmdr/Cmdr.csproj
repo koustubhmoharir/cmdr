@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Cmdr.Core\Cmdr.Core.csproj" />
+    <ProjectReference Include="..\Shared.Core\Shared.Core.csproj" />
+    <ProjectReference Include="..\Shared.Tui\Shared.Tui.csproj" />
   </ItemGroup>
 
   <!--

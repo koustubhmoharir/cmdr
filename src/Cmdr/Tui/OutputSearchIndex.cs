@@ -1,4 +1,5 @@
 using Cmdr.Core.Output;
+using Shared.Core;
 
 namespace Cmdr.Tui;
 

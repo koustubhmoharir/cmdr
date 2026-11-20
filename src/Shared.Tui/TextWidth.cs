@@ -142,7 +142,7 @@ public static class TextWidth
     /// offsets <c>[Start, End)</c>. The spaces dropped at a break lie between one line's End and the next line's Start. A
     /// grapheme takes the style of its first UTF-16 unit.
     /// </summary>
-    internal static List<WrappedSpans<T>> WrapSpanRanges<T>(IReadOnlyList<(string Text, T Style)> spans, int width)
+    public static List<WrappedSpans<T>> WrapSpanRanges<T>(IReadOnlyList<(string Text, T Style)> spans, int width)
     {
         ArgumentNullException.ThrowIfNull(spans);
 
