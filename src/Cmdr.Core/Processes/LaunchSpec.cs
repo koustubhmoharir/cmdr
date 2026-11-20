@@ -91,6 +91,50 @@ public sealed record LaunchSpec(
     }
 
     /// <summary>
+    /// Builds the launch request of an environment script (<see cref="EnvScriptSpec"/>). The script's working directory is its
+    /// <c>cwd</c> resolved against <paramref name="levelCwd"/>, or <paramref name="levelCwd"/> when it has none, as for a command.
+    /// <c>${cwd}</c> in the script's arguments is that working directory. The script stops with Ctrl+C, reads a stdin pipe, and
+    /// leftover processes are tracked. The script itself is not in <paramref name="levels"/>: the caller passes the environment
+    /// chain that applies to it (the levels up to, not including, the level that owns the script).
+    /// </summary>
+    /// <param name="script">The script to launch. Its arguments are copied; they are expanded when the process is launched.</param>
+    /// <param name="levels">The environment overlays that apply to the script, outermost first. Copied.</param>
+    /// <param name="levelCwd">The directory that the script's <c>cwd</c> is relative to: the effective working directory of the level that owns the script.</param>
+    /// <param name="configDir">The config directory, the value of <c>${configDir}</c>.</param>
+    /// <param name="inputs">The input placeholder values, for the script's arguments and the env values of <paramref name="levels"/>. Copied.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="script"/>, <paramref name="levels"/> or <paramref name="inputs"/> is null.</exception>
+    /// <exception cref="ArgumentException"><paramref name="levelCwd"/> or <paramref name="configDir"/> is null or empty.</exception>
+    public static LaunchSpec ForEnvScript(
+        EnvScriptSpec script,
+        IReadOnlyList<EnvLevel> levels,
+        string levelCwd,
+        string configDir,
+        IReadOnlyDictionary<string, string> inputs)
+    {
+        ArgumentNullException.ThrowIfNull(script);
+        ArgumentNullException.ThrowIfNull(levels);
+        ArgumentNullException.ThrowIfNull(inputs);
+        ArgumentException.ThrowIfNullOrEmpty(levelCwd);
+        ArgumentException.ThrowIfNullOrEmpty(configDir);
+
+        string workingDirectory = ConfigPaths.ResolveDir(script.Cwd, levelCwd);
+        return new LaunchSpec(
+            script.Program,
+            script.Args,
+            workingDirectory,
+            levels,
+            Path.GetFullPath(configDir),
+            StopMethod.CtrlC,
+            StopInput: null,
+            Leftovers: LeftoverMode.Track,
+            Stdin: StdinMode.Pipe,
+            Ready: null)
+        {
+            Inputs = inputs,
+        };
+    }
+
+    /// <summary>
     /// The arguments with every placeholder expanded, in one pass per argument: <c>${env:NAME}</c> from <paramref name="env"/>,
     /// <c>${cwd}</c> as <see cref="WorkingDirectory"/>, <c>${configDir}</c> as <see cref="ConfigDir"/>, <c>${pathsep}</c> as
     /// <paramref name="pathSeparator"/>, <c>$${</c> as <c>${</c>. An input placeholder is replaced by its value in

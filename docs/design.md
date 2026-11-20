@@ -244,6 +244,16 @@ after a Ctrl+C stop of a batch-wrapped command cmdr also writes `Y\r\n` to stdin
 reads stdin could consume the answer first. With `stdin: console` the answer cannot be sent; the launch
 returns a notice that is written to the output.
 
+**Environment scripts (`EnvScriptRunner`).** An `envScript` (a file's or a group's) runs once through
+`LaunchSpec.ForEnvScript`, like a command: its own group or job, stdin closed at once, stdout and stderr read
+concurrently. Its stdout must be one JSON object of variables (string or null values, no duplicate names, valid
+names); stdout is capped at 1 MiB and stderr keeps its last 16 KiB. The run ends on exit, on its timeout, on
+cancellation, or when stdout is too large; each ends by killing the whole tree (a leftover child would hold the
+pipes open), and the streams are then read for at most 2 s, so a pipe held by an escaped process cannot hang the
+caller. A non-zero exit is a failure whatever the output. The outcome is an `EnvScriptResult`: the values, or a
+one-line error that names no value (its stdout is never echoed). `${cwd}` in its arguments is the script's own
+working directory. The runner has no session or UI integration yet.
+
 ## Session tree (runtime)
 
 - `GroupEntry` has `Parent` (null at top level) and ordered mixed `Items`; `Commands`/`Groups` are its

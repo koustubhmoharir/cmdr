@@ -314,4 +314,73 @@ public class LaunchSpecTests
         EnvLevel copied = spec.EnvLevels[0];
         Assert.Equal("base", Assert.Single(copied.ImportFrom!).Env["X"]);
     }
+
+    [Fact]
+    public void ForEnvScript_ResolvesCwdAgainstLevelCwd_AndDefaultsToIt()
+    {
+        using var dir = new TempDir();
+        string levelCwd = Path.Combine(dir.Path, "base");
+        var inputs = new Dictionary<string, string>();
+
+        LaunchSpec relative = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p", Cwd = "sub" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
+        LaunchSpec defaulted = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
+
+        Assert.Equal(Path.GetFullPath(Path.Combine(levelCwd, "sub")), relative.WorkingDirectory);
+        Assert.Equal(Path.GetFullPath(levelCwd), defaulted.WorkingDirectory);
+    }
+
+    [Fact]
+    public void ForEnvScript_CarriesLevelsInputsConfigDirProgramAndArgs()
+    {
+        using var dir = new TempDir();
+        var levels = new[] { new EnvLevel(new Dictionary<string, string?> { ["X"] = "1" }, dir.Path) };
+        var inputs = new Dictionary<string, string> { ["name"] = "typed" };
+        var script = new EnvScriptSpec { Program = "prog", Args = { "a", "${input:name}" } };
+
+        LaunchSpec spec = LaunchSpec.ForEnvScript(script, levels, dir.Path, dir.Path, inputs);
+
+        Assert.Equal("prog", spec.Program);
+        Assert.Equal(new[] { "a", "${input:name}" }, spec.Args);
+        Assert.Equal(Path.GetFullPath(dir.Path), spec.ConfigDir);
+        EnvLevel level = Assert.Single(spec.EnvLevels);
+        Assert.Equal("1", level.Env["X"]);
+        Assert.Equal("typed", spec.Inputs["name"]);
+    }
+
+    [Fact]
+    public void ForEnvScript_UsesAStdinPipe_CtrlCStop_AndTracksLeftovers()
+    {
+        using var dir = new TempDir();
+
+        LaunchSpec spec = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p" }, Array.Empty<EnvLevel>(), dir.Path, dir.Path, new Dictionary<string, string>());
+
+        Assert.Equal(StdinMode.Pipe, spec.Stdin);
+        Assert.Equal(StopMethod.CtrlC, spec.StopMethod);
+        Assert.Null(spec.StopInput);
+        Assert.Equal(LeftoverMode.Track, spec.Leftovers);
+        Assert.Null(spec.Ready);
+    }
+
+    [Fact]
+    public void ForEnvScript_CwdPlaceholderIsTheScriptWorkingDirectory()
+    {
+        using var dir = new TempDir();
+        string levelCwd = Path.Combine(dir.Path, "base");
+        var script = new EnvScriptSpec { Program = "p", Cwd = "sub", Args = { "${cwd}" } };
+
+        LaunchSpec spec = LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), levelCwd, dir.Path, new Dictionary<string, string>());
+
+        string[] expanded = spec.ExpandArgs(_ => null, Path.PathSeparator, null);
+        Assert.Equal(Path.GetFullPath(Path.Combine(levelCwd, "sub")), expanded[0]);
+    }
+
+    [Fact]
+    public void ForEnvScript_RequiresLevelCwdAndConfigDir()
+    {
+        var script = new EnvScriptSpec { Program = "p" };
+        var inputs = new Dictionary<string, string>();
+
+        Assert.Throws<ArgumentException>(() => LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), "", "/c", inputs));
+        Assert.Throws<ArgumentException>(() => LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), "/w", "", inputs));
+    }
 }
