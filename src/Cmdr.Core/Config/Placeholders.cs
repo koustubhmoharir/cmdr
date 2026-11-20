@@ -295,7 +295,7 @@ public static class Placeholders
         index + prefix.Length <= text.Length && string.CompareOrdinal(text, index, prefix, 0, prefix.Length) == 0;
 
     /// <summary>A variable name: non-empty, and without <c>=</c> or NUL. Anything else, such as spaces or <c>(</c>, is allowed (Windows has <c>ProgramFiles(x86)</c>).</summary>
-    private static bool IsEnvName(string name) =>
+    internal static bool IsEnvName(string name) =>
         name.Length > 0 && name.IndexOf('=') < 0 && name.IndexOf('\0') < 0;
 
     private static bool IsInputNameChar(char c) =>

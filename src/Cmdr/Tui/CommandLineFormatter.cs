@@ -67,7 +67,7 @@ internal static class CommandLineFormatter
         LaunchSpec spec;
         try
         {
-            spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir);
+            spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
         }
         catch (Exception ex) when (DetailsText.IsPathError(ex))
         {
@@ -209,7 +209,7 @@ internal static class CommandLineFormatter
     {
         try
         {
-            LaunchSpec spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir);
+            LaunchSpec spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
             return WindowsBatchCommandLine.ForCopy(spec);
         }
         catch (ArgumentException)

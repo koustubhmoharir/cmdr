@@ -4,9 +4,19 @@ namespace Cmdr.Core.Config;
 /// One environment overlay of the launch chain: the <c>env</c> of a group (or of a command) and the effective working
 /// directory of the item that defines it, which is what <c>${cwd}</c> means in its values.
 /// </summary>
-/// <param name="Env">Values; a null value removes the variable.</param>
+/// <param name="Env">Values; a null value removes the variable. When <see cref="ImportFrom"/> is set, the keys are the imported names and the values are null.</param>
 /// <param name="Cwd">The effective working directory of the item that defines <paramref name="Env"/>.</param>
-public sealed record EnvLevel(IReadOnlyDictionary<string, string?> Env, string Cwd);
+public sealed record EnvLevel(IReadOnlyDictionary<string, string?> Env, string Cwd)
+{
+    /// <summary>
+    /// Makes this an import level: the keys of <see cref="Env"/> are names to take from the environment that the levels here produce
+    /// (the top-level environment of a base file). Those levels are applied to a copy of the environment as it is when this level is
+    /// reached; then each name present in the copy is set to its value, and each name absent from it is removed. The values of
+    /// <see cref="Env"/> are not expanded. <see cref="Cwd"/> is the base file's directory, which is also the <c>${configDir}</c> of
+    /// the imported levels. Null for an ordinary level.
+    /// </summary>
+    public IReadOnlyList<EnvLevel>? ImportFrom { get; init; }
+}
 
 /// <summary>Applies the environment overlay levels of the launch chain. Values are expanded by <see cref="Placeholders.Expand"/>. Pure; no process state.</summary>
 public static class EnvExpansion
@@ -39,6 +49,26 @@ public static class EnvExpansion
             foreach (KeyValuePair<string, string?> entry in target)
             {
                 snapshot[entry.Key] = entry.Value;
+            }
+
+            if (level.ImportFrom is not null)
+            {
+                // The imported levels see the environment as it is here, and their values are not expanded by this level. They are a
+                // base file's top-level levels, so their ${configDir} is that file's directory, which is this level's Cwd.
+                ApplyLevels(snapshot, level.ImportFrom, level.Cwd, pathSeparator, inputs);
+                foreach (string name in level.Env.Keys)
+                {
+                    if (snapshot.TryGetValue(name, out string? value) && value is not null)
+                    {
+                        target[name] = value;
+                    }
+                    else
+                    {
+                        target.Remove(name);
+                    }
+                }
+
+                continue;
             }
 
             Func<string, string?> lookup = name => snapshot.TryGetValue(name, out string? value) ? value : null;

@@ -147,6 +147,8 @@ against the directory of the file.
 | `bufferLines` | `10000` | Output lines kept in memory per command. |
 | `logsDir` | `logs` | Directory for log files. |
 | `base` | | Path of a base config file to import (see [Base files](#base-files)). |
+| `env` | | Environment variables for every group of this file (see [Environment](#environment)); `${cwd}` is the file's folder. |
+| `baseEnv` | | Names to take from the base file's top-level `env`; needs `base` (see [Base files](#base-files)). |
 
 ### Groups
 
@@ -181,8 +183,9 @@ and the `cwd` and `env` of groups) may not contain NUL characters; such a config
 
 ### Environment
 
-`env` values are added to the environment cmdr was started with; `null` removes a variable. Groups'
-`env` apply to everything inside them, outermost first, then the command's own.
+`env` values are added to the environment cmdr was started with; `null` removes a variable. The levels apply in
+this order: the file's own level (the names of its `baseEnv`, then its top-level `env`), the groups' `env` outermost
+first, then the command's own `env`. Each level applies to everything inside it.
 
 Values can refer to other values:
 
@@ -224,6 +227,11 @@ Values are not remembered for the next run and are not written to the output or 
 `"base": "shared/cmdr.json"` (top level) imports another config file, which may import another in turn.
 The groups of the deepest base file are shown first, then each importing file's. Groups are not merged:
 the same group name may appear in different files.
+
+A base file's top-level `env` applies only to its own groups. To give the importing file's commands some of its
+variables, list their names in `baseEnv`, e.g. `"baseEnv": ["SHARED_HOME"]`. Each listed name takes the value it has
+in the base file's top-level environment (including that file's own imports at that point), or is removed when the
+base file does not set it. Names that are not listed are not imported.
 
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,

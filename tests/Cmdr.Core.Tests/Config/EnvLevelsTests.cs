@@ -116,5 +116,94 @@ public class EnvLevelsTests
         Assert.Equal(OperatingSystem.IsWindows() ? "/bin" : "", target["X"]);
     }
 
+    private static EnvLevel Import(string cwd, params string[] names) =>
+        new(names.ToDictionary(n => n, _ => (string?)null), cwd);
 
+    [Fact]
+    public void Import_PresentInBase_IsCopiedToTarget()
+    {
+        var target = Target(("A", "cmdr"));
+
+        Apply(target, Import("/a", "A") with { ImportFrom = new[] { Level("/base", ("A", "base")) } });
+
+        Assert.Equal("base", target["A"]);
+    }
+
+    [Fact]
+    public void Import_NameNotSetByBase_KeepsTheValueItHadBeforeTheImport()
+    {
+        // The base levels run on a copy of the environment at that point, so a name they do not set still has its value there.
+        // See the open question in the implementation notes: removal happens only when the name is absent from that copy.
+        var target = Target(("A", "cmdr"), ("KEEP", "k"));
+
+        Apply(target, Import("/a", "A") with { ImportFrom = new[] { Level("/base", ("OTHER", "x")) } });
+
+        Assert.Equal("cmdr", target["A"]);
+        Assert.Equal("k", target["KEEP"]);
+    }
+
+    [Fact]
+    public void Import_NameAbsentFromEnvironmentAndBase_StaysAbsent()
+    {
+        var target = Target(("KEEP", "k"));
+
+        Apply(target, Import("/a", "A") with { ImportFrom = new[] { Level("/base", ("OTHER", "x")) } });
+
+        Assert.False(target.ContainsKey("A"));
+        Assert.Equal("k", target["KEEP"]);
+    }
+
+    [Fact]
+    public void Import_OnlyNamedVariablesAreChanged()
+    {
+        var target = Target(("A", "cmdr"), ("B", "b-cmdr"));
+
+        Apply(target, Import("/a", "A") with { ImportFrom = new[] { Level("/base", ("A", "base"), ("C", "c-base")) } });
+
+        Assert.Equal("base", target["A"]);
+        Assert.Equal("b-cmdr", target["B"]);
+        Assert.False(target.ContainsKey("C"));
+    }
+
+    [Fact]
+    public void Import_ChainedThroughTwoBaseFiles_UsesTheMiddleFilesImport()
+    {
+        // deepest: X=deep. middle: imports X from deepest, and sets Y from it. The opened file imports X and Y from the middle.
+        EnvLevel[] deepest = { Level("/deepest", ("X", "deep")) };
+        EnvLevel[] middle =
+        {
+            Import("/middle", "X") with { ImportFrom = deepest },
+            Level("/middle", ("Y", "${env:X}!")),
+        };
+        var target = Target(("X", "cmdr"));
+
+        Apply(target, Import("/main", "X", "Y") with { ImportFrom = middle });
+
+        Assert.Equal("deep", target["X"]);
+        Assert.Equal("deep!", target["Y"]);
+    }
+
+    [Fact]
+    public void Import_ValuesOfTheBaseAreExpandedByTheBaseLevel_NotAgain()
+    {
+        var target = Target();
+
+        Apply(target, Import("/main", "A") with { ImportFrom = new[] { Level("/base/dir", ("A", "${cwd}/x")) } });
+
+        Assert.Equal("/base/dir/x", target["A"]);
+    }
+
+    [Fact]
+    public void Import_ImportedValueIsComputedAgainstTheEnvironmentAtThatPoint()
+    {
+        // The outer level changes A before the import; the base's value refers to A as it is then.
+        var target = Target(("A", "cmdr"));
+
+        Apply(
+            target,
+            Level("/main", ("A", "outer")),
+            Import("/main", "A") with { ImportFrom = new[] { Level("/base", ("A", "${env:A}+base")) } });
+
+        Assert.Equal("outer+base", target["A"]);
+    }
 }

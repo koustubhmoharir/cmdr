@@ -144,7 +144,7 @@ internal static class DetailsText
         LaunchSpec? launch = null;
         try
         {
-            launch = LaunchSpec.From(ancestors, spec, configDir);
+            launch = LaunchSpec.From(ancestors, spec, configDir, entry.Source.EnvLevels);
         }
         catch (Exception ex) when (IsPathError(ex))
         {

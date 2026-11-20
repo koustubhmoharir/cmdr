@@ -20,6 +20,10 @@ public class CommandSpec : ItemSpec
     /// </summary>
     public Dictionary<string, string?> Env { get; set; } = new();
 
+    /// <summary>Names of environment variables that are secret, as written in the configuration. Null means none. Omitted from the configuration file when null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Secret { get; set; }
+
     /// <summary>How the process is asked to stop.</summary>
     public StopSpec Stop { get; set; } = new();
 
@@ -56,6 +60,7 @@ public class CommandSpec : ItemSpec
         Args = new List<string>(Args),
         Cwd = Cwd,
         Env = new Dictionary<string, string?>(Env),
+        Secret = Secret is null ? null : new List<string>(Secret),
         Stop = new StopSpec { Method = Stop.Method, Input = Stop.Input },
         Log = new LogSpec { Enabled = Log.Enabled, Path = Log.Path },
         Ready = Ready?.Clone(),

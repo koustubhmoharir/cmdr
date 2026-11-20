@@ -38,7 +38,13 @@ public sealed partial class Session : IDisposable
     {
         _mode = mode;
         string openedDir = chain[^1].Dir;
-        var sources = chain.Select(file => new ConfigSource(file, openedDir)).ToList();
+        // Each file imports the one before it in the chain, so every source is built after the source of its base.
+        var sources = new List<ConfigSource>(chain.Count);
+        for (int i = 0; i < chain.Count; i++)
+        {
+            sources.Add(new ConfigSource(chain[i], openedDir, i > 0 ? sources[i - 1] : null));
+        }
+
         Sources = sources;
         MainSource = sources[^1];
 
@@ -430,7 +436,16 @@ public sealed partial class Session : IDisposable
     /// </summary>
     public CmdrConfig BuildConfig()
     {
-        var config = new CmdrConfig { Base = _base, BufferLines = MainSource.BufferLines, LogsDir = LogsDirSetting };
+        var config = new CmdrConfig
+        {
+            Base = _base,
+            BufferLines = MainSource.BufferLines,
+            LogsDir = LogsDirSetting,
+            Env = MainSource.Env is null ? null : new Dictionary<string, string?>(MainSource.Env),
+            EnvScript = MainSource.EnvScript,
+            BaseEnv = MainSource.BaseEnv is null ? null : new List<string>(MainSource.BaseEnv),
+            Secret = MainSource.Secret is null ? null : new List<string>(MainSource.Secret),
+        };
         foreach (GroupEntry group in _groups)
         {
             if (ReferenceEquals(group.Source, MainSource))
@@ -635,6 +650,8 @@ public sealed partial class Session : IDisposable
         GroupEntry group = NewGroup(
             new GroupSettings(spec.Name, spec.Description, spec.Mode, spec.Cwd, spec.Env, spec.Expanded ?? true),
             source);
+        group.EnvScript = spec.EnvScript?.Clone();
+        group.Secret = spec.Secret is null ? null : new List<string>(spec.Secret);
         foreach (ItemSpec item in spec.Items)
         {
             if (item is CommandSpec command)

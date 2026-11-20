@@ -101,11 +101,17 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 
 ### Environment and paths
 
-- `LaunchSpec.From(ancestors, spec, configDir)` resolves `cwd` through the group chain and collects one
-  `EnvLevel` per group with `env` plus the command's. `EnvExpansion.ApplyLevels` applies them outermost
-  first; each level's values expand against the environment as it was before that level (so `${env:PATH}`
-  is the parent's value). `${cwd}` is the effective cwd of the item that defines the value. Expansion is
-  `Placeholders.Expand`, the one placeholder syntax (`${env:NAME}`, `${input:NAME}`, built-ins, escape `$${`).
+- `LaunchSpec.From(ancestors, spec, configDir, fileLevels)` resolves `cwd` through the group chain and collects
+  the levels outermost first: the command's file (`ConfigSource.EnvLevels`, see below), one `EnvLevel` per group
+  with `env`, then the command's own. The file level is an import level (`EnvLevel.ImportFrom` set, from the base
+  file's `EnvLevels`, its keys the `baseEnv` names with null values) when `baseEnv` is non-empty, then the file's
+  top-level `env` level. `EnvExpansion.ApplyLevels` applies them outermost first; each level's values expand
+  against the environment as it was before that level (so `${env:PATH}` is the parent's value). An import level
+  applies the imported levels to a copy of the environment at that point, then sets each name that the copy has
+  and removes each name it lacks; its own keys are not expanded. Each `ConfigSource` is built after its base's
+  source, so the chain is resolved without a lookup. `${cwd}` is the effective cwd of the item that defines the
+  value (the file's folder for the file level). Expansion is `Placeholders.Expand`, the one placeholder syntax
+  (`${env:NAME}`, `${input:NAME}`, built-ins, escape `$${`).
 - Expansion happens at launch, not when the spec is built. `Session.StartEntry` checks the input values
   the arguments and env values need (`Placeholders.CheckInputs`), then passes them as `LaunchSpec.Inputs`
   (a private copy, never in `ToString`). The platform's `Prepare` applies the env levels with those inputs,

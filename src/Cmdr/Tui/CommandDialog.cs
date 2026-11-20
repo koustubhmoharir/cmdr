@@ -70,6 +70,9 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly IReadOnlyList<string>? _keptArgs;
     private readonly IReadOnlyDictionary<string, string?>? _keptEnv;
 
+    // The command's secret names as written; the dialog does not edit them, so they are saved as they are.
+    private readonly IReadOnlyList<string>? _secret;
+
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
     /// <param name="title">The dialog title, e.g. "Add command".</param>
@@ -98,6 +101,7 @@ internal sealed class CommandDialog : Dialog<bool>
         bool envEditable = EnvText.CanEdit(initial.Env);
         _keptArgs = argsEditable ? null : initial.Args.ToList();
         _keptEnv = envEditable ? null : new Dictionary<string, string?>(initial.Env);
+        _secret = initial.Secret?.ToList();
 
         _nameDraft = new FieldDraft(initial.Name);
         _programDraft = new FieldDraft(initial.Program);
@@ -273,7 +277,8 @@ internal sealed class CommandDialog : Dialog<bool>
         KeptCwd: _cwdDraft.KeptIfUnchanged(_cwd.Text),
         KeptLogPath: _logPathDraft.KeptIfUnchanged(_logPath.Text),
         KeptReadyPattern: _readyDraft.KeptIfUnchanged(_readyPattern.Text),
-        KeptBusyPattern: _busyDraft.KeptIfUnchanged(_busyPattern.Text));
+        KeptBusyPattern: _busyDraft.KeptIfUnchanged(_busyPattern.Text),
+        Secret: _secret);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)

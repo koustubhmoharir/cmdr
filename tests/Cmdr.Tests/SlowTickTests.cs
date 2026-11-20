@@ -21,7 +21,7 @@ public sealed class SlowTickTests
 
         Assert.False(MainController.ShowsElapsedTime(rows));
 
-        entry.Process.Start(LaunchSpec.From(Array.Empty<GroupSpec>(), spec, temp.Session.ConfigDir));
+        entry.Process.Start(LaunchSpec.From(Array.Empty<GroupSpec>(), spec, temp.Session.ConfigDir, Array.Empty<EnvLevel>()));
         try
         {
             Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);

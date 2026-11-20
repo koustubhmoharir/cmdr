@@ -297,4 +297,161 @@ public class SessionBaseConfigTests
         Assert.Empty(reopened.LoadErrors);
         Assert.Equal(new[] { "b", "m1", "m2", "new" }, reopened.Groups.Select(g => g.Name));
     }
+
+    /// <summary>A command that prints the value of each name, in brackets, so an unset variable is visible.</summary>
+    private static CommandSpec Print(string name, params string[] variables) =>
+        Sh(name, string.Join(" ", variables.Select(v => $"echo \"{v}=[${v}]\";")));
+
+    private static void StartAndWait(CmdrSession session, CommandEntry entry, string expected, IReadOnlyDictionary<string, string>? inputs = null)
+    {
+        Assert.Null(session.Activate(new[] { entry }, inputs));
+        WaitUntil(() => Text(entry.Process).Contains(expected, StringComparison.Ordinal), "output " + expected, entry.Process);
+    }
+
+    [Fact]
+    public void TopLevelEnv_ReachesCommandsOfTheOpenedFile()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_TOP"] = "top", ["CMDRTEST_DIR"] = "${cwd}/d" },
+            Groups = { Group("m", GroupMode.Parallel, Print("c", "CMDRTEST_TOP", "CMDRTEST_DIR")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+
+        StartAndWait(session, session.Groups[0].Commands[0], $"CMDRTEST_DIR=[{dir.File("d")}]");
+
+        Assert.Contains("CMDRTEST_TOP=[top]", Text(session.Groups[0].Commands[0].Process), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BaseEnv_OnlyOptedInNamesReachTheImportingFile()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_IMPORTED"] = "yes", ["CMDRTEST_NOT_IMPORTED"] = "no" },
+            Groups = { Group("b", GroupMode.Parallel, Sh("bcmd", "true")) },
+        }, dir.File(BaseRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = BaseRel,
+            BaseEnv = new List<string> { "CMDRTEST_IMPORTED" },
+            Groups = { Group("m", GroupMode.Parallel, Print("c", "CMDRTEST_IMPORTED", "CMDRTEST_NOT_IMPORTED")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+
+        CommandEntry entry = session.Groups[1].Commands[0];
+        StartAndWait(session, entry, "CMDRTEST_NOT_IMPORTED=[]");
+
+        Assert.Contains("CMDRTEST_IMPORTED=[yes]", Text(entry.Process), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BaseEnv_ImportedValue_ExpandsConfigDirAndCwdAsTheBaseFileDirectory()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_BASE_DIRS"] = "${configDir}|${cwd}" },
+            Groups = { Group("b", GroupMode.Parallel, Sh("bcmd", "true")) },
+        }, dir.File(BaseRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = BaseRel,
+            BaseEnv = new List<string> { "CMDRTEST_BASE_DIRS" },
+            Groups = { Group("m", GroupMode.Parallel, Print("c", "CMDRTEST_BASE_DIRS")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+
+        string baseDir = Path.GetDirectoryName(Path.GetFullPath(dir.File(BaseRel)))!;
+        StartAndWait(session, session.Groups[1].Commands[0], $"CMDRTEST_BASE_DIRS=[{baseDir}|{baseDir}]");
+    }
+
+    [Fact]
+    public void BaseFileGroups_SeeTheTopLevelEnvOfTheirOwnFile()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_BASE_TOP"] = "base-value" },
+            Groups = { Group("b", GroupMode.Parallel, Print("bcmd", "CMDRTEST_BASE_TOP")) },
+        }, dir.File(BaseRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = BaseRel,
+            Env = new Dictionary<string, string?> { ["CMDRTEST_BASE_TOP"] = "main-value" },
+            Groups = { Group("m", GroupMode.Parallel, Print("mcmd", "CMDRTEST_BASE_TOP")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+
+        CommandEntry baseEntry = session.Groups[0].Commands[0];
+        StartAndWait(session, baseEntry, "CMDRTEST_BASE_TOP=[base-value]");
+        CommandEntry mainEntry = session.Groups[1].Commands[0];
+        StartAndWait(session, mainEntry, "CMDRTEST_BASE_TOP=[main-value]");
+    }
+
+    [Fact]
+    public void ThreeFileChain_ImportsThroughTheMiddleFile()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        string deepRel = Path.Combine("shared", "deep.json");
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_DEEP"] = "deep", ["CMDRTEST_DEEP_ONLY"] = "x" },
+            Groups = { Group("d", GroupMode.Parallel, Sh("dcmd", "true")) },
+        }, dir.File(deepRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = "deep.json",
+            BaseEnv = new List<string> { "CMDRTEST_DEEP" },
+            Groups = { Group("b", GroupMode.Parallel, Sh("bcmd", "true")) },
+        }, dir.File(BaseRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = BaseRel,
+            BaseEnv = new List<string> { "CMDRTEST_DEEP" },
+            Groups = { Group("m", GroupMode.Parallel, Print("c", "CMDRTEST_DEEP", "CMDRTEST_DEEP_ONLY")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+
+        Assert.Empty(session.LoadErrors);
+        CommandEntry entry = session.Groups[2].Commands[0];
+        StartAndWait(session, entry, "CMDRTEST_DEEP=[deep]");
+        Assert.Contains("CMDRTEST_DEEP_ONLY=[]", Text(entry.Process), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InputInImportedBaseValue_IsRequestedAndReachesTheProcess()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var dir = new TempDir();
+        ConfigStore.Save(new CmdrConfig
+        {
+            Env = new Dictionary<string, string?> { ["CMDRTEST_GREETING"] = "hi-${input:who}" },
+            Groups = { Group("b", GroupMode.Parallel, Sh("bcmd", "true")) },
+        }, dir.File(BaseRel));
+        ConfigStore.Save(new CmdrConfig
+        {
+            Base = BaseRel,
+            BaseEnv = new List<string> { "CMDRTEST_GREETING" },
+            Groups = { Group("m", GroupMode.Parallel, Print("c", "CMDRTEST_GREETING")) },
+        }, dir.File("cmdr.json"));
+        using CmdrSession session = CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Run);
+        CommandEntry entry = session.Groups[1].Commands[0];
+
+        Assert.Equal(new[] { new InputRequest("who", false) }, session.InputsForActivate(new[] { entry }));
+        StartAndWait(session, entry, "CMDRTEST_GREETING=[hi-bob]", new Dictionary<string, string> { ["who"] = "bob" });
+    }
 }

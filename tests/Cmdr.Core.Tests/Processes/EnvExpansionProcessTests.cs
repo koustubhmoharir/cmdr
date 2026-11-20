@@ -34,7 +34,7 @@ public class EnvExpansionProcessTests
         };
 
         Directory.CreateDirectory(Path.Combine(dir.Path, "sub"));
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path);
+        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
         var p = new ManagedProcess(1000);
         try
         {
@@ -98,7 +98,7 @@ public class EnvExpansionProcessTests
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["FOO"] = "from-group" } };
         CommandSpec cmd = Printing("${env:FOO}");
 
-        Assert.Equal(new[] { "from-group" }, Run(LaunchSpec.From(new[] { group }, cmd, dir.Path), 1));
+        Assert.Equal(new[] { "from-group" }, Run(LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>()), 1));
     }
 
     [Fact]
@@ -111,7 +111,7 @@ public class EnvExpansionProcessTests
         CommandSpec cmd = Printing("${env:FOO}", "${env:FOO}-x");
         cmd.Env = new Dictionary<string, string?> { ["FOO"] = "own" };
 
-        Assert.Equal(new[] { "own", "own-x" }, Run(LaunchSpec.From(new[] { group }, cmd, dir.Path), 2));
+        Assert.Equal(new[] { "own", "own-x" }, Run(LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>()), 2));
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public class EnvExpansionProcessTests
         Directory.CreateDirectory(Path.Combine(dir.Path, "sub"));
         CommandSpec cmd = Printing("${cwd}", "${configDir}", "a${pathsep}b");
 
-        string[] lines = Run(LaunchSpec.From(new[] { group }, cmd, dir.Path), 3);
+        string[] lines = Run(LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>()), 3);
 
         Assert.Equal(
             new[] { Path.GetFullPath(Path.Combine(dir.Path, "sub")), Path.GetFullPath(dir.Path), "a:b" },
@@ -139,7 +139,7 @@ public class EnvExpansionProcessTests
         using var dir = new TempDir();
         CommandSpec cmd = Printing("$${env:FOO}");
 
-        Assert.Equal(new[] { "${env:FOO}" }, Run(LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path), 1));
+        Assert.Equal(new[] { "${env:FOO}" }, Run(LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path, Array.Empty<EnvLevel>()), 1));
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class EnvExpansionProcessTests
         using var dir = new TempDir();
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["V"] = "[${input:x}]" } };
         var cmd = new CommandSpec { Name = "c", Program = "sh", Args = { "-c", "printf '%s\\n' \"$V\"" } };
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path) with
+        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>()) with
         {
             Inputs = new Dictionary<string, string> { ["x"] = "hi" },
         };
@@ -166,7 +166,7 @@ public class EnvExpansionProcessTests
         using var dir = new TempDir();
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["FOO"] = "from-group" } };
         CommandSpec cmd = Printing("${input:x}", "${env:FOO}");
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path) with
+        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>()) with
         {
             Inputs = new Dictionary<string, string> { ["x"] = "${env:FOO}" },
         };

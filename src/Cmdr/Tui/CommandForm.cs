@@ -8,6 +8,7 @@ namespace Cmdr.Tui;
 /// The text and choices of the command dialog, as the user left them. A <c>Kept</c> value is the original of a field that is
 /// read-only or was not edited: it is saved exactly, and the text of that field is not used (see <see cref="FieldDraft"/>).
 /// <paramref name="KeptArgs"/> and <paramref name="KeptEnv"/> are the same for the args and env fields, whose text is not parsed.
+/// <paramref name="Secret"/> is not edited here: it is the command's secret names as they were, saved as they are.
 /// </summary>
 internal sealed record CommandFormValues(
     string Name,
@@ -31,7 +32,8 @@ internal sealed record CommandFormValues(
     KeptValue? KeptCwd = null,
     KeptValue? KeptLogPath = null,
     KeptValue? KeptReadyPattern = null,
-    KeptValue? KeptBusyPattern = null);
+    KeptValue? KeptBusyPattern = null,
+    IReadOnlyList<string>? Secret = null);
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -129,6 +131,7 @@ internal static class CommandForm
             },
             Leftovers = values.DetachLeftovers ? LeftoverMode.Detach : LeftoverMode.Track,
             Stdin = values.Stdin,
+            Secret = values.Secret?.ToList(),
             Ready = BuildReady(
                 SavedText.Pattern(values.ReadyPattern, values.KeptReadyPattern),
                 SavedText.Pattern(values.BusyPattern, values.KeptBusyPattern)),

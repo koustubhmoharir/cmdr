@@ -776,8 +776,8 @@ public sealed partial class Session
             {
                 CommandSpec spec = entry.Spec;
                 IReadOnlyList<GroupSpec> groups = entry.Group.SpecChain();
-                Placeholders.CheckInputs(LaunchTexts(groups, spec), inputs);
-                launch = LaunchSpec.From(groups, spec, entry.Source.Dir) with { Inputs = inputs };
+                Placeholders.CheckInputs(LaunchTexts(entry.Source.EnvLevels, groups, spec), inputs);
+                launch = LaunchSpec.From(groups, spec, entry.Source.Dir, entry.Source.EnvLevels) with { Inputs = inputs };
 
                 if (spec.Log.Enabled)
                 {
@@ -1820,20 +1820,26 @@ public sealed partial class Session
 
     /// <summary>
     /// The distinct inputs the commands need, in first-seen order: for each command, those of its arguments, then those of the env
-    /// values of its ancestor groups (outermost first) and of its own env (see <see cref="LaunchTexts"/>).
+    /// values of its file, its ancestor groups (outermost first) and its own env (see <see cref="LaunchTexts"/>).
     /// </summary>
     private static IReadOnlyList<InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
-        Placeholders.Requests(commands.SelectMany(c => LaunchTexts(c.Group.SpecChain(), c.Spec)));
+        Placeholders.Requests(commands.SelectMany(c => LaunchTexts(c.Source.EnvLevels, c.Group.SpecChain(), c.Spec)));
 
     /// <summary>
     /// The texts of a launch that are expanded at launch and may use input placeholders: the command's arguments, then the non-null
-    /// env values of each group above it (outermost first), then those of the command's own env.
+    /// env values of the file level (following the imports of a base file's values too, see <see cref="EnvLevel.ImportFrom"/>), then
+    /// those of each group above the command (outermost first), then those of the command's own env.
     /// </summary>
-    private static IEnumerable<string> LaunchTexts(IReadOnlyList<GroupSpec> groups, CommandSpec command)
+    private static IEnumerable<string> LaunchTexts(IReadOnlyList<EnvLevel> fileLevels, IReadOnlyList<GroupSpec> groups, CommandSpec command)
     {
         foreach (string arg in command.Args)
         {
             yield return arg;
+        }
+
+        foreach (string text in LevelTexts(fileLevels))
+        {
+            yield return text;
         }
 
         foreach (GroupSpec group in groups)
@@ -1857,6 +1863,29 @@ public sealed partial class Session
             if (value is not null)
             {
                 yield return value;
+            }
+        }
+    }
+
+    /// <summary>The non-null values of the levels, and of the levels they import, in order.</summary>
+    private static IEnumerable<string> LevelTexts(IEnumerable<EnvLevel> levels)
+    {
+        foreach (EnvLevel level in levels)
+        {
+            foreach (string? value in level.Env.Values)
+            {
+                if (value is not null)
+                {
+                    yield return value;
+                }
+            }
+
+            if (level.ImportFrom is not null)
+            {
+                foreach (string text in LevelTexts(level.ImportFrom))
+                {
+                    yield return text;
+                }
             }
         }
     }

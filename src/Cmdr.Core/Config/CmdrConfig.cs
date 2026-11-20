@@ -19,6 +19,28 @@ public class CmdrConfig
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Base { get; set; }
 
+    /// <summary>
+    /// Environment overlay of the whole file, applied before the groups (see <see cref="EnvLevel"/>). Its <c>${cwd}</c> is the folder
+    /// of the file. Null means none; null values remove a variable. Omitted from the configuration file when null.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, string?>? Env { get; set; }
+
+    /// <summary>The file's environment script (see <see cref="EnvScriptSpec"/>). Null means none. Omitted from the configuration file when null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EnvScriptSpec? EnvScript { get; set; }
+
+    /// <summary>
+    /// Names of variables to take from the top-level environment of the base file (see <see cref="Base"/>). Null means none. Only
+    /// allowed when <see cref="Base"/> is set. Omitted from the configuration file when null.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? BaseEnv { get; set; }
+
+    /// <summary>Names of environment variables that are secret, as written in the configuration. Null means none. Omitted from the configuration file when null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Secret { get; set; }
+
     /// <summary>Maximum number of output lines kept per command in memory.</summary>
     public int BufferLines { get; set; } = 10000;
 
@@ -49,6 +71,26 @@ public class CmdrConfig
         {
             errors.Add($"bufferLines must be greater than 0 (got {BufferLines}).");
         }
+
+        ValidateEnvNoNul(Env, "Top level", errors);
+        ValidateEnvPlaceholders(Env, "Top level", errors);
+
+        if (EnvScript is not null)
+        {
+            ValidateEnvScript(EnvScript, "envScript", errors);
+        }
+
+        if (BaseEnv is not null)
+        {
+            if (string.IsNullOrWhiteSpace(Base))
+            {
+                errors.Add("baseEnv needs base.");
+            }
+
+            ValidateEnvNames(BaseEnv, "baseEnv", errors);
+        }
+
+        ValidateEnvNames(Secret, "secret", errors);
 
         for (int g = 0; g < Groups.Count; g++)
         {
@@ -117,6 +159,7 @@ public class CmdrConfig
                     }
 
                     ValidateCommandStrings(cmd, label, errors);
+                    ValidateEnvNames(cmd.Secret, $"{label}: secret", errors);
 
                     if (cmd.Ready is not null)
                     {
@@ -173,6 +216,89 @@ public class CmdrConfig
         ValidateNoNul(group.Cwd, $"{label}: cwd", errors);
         ValidateEnvNoNul(group.Env, label, errors);
         ValidateEnvPlaceholders(group.Env, label, errors);
+
+        if (group.EnvScript is not null)
+        {
+            ValidateEnvScript(group.EnvScript, $"{label}: envScript", errors);
+        }
+
+        ValidateEnvNames(group.Secret, $"{label}: secret", errors);
+    }
+
+    /// <summary>
+    /// Checks an environment script: the program must not be blank, the program, each argument and the cwd must not contain NUL,
+    /// each argument must be a valid placeholder text (see <see cref="Placeholders.Errors"/>), and the timeout must be greater than 0
+    /// when set. Arguments are numbered from 1.
+    /// </summary>
+    private static void ValidateEnvScript(EnvScriptSpec script, string label, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(script.Program))
+        {
+            errors.Add($"{label}: program must not be blank.");
+        }
+
+        ValidateNoNul(script.Program, $"{label}: program", errors);
+        List<string> args = script.Args ?? new List<string>();
+        for (int a = 0; a < args.Count; a++)
+        {
+            string? arg = args[a];
+            if (arg is null)
+            {
+                errors.Add($"{label}: argument {a + 1} must be a string, not null.");
+                continue;
+            }
+
+            ValidateNoNul(arg, $"{label}: argument {a + 1}", errors);
+            foreach (string error in Placeholders.Errors(arg))
+            {
+                errors.Add($"{label}: argument {a + 1}: {error}");
+            }
+        }
+
+        ValidateNoNul(script.Cwd, $"{label}: cwd", errors);
+
+        if (script.TimeoutSeconds is { } timeout && timeout <= 0)
+        {
+            errors.Add($"{label}: timeoutSeconds must be greater than 0 (got {timeout}).");
+        }
+    }
+
+    /// <summary>
+    /// Checks a list of environment variable names (<c>baseEnv</c> or <c>secret</c>): each must be a valid name (see
+    /// <see cref="Placeholders.IsEnvName"/>), and no name may occur twice. Duplicates are exact (case-sensitive), as on Linux.
+    /// </summary>
+    private static void ValidateEnvNames(IReadOnlyList<string>? names, string label, List<string> errors)
+    {
+        if (names is null)
+        {
+            return;
+        }
+
+        var positions = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+        var order = new List<string>();
+        for (int i = 0; i < names.Count; i++)
+        {
+            string? name = names[i];
+            if (name is null || !Placeholders.IsEnvName(name))
+            {
+                errors.Add($"{label}: name '{(name ?? string.Empty).Replace('\0', '?')}' is not a valid environment variable name.");
+                continue;
+            }
+
+            if (!positions.TryGetValue(name, out List<int>? list))
+            {
+                list = new List<int>();
+                positions[name] = list;
+                order.Add(name);
+            }
+
+            list.Add(i + 1);
+        }
+
+        foreach (string name in order.Where(n => positions[n].Count > 1))
+        {
+            errors.Add($"{label}: duplicate name '{name}' ({FormatPositions(positions[name])}).");
+        }
     }
 
     /// <summary>

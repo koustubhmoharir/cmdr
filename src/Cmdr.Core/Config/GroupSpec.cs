@@ -30,6 +30,16 @@ public class GroupSpec : ItemSpec
     public Dictionary<string, string?>? Env { get; set; }
 
     /// <summary>
+    /// The environment script of the group (see <see cref="EnvScriptSpec"/>). Null means none. Omitted from the configuration file when null.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EnvScriptSpec? EnvScript { get; set; }
+
+    /// <summary>Names of environment variables that are secret, as written in the configuration. Null means none. Omitted from the configuration file when null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Secret { get; set; }
+
+    /// <summary>
     /// Whether the group starts expanded when the configuration is loaded. Null (omitted) and true mean expanded; only false is
     /// written. It does not follow the collapse state of the list while the program runs.
     /// </summary>
@@ -47,6 +57,8 @@ public class GroupSpec : ItemSpec
         Mode = Mode,
         Cwd = Cwd,
         Env = Env is null ? null : new Dictionary<string, string?>(Env),
+        EnvScript = EnvScript?.Clone(),
+        Secret = Secret is null ? null : new List<string>(Secret),
         Expanded = Expanded,
         Items = Items.Select(i => i.Clone()).ToList(),
     };

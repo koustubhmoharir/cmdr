@@ -11,7 +11,7 @@ namespace Cmdr.Core.Processes;
 /// <param name="Args">Arguments, passed without quoting.</param>
 /// <param name="WorkingDirectory">Absolute working directory.</param>
 /// <param name="EnvLevels">
-/// Environment overlays, outermost first: each enclosing group with an <c>env</c>, then the command's own.
+/// Environment overlays, outermost first: the file's levels, each enclosing group with an <c>env</c>, then the command's own.
 /// See <see cref="EnvExpansion.ApplyLevels"/>.
 /// </param>
 /// <param name="ConfigDir">Absolute config directory, the value of <c>${configDir}</c>.</param>
@@ -50,17 +50,20 @@ public sealed record LaunchSpec(
 
     /// <summary>
     /// Builds a launch request from a command and the groups that contain it (outermost first). The working directory and
-    /// each environment level are resolved against <paramref name="configDir"/>.
+    /// each environment level are resolved against <paramref name="configDir"/>. The environment levels of the command's file
+    /// (<paramref name="fileLevels"/>, see <c>ConfigSource.EnvLevels</c>) come first, then those of the groups, then the command's own.
     /// </summary>
-    /// <exception cref="ArgumentNullException"><paramref name="ancestors"/> or <paramref name="spec"/> is null.</exception>
+    /// <param name="fileLevels">The file level of the environment chain: the file's <c>baseEnv</c> import and its top-level <c>env</c>. Empty for none.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="ancestors"/>, <paramref name="spec"/> or <paramref name="fileLevels"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="configDir"/> is null or empty.</exception>
-    public static LaunchSpec From(IReadOnlyList<GroupSpec> ancestors, CommandSpec spec, string configDir)
+    public static LaunchSpec From(IReadOnlyList<GroupSpec> ancestors, CommandSpec spec, string configDir, IReadOnlyList<EnvLevel> fileLevels)
     {
         ArgumentNullException.ThrowIfNull(ancestors);
         ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(fileLevels);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
 
-        var levels = new List<EnvLevel>();
+        var levels = new List<EnvLevel>(fileLevels);
         string cwd = Path.GetFullPath(configDir);
         foreach (GroupSpec group in ancestors)
         {
@@ -123,7 +126,10 @@ public sealed record LaunchSpec(
         for (int i = 0; i < copy.Length; i++)
         {
             EnvLevel level = levels[i] ?? throw new ArgumentException("An environment level is null.", nameof(levels));
-            copy[i] = new EnvLevel(new Dictionary<string, string?>(level.Env), level.Cwd);
+            copy[i] = new EnvLevel(new Dictionary<string, string?>(level.Env), level.Cwd)
+            {
+                ImportFrom = level.ImportFrom is null ? null : CopyLevels(level.ImportFrom),
+            };
         }
 
         return copy;

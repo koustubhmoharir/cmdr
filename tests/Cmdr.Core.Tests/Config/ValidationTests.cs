@@ -695,4 +695,154 @@ public class ValidationTests
 
         Assert.Empty(config.Validate());
     }
+
+    [Fact]
+    public void TopLevelEnvScript_BlankProgram_IsReported()
+    {
+        var config = ValidConfig();
+        config.EnvScript = new EnvScriptSpec { Program = " " };
+
+        string error = Assert.Single(config.Validate());
+        Assert.Equal("envScript: program must not be blank.", error);
+    }
+
+    [Fact]
+    public void GroupEnvScript_ErrorsUseGroupLabel()
+    {
+        var config = ValidConfig();
+        config.Groups[0].EnvScript = new EnvScriptSpec { Program = "" };
+
+        string error = Assert.Single(config.Validate());
+        Assert.Equal("Group 'build': envScript: program must not be blank.", error);
+    }
+
+    [Fact]
+    public void EnvScript_NulInProgramArgumentOrCwd_IsReported()
+    {
+        var config = ValidConfig();
+        config.EnvScript = new EnvScriptSpec { Program = "p\0", Args = { "a", "b\0" }, Cwd = "c\0" };
+
+        string[] errors = config.Validate().ToArray();
+
+        Assert.Equal(3, errors.Length);
+        Assert.Contains("envScript: program contains a NUL character.", errors);
+        Assert.Contains("envScript: argument 2 contains a NUL character.", errors);
+        Assert.Contains("envScript: cwd contains a NUL character.", errors);
+    }
+
+    [Fact]
+    public void EnvScript_MalformedPlaceholderInArgument_IsReportedWithArgumentNumber()
+    {
+        var config = ValidConfig();
+        config.EnvScript = new EnvScriptSpec { Program = "p", Args = { "ok", "${HOME}" } };
+
+        string error = Assert.Single(config.Validate());
+        Assert.StartsWith("envScript: argument 2: ", error, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void EnvScript_TimeoutMustBePositiveWhenSet(int seconds)
+    {
+        var config = ValidConfig();
+        config.EnvScript = new EnvScriptSpec { Program = "p", TimeoutSeconds = seconds };
+
+        string error = Assert.Single(config.Validate());
+        Assert.Equal($"envScript: timeoutSeconds must be greater than 0 (got {seconds}).", error);
+    }
+
+    [Fact]
+    public void EnvScript_ValidSettingsAndUnsetTimeout_AreNotReported()
+    {
+        var config = ValidConfig();
+        config.EnvScript = new EnvScriptSpec { Program = "p", Args = { "--x=${env:HOME}" }, Cwd = "scripts", Rerun = EnvScriptRerun.EachStart };
+
+        Assert.Empty(config.Validate());
+    }
+
+    [Fact]
+    public void BaseEnv_WithoutBase_IsReported()
+    {
+        var config = ValidConfig();
+        config.BaseEnv = new List<string> { "HOME" };
+
+        string error = Assert.Single(config.Validate());
+        Assert.Equal("baseEnv needs base.", error);
+    }
+
+    [Fact]
+    public void BaseEnv_WithBase_IsAllowed()
+    {
+        var config = ValidConfig();
+        config.Base = "base.json";
+        config.BaseEnv = new List<string> { "HOME" };
+
+        Assert.Empty(config.Validate());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("A=B")]
+    [InlineData("X\0Y")]
+    public void BaseEnv_InvalidNameIsReported(string name)
+    {
+        var config = ValidConfig();
+        config.Base = "base.json";
+        config.BaseEnv = new List<string> { name };
+
+        string error = Assert.Single(config.Validate());
+        Assert.StartsWith("baseEnv: name '", error, StringComparison.Ordinal);
+        Assert.EndsWith("' is not a valid environment variable name.", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BaseEnv_DuplicateNamesAreReportedOnce_ButCaseVariantsAreNot()
+    {
+        var config = ValidConfig();
+        config.Base = "base.json";
+        config.BaseEnv = new List<string> { "HOME", "Path", "HOME", "PATH" };
+
+        string error = Assert.Single(config.Validate());
+        Assert.Equal("baseEnv: duplicate name 'HOME' (#1, #3).", error);
+    }
+
+    [Fact]
+    public void Secret_InvalidAndDuplicateNames_AreReportedAtEachLevel()
+    {
+        var config = ValidConfig();
+        config.Secret = new List<string> { "TOKEN", "TOKEN", "A=B" };
+        config.Groups[0].Secret = new List<string> { "" };
+        CommandSpec command = (CommandSpec)config.Groups[1].Items[0];
+        command.Secret = new List<string> { "X", "X" };
+
+        string[] errors = config.Validate().ToArray();
+
+        Assert.Equal(4, errors.Length);
+        Assert.Contains("secret: duplicate name 'TOKEN' (#1, #2).", errors);
+        Assert.Contains("secret: name 'A=B' is not a valid environment variable name.", errors);
+        Assert.Contains("Group 'build': secret: name '' is not a valid environment variable name.", errors);
+        Assert.Contains("Group 'servers' › command 'web': secret: duplicate name 'X' (#1, #2).", errors);
+    }
+
+    [Fact]
+    public void TopLevelEnv_NulAndMalformedPlaceholder_AreReported()
+    {
+        var config = ValidConfig();
+        config.Env = new Dictionary<string, string?> { ["BAD"] = "${HOME}", ["NUL\0"] = "x" };
+
+        string[] errors = config.Validate().ToArray();
+
+        Assert.Contains(errors, e => e.StartsWith("Top level: env name 'NUL?'", StringComparison.Ordinal));
+        Assert.Contains(errors, e => e.StartsWith("Top level: env 'BAD': ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TopLevelSecret_ValidNames_AreNotReported()
+    {
+        var config = ValidConfig();
+        config.Secret = new List<string> { "TOKEN", "API_KEY" };
+
+        Assert.Empty(config.Validate());
+    }
 }

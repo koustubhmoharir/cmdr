@@ -44,6 +44,15 @@ public sealed class GroupEntry : ItemEntry
     public IReadOnlyDictionary<string, string?>? Env { get; internal set; }
 
     /// <summary>
+    /// The group's environment script as written in the config (null when not set). The session keeps it so that saving does not lose it;
+    /// editing the group does not change it. Do not modify the returned object.
+    /// </summary>
+    public EnvScriptSpec? EnvScript { get; internal set; }
+
+    /// <summary>The group's secret names as written in the config (null when not set). Kept so saving does not lose it; editing the group does not change it.</summary>
+    public IReadOnlyList<string>? Secret { get; internal set; }
+
+    /// <summary>
     /// Whether the group starts expanded when the configuration is loaded. Only read at load: the list's collapse state is
     /// not kept in sync with it, and changing it does not change the list.
     /// </summary>
@@ -108,6 +117,8 @@ public sealed class GroupEntry : ItemEntry
         Mode = Mode,
         Cwd = Cwd,
         Env = Env is null ? null : new Dictionary<string, string?>(Env),
+        EnvScript = EnvScript?.Clone(),
+        Secret = Secret is null ? null : new List<string>(Secret),
         Expanded = Expanded ? null : false,
     };
 
