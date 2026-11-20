@@ -16,6 +16,12 @@ public sealed record EnvLevel(IReadOnlyDictionary<string, string?> Env, string C
     /// the imported levels. Null for an ordinary level.
     /// </summary>
     public IReadOnlyList<EnvLevel>? ImportFrom { get; init; }
+
+    /// <summary>
+    /// Makes this a literal level: its values are set as they are, with no placeholder expanded (a null removes the variable).
+    /// Used for the values an environment script produced, which are never expanded again. Ignored for an import level.
+    /// </summary>
+    public bool Literal { get; init; }
 }
 
 /// <summary>Applies the environment overlay levels of the launch chain. Values are expanded by <see cref="Placeholders.Expand"/>. Pure; no process state.</summary>
@@ -24,7 +30,8 @@ public static class EnvExpansion
     /// <summary>
     /// Applies the levels to <paramref name="target"/>, outermost first. Within a level every value is expanded against the
     /// environment as it was before that level, so <c>${env:PATH}</c> refers to the value from the outer level. A null value removes
-    /// the variable. Key comparison is left to <paramref name="target"/> (Windows environments are case-insensitive).
+    /// the variable. A literal level (<see cref="EnvLevel.Literal"/>) sets its values without expanding them. Key comparison is left
+    /// to <paramref name="target"/> (Windows environments are case-insensitive).
     /// </summary>
     /// <param name="inputs">
     /// The values of the input placeholders in the values, or null to keep them as written (for display). A launch passes its inputs.
@@ -65,6 +72,23 @@ public static class EnvExpansion
                     else
                     {
                         target.Remove(name);
+                    }
+                }
+
+                continue;
+            }
+
+            if (level.Literal)
+            {
+                foreach (KeyValuePair<string, string?> entry in level.Env)
+                {
+                    if (entry.Value is null)
+                    {
+                        target.Remove(entry.Key);
+                    }
+                    else
+                    {
+                        target[entry.Key] = entry.Value;
                     }
                 }
 

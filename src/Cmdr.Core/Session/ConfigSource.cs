@@ -9,6 +9,7 @@ namespace Cmdr.Core.Session;
 public sealed class ConfigSource
 {
     private readonly EnvScriptSpec? _envScript;
+    private readonly ConfigSource? _base;
 
     /// <param name="file">The file.</param>
     /// <param name="openedDir">The directory of the opened file.</param>
@@ -23,9 +24,10 @@ public sealed class ConfigSource
         BaseSetting = file.Config.Base;
         Env = file.Config.Env is null ? null : new Dictionary<string, string?>(file.Config.Env);
         _envScript = file.Config.EnvScript?.Clone();
+        _base = baseSource;
         BaseEnv = file.Config.BaseEnv is null ? null : new List<string>(file.Config.BaseEnv);
         Secret = file.Config.Secret is null ? null : new List<string>(file.Config.Secret);
-        EnvLevels = BuildEnvLevels(baseSource);
+        EnvLevels = EnvLevelsWith(ScriptValues.Empty);
         try
         {
             LogsDir = ConfigPaths.ResolveLogsDir(file.Config, Dir);
@@ -40,13 +42,39 @@ public sealed class ConfigSource
     }
 
     /// <summary>
-    /// The file level of the environment chain (see <see cref="EnvLevel"/>): the import of <see cref="BaseEnv"/> from the base file when
-    /// there is one, then the top-level <see cref="Env"/> when it is set. Both use <see cref="Dir"/> as their working directory.
+    /// The file's environment levels (see <see cref="EnvLevel"/>) with the values its environment script and its base's produced, given
+    /// as <paramref name="values"/>: the import of <see cref="BaseEnv"/> from the base file's levels (themselves with their values) when
+    /// there is one, then the literal level of this file's script when it has one and <paramref name="values"/> has its output, then
+    /// the top-level <see cref="Env"/> when it is set. Each uses <see cref="Dir"/> as its working directory, except the import, which
+    /// uses the base file's. With <see cref="ScriptValues.Empty"/> this is <see cref="EnvLevels"/>.
     /// </summary>
-    private IReadOnlyList<EnvLevel> BuildEnvLevels(ConfigSource? baseSource)
+    /// <exception cref="ArgumentNullException"><paramref name="values"/> is null.</exception>
+    public IReadOnlyList<EnvLevel> EnvLevelsWith(ScriptValues values)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+
+        var levels = new List<EnvLevel>(ImportLevelsWith(values));
+        if (_envScript is not null && values.TryGet(this, out IReadOnlyDictionary<string, string?>? scriptValues))
+        {
+            levels.Add(new EnvLevel(scriptValues, Dir) { Literal = true });
+        }
+
+        if (Env is not null)
+        {
+            levels.Add(new EnvLevel(new Dictionary<string, string?>(Env), Dir));
+        }
+
+        return levels;
+    }
+
+    /// <summary>
+    /// The levels of <see cref="EnvLevelsWith"/> that come before this file's own script: only the <see cref="BaseEnv"/> import (empty when
+    /// there is none). This is the environment a file's script runs in.
+    /// </summary>
+    internal IReadOnlyList<EnvLevel> ImportLevelsWith(ScriptValues values)
     {
         var levels = new List<EnvLevel>();
-        if (baseSource is not null && BaseEnv is { Count: > 0 } names)
+        if (_base is not null && BaseEnv is { Count: > 0 } names)
         {
             var imported = new Dictionary<string, string?>(StringComparer.Ordinal);
             foreach (string? name in names)
@@ -58,16 +86,14 @@ public sealed class ConfigSource
             }
 
             // The import level's directory is the base file's: it is what ${cwd} and ${configDir} mean in the imported values.
-            levels.Add(new EnvLevel(imported, baseSource.Dir) { ImportFrom = baseSource.EnvLevels });
-        }
-
-        if (Env is not null)
-        {
-            levels.Add(new EnvLevel(new Dictionary<string, string?>(Env), Dir));
+            levels.Add(new EnvLevel(imported, _base.Dir) { ImportFrom = _base.EnvLevelsWith(values) });
         }
 
         return levels;
     }
+
+    /// <summary>The source of the file this one imports (its <c>base</c>), or null when it imports none.</summary>
+    internal ConfigSource? BaseSource => _base;
 
     /// <summary>Full path of the file.</summary>
     public string Path { get; }
@@ -92,7 +118,8 @@ public sealed class ConfigSource
 
     /// <summary>
     /// The environment this file adds to every command of the session that is defined in it, outermost first, before the groups
-    /// (see <see cref="EnvLevel"/>). Empty when the file has neither a top-level <c>env</c> nor a <c>baseEnv</c> import.
+    /// (see <see cref="EnvLevel"/>), without any environment script's values (see <see cref="EnvLevelsWith"/>). Empty when the file has
+    /// neither a top-level <c>env</c> nor a <c>baseEnv</c> import.
     /// </summary>
     public IReadOnlyList<EnvLevel> EnvLevels { get; }
 

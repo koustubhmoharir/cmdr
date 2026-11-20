@@ -54,25 +54,30 @@ public sealed record LaunchSpec(
     /// (<paramref name="fileLevels"/>, see <c>ConfigSource.EnvLevels</c>) come first, then those of the groups, then the command's own.
     /// </summary>
     /// <param name="fileLevels">The file level of the environment chain: the file's <c>baseEnv</c> import and its top-level <c>env</c>. Empty for none.</param>
+    /// <param name="groupScriptValues">
+    /// The values of each ancestor group's environment script, aligned with <paramref name="ancestors"/>; null for a group whose script
+    /// produced none. A group with values gets a literal level before its <c>env</c> level. Null when no group has values.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="ancestors"/>, <paramref name="spec"/> or <paramref name="fileLevels"/> is null.</exception>
-    /// <exception cref="ArgumentException"><paramref name="configDir"/> is null or empty.</exception>
-    public static LaunchSpec From(IReadOnlyList<GroupSpec> ancestors, CommandSpec spec, string configDir, IReadOnlyList<EnvLevel> fileLevels)
+    /// <exception cref="ArgumentException"><paramref name="configDir"/> is null or empty, or <paramref name="groupScriptValues"/> does not have one entry per ancestor.</exception>
+    public static LaunchSpec From(
+        IReadOnlyList<GroupSpec> ancestors,
+        CommandSpec spec,
+        string configDir,
+        IReadOnlyList<EnvLevel> fileLevels,
+        IReadOnlyList<IReadOnlyDictionary<string, string?>?>? groupScriptValues = null)
     {
         ArgumentNullException.ThrowIfNull(ancestors);
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(fileLevels);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
+        if (groupScriptValues is not null && groupScriptValues.Count != ancestors.Count)
+        {
+            throw new ArgumentException("There must be one script value entry per ancestor group.", nameof(groupScriptValues));
+        }
 
         var levels = new List<EnvLevel>(fileLevels);
-        string cwd = Path.GetFullPath(configDir);
-        foreach (GroupSpec group in ancestors)
-        {
-            cwd = ConfigPaths.ResolveDir(group.Cwd, cwd);
-            if (group.Env is not null)
-            {
-                levels.Add(new EnvLevel(group.Env, cwd));
-            }
-        }
+        levels.AddRange(GroupLevels(ancestors, groupScriptValues, Path.GetFullPath(configDir), out string cwd));
 
         string workingDirectory = ConfigPaths.ResolveDir(spec.Cwd, cwd);
         levels.Add(new EnvLevel(spec.Env, workingDirectory));
@@ -151,6 +156,38 @@ public sealed record LaunchSpec(
         return Args.Select(arg => Placeholders.Expand(arg, env, inputs, WorkingDirectory, ConfigDir, pathSeparator)).ToArray();
     }
 
+    /// <summary>
+    /// The environment levels of a chain of groups, outermost first, from <paramref name="startCwd"/>: for each group with values in
+    /// <paramref name="scriptValues"/> a literal level (its environment script's output), then one level for its <c>env</c> when it has
+    /// one. Each level's directory is that group's effective working directory. <paramref name="cwd"/> receives the effective working
+    /// directory of the innermost group (<paramref name="startCwd"/> when there are none).
+    /// </summary>
+    internal static List<EnvLevel> GroupLevels(
+        IReadOnlyList<GroupSpec> groups,
+        IReadOnlyList<IReadOnlyDictionary<string, string?>?>? scriptValues,
+        string startCwd,
+        out string cwd)
+    {
+        var levels = new List<EnvLevel>();
+        cwd = startCwd;
+        for (int i = 0; i < groups.Count; i++)
+        {
+            GroupSpec group = groups[i];
+            cwd = ConfigPaths.ResolveDir(group.Cwd, cwd);
+            if (scriptValues?[i] is { } values)
+            {
+                levels.Add(new EnvLevel(values, cwd) { Literal = true });
+            }
+
+            if (group.Env is not null)
+            {
+                levels.Add(new EnvLevel(group.Env, cwd));
+            }
+        }
+
+        return levels;
+    }
+
     private static IReadOnlyDictionary<string, string> CopyInputs(IReadOnlyDictionary<string, string> inputs)
     {
         ArgumentNullException.ThrowIfNull(inputs);
@@ -173,6 +210,7 @@ public sealed record LaunchSpec(
             copy[i] = new EnvLevel(new Dictionary<string, string?>(level.Env), level.Cwd)
             {
                 ImportFrom = level.ImportFrom is null ? null : CopyLevels(level.ImportFrom),
+                Literal = level.Literal,
             };
         }
 

@@ -776,8 +776,10 @@ public sealed partial class Session
             {
                 CommandSpec spec = entry.Spec;
                 IReadOnlyList<GroupSpec> groups = entry.Group.SpecChain();
-                Placeholders.CheckInputs(LaunchTexts(entry.Source.EnvLevels, groups, spec), inputs);
-                launch = LaunchSpec.From(groups, spec, entry.Source.Dir, entry.Source.EnvLevels) with { Inputs = inputs };
+                (IReadOnlyList<EnvLevel> fileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> groupValues) =
+                    EnvironmentFor(entry, ScriptValues.Empty);
+                Placeholders.CheckInputs(LaunchTexts(fileLevels, groups, spec, OwnerArgs(entry)), inputs);
+                launch = LaunchSpec.From(groups, spec, entry.Source.Dir, fileLevels, groupValues) with { Inputs = inputs };
 
                 if (spec.Log.Enabled)
                 {
@@ -1819,20 +1821,31 @@ public sealed partial class Session
         inputs is null ? NoInputs : new Dictionary<string, string>(inputs);
 
     /// <summary>
-    /// The distinct inputs the commands need, in first-seen order: for each command, those of its arguments, then those of the env
-    /// values of its file, its ancestor groups (outermost first) and its own env (see <see cref="LaunchTexts"/>).
+    /// The distinct inputs the commands need, in first-seen order: for each command, those of its arguments and of its environment
+    /// scripts' arguments, then those of the env values of its file, its ancestor groups (outermost first) and its own env (see
+    /// <see cref="LaunchTexts"/>).
     /// </summary>
     private static IReadOnlyList<InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
-        Placeholders.Requests(commands.SelectMany(c => LaunchTexts(c.Source.EnvLevels, c.Group.SpecChain(), c.Spec)));
+        Placeholders.Requests(commands.SelectMany(c => LaunchTexts(c.Source.EnvLevels, c.Group.SpecChain(), c.Spec, OwnerArgs(c))));
 
     /// <summary>
-    /// The texts of a launch that are expanded at launch and may use input placeholders: the command's arguments, then the non-null
-    /// env values of the file level (following the imports of a base file's values too, see <see cref="EnvLevel.ImportFrom"/>), then
-    /// those of each group above the command (outermost first), then those of the command's own env.
+    /// The texts of a launch that are expanded at launch and may use input placeholders: the command's arguments, then the arguments of
+    /// its environment scripts (<paramref name="ownerArgs"/>), then the non-null env values of the file level (following the imports of a
+    /// base file's values too, see <see cref="EnvLevel.ImportFrom"/>), then those of each group above the command (outermost first), then
+    /// those of the command's own env.
     /// </summary>
-    private static IEnumerable<string> LaunchTexts(IReadOnlyList<EnvLevel> fileLevels, IReadOnlyList<GroupSpec> groups, CommandSpec command)
+    private static IEnumerable<string> LaunchTexts(
+        IReadOnlyList<EnvLevel> fileLevels,
+        IReadOnlyList<GroupSpec> groups,
+        CommandSpec command,
+        IEnumerable<string> ownerArgs)
     {
         foreach (string arg in command.Args)
+        {
+            yield return arg;
+        }
+
+        foreach (string arg in ownerArgs)
         {
             yield return arg;
         }
@@ -1867,10 +1880,13 @@ public sealed partial class Session
         }
     }
 
-    /// <summary>The non-null values of the levels, and of the levels they import, in order.</summary>
+    /// <summary>
+    /// The non-null values of the levels, and of the levels they import, in order. A literal level (a script's output) is not text the
+    /// user writes, so it is skipped: it is never expanded.
+    /// </summary>
     private static IEnumerable<string> LevelTexts(IEnumerable<EnvLevel> levels)
     {
-        foreach (EnvLevel level in levels)
+        foreach (EnvLevel level in levels.Where(level => !level.Literal))
         {
             foreach (string? value in level.Env.Values)
             {

@@ -558,13 +558,14 @@ public sealed partial class Session : IDisposable
     }
 
     /// <summary>
-    /// Releases the session: revokes pending restarts, cancels sequences, unsubscribes and disposes all processes, then waits up
+    /// Releases the session: revokes pending restarts, cancels running environment scripts, cancels sequences, unsubscribes and disposes all processes, then waits up
     /// to two seconds in total for their logs to be written. Does not kill processes on Linux. A restart that was pending
     /// completes with <see cref="OperationCanceledException"/> and starts nothing.
     /// </summary>
     public void Dispose()
     {
         RevokeRestarts(_ => true, force: false);
+        _envCache.Dispose();
 
         List<SequenceRun> runs;
         List<CommandEntry> entries;

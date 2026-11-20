@@ -252,7 +252,25 @@ cancellation, or when stdout is too large; each ends by killing the whole tree (
 pipes open), and the streams are then read for at most 2 s, so a pipe held by an escaped process cannot hang the
 caller. A non-zero exit is a failure whatever the output. The outcome is an `EnvScriptResult`: the values, or a
 one-line error that names no value (its stdout is never echoed). `${cwd}` in its arguments is the script's own
-working directory. The runner has no session or UI integration yet.
+working directory.
+
+**Environment scripts in the session (`Session.PrepareEnvAsync`).** The owners of a set of commands are the
+scripts their environments reach: a file's `envScript` when the file's own levels reach the command (its own file,
+or a base file that a `baseEnv` imports from, recursively; a base without `baseEnv` is not reached), and each
+group above the command that has one. Owners run one at a time, base file first and then groups by depth, so
+each script sees the values of the scripts that come before it in its chain. A file's script runs in the file's
+`baseEnv` import levels only (its own `env` applies after it); a group's script runs in the file's levels with the
+values so far and the groups above it (not its own `env`). Script output enters the chain as literal levels
+(`EnvLevel.Literal`: set as written, never expanded), placed before the file's `env` and before each group's `env`, so
+an `env` value can read `${env:NAME}` from a script and override it. `ScriptValues` maps each owner (by reference) to its
+output. `EnvScriptCache` holds the results: a successful `once` run is reused for the same owner while its fingerprint
+is unchanged (program, args, working directory, timeout, rerun, the environment it runs in with the inputs, and the
+values of the inputs its arguments use); `eachStart` runs are never reused, failures are never reused, and concurrent
+requests share one in-flight run. When the last waiter of an unfinished run leaves, the run is cancelled and the script
+is killed. `RefreshEnvScripts` drops an item's owners' results; `LastEnvScriptRun` gives the last outcome for display.
+A failing script stops the preparation: its label (`file 'cmdr.json'` or `group 'a › b'`), error and the last stderr
+lines are written to each command that needs it. The arguments of the owners' scripts are part of the commands' inputs.
+Start paths do not use the values yet.
 
 ## Session tree (runtime)
 
