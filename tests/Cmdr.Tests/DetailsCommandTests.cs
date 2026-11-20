@@ -45,7 +45,7 @@ public sealed class DetailsCommandTests : IDisposable
             Env = new Dictionary<string, string?>
             {
                 ["TOP"] = "t",
-                ["PATHX"] = "${PATHX}${pathsep}/top",
+                ["PATHX"] = "${env:PATHX}${pathsep}/top",
                 ["SHARED"] = "outer",
             },
             Items =
@@ -56,7 +56,7 @@ public sealed class DetailsCommandTests : IDisposable
                     Cwd = "sub",
                     Env = new Dictionary<string, string?>
                     {
-                        ["SHARED"] = "${SHARED}-mid",
+                        ["SHARED"] = "${env:SHARED}-mid",
                         ["GONE"] = null,
                         ["HERE"] = "${cwd}/x",
                     },
@@ -71,8 +71,8 @@ public sealed class DetailsCommandTests : IDisposable
                             Description = "a\nb\nc\nd\ne",
                             Env = new Dictionary<string, string?>
                             {
-                                ["SHARED"] = "${SHARED}+cmd",
-                                ["OWN"] = "${configDir}|${SHARED}",
+                                ["SHARED"] = "${env:SHARED}+cmd",
+                                ["OWN"] = "${configDir}|${env:SHARED}",
                             },
                         },
                     },
@@ -262,7 +262,7 @@ public sealed class DetailsCommandTests : IDisposable
         var levels = new List<EnvLevel>
         {
             new(new Dictionary<string, string?> { ["B"] = "1", ["A"] = "2" }, "/w"),
-            new(new Dictionary<string, string?> { ["B"] = "3", ["C"] = "${B}" }, "/w"),
+            new(new Dictionary<string, string?> { ["B"] = "3", ["C"] = "${env:B}" }, "/w"),
         };
 
         IReadOnlyList<string> lines = DetailsText.Plain(DetailsText.EnvLines(levels, "/conf", new Dictionary<string, string?>(), windows: false, '/'));

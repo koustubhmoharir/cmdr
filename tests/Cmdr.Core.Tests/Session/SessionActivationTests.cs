@@ -40,7 +40,7 @@ public class SessionActivationTests
             WaitForText(a.Process, "a:[x]");
 
             PreparedActivation prepared = session.PrepareActivate(group);
-            Assert.Equal(new[] { new InputPlaceholders.InputRequest("a", false) }, prepared.Requests);
+            Assert.Equal(new[] { new InputRequest("a", false) }, prepared.Requests);
 
             // a is running, so it is not startable when Enter is pressed. It exits, and becomes startable, after the decision.
             a.Process.ForceKill();

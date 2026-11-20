@@ -17,7 +17,7 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
     private const int MaxFieldWidth = 60;
 
     private readonly IApplication _app;
-    private readonly IReadOnlyList<InputPlaceholders.InputRequest> _requests;
+    private readonly IReadOnlyList<InputRequest> _requests;
     private readonly TextField[] _fields;
     private readonly Label[] _labels;
     private readonly View _form;
@@ -26,7 +26,7 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
     /// <param name="app">The application, for the message boxes and the screen size.</param>
     /// <param name="what">What is being started, shown in the title: a command name, a group path or "N commands".</param>
     /// <param name="requests">The inputs, in order. Must not be empty.</param>
-    private InputDialog(IApplication app, string what, IReadOnlyList<InputPlaceholders.InputRequest> requests)
+    private InputDialog(IApplication app, string what, IReadOnlyList<InputRequest> requests)
     {
         ArgumentNullException.ThrowIfNull(requests);
         if (requests.Count == 0)
@@ -106,7 +106,7 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
     public static IReadOnlyDictionary<string, string>? Ask(
         IApplication app,
         string what,
-        IReadOnlyList<InputPlaceholders.InputRequest> requests)
+        IReadOnlyList<InputRequest> requests)
     {
         ArgumentNullException.ThrowIfNull(app);
         using var dialog = new InputDialog(app, what, requests);
@@ -114,7 +114,7 @@ internal sealed class InputDialog : Dialog<IReadOnlyDictionary<string, string>>
         return dialog.Result;
     }
 
-    private static string LabelOf(InputPlaceholders.InputRequest request) =>
+    private static string LabelOf(InputRequest request) =>
         request.AllowEmpty ? request.Name + " (optional)" : request.Name;
 
     /// <summary>The dialog's width on a screen this wide: room for the longest label and a field, within the screen.</summary>

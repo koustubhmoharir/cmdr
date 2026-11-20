@@ -413,14 +413,92 @@ public class ValidationTests
 
         string error = Assert.Single(config.Validate());
 
-        Assert.Equal("Group 'g' › command 'x': args[1]: malformed input placeholder '${input:a b}'", error);
+        Assert.Equal("Group 'g' › command 'x': argument 2: malformed placeholder '${input:a b}'", error);
     }
 
     [Fact]
     public void WellFormedInputPlaceholders_AndEscapes_AreValid()
     {
         var config = ValidConfig();
-        ((CommandSpec)config.Groups[1].Items[0]).Args = new List<string> { "${input:x}", "--n=${input:n?}", "$${input:literal}" };
+        ((CommandSpec)config.Groups[1].Items[0]).Args = new List<string> { "${input:x}", "--n=${input:n?}", "$${input:literal}", "${env:PATH}", "$${" };
+
+        Assert.Empty(config.Validate());
+    }
+
+    [Fact]
+    public void BareNameInArgument_IsReportedWithCommandLabel()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Items = { new CommandSpec { Name = "x", Program = "p", Args = new List<string> { "${PATH}" } } },
+                },
+            },
+        };
+
+        string error = Assert.Single(config.Validate());
+
+        Assert.Equal(
+            "Group 'g' › command 'x': argument 1: unknown placeholder '${PATH}' (write ${env:PATH} for a variable, or $${ for a literal ${)",
+            error);
+    }
+
+    [Fact]
+    public void BareNameInEnvValue_IsReportedWithItsLabelAndName()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Env = new Dictionary<string, string?> { ["BAZ"] = "${PATH}" },
+                    Items = { new CommandSpec { Name = "x", Program = "p", Env = new Dictionary<string, string?> { ["Q"] = "a ${PATH}" } } },
+                },
+            },
+        };
+
+        IReadOnlyList<string> errors = config.Validate();
+
+        Assert.Equal(
+            new[]
+            {
+                "Group 'g': env 'BAZ': unknown placeholder '${PATH}' (write ${env:PATH} for a variable, or $${ for a literal ${)",
+                "Group 'g' › command 'x': env 'Q': unknown placeholder '${PATH}' (write ${env:PATH} for a variable, or $${ for a literal ${)",
+            },
+            errors);
+    }
+
+    [Fact]
+    public void InputPlaceholderInEnvValue_IsReported()
+    {
+        var config = new CmdrConfig
+        {
+            Groups =
+            {
+                new GroupSpec
+                {
+                    Name = "g",
+                    Items = { new CommandSpec { Name = "x", Program = "p", Env = new Dictionary<string, string?> { ["Q"] = "v${input:x?}" } } },
+                },
+            },
+        };
+
+        string error = Assert.Single(config.Validate());
+
+        Assert.Equal("Group 'g' › command 'x': env 'Q': input placeholders are not supported in env values", error);
+    }
+
+    [Fact]
+    public void EnvReferencesAndEscapes_InEnvValues_AreValid()
+    {
+        var config = ValidConfig();
+        ((CommandSpec)config.Groups[1].Items[0]).Env = new Dictionary<string, string?> { ["Q"] = "${env:PATH}${pathsep}$${env:X}${cwd}" };
 
         Assert.Empty(config.Validate());
     }
@@ -608,7 +686,7 @@ public class ValidationTests
                             Program = "p",
                             Args = { "a", "--b=${input:c}" },
                             Cwd = "x",
-                            Env = new Dictionary<string, string?> { ["BAZ"] = "${PATH}" },
+                            Env = new Dictionary<string, string?> { ["BAZ"] = "${env:PATH}" },
                             Stop = new StopSpec { Method = StopMethod.Input, Input = "q\n" },
                             Log = new LogSpec { Enabled = true, Path = "w.log" },
                         },

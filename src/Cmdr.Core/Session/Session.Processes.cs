@@ -61,7 +61,7 @@ public sealed partial class Session
             refused = CommandsRefusal(group, startable) is not null;
         }
 
-        IReadOnlyList<InputPlaceholders.InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
+        IReadOnlyList<InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
         return new PreparedActivation(this, group, isGroup: false, targets.ToList(), Array.Empty<CommandEntry>(), startable, requests);
     }
 
@@ -192,7 +192,7 @@ public sealed partial class Session
             refused = GroupRefusal(group, children) is not null;
         }
 
-        IReadOnlyList<InputPlaceholders.InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
+        IReadOnlyList<InputRequest> requests = refused ? NoRequests : RequestsFor(startable);
         return new PreparedActivation(this, group, isGroup: true, Array.Empty<CommandEntry>(), Array.Empty<CommandEntry>(), startable, requests);
     }
 
@@ -608,7 +608,7 @@ public sealed partial class Session
     /// these targets: none when it would only kill, or would start nothing. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(IReadOnlyList<CommandEntry> targets) =>
+    public IReadOnlyList<InputRequest> InputsForActivate(IReadOnlyList<CommandEntry> targets) =>
         PlanActivate(targets).Requests;
 
     /// <summary>
@@ -616,7 +616,7 @@ public sealed partial class Session
     /// when it would only kill, or would be refused. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForActivate(GroupEntry group) =>
+    public IReadOnlyList<InputRequest> InputsForActivate(GroupEntry group) =>
         PlanActivate(group).Requests;
 
     /// <summary>
@@ -626,12 +626,12 @@ public sealed partial class Session
     /// allowing for the runs the restart cancels and the commands it stops. Empty when no input is needed.
     /// </summary>
     /// <exception cref="ArgumentException">The targets are not all in the same group, or are not distinct commands in file order.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets)
+    public IReadOnlyList<InputRequest> InputsForRestart(IReadOnlyList<CommandEntry> targets)
     {
         GroupEntry? group = GroupOf(targets);
         if (group is null)
         {
-            return Array.Empty<InputPlaceholders.InputRequest>();
+            return Array.Empty<InputRequest>();
         }
 
         List<CommandEntry> willStart = targets.Where(WillStartAfterStop).ToList();
@@ -659,7 +659,7 @@ public sealed partial class Session
     /// Empty when the restart's start would be refused, allowing for the runs the restart cancels and the commands it stops.
     /// </summary>
     /// <exception cref="ArgumentException">The group does not belong to this session.</exception>
-    public IReadOnlyList<InputPlaceholders.InputRequest> InputsForRestart(GroupEntry group)
+    public IReadOnlyList<InputRequest> InputsForRestart(GroupEntry group)
     {
         EnsureOwned(group);
         List<PlanNode> children;
@@ -776,7 +776,7 @@ public sealed partial class Session
                 CommandSpec spec = entry.Spec;
                 launch = LaunchSpec.From(entry.Group.SpecChain(), spec, entry.Source.Dir) with
                 {
-                    Args = InputPlaceholders.Substitute(spec.Args, inputs),
+                    Args = spec.Args.Select(arg => Placeholders.SubstituteInputs(arg, inputs)).ToList(),
                 };
 
                 if (spec.Log.Enabled)
@@ -1812,15 +1812,15 @@ public sealed partial class Session
 
     private static readonly IReadOnlyDictionary<string, string> NoInputs = new Dictionary<string, string>();
 
-    private static readonly IReadOnlyList<InputPlaceholders.InputRequest> NoRequests = Array.Empty<InputPlaceholders.InputRequest>();
+    private static readonly IReadOnlyList<InputRequest> NoRequests = Array.Empty<InputRequest>();
 
     /// <summary>A private copy of the input values, so that a running action does not see later changes. Null means no values.</summary>
     private static IReadOnlyDictionary<string, string> Freeze(IReadOnlyDictionary<string, string>? inputs) =>
         inputs is null ? NoInputs : new Dictionary<string, string>(inputs);
 
     /// <summary>The distinct inputs the commands' arguments need, in first-seen order.</summary>
-    private static IReadOnlyList<InputPlaceholders.InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
-        InputPlaceholders.Requests(commands.Select(c => (IReadOnlyList<string>)c.Spec.Args).ToList());
+    private static IReadOnlyList<InputRequest> RequestsFor(IEnumerable<CommandEntry> commands) =>
+        Placeholders.Requests(commands.SelectMany(c => c.Spec.Args));
 
     /// <summary>The commands planned at or below the steps, in order.</summary>
     private static List<CommandEntry> CollectCommands(IEnumerable<PlanNode> steps)

@@ -15,7 +15,7 @@ public sealed class InputDialogLayoutTests
         using var app = Application.Create();
         app.Init("ansi");
         var requests = Enumerable.Range(0, 30)
-            .Select(i => new InputPlaceholders.InputRequest(i == 29 ? new string('x', 100) : $"input{i}", false))
+            .Select(i => new InputRequest(i == 29 ? new string('x', 100) : $"input{i}", false))
             .ToArray();
         ConstructorInfo constructor = typeof(InputDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
         using var dialog = (InputDialog)constructor.Invoke(new object[] { app, "test", requests });
@@ -50,7 +50,7 @@ public sealed class InputDialogLayoutTests
         app.Init("ansi");
         app.Driver!.SetScreenSize(80, 24);
         var requests = Enumerable.Range(0, 30)
-            .Select(i => new InputPlaceholders.InputRequest(i == 29 ? new string('x', 100) : $"input{i}", false))
+            .Select(i => new InputRequest(i == 29 ? new string('x', 100) : $"input{i}", false))
             .ToArray();
         ConstructorInfo constructor = typeof(InputDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
         using var dialog = (InputDialog)constructor.Invoke(new object[] { app, "test", requests });
@@ -156,7 +156,7 @@ public sealed class InputDialogLayoutTests
 
     private static InputDialog CreateDialog(IApplication app, string[] names)
     {
-        var requests = names.Select(name => new InputPlaceholders.InputRequest(name, false)).ToArray();
+        var requests = names.Select(name => new InputRequest(name, false)).ToArray();
         ConstructorInfo constructor = typeof(InputDialog).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
         return (InputDialog)constructor.Invoke(new object[] { app, "test", requests });
     }

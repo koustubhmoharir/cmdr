@@ -1481,11 +1481,11 @@ internal sealed class MainController : IDisposable, IListSearchHost
         PreparedRestart prepared;
         try
         {
-            IReadOnlyList<InputPlaceholders.InputRequest> requests = target switch
+            IReadOnlyList<InputRequest> requests = target switch
             {
                 GroupTarget group => _session.InputsForRestart(group.Group),
                 CommandsTarget commands => _session.InputsForRestart(commands.Commands),
-                _ => Array.Empty<InputPlaceholders.InputRequest>(),
+                _ => Array.Empty<InputRequest>(),
             };
             if (requests.Count > 0)
             {

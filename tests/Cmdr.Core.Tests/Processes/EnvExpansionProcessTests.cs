@@ -27,9 +27,9 @@ public class EnvExpansionProcessTests
             Args = { "-c", "echo \"$BAR\"; echo \"$WHERE\"; case $PATH in /cmdr-test-prefix:*) echo prefixed;; *) echo plain;; esac" },
             Env = new Dictionary<string, string?>
             {
-                ["BAR"] = "${FOO}-b",
+                ["BAR"] = "${env:FOO}-b",
                 ["WHERE"] = "${cwd}",
-                ["PATH"] = "/cmdr-test-prefix${pathsep}${PATH}",
+                ["PATH"] = "/cmdr-test-prefix${pathsep}${env:PATH}",
             },
         };
 

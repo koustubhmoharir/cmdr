@@ -27,7 +27,7 @@ public sealed class PreparedActivation
         IReadOnlyList<CommandEntry> targets,
         IReadOnlyList<CommandEntry> killable,
         IReadOnlyList<CommandEntry> startable,
-        IReadOnlyList<InputPlaceholders.InputRequest> requests)
+        IReadOnlyList<InputRequest> requests)
     {
         Owner = owner;
         Group = group;
@@ -39,7 +39,7 @@ public sealed class PreparedActivation
     }
 
     /// <summary>The inputs the start needs, in first-seen order. Empty when the decision is to kill, to start nothing, or when no input is needed.</summary>
-    public IReadOnlyList<InputPlaceholders.InputRequest> Requests { get; }
+    public IReadOnlyList<InputRequest> Requests { get; }
 
     /// <summary>The session the activation was prepared in.</summary>
     internal Session Owner { get; }

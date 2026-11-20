@@ -5,8 +5,8 @@ namespace Cmdr.Tests;
 
 public sealed class InputFormTests
 {
-    private static readonly InputPlaceholders.InputRequest Required = new("token", false);
-    private static readonly InputPlaceholders.InputRequest Optional = new("note", true);
+    private static readonly InputRequest Required = new("token", false);
+    private static readonly InputRequest Optional = new("note", true);
 
     [Fact]
     public void Required_input_that_is_empty_is_an_error_naming_it()
@@ -20,7 +20,7 @@ public sealed class InputFormTests
     [Fact]
     public void Each_empty_required_input_gets_its_own_error()
     {
-        var requests = new[] { new InputPlaceholders.InputRequest("a", false), new InputPlaceholders.InputRequest("b", false) };
+        var requests = new[] { new InputRequest("a", false), new InputRequest("b", false) };
 
         IReadOnlyList<string> errors = InputForm.Validate(requests, new[] { string.Empty, "x" });
 
@@ -43,7 +43,7 @@ public sealed class InputFormTests
     [Fact]
     public void Values_map_names_to_values_in_request_order()
     {
-        var requests = new[] { new InputPlaceholders.InputRequest("second", false), new InputPlaceholders.InputRequest("first", true) };
+        var requests = new[] { new InputRequest("second", false), new InputRequest("first", true) };
 
         IReadOnlyDictionary<string, string> values = InputForm.Values(requests, new[] { "2", string.Empty });
 
@@ -55,7 +55,7 @@ public sealed class InputFormTests
     [Fact]
     public void Names_are_case_sensitive()
     {
-        var requests = new[] { new InputPlaceholders.InputRequest("Token", false), new InputPlaceholders.InputRequest("token", false) };
+        var requests = new[] { new InputRequest("Token", false), new InputRequest("token", false) };
 
         IReadOnlyDictionary<string, string> values = InputForm.Values(requests, new[] { "upper", "lower" });
 

@@ -108,9 +108,12 @@ public class CmdrConfig
                         errors.Add($"{label}: stop.method 'input' needs stdin 'pipe' (there is nothing to write the stop input to).");
                     }
 
-                    foreach (string error in InputPlaceholders.Errors(cmd.Args))
+                    for (int a = 0; a < cmd.Args.Count; a++)
                     {
-                        errors.Add($"{label}: {error}");
+                        foreach (string error in Placeholders.Errors(cmd.Args[a]))
+                        {
+                            errors.Add($"{label}: argument {a + 1}: {error}");
+                        }
                     }
 
                     ValidateCommandStrings(cmd, label, errors);
@@ -159,6 +162,7 @@ public class CmdrConfig
 
         ValidateNoNul(cmd.Cwd, $"{label}: cwd", errors);
         ValidateEnvNoNul(cmd.Env, label, errors);
+        ValidateEnvPlaceholders(cmd.Env, label, errors);
         ValidateNoNul(cmd.Stop.Input, $"{label}: stop.input", errors);
         ValidateNoNul(cmd.Log.Path, $"{label}: log.path", errors);
     }
@@ -168,6 +172,38 @@ public class CmdrConfig
     {
         ValidateNoNul(group.Cwd, $"{label}: cwd", errors);
         ValidateEnvNoNul(group.Env, label, errors);
+        ValidateEnvPlaceholders(group.Env, label, errors);
+    }
+
+    /// <summary>
+    /// Checks the placeholders of each env value: malformed ones (see <see cref="Placeholders.Errors"/>) and input placeholders, which
+    /// env values do not support yet. Null values (which remove a variable) are not checked.
+    /// </summary>
+    private static void ValidateEnvPlaceholders(Dictionary<string, string?>? env, string label, List<string> errors)
+    {
+        if (env is null)
+        {
+            return;
+        }
+
+        foreach (KeyValuePair<string, string?> entry in env)
+        {
+            if (entry.Value is null)
+            {
+                continue;
+            }
+
+            string name = entry.Key.Replace('\0', '?');
+            foreach (string error in Placeholders.Errors(entry.Value))
+            {
+                errors.Add($"{label}: env '{name}': {error}");
+            }
+
+            if (Placeholders.Requests(new[] { entry.Value }).Count > 0)
+            {
+                errors.Add($"{label}: env '{name}': input placeholders are not supported in env values");
+            }
+        }
     }
 
     private static void ValidateEnvNoNul(Dictionary<string, string?>? env, string label, List<string> errors)

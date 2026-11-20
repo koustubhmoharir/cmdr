@@ -103,8 +103,9 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 
 - `LaunchSpec.From(ancestors, spec, configDir)` resolves `cwd` through the group chain and collects one
   `EnvLevel` per group with `env` plus the command's. `EnvExpansion.ApplyLevels` applies them outermost
-  first; each level's values expand against the environment as it was before that level (so `${PATH}`
-  is the parent's value). `${cwd}` is the effective cwd of the item that defines the value.
+  first; each level's values expand against the environment as it was before that level (so `${env:PATH}`
+  is the parent's value). `${cwd}` is the effective cwd of the item that defines the value. Expansion is
+  `Placeholders.Expand`, the one placeholder syntax (`${env:NAME}`, `${input:NAME}`, built-ins, escape `$${`).
 - Log path: `<logsDir>/<group>/<subgroup>/…/<command>.log` unless `log.path` is set. Two commands with
   the same log path, or whose log file would be another's folder, are a validation error, whether or not
   their logs are enabled (logs can be toggled at runtime). Paths are compared after resolving symbolic links
@@ -113,8 +114,9 @@ targets. Top-level moves of opened-file groups stop at the first opened-file gro
 
 ### Input placeholders
 
-`InputPlaceholders` scans args for `${input:NAME}` / `${input:NAME?}` (escape `$${input:`). Malformed
-placeholders are validation errors and copied literally otherwise. `Session.InputsForActivate/
+`Placeholders` (`Errors`, `Requests`, `Expand`, `CheckInputs`, `SubstituteInputs`) scans text for `${input:NAME}` /
+`${input:NAME?}` (escape `$${`). Malformed placeholders (including a bare `${NAME}`) are validation errors and
+copied literally otherwise. `Session.InputsForActivate/
 InputsForRestart` mirror the real start decisions (kill-instead-of-start, refused starts, startable
 commands) and merge requests by name (required wins over `?`). For restart, the refusal check ignores the runs it
 cancels and the commands it stops. Enter decides first: `Session.PrepareActivate`

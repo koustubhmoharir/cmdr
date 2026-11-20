@@ -23,9 +23,9 @@ public class SessionInputTests
     private static CommandSpec Echo(string name, string inputPlaceholder) =>
         Shell(name, "echo \"got:[$1]\"", inputPlaceholder);
 
-    private static InputPlaceholders.InputRequest Required(string name) => new(name, false);
+    private static InputRequest Required(string name) => new(name, false);
 
-    private static InputPlaceholders.InputRequest Optional(string name) => new(name, true);
+    private static InputRequest Optional(string name) => new(name, true);
 
     [Fact]
     public void InputsForActivate_Commands_ListsInputsOfStartableTargetsOnly()

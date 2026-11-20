@@ -33,8 +33,8 @@ public class EnvLevelsTests
 
         Apply(
             target,
-            Level("/a", ("PATH", "/outer${pathsep}${PATH}")),
-            Level("/a/b", ("PATH", "/inner${pathsep}${PATH}")));
+            Level("/a", ("PATH", "/outer${pathsep}${env:PATH}")),
+            Level("/a/b", ("PATH", "/inner${pathsep}${env:PATH}")));
 
         Assert.Equal("/inner:/outer:/bin", target["PATH"]);
     }
@@ -44,7 +44,7 @@ public class EnvLevelsTests
     {
         var target = Target(("A", "before"));
 
-        Apply(target, Level("/a", ("A", "level"), ("B", "${A}")));
+        Apply(target, Level("/a", ("A", "level"), ("B", "${env:A}")));
 
         Assert.Equal("level", target["A"]);
         Assert.Equal("before", target["B"]);
@@ -66,7 +66,7 @@ public class EnvLevelsTests
     {
         var target = Target(("FOO", "present"));
 
-        Apply(target, Level("/a", ("FOO", null)), Level("/a", ("BAR", "[${FOO}]")));
+        Apply(target, Level("/a", ("FOO", null)), Level("/a", ("BAR", "[${env:FOO}]")));
 
         Assert.False(target.ContainsKey("FOO"));
         Assert.Equal("[]", target["BAR"]);
@@ -108,10 +108,10 @@ public class EnvLevelsTests
     [Fact]
     public void KeyComparison_FollowsPlatform_ForSnapshotLookups()
     {
-        // On Windows the snapshot is case-insensitive, so ${path} finds PATH. On other systems it is case-sensitive.
+        // On Windows the snapshot is case-insensitive, so ${env:path} finds PATH. On other systems it is case-sensitive.
         var target = Target(("PATH", "/bin"));
 
-        Apply(target, Level("/a", ("X", "${path}")));
+        Apply(target, Level("/a", ("X", "${env:path}")));
 
         Assert.Equal(OperatingSystem.IsWindows() ? "/bin" : "", target["X"]);
     }

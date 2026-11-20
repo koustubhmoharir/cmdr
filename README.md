@@ -188,11 +188,16 @@ Values can refer to other values:
 
 | Write | Means |
 |---|---|
-| `${NAME}` | The variable's value from the level above (empty if unset), e.g. `"PATH": "/my/bin${pathsep}${PATH}"`. |
+| `${env:NAME}` | The variable's value from the level above (empty if unset), e.g. `"PATH": "/my/bin${pathsep}${env:PATH}"`. `NAME` may contain any characters except `}`, `=` and NUL, e.g. `${env:ProgramFiles(x86)}`. |
 | `${cwd}` | The working directory of the group or command that defines the value. |
 | `${configDir}` | The directory of the config file. |
 | `${pathsep}` | `:` on Linux, `;` on Windows. |
-| `$$` | A literal `$`. |
+| `$${` | A literal `${`. |
+
+Any other `$` is literal. A bare `${NAME}`, such as `${PATH}`, is reported as an error (write
+`${env:NAME}`), and so is any other `${...}` that is not in the table above or is malformed (for example
+`${env:}` or an unclosed `${`). Such text is used as written. Input placeholders (`${input:...}`) are not
+supported in env values yet.
 
 Programs usually turn color off when their output isn't a terminal. To keep colors, set the program's
 variable, e.g. `FORCE_COLOR=1`, `CLICOLOR_FORCE=1` or
@@ -202,8 +207,8 @@ variable, e.g. `FORCE_COLOR=1`, `CLICOLOR_FORCE=1` or
 
 An argument can ask for a value when the command starts: `${input:NAME}` needs a non-empty value,
 `${input:NAME?}` allows an empty one. Placeholders can sit anywhere inside an argument
-(`--db=${input:db-name}`). NAME may use letters, digits, `-`, `_` and `.`. Write `$${input:` for the
-literal text `${input:`.
+(`--db=${input:db-name}`). NAME may use letters, digits, `-`, `_` and `.`. Write `$${` for the
+literal text `${`, e.g. `$${input:db-name}`.
 
 Before Enter or F5 starts anything that needs inputs, one dialog asks for every distinct name. A name
 used by several commands of the same start gets one value. Enter starts; Esc cancels and starts nothing.

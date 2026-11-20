@@ -10,7 +10,7 @@ internal static class InputForm
     /// value. <paramref name="values"/> are in the same order as <paramref name="requests"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The lists have different lengths.</exception>
-    public static IReadOnlyList<string> Validate(IReadOnlyList<InputPlaceholders.InputRequest> requests, IReadOnlyList<string> values)
+    public static IReadOnlyList<string> Validate(IReadOnlyList<InputRequest> requests, IReadOnlyList<string> values)
     {
         CheckLengths(requests, values);
 
@@ -28,7 +28,7 @@ internal static class InputForm
 
     /// <summary>The values by input name, for <see cref="Cmdr.Core.Session.Session.Activate"/> and the restart. Pure.</summary>
     /// <exception cref="ArgumentException">The lists have different lengths.</exception>
-    public static IReadOnlyDictionary<string, string> Values(IReadOnlyList<InputPlaceholders.InputRequest> requests, IReadOnlyList<string> values)
+    public static IReadOnlyDictionary<string, string> Values(IReadOnlyList<InputRequest> requests, IReadOnlyList<string> values)
     {
         CheckLengths(requests, values);
 
@@ -41,7 +41,7 @@ internal static class InputForm
         return result;
     }
 
-    private static void CheckLengths(IReadOnlyList<InputPlaceholders.InputRequest> requests, IReadOnlyList<string> values)
+    private static void CheckLengths(IReadOnlyList<InputRequest> requests, IReadOnlyList<string> values)
     {
         ArgumentNullException.ThrowIfNull(requests);
         ArgumentNullException.ThrowIfNull(values);

@@ -23,7 +23,7 @@ public class ItemSpecJsonTests
                         Name = "nav",
                         Mode = GroupMode.Sequential,
                         Cwd = "nav",
-                        Env = new Dictionary<string, string?> { ["NAV_ONLY"] = "1", ["PATH"] = "${PATH}${pathsep}/x" },
+                        Env = new Dictionary<string, string?> { ["NAV_ONLY"] = "1", ["PATH"] = "${env:PATH}${pathsep}/x" },
                         Items =
                         {
                             new CommandSpec { Name = "build", Program = "go", Args = { "build" }, Description = "Builds.\nTwo lines." },
@@ -64,7 +64,7 @@ public class ItemSpecJsonTests
         Assert.Equal("nav", nav.Name);
         Assert.Equal(GroupMode.Sequential, nav.Mode);
         Assert.Equal("nav", nav.Cwd);
-        Assert.Equal(new Dictionary<string, string?> { ["NAV_ONLY"] = "1", ["PATH"] = "${PATH}${pathsep}/x" }, nav.Env);
+        Assert.Equal(new Dictionary<string, string?> { ["NAV_ONLY"] = "1", ["PATH"] = "${env:PATH}${pathsep}/x" }, nav.Env);
         Assert.Equal(3, nav.Items.Count);
         Assert.Equal("build", nav.Items[0].Name);
         Assert.Equal("Builds.\nTwo lines.", nav.Items[0].Description);

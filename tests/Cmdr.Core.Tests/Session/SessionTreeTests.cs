@@ -139,7 +139,7 @@ public class SessionTreeTests
         Directory.CreateDirectory(Path.Combine(dir.Path, "sub"));
         var command = new CommandSpec { Name = "show", Program = "sh", Args = { "-c", "echo \"[$BAR]\"; pwd" } };
         command.Log.Enabled = true;
-        var inner = new GroupSpec { Name = "inner", Env = new Dictionary<string, string?> { ["BAR"] = "${FOO}b" }, Items = { command } };
+        var inner = new GroupSpec { Name = "inner", Env = new Dictionary<string, string?> { ["BAR"] = "${env:FOO}b" }, Items = { command } };
         var outer = new GroupSpec { Name = "outer", Cwd = "sub", Env = new Dictionary<string, string?> { ["FOO"] = "a" }, Items = { inner } };
         string path = dir.File("cmdr.json");
         ConfigStore.Save(new CmdrConfig { Groups = { outer } }, path);
