@@ -63,12 +63,36 @@ internal static class CommandLineFormatter
     /// The file levels and group values of the launch, with the environment scripts' values that are known (see
     /// <see cref="Cmdr.Core.Session.Session.KnownLaunchEnvironment"/>). Null uses the file's levels without any script's values.
     /// </param>
+    /// <param name="secret">The secret names that apply to the command (see <see cref="Cmdr.Core.Session.Session.SecretNamesFor(ItemEntry)"/>). Null for none.</param>
     public static string ForCopy(
         CommandEntry entry,
         bool powerShell,
         IReadOnlyDictionary<string, string?> environment,
         char pathSeparator,
-        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null)
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null,
+        IReadOnlySet<string>? secret = null) =>
+        CopyOf(entry, powerShell, environment, pathSeparator, known, secret).Line;
+
+    /// <summary>
+    /// The copied command line (see <see cref="ForCopy"/>) and whether a secret value was left out of it: a secret variable's assignment
+    /// that is not emitted, or an argument that references a secret variable and is copied as written.
+    /// </summary>
+    /// <param name="Line">The command line to copy.</param>
+    /// <param name="SecretsLeftOut">True when a secret variable's value or reference was kept out of <paramref name="Line"/>.</param>
+    internal readonly record struct CopyOutcome(string Line, bool SecretsLeftOut);
+
+    /// <summary>
+    /// As <see cref="ForCopy"/>, and reports whether secrets were left out. A secret name's assignment is left out (a removal of it, with
+    /// a null value, is still emitted: it carries no value). An argument that references a secret through <c>${env:NAME}</c> is copied as
+    /// written; the other arguments are expanded as usual.
+    /// </summary>
+    internal static CopyOutcome CopyOf(
+        CommandEntry entry,
+        bool powerShell,
+        IReadOnlyDictionary<string, string?> environment,
+        char pathSeparator,
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known,
+        IReadOnlySet<string>? secret)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentNullException.ThrowIfNull(environment);
@@ -80,22 +104,52 @@ internal static class CommandLineFormatter
         }
         catch (Exception ex) when (DetailsText.IsPathError(ex))
         {
-            return ForEntry(entry, powerShell);
+            return new CopyOutcome(ForEntry(entry, powerShell), SecretsLeftOut: false);
         }
 
         // The arguments are expanded against the final environment, with input placeholders kept as written (no input values are known).
+        // An argument that references a secret variable is kept as written, so that its value is not copied.
         IReadOnlyDictionary<string, string?> applied = EffectiveEnv.Applied(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
-        spec = spec with
+        bool secretsLeftOut = false;
+        var args = new List<string>(spec.Args.Count);
+        foreach (string arg in spec.Args)
         {
-            Args = spec.ExpandArgs(name => applied.TryGetValue(name, out string? value) ? value : null, pathSeparator, inputs: null),
-        };
+            if (secret is not null && Placeholders.EnvNames(arg).Any(name => secret.Contains(name)))
+            {
+                args.Add(arg);
+                secretsLeftOut = true;
+            }
+            else
+            {
+                args.Add(Placeholders.Expand(
+                    arg,
+                    name => applied.TryGetValue(name, out string? value) ? value : null,
+                    inputs: null,
+                    spec.WorkingDirectory,
+                    spec.ConfigDir,
+                    pathSeparator));
+            }
+        }
 
-        IReadOnlyList<KeyValuePair<string, string?>> env =
-            EffectiveEnv.Of(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator);
+        spec = spec with { Args = args };
+
+        // A secret name's value is left out; its removal is kept, since it carries no value.
+        var env = new List<KeyValuePair<string, string?>>();
+        foreach (KeyValuePair<string, string?> assignment in EffectiveEnv.Of(spec.EnvLevels, spec.ConfigDir, environment, powerShell, pathSeparator))
+        {
+            if (assignment.Value is not null && secret is not null && secret.Contains(assignment.Key))
+            {
+                secretsLeftOut = true;
+                continue;
+            }
+
+            env.Add(assignment);
+        }
 
         if (!powerShell)
         {
-            return Wrap(spec.WorkingDirectory, env, Format(spec.Program, spec.Args, powerShell: false), powerShell: false);
+            string posix = Format(spec.Program, spec.Args, powerShell: false);
+            return new CopyOutcome(Wrap(spec.WorkingDirectory, env, posix, powerShell: false), secretsLeftOut);
         }
 
         // The batch-file form: the cmd.exe command goes in a variable, so that PowerShell does not pass it as an argument, and
@@ -103,11 +157,13 @@ internal static class CommandLineFormatter
         string? batchCommand = WindowsBatchCommandLine.ForCopy(spec);
         if (batchCommand is null)
         {
-            return Wrap(spec.WorkingDirectory, env, Format(spec.Program, spec.Args, powerShell: true), powerShell: true);
+            string plain = Format(spec.Program, spec.Args, powerShell: true);
+            return new CopyOutcome(Wrap(spec.WorkingDirectory, env, plain, powerShell: true), secretsLeftOut);
         }
 
         env = WithVariable(env, BatchVariable, batchCommand);
-        return Wrap(spec.WorkingDirectory, env, $"cmd /d /v:off /c '%{BatchVariable}%'", powerShell: true);
+        string batch = $"cmd /d /v:off /c '%{BatchVariable}%'";
+        return new CopyOutcome(Wrap(spec.WorkingDirectory, env, batch, powerShell: true), secretsLeftOut);
     }
 
     /// <summary>

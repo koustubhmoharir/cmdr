@@ -89,6 +89,17 @@ public static class Placeholders
     }
 
     /// <summary>
+    /// The names of the well-formed <c>${env:NAME}</c> placeholders of <paramref name="text"/>, in text order, one per occurrence (a
+    /// name is repeated when it occurs again). Escapes, inputs, built-ins and malformed placeholders are not included. Empty when none.
+    /// </summary>
+    public static IReadOnlyList<string> EnvNames(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        return Scan(text).Where(token => token.Kind == TokenKind.Env).Select(token => token.Name).ToList();
+    }
+
+    /// <summary>
     /// Expands every placeholder of <paramref name="text"/> in one pass. <c>${env:NAME}</c> becomes <paramref name="env"/>(NAME), or
     /// empty when that is null. The built-ins become <paramref name="cwd"/>, <paramref name="configDir"/> and
     /// <paramref name="pathSeparator"/>. <c>$${</c> becomes <c>${</c>. Malformed placeholders are copied literally. Input placeholders

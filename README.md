@@ -150,7 +150,9 @@ against the directory of the file.
 | `logsDir` | `logs` | Directory for log files. |
 | `base` | | Path of a base config file to import (see [Base files](#base-files)). |
 | `env` | | Environment variables for every group of this file (see [Environment](#environment)); `${cwd}` is the file's folder. |
-| `baseEnv` | | Names to take from the base file's top-level `env`; needs `base` (see [Base files](#base-files)). |
+| `baseEnv` | | Names to take from the base file's top-level environment (its `env` and `envScript`); needs `base` (see [Base files](#base-files)). |
+| `envScript` | | A script whose output adds environment variables for every group of this file (see [Environment scripts](#environment-scripts)). |
+| `secret` | | Names of variables whose values are never shown or copied (see [Secrets](#secrets)). |
 
 ### Groups
 
@@ -162,6 +164,8 @@ against the directory of the file.
 | `expanded` | `true` | Whether the group starts expanded when the config is loaded. Collapsing it in the UI doesn't change the setting. |
 | `cwd` | | Working directory for everything inside; relative to the parent group's (top level: the config file's directory). |
 | `env` | | Environment variables for everything inside (see [Environment](#environment)). |
+| `envScript` | | A script whose output adds environment variables for everything inside (see [Environment scripts](#environment-scripts)). |
+| `secret` | | Names of variables whose values are never shown or copied, for everything inside (see [Secrets](#secrets)). |
 | `items` | | Commands and nested groups, in display order. An item with `program` is a command; an item with `items` is a group. Groups nest at most 16 levels deep. |
 
 ### Commands
@@ -174,6 +178,7 @@ against the directory of the file.
 | `args` | `[]` | Arguments, one per array element (no shell quoting). May contain [input placeholders](#input-placeholders) and `${env:NAME}`, `${cwd}`, `${configDir}`, `${pathsep}` and `$${` (see [Environment](#environment)). |
 | `cwd` | | Working directory; relative to the group's. |
 | `env` | | Environment variables (see [Environment](#environment)). |
+| `secret` | | Names of variables whose values are never shown or copied (see [Secrets](#secrets)). |
 | `stop` | `{ "method": "ctrlC" }` | How to stop gracefully: `ctrlC` (SIGINT on Linux, Ctrl+C on Windows) or `input`, which writes `stop.input` to the command's input (e.g. `"q\n"`). |
 | `log` | `{ "enabled": false }` | `enabled`: also write the output to a log file. `path`: the file, relative to `logsDir`; defaults to `<logsDir>/<group>/…/<command>.log`. No two commands may resolve to the same log file (e.g. `a b` and `a_b`), across base files too. |
 | `leftovers` | `track` | What to do with processes still running after the command's main process exits (see [Leftover processes](#leftover-processes)). |
@@ -186,8 +191,9 @@ and the `cwd` and `env` of groups) may not contain NUL characters; such a config
 ### Environment
 
 `env` values are added to the environment cmdr was started with; `null` removes a variable. The levels apply in
-this order: the file's own level (the names of its `baseEnv`, then its top-level `env`), the groups' `env` outermost
-first, then the command's own `env`. Each level applies to everything inside it.
+this order: the file's own level (the names of its `baseEnv`, then the output of its `envScript`, then its top-level
+`env`), then for each group, outermost first, the output of its `envScript` and then its `env`, and finally the
+command's own `env`. Each level applies to everything inside it.
 
 Values can refer to other values:
 
@@ -213,6 +219,65 @@ Programs usually turn color off when their output isn't a terminal. To keep colo
 variable, e.g. `FORCE_COLOR=1`, `CLICOLOR_FORCE=1` or
 `DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=1`.
 
+### Environment scripts
+
+An `envScript` (at the top level of a file, or on a group) runs a program that collects values, such as a
+token or a service address, and prints them as one JSON object. Its variables apply to everything inside, like
+an `env` written there. PowerShell 7 works on both platforms:
+
+```json
+"envScript": {
+  "program": "pwsh",
+  "args": ["-NoProfile", "-NonInteractive", "-File", "${configDir}/scripts/env.ps1"],
+  "rerun": "eachStart"
+}
+```
+
+```powershell
+# scripts/env.ps1
+$token = (az account get-access-token --query accessToken -o tsv)
+@{ API_TOKEN = $token; API_URL = "https://api.example.test" } | ConvertTo-Json -Compress
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `program` | | Required. The executable, found as a command's would be. |
+| `args` | `[]` | Arguments, with the same placeholders as a command's; `${cwd}` is the script's working directory. |
+| `cwd` | | Working directory; relative to the group's (top level: the file's folder). |
+| `timeoutSeconds` | `30` | The script is killed, and the start fails, when it runs longer. |
+| `rerun` | `once` | `once`: the result is kept for the session and reused. `eachStart`: the script runs for every start (Enter or F5). |
+
+The output must be a single JSON object whose values are strings, or `null` to remove a variable. Anything else
+(other text, a number, an array) fails the script. What the script writes to stderr is kept for the error message.
+
+The script runs when a start needs it: Enter or F5 runs the scripts of everything it is about to start, then
+starts. While they run, the commands show `preparing env…`, and Ctrl+C on them cancels the start. F5 runs the
+scripts before it stops anything, so a failing script leaves running commands as they are. One run serves every
+command of that start, including the commands a sequence starts later. A script sees the environment of its
+position: a group's script sees the variables of the file and of the groups above it (including their scripts),
+but not its own group's `env`, which can in turn use the script's values with `${env:NAME}`.
+
+A `once` result is reused while nothing it depends on changes: its settings, its environment and the input
+values its arguments use. When one of them changes, the script runs again at the next start. Ctrl+R on a group or
+command makes the scripts it depends on run again at the next start. A failed run is never reused. When a
+script fails, nothing of that start is started, and the error and the last lines of its stderr are written to the
+output of the commands that needed it.
+
+The info pane shows a script, when it last ran, how long it took and the variables it produced (or its error),
+and a command's environment includes the variables of the scripts that have run. The values a script produces
+are used as they are: they are not expanded.
+
+### Secrets
+
+`secret` lists names of variables whose values cmdr never shows or copies, for example `"secret": ["API_TOKEN"]`.
+It can be set at the top level of a file, on a group and on a command, and applies to everything inside. A name
+taken from a base file with `baseEnv` stays secret when the base file marks it secret.
+
+The info pane shows a secret value as `••••`. The copy (`c`) leaves out the assignments of secret variables (the
+pasted command uses the value in your shell, if any) and copies an argument that uses a secret variable as written,
+without expanding it; the status line says so. cmdr cannot hide what a program itself prints, so secret values can
+still appear in its output and log file.
+
 ### Input placeholders
 
 An argument can ask for a value when the command starts: `${input:NAME}` needs a non-empty value,
@@ -230,10 +295,12 @@ Values are not remembered for the next run and are not written to the output or 
 The groups of the deepest base file are shown first, then each importing file's. Groups are not merged:
 the same group name may appear in different files.
 
-A base file's top-level `env` applies only to its own groups. To give the importing file's commands some of its
-variables, list their names in `baseEnv`, e.g. `"baseEnv": ["SHARED_HOME"]`. Each listed name takes the value it has
-in the base file's top-level environment (including that file's own imports at that point), or is removed when the
-base file does not set it. Names that are not listed are not imported.
+A base file's top-level `env` and `envScript` apply only to its own groups. To give the importing file's commands
+some of their variables, list the names in `baseEnv`, e.g. `"baseEnv": ["SHARED_HOME"]`. Each listed name takes the
+value it has in the base file's top-level environment: cmdr's environment with that file's own imports, script
+output and `env` applied. A name the base file removes is removed; a name it does not touch keeps the value cmdr
+was started with. Names that are not listed are not imported. When an imported name comes from the base file's
+`envScript`, that script runs before the importing file's commands start.
 
 Each file's settings (`bufferLines`, `logsDir`, and the directory relative paths resolve against) apply
 to its own groups. Groups from base files are read-only in the UI: they can be run, stopped and logged,

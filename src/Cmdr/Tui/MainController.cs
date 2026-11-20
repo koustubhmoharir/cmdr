@@ -1938,7 +1938,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>
     /// Copies the command line of a command row: POSIX sh quoting, or PowerShell quoting on Windows. The copy carries the environment
     /// script values that are known (see <see cref="KnownEnvironmentOf"/>); when a script has not run, the message says it is not
-    /// included. Group rows do nothing. Used by the list and the details strip.
+    /// included. Secret values are left out of the copy (see <see cref="SecretNamesOf(ItemEntry)"/>), and the message says so. Group rows
+    /// do nothing. Used by the list and the details strip.
     /// </summary>
     public void CopyCommandLine(ListRow? focused)
     {
@@ -1948,20 +1949,34 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
 
         bool windows = OperatingSystem.IsWindows();
-        string line = CommandLineFormatter.ForCopy(
+        CommandLineFormatter.CopyOutcome outcome = CommandLineFormatter.CopyOf(
             command.Entry,
             windows,
             EffectiveEnv.Process(),
             Path.PathSeparator,
-            KnownEnvironmentOf(command.Entry));
+            KnownEnvironmentOf(command.Entry),
+            SecretNamesOf(command.Entry));
+        bool scriptsNotRun = EnvScriptsNotRunFor(command.Entry).Count > 0;
         string message = windows ? "Copied command line (PowerShell)" : "Copied command line";
-        if (EnvScriptsNotRunFor(command.Entry).Count > 0)
+        if (outcome.SecretsLeftOut)
+        {
+            message = scriptsNotRun
+                ? "Copied; secret values and variables of env scripts without a successful run are left out"
+                : "Copied; secret values are left out";
+        }
+        else if (scriptsNotRun)
         {
             message = "Copied; variables of env scripts without a successful run are not included";
         }
 
-        CopyToClipboard(line, message);
+        CopyToClipboard(outcome.Line, message);
     }
+
+    /// <summary>The secret names that apply to an item (see <see cref="Session.SecretNamesFor(ItemEntry)"/>): their values are masked in the info pane.</summary>
+    internal IReadOnlySet<string> SecretNamesOf(ItemEntry item) => _session.SecretNamesFor(item);
+
+    /// <summary>The secret names of a file (see <see cref="Session.SecretNamesFor(ConfigSource)"/>): their values are masked in the info pane.</summary>
+    internal IReadOnlySet<string> SecretNamesOf(ConfigSource source) => _session.SecretNamesFor(source);
 
     /// <summary>The file levels and group values a command's launch is built from, with the environment script values that are known (see <see cref="Session.KnownLaunchEnvironment"/>).</summary>
     internal (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownEnvironmentOf(CommandEntry entry) =>

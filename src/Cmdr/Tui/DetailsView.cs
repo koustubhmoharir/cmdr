@@ -852,14 +852,20 @@ internal sealed class DetailsView : View, ISearchTarget
             EffectiveEnv.Process(),
             Path.PathSeparator,
             _controller.KnownEnvironmentOf(command.Entry),
-            _controller.EnvScriptsNotRunFor(command.Entry)),
-        GroupRow group => DetailsText.GroupLines(group.Group, _configDir, _controller.LastEnvScriptRunOf(group.Group)),
+            _controller.EnvScriptsNotRunFor(command.Entry),
+            _controller.SecretNamesOf(command.Entry)),
+        GroupRow group => DetailsText.GroupLines(
+            group.Group,
+            _configDir,
+            _controller.LastEnvScriptRunOf(group.Group),
+            _controller.SecretNamesOf(group.Group)),
         FileRow file => DetailsText.FileLines(
             file.Source,
             EffectiveEnv.Process(),
             OperatingSystem.IsWindows(),
             Path.PathSeparator,
-            _controller.LastEnvScriptRunOf(file.Source)),
+            _controller.LastEnvScriptRunOf(file.Source),
+            _controller.SecretNamesOf(file.Source)),
         _ => Array.Empty<DetailsLine>(),
     };
 

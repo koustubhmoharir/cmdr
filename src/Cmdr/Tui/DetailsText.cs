@@ -123,6 +123,7 @@ internal static class DetailsText
     /// the file's levels without any environment script's values.
     /// </param>
     /// <param name="notRunLabels">The labels of the environment scripts of the command that have no successful run, one line each. Null for none.</param>
+    /// <param name="secret">The secret names that apply to the command (see <see cref="CmdrSession.SecretNamesFor(ItemEntry)"/>): their values are masked. Null for none.</param>
     public static IReadOnlyList<DetailsLine> CommandLines(
         CommandEntry entry,
         string configDir,
@@ -130,7 +131,8 @@ internal static class DetailsText
         IReadOnlyDictionary<string, string?> environment,
         char pathSeparator,
         (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null,
-        IReadOnlyList<string>? notRunLabels = null)
+        IReadOnlyList<string>? notRunLabels = null,
+        IReadOnlySet<string>? secret = null)
     {
         ArgumentNullException.ThrowIfNull(entry);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
@@ -167,7 +169,7 @@ internal static class DetailsText
         if (launch is not null)
         {
             lines.Add(Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan(launch.WorkingDirectory, DetailsStyle.Path)));
-            lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator));
+            lines.AddRange(EnvLines(launch.EnvLevels, launch.ConfigDir, environment, windows, pathSeparator, secret));
         }
 
         foreach (string label in notRunLabels ?? Array.Empty<string>())
@@ -202,17 +204,20 @@ internal static class DetailsText
     /// <summary>
     /// The environment of a launch, as a preview: the keys that any level mentions, in first-mention order, each as
     /// <c>KEY=value</c> with the value expanded, or <c>KEY (unset)</c> when the variable is removed. The levels are applied to a
-    /// copy of <paramref name="environment"/> exactly as the launch applies them. Empty when no level mentions a key.
+    /// copy of <paramref name="environment"/> exactly as the launch applies them. Empty when no level mentions a key. A secret key's
+    /// value is masked (see <see cref="EnvLine"/>).
     /// </summary>
+    /// <param name="secret">The secret names whose values are masked. Null for none.</param>
     public static IReadOnlyList<DetailsLine> EnvLines(
         IReadOnlyList<EnvLevel> levels,
         string configDir,
         IReadOnlyDictionary<string, string?> environment,
         bool windows,
-        char pathSeparator)
+        char pathSeparator,
+        IReadOnlySet<string>? secret = null)
     {
         IReadOnlyList<KeyValuePair<string, string?>> effective = EffectiveEnv.Of(levels, configDir, environment, windows, pathSeparator);
-        return effective.Select(entry => EnvLine(entry.Key, entry.Value)).ToList();
+        return effective.Select(entry => EnvLine(entry.Key, entry.Value, secret)).ToList();
     }
 
     /// <summary>
@@ -221,10 +226,12 @@ internal static class DetailsText
     /// <see cref="EnvScriptLines"/>), then the description.
     /// </summary>
     /// <param name="lastRun">The last run of the group's script (see <see cref="CmdrSession.LastEnvScriptRun"/>), or null when it has not run.</param>
+    /// <param name="secret">The secret names of the group (see <see cref="CmdrSession.SecretNamesFor(ItemEntry)"/>): their values are masked. Null for none.</param>
     public static IReadOnlyList<DetailsLine> GroupLines(
         GroupEntry group,
         string configDir,
-        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null)
+        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null,
+        IReadOnlySet<string>? secret = null)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
@@ -267,13 +274,13 @@ internal static class DetailsText
         {
             foreach (KeyValuePair<string, string?> entry in group.Env)
             {
-                lines.Add(EnvLine(entry.Key, entry.Value));
+                lines.Add(EnvLine(entry.Key, entry.Value, secret));
             }
         }
 
         if (group.EnvScript is { } envScript)
         {
-            lines.AddRange(EnvScriptLines(envScript, lastRun));
+            lines.AddRange(EnvScriptLines(envScript, lastRun, secret));
         }
 
         lines.AddRange(DescriptionLines(group.Description));
@@ -289,12 +296,14 @@ internal static class DetailsText
     /// <param name="windows">The platform, as for <see cref="EnvLines"/>.</param>
     /// <param name="pathSeparator">The path separator of the platform, as for <see cref="EnvLines"/>.</param>
     /// <param name="lastRun">The last run of the file's script (see <see cref="EnvScriptLines"/>), or null when it has not run.</param>
+    /// <param name="secret">The secret names of the file (see <see cref="CmdrSession.SecretNamesFor(ConfigSource)"/>): their values are masked. Null for none.</param>
     public static IReadOnlyList<DetailsLine> FileLines(
         ConfigSource source,
         IReadOnlyDictionary<string, string?> environment,
         bool windows,
         char pathSeparator,
-        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null)
+        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null,
+        IReadOnlySet<string>? secret = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(environment);
@@ -326,15 +335,15 @@ internal static class DetailsText
 
         if (source.EnvScript is { } envScript)
         {
-            lines.AddRange(EnvScriptLines(envScript, lastRun));
+            lines.AddRange(EnvScriptLines(envScript, lastRun, secret));
         }
 
-        if (source.Secret is { Count: > 0 } secret)
+        if (source.Secret is { Count: > 0 } secretNames)
         {
-            lines.Add(Line(new DetailsSpan("secret: ", DetailsStyle.Label), new DetailsSpan(string.Join(", ", secret), DetailsStyle.Normal)));
+            lines.Add(Line(new DetailsSpan("secret: ", DetailsStyle.Label), new DetailsSpan(string.Join(", ", secretNames), DetailsStyle.Normal)));
         }
 
-        lines.AddRange(EnvLines(source.EnvLevels, source.Dir, environment, windows, pathSeparator));
+        lines.AddRange(EnvLines(source.EnvLevels, source.Dir, environment, windows, pathSeparator, secret));
         return lines;
     }
 
@@ -389,9 +398,13 @@ internal static class DetailsText
     /// <summary>
     /// The lines of an environment script: its command as written, then the status of its last run: when it ran, the time it finished
     /// and how long it took, and how many variables it produced, followed by one <c>KEY=value</c> line per variable in its output order
-    /// (<c>KEY (unset)</c> for a removal); when it failed, the time and the error; or <c>not run yet</c> when it has not run.
+    /// (<c>KEY (unset)</c> for a removal); when it failed, the time and the error; or <c>not run yet</c> when it has not run. A secret
+    /// variable's value is masked.
     /// </summary>
-    private static List<DetailsLine> EnvScriptLines(EnvScriptSpec script, (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun)
+    private static List<DetailsLine> EnvScriptLines(
+        EnvScriptSpec script,
+        (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun,
+        IReadOnlySet<string>? secret)
     {
         string command = string.Join(" ", new[] { script.Program }.Concat(script.Args));
         var lines = new List<DetailsLine>
@@ -418,19 +431,25 @@ internal static class DetailsText
         lines.Add(Line(new DetailsSpan($"last run {time} ({seconds} s): {values.Count} {(values.Count == 1 ? "variable" : "variables")}", DetailsStyle.Normal)));
         foreach (KeyValuePair<string, string?> entry in values)
         {
-            lines.Add(EnvLine(entry.Key, entry.Value));
+            lines.Add(EnvLine(entry.Key, entry.Value, secret));
         }
 
         return lines;
     }
 
-    /// <summary>One environment entry: <c>KEY=value</c>, or <c>KEY (unset)</c> when the value is null.</summary>
-    private static DetailsLine EnvLine(string key, string? value) => value is null
+    /// <summary>The text that stands for the value of a secret variable. The value itself is never shown.</summary>
+    internal const string MaskedValue = "••••";
+
+    /// <summary>
+    /// One environment entry: <c>KEY=value</c>, or <c>KEY (unset)</c> when the value is null. When <paramref name="key"/> is secret, the
+    /// value is <see cref="MaskedValue"/> instead; a removal is shown as before, since it has no value.
+    /// </summary>
+    private static DetailsLine EnvLine(string key, string? value, IReadOnlySet<string>? secret = null) => value is null
         ? Line(new DetailsSpan(key, DetailsStyle.EnvName), new DetailsSpan(" (unset)", DetailsStyle.Unset))
         : Line(
             new DetailsSpan(key, DetailsStyle.EnvName),
             new DetailsSpan("=", DetailsStyle.Faint),
-            new DetailsSpan(value, DetailsStyle.EnvValue));
+            new DetailsSpan(secret is not null && secret.Contains(key) ? MaskedValue : value, DetailsStyle.EnvValue));
 
     /// <summary>A line of the given spans. Empty spans are dropped, so a line never holds an empty run.</summary>
     private static DetailsLine Line(params DetailsSpan[] spans) =>
