@@ -2,6 +2,7 @@ using System.Reflection;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using FileDialog = Cmdr.Tui.FileDialog;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
@@ -26,6 +27,12 @@ public sealed class FileRowTests
     private static readonly Key[] IgnoredKeys =
     {
         Key.Enter, Key.C.WithCtrl, Key.F5, Key.L, Key.Delete, Key.Space, Key.A.WithCtrl, Key.F2, Key.C, Key.CursorUp.WithAlt, Key.CursorDown.WithAlt,
+    };
+
+    /// <summary>The keys a file row takes and does nothing with in edit mode: Enter and F2 edit the opened file, so they are not among them.</summary>
+    private static readonly Key[] EditModeIgnoredKeys =
+    {
+        Key.C.WithCtrl, Key.F5, Key.L, Key.Delete, Key.Space, Key.A.WithCtrl, Key.C, Key.CursorUp.WithAlt, Key.CursorDown.WithAlt,
     };
 
     [Fact]
@@ -85,7 +92,7 @@ public sealed class FileRowTests
         int groups = temp.Session.AllGroups.Count;
         FocusKey(controller, temp.Session.MainSource);
 
-        foreach (Key key in IgnoredKeys)
+        foreach (Key key in EditModeIgnoredKeys)
         {
             ClearMessage(controller);
             Assert.True(controller.OnListKey(key), $"{key} on a file row");
@@ -274,7 +281,7 @@ public sealed class FileRowTests
     }
 
     [Fact]
-    public void Hints_with_a_file_row_focused_in_edit_mode_show_the_new_group_and_command_save_and_run_only()
+    public void Hints_with_the_opened_file_row_focused_in_edit_mode_show_edit_the_new_group_and_command_save_and_run()
     {
         using TempSession temp = TempSession.Sample(SessionMode.Edit);
         using IApplication app = Application.Create();
@@ -283,7 +290,7 @@ public sealed class FileRowTests
         FocusKey(controller, temp.Session.MainSource);
         Field<CommandListView>(controller, "_list").SetFocus();
 
-        Assert.Equal("^N Command  ^G Group  ^S Save  ^E Run", HintLeft(controller));
+        Assert.Equal("Enter Edit  ^N Command  ^G Group  ^S Save  ^E Run", HintLeft(controller));
     }
 
     [Fact]
@@ -324,6 +331,88 @@ public sealed class FileRowTests
         controller.RestoreSearchCollapsed();
 
         Assert.DoesNotContain("tool", Names(controller));
+    }
+
+    [Fact]
+    public void Enter_and_F2_on_the_opened_file_row_in_edit_mode_open_the_file_settings()
+    {
+        using TempSession temp = TempSession.Sample(SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, temp.Session);
+
+        foreach (Key key in new[] { Key.Enter, Key.F2 })
+        {
+            FocusKey(controller, temp.Session.MainSource);
+            FileDialog? dialog = null;
+            app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+            {
+                // The dialog is modal: read it while it is open, then close it, which changes nothing.
+                dialog = app.TopRunnableView as FileDialog;
+                app.RequestStop();
+                return false;
+            });
+
+            Assert.True(controller.OnListKey(key), $"{key} on the opened file's row");
+
+            Assert.NotNull(dialog);
+            Assert.False(temp.Session.IsDirty);
+        }
+    }
+
+    [Fact]
+    public void Enter_and_F2_on_a_base_file_row_in_edit_mode_show_the_refusal_and_open_nothing()
+    {
+        using TempChain chain = TempChain.Open(SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, chain.Session);
+        ConfigSource baseFile = chain.Session.Sources[0];
+        FocusKey(controller, baseFile);
+        string expected = $"'{baseFile.DisplayPath}' is a base file; edit that file.";
+
+        foreach (Key key in new[] { Key.Enter, Key.F2 })
+        {
+            ClearMessage(controller);
+            // Nothing modal opens here: the call returns at once.
+            Assert.True(controller.OnListKey(key), $"{key} on a base file's row");
+            Assert.Equal(expected, Message(controller));
+        }
+
+        Assert.False(chain.Session.IsDirty);
+    }
+
+    [Fact]
+    public void Enter_and_F2_on_a_file_row_in_run_mode_open_nothing_and_show_no_message()
+    {
+        using TempChain chain = TempChain.Open(SessionMode.Run);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, chain.Session);
+        FocusKey(controller, chain.Session.MainSource);
+
+        foreach (Key key in new[] { Key.Enter, Key.F2 })
+        {
+            ClearMessage(controller);
+            Assert.True(controller.OnListKey(key));
+            Assert.Null(Message(controller));
+        }
+    }
+
+    [Fact]
+    public void Enter_Edit_hint_is_offered_on_the_opened_file_row_and_not_on_a_base_file_row()
+    {
+        using TempChain chain = TempChain.Open(SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, chain.Session);
+        Field<CommandListView>(controller, "_list").SetFocus();
+
+        FocusKey(controller, chain.Session.MainSource);
+        Assert.Contains("Enter Edit", HintLeft(controller));
+
+        FocusKey(controller, chain.Session.Sources[0]);
+        Assert.DoesNotContain("Enter Edit", HintLeft(controller));
     }
 
     /// <summary>Builds the controller over the session, without showing it: the list, its rows and its focus are set up.</summary>

@@ -264,6 +264,18 @@ public class CmdrConfig
     }
 
     /// <summary>
+    /// The errors of a list of environment variable names (the <c>baseEnv</c> or <c>secret</c> rule, see the configuration check), each
+    /// labelled with <paramref name="label"/>. Empty when the names are valid. For the editing dialogs, which check names before they
+    /// build a configuration.
+    /// </summary>
+    public static IReadOnlyList<string> EnvNameErrors(IReadOnlyList<string>? names, string label)
+    {
+        var errors = new List<string>();
+        ValidateEnvNames(names, label, errors);
+        return errors;
+    }
+
+    /// <summary>
     /// Checks a list of environment variable names (<c>baseEnv</c> or <c>secret</c>): each must be a valid name (see
     /// <see cref="Placeholders.IsEnvName"/>), and no name may occur twice. Duplicates are exact (case-sensitive), as on Linux.
     /// </summary>

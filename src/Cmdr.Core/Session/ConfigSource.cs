@@ -8,7 +8,7 @@ namespace Cmdr.Core.Session;
 /// </summary>
 public sealed class ConfigSource
 {
-    private readonly EnvScriptSpec? _envScript;
+    private EnvScriptSpec? _envScript;
     private readonly ConfigSource? _base;
 
     /// <param name="file">The file.</param>
@@ -68,6 +68,30 @@ public sealed class ConfigSource
     }
 
     /// <summary>
+    /// Replaces the file's own top-level settings and recomputes <see cref="EnvLevels"/>. Only the opened file is changed this way: a base
+    /// file is read-only, and the opened file is the last of the chain, so no other source imports from it and their levels do not change.
+    /// The values are copied.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">This is a base file.</exception>
+    internal void ApplySettings(
+        IReadOnlyDictionary<string, string?>? env,
+        EnvScriptSpec? envScript,
+        IReadOnlyList<string>? baseEnv,
+        IReadOnlyList<string>? secret)
+    {
+        if (IsBase)
+        {
+            throw new InvalidOperationException($"'{DisplayPath}' is a base file; edit that file.");
+        }
+
+        Env = env is null ? null : new Dictionary<string, string?>(env);
+        _envScript = envScript?.Clone();
+        BaseEnv = baseEnv is null ? null : new List<string>(baseEnv);
+        Secret = secret is null ? null : new List<string>(secret);
+        EnvLevels = EnvLevelsWith(ScriptValues.Empty);
+    }
+
+    /// <summary>
     /// The levels of <see cref="EnvLevelsWith"/> that come before this file's own script: only the <see cref="BaseEnv"/> import (empty when
     /// there is none). This is the environment a file's script runs in.
     /// </summary>
@@ -121,19 +145,19 @@ public sealed class ConfigSource
     /// (see <see cref="EnvLevel"/>), without any environment script's values (see <see cref="EnvLevelsWith"/>). Empty when the file has
     /// neither a top-level <c>env</c> nor a <c>baseEnv</c> import.
     /// </summary>
-    public IReadOnlyList<EnvLevel> EnvLevels { get; }
+    public IReadOnlyList<EnvLevel> EnvLevels { get; private set; }
 
     /// <summary>The file's top-level <c>env</c> as written (null when not set). A copy; changing it does not change the file's settings.</summary>
-    public IReadOnlyDictionary<string, string?>? Env { get; }
+    public IReadOnlyDictionary<string, string?>? Env { get; private set; }
 
     /// <summary>The file's top-level <c>envScript</c> as written (null when not set). Returns a new copy on each read.</summary>
     public EnvScriptSpec? EnvScript => _envScript?.Clone();
 
     /// <summary>The file's <c>baseEnv</c> names as written (null when not set). A copy.</summary>
-    public IReadOnlyList<string>? BaseEnv { get; }
+    public IReadOnlyList<string>? BaseEnv { get; private set; }
 
     /// <summary>The file's top-level <c>secret</c> names as written (null when not set). A copy.</summary>
-    public IReadOnlyList<string>? Secret { get; }
+    public IReadOnlyList<string>? Secret { get; private set; }
 
     /// <summary>
     /// The file's path relative to the directory of the opened file (for example <c>shared/base.json</c>), or just the file

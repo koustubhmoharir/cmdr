@@ -396,8 +396,10 @@ In run mode, commands act on the marked commands, or the focused command if none
 act on everything in the group. Marks are limited to one group, and switching to edit mode clears them. In the info and
 output panes, Enter, Ctrl+C, F5, L and Del act on the command the panes show (the focused command) alone, ignoring marks; on a
 group header they do nothing there. In edit mode, Enter, F2 and Del in the info pane act on the command it shows.
-On a file row the list's command keys (Enter, Ctrl+C, F5, L, Del, Ctrl+R, Space, Ctrl+A, F2, c and Alt+↑↓) do nothing, without a
-message; Ctrl+N and Ctrl+G add a command or a top-level group to the opened file, as they do with no row focused.
+On a file row the list's command keys (Ctrl+C, F5, L, Del, Ctrl+R, Space, Ctrl+A, c and Alt+↑↓) do nothing, without a message.
+Enter and F2 do nothing in run mode; in edit mode on the opened file's row they edit its top-level settings, and on a base
+file's row they say to edit that file. Ctrl+N and Ctrl+G add a command or a top-level group to the opened file, as they do
+with no row focused.
 
 A key of the other mode does nothing but say which mode it needs (Ctrl+E switches).
 
@@ -435,7 +437,7 @@ Edit mode:
 
 | Key | Action |
 |---|---|
-| Enter, F2 | Edit the focused command or group |
+| Enter, F2 | Edit the focused command or group. On the opened file's row, edit its top-level settings (`env`, `baseEnv`, `secret` and `envScript`) |
 | Ctrl+N | Add a command |
 | Ctrl+G | Add a group |
 | Del | Delete the focused command or group, with confirmation |

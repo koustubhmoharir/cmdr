@@ -8,7 +8,8 @@ namespace Cmdr.Tui;
 /// The text and choices of the command dialog, as the user left them. A <c>Kept</c> value is the original of a field that is
 /// read-only or was not edited: it is saved exactly, and the text of that field is not used (see <see cref="FieldDraft"/>).
 /// <paramref name="KeptArgs"/> and <paramref name="KeptEnv"/> are the same for the args and env fields, whose text is not parsed.
-/// <paramref name="Secret"/> is not edited here: it is the command's secret names as they were, saved as they are.
+/// <paramref name="SecretText"/> is the secret names typed (see <see cref="NameListText"/>); <paramref name="KeptSecret"/> is the
+/// original names when that field is read-only, and then the text is not parsed.
 /// </summary>
 internal sealed record CommandFormValues(
     string Name,
@@ -25,6 +26,7 @@ internal sealed record CommandFormValues(
     StdinMode Stdin,
     string ReadyPattern = "",
     string BusyPattern = "",
+    string SecretText = "",
     IReadOnlyList<string>? KeptArgs = null,
     IReadOnlyDictionary<string, string?>? KeptEnv = null,
     KeptValue? KeptName = null,
@@ -33,7 +35,7 @@ internal sealed record CommandFormValues(
     KeptValue? KeptLogPath = null,
     KeptValue? KeptReadyPattern = null,
     KeptValue? KeptBusyPattern = null,
-    IReadOnlyList<string>? Secret = null);
+    IReadOnlyList<string>? KeptSecret = null);
 
 /// <summary>Validation and conversion of the command dialog's values. Pure.</summary>
 internal static class CommandForm
@@ -75,6 +77,12 @@ internal static class CommandForm
         errors.AddRange(ValidateReady(
             SavedText.Pattern(values.ReadyPattern, values.KeptReadyPattern),
             SavedText.Pattern(values.BusyPattern, values.KeptBusyPattern)));
+
+        // Kept secret names are the original of a read-only field: they are not parsed.
+        if (values.KeptSecret is null)
+        {
+            errors.AddRange(NameListText.Errors(values.SecretText, "Secret"));
+        }
 
         // The stop input is only used by the Input method; other values are not checked.
         if (values.Method == StopMethod.Input)
@@ -131,7 +139,7 @@ internal static class CommandForm
             },
             Leftovers = values.DetachLeftovers ? LeftoverMode.Detach : LeftoverMode.Track,
             Stdin = values.Stdin,
-            Secret = values.Secret?.ToList(),
+            Secret = NameListText.NamesOrNull(values.KeptSecret ?? NameListText.Parse(values.SecretText)),
             Ready = BuildReady(
                 SavedText.Pattern(values.ReadyPattern, values.KeptReadyPattern),
                 SavedText.Pattern(values.BusyPattern, values.KeptBusyPattern)),
@@ -194,7 +202,9 @@ internal static class CommandForm
 /// The text and choices of the group dialog, as the user left them. <paramref name="KeptEnv"/> is the original environment when
 /// the environment field is read-only; then <paramref name="Env"/> is not parsed. <paramref name="KeptName"/> and
 /// <paramref name="KeptCwd"/> are the originals of the name and working dir fields when they were not edited (see
-/// <see cref="FieldDraft"/>).
+/// <see cref="FieldDraft"/>). <paramref name="EnvScript"/> is the environment script as the env script dialog left it (null for
+/// none). <paramref name="SecretText"/> is the secret names typed; <paramref name="KeptSecret"/> is the original names when that
+/// field is read-only, and then the text is not parsed.
 /// </summary>
 internal sealed record GroupFormValues(
     string Name,
@@ -205,7 +215,10 @@ internal sealed record GroupFormValues(
     bool Expanded,
     IReadOnlyDictionary<string, string?>? KeptEnv = null,
     KeptValue? KeptName = null,
-    KeptValue? KeptCwd = null);
+    KeptValue? KeptCwd = null,
+    EnvScriptSpec? EnvScript = null,
+    string SecretText = "",
+    IReadOnlyList<string>? KeptSecret = null);
 
 /// <summary>Validation and conversion of the group dialog's values. Pure.</summary>
 internal static class GroupForm
@@ -260,13 +273,19 @@ internal static class GroupForm
             }
         }
 
+        // Kept secret names are the original of a read-only field: they are not parsed.
+        if (values.KeptSecret is null)
+        {
+            errors.AddRange(NameListText.Errors(values.SecretText, "Secret"));
+        }
+
         return errors;
     }
 
     /// <summary>
     /// Builds the group settings. Call only when <see cref="Validate(GroupFormValues, IEnumerable{string})"/> returned no errors.
     /// Edited text is trimmed; a blank description, working directory or an empty environment becomes null. Kept originals are
-    /// saved exactly.
+    /// saved exactly. The environment script and the secret names are as the dialog holds them (empty secret names become null).
     /// </summary>
     public static GroupSettings Build(GroupFormValues values)
     {
@@ -281,6 +300,8 @@ internal static class GroupForm
             values.Mode,
             SavedText.Optional(values.Cwd, values.KeptCwd),
             env.Count == 0 ? null : new Dictionary<string, string?>(env),
-            values.Expanded);
+            values.Expanded,
+            values.EnvScript,
+            NameListText.NamesOrNull(values.KeptSecret ?? NameListText.Parse(values.SecretText)));
     }
 }

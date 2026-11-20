@@ -118,8 +118,9 @@ public sealed class KeyHintsTests
     }
 
     [Fact]
-    public void The_edit_mode_bar_with_no_row_offers_only_the_adds_Save_and_Run()
+    public void The_edit_mode_bar_with_only_the_file_row_focused_offers_Enter_Edit_the_adds_Save_and_Run()
     {
+        // With no groups the focus is on the opened file's row, whose settings Enter edits.
         using TempSession temp = TempSession.Open(SessionMode.Edit);
         using IApplication app = Application.Create();
         app.Init("ansi");
@@ -128,7 +129,7 @@ public sealed class KeyHintsTests
         Field<CommandListView>(controller, "_list").SetFocus();
         Tick(controller);
 
-        Assert.Equal("^N Command  ^G Group  ^S Save  ^E Run  ^Q Quit", Bar(controller));
+        Assert.Equal("Enter Edit  ^N Command  ^G Group  ^S Save  ^E Run  ^Q Quit", Bar(controller));
     }
 
     [Fact]

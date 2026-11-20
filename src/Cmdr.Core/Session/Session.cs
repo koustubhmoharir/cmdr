@@ -211,7 +211,9 @@ public sealed partial class Session : IDisposable
 
     /// <summary>
     /// Changes the settings of a group and, when <paramref name="parent"/> differs from its current parent, moves it to the
-    /// end of the new parent's items (or of the top level when <paramref name="parent"/> is null).
+    /// end of the new parent's items (or of the top level when <paramref name="parent"/> is null). Every setting of
+    /// <paramref name="settings"/> is applied, the environment script and the secret names included: a caller that keeps them
+    /// passes their current values.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The session is in run mode; the group comes from a base file; the group would be moved into a group of a base file; the group
@@ -264,6 +266,28 @@ public sealed partial class Session : IDisposable
             group.Cwd = settings.Cwd;
             group.Env = CopyEnv(settings.Env);
             group.Expanded = settings.Expanded;
+            group.EnvScript = settings.EnvScript?.Clone();
+            group.Secret = CopyNames(settings.Secret);
+            _isDirty = true;
+        }
+
+        RaiseStructureChanged();
+    }
+
+    /// <summary>
+    /// Replaces the opened file's own top-level settings (its <c>env</c>, <c>envScript</c>, <c>baseEnv</c> and <c>secret</c>). The values are
+    /// copied. The next start of a command uses the new environment; the file's script runs again when its settings changed (see
+    /// <see cref="EnvScriptCache"/>). The file's groups and commands are not changed.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The session is in run mode.</exception>
+    public void UpdateFileSettings(FileSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+
+        lock (_sync)
+        {
+            EnsureEditMode();
+            MainSource.ApplySettings(settings.Env, settings.EnvScript, settings.BaseEnv, settings.Secret);
             _isDirty = true;
         }
 
@@ -633,10 +657,15 @@ public sealed partial class Session : IDisposable
             Cwd = settings.Cwd,
             Env = CopyEnv(settings.Env),
             Expanded = settings.Expanded,
+            EnvScript = settings.EnvScript?.Clone(),
+            Secret = CopyNames(settings.Secret),
         };
 
     private static IReadOnlyDictionary<string, string?>? CopyEnv(IReadOnlyDictionary<string, string?>? env) =>
         env is null ? null : new Dictionary<string, string?>(env);
+
+    private static List<string>? CopyNames(IReadOnlyList<string>? names) =>
+        names is null ? null : new List<string>(names);
 
     private static GroupSpec ToSpecTree(GroupEntry group)
     {

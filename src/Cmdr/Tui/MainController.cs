@@ -356,6 +356,17 @@ internal sealed class MainController : IDisposable, IListSearchHost
             return true;
         }
 
+        // Enter and F2 on a file row edit the opened file's top-level settings in edit mode, and do nothing in run mode.
+        if (focused is FileRow file && (key == Key.Enter || key == Key.F2))
+        {
+            if (IsEditMode)
+            {
+                EditFile(file.Source);
+            }
+
+            return true;
+        }
+
         // A file row takes the keys of a group or command row and does nothing with them: no action and no message.
         if (focused is FileRow && IsIgnoredOnFile(key))
         {
@@ -529,12 +540,12 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// The keys a file row takes and does nothing with: Enter, F2, Del, Space, Ctrl+A, Ctrl+C, c, F5, L, Ctrl+R and Alt+Up/Down. Ctrl+N and
-    /// Ctrl+G are not among them: they add a command or a group whatever row is focused. Left, Right, Up, Down and Shift+Up/Down are
-    /// not among them either.
+    /// The keys a file row takes and does nothing with: Del, Space, Ctrl+A, Ctrl+C, c, F5, L, Ctrl+R and Alt+Up/Down. Enter and F2 are not
+    /// among them (in edit mode they edit the opened file's settings, see <see cref="OnListKey"/>), and Ctrl+N and Ctrl+G are not among
+    /// them either: they add a command or a group whatever row is focused. Left, Right, Up, Down and Shift+Up/Down are not among them.
     /// </summary>
     private static bool IsIgnoredOnFile(Key key) =>
-        key == Key.Enter || key == Key.F2 || key == Key.Delete || key == Key.Space || key == Key.A.WithCtrl || key == Key.C
+        key == Key.Delete || key == Key.Space || key == Key.A.WithCtrl || key == Key.C
         || key == Key.C.WithCtrl || key == Key.F5 || key == Key.CursorUp.WithAlt || key == Key.CursorDown.WithAlt || IsLogKey(key)
         || key == Key.R.WithCtrl;
 
@@ -2196,6 +2207,40 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
+    /// <summary>
+    /// Enter or F2 on the opened file's row in edit mode: its top-level settings (env, baseEnv, secret and envScript). A base file's row
+    /// is refused, as a base item is: its file is edited separately.
+    /// </summary>
+    private void EditFile(ConfigSource file)
+    {
+        if (file.IsBase)
+        {
+            ShowMessage($"'{file.DisplayPath}' is a base file; edit that file.");
+            return;
+        }
+
+        using var dialog = new FileDialog(
+            _app,
+            file,
+            commit: settings =>
+            {
+                try
+                {
+                    _session.UpdateFileSettings(settings);
+                    return null;
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                {
+                    return ex.Message;
+                }
+            });
+
+        if (RunDialog(dialog))
+        {
+            FocusKey(file);
+        }
+    }
+
     private void EditGroup(GroupEntry group)
     {
         using var dialog = new GroupDialog(
@@ -2204,7 +2249,15 @@ internal sealed class MainController : IDisposable, IListSearchHost
             "Edit group",
             editing: group,
             initialParent: group.Parent,
-            initial: new GroupSettings(group.Name, group.Description, group.Mode, group.Cwd, group.Env, group.Expanded),
+            initial: new GroupSettings(
+                group.Name,
+                group.Description,
+                group.Mode,
+                group.Cwd,
+                group.Env,
+                group.Expanded,
+                group.EnvScript,
+                group.Secret),
             commit: (parent, settings) =>
             {
                 try
@@ -2473,7 +2526,8 @@ internal sealed class MainController : IDisposable, IListSearchHost
     /// <summary>
     /// The edit-mode hint: "Enter Edit" and "Del Delete" when the focused group or command row (the list) or the shown command (the info
     /// pane) can be edited; in the list, "^N Command", "^G Group" and, with a group or command row focused, "Alt+↑↓ Move"; the c hint;
-    /// "^S Save"; and "^E Run". A file row has none of the row hints.
+    /// "^S Save"; and "^E Run". A file row has no row hints, except "Enter Edit" when it is the opened file's row (its settings), not a
+    /// base file's.
     /// </summary>
     private Hint EditHintLeft(CopyPane pane, string? copy)
     {
@@ -2484,9 +2538,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
             CopyPane.Details or CopyPane.Output => ShownRow is not null,
             _ => false,
         };
+        bool editsFile = onList && FocusedRow is FileRow { Source.IsBase: false };
 
         var parts = new List<Hint>();
-        if (canEdit)
+        if (canEdit || editsFile)
         {
             parts.Add(KeyHints.Bound(Key.Enter, "Enter Edit"));
         }

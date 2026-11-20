@@ -82,21 +82,33 @@ public sealed class TopLevelSettingsTests : IDisposable
     [Fact]
     public void CommandForm_KeepsTheCommandSecretOnEdit()
     {
-        var values = new CommandFormValues("mine", string.Empty, "tool", string.Empty, string.Empty, string.Empty, StopMethod.CtrlC, string.Empty, false, string.Empty, false, StdinMode.Pipe, Secret: new[] { "CMD_SECRET" });
+        var values = new CommandFormValues("mine", string.Empty, "tool", string.Empty, string.Empty, string.Empty, StopMethod.CtrlC, string.Empty, false, string.Empty, false, StdinMode.Pipe, KeptSecret: new[] { "CMD_SECRET" });
 
         Assert.Equal(new[] { "CMD_SECRET" }, CommandForm.Build(values).Secret);
     }
 
     [Fact]
-    public void EditingAGroup_KeepsItsEnvScriptAndSecret()
+    public void EditingAGroup_WithTheCurrentEnvScriptAndSecret_KeepsThem()
     {
         GroupEntry group = _session.Groups.Single(g => g.Name == "main");
 
-        _session.UpdateGroup(group, new GroupSettings("renamed", null, GroupMode.Parallel, null, null), null);
+        _session.UpdateGroup(group, new GroupSettings("renamed", null, GroupMode.Parallel, null, null, true, group.EnvScript, group.Secret), null);
 
         Assert.Equal("renamed", group.Name);
         Assert.Equal("sh", group.EnvScript!.Program);
         Assert.Equal(new[] { "GROUP_SECRET" }, group.Secret);
+    }
+
+    [Fact]
+    public void EditingAGroup_WithoutThemInTheSettings_ClearsThem()
+    {
+        // The settings are applied as they are: a caller that does not pass the script and the secrets clears them.
+        GroupEntry group = _session.Groups.Single(g => g.Name == "main");
+
+        _session.UpdateGroup(group, new GroupSettings("renamed", null, GroupMode.Parallel, null, null), null);
+
+        Assert.Null(group.EnvScript);
+        Assert.Null(group.Secret);
     }
 
     [Fact]

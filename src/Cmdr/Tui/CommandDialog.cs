@@ -23,12 +23,13 @@ namespace Cmdr.Tui;
 /// A field whose initial values cannot be written in its line format (see <see cref="ArgsText.CanEdit"/> and
 /// <see cref="EnvText.CanEdit"/>) is read-only, and accepting the dialog keeps those values exactly: edit them in the JSON.
 /// The single-line fields work the same way (see <see cref="FieldDraft"/>): a value with a line break is read-only, and a
-/// value that is not edited is saved exactly; only edited text is trimmed.
+/// value that is not edited is saved exactly; only edited text is trimmed. The secret names are a comma-separated field (see
+/// <see cref="NameListText"/>), read-only and kept exactly when they cannot be written that way.
 /// </remarks>
 internal sealed class CommandDialog : Dialog<bool>
 {
     private const int DialogWidth = 78;
-    private const int DialogHeight = 20;
+    private const int DialogHeight = 21;
     private const int LeftWidth = 37;
     private const int RightX = 40;
     private const int RightWidth = 36;
@@ -56,6 +57,7 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly OptionSelector<StdinMode> _stdin;
     private readonly TextField _readyPattern;
     private readonly TextField _busyPattern;
+    private readonly TextField _secret;
     private readonly Label _multilineHint;
 
     // The originals of the single-line fields (see FieldDraft).
@@ -66,12 +68,10 @@ internal sealed class CommandDialog : Dialog<bool>
     private readonly FieldDraft _readyDraft;
     private readonly FieldDraft _busyDraft;
 
-    // The original args or env when their field is read-only; null when the field is edited as text.
+    // The original args, env or secret names when their field is read-only; null when the field is edited as text.
     private readonly IReadOnlyList<string>? _keptArgs;
     private readonly IReadOnlyDictionary<string, string?>? _keptEnv;
-
-    // The command's secret names as written; the dialog does not edit them, so they are saved as they are.
-    private readonly IReadOnlyList<string>? _secret;
+    private readonly IReadOnlyList<string>? _keptSecret;
 
     /// <param name="app">The application, for the message boxes.</param>
     /// <param name="session">Supplies the groups and the logs directory.</param>
@@ -101,7 +101,8 @@ internal sealed class CommandDialog : Dialog<bool>
         bool envEditable = EnvText.CanEdit(initial.Env);
         _keptArgs = argsEditable ? null : initial.Args.ToList();
         _keptEnv = envEditable ? null : new Dictionary<string, string?>(initial.Env);
-        _secret = initial.Secret?.ToList();
+        bool secretEditable = NameListText.CanEdit(initial.Secret);
+        _keptSecret = secretEditable ? null : initial.Secret?.ToList();
 
         _nameDraft = new FieldDraft(initial.Name);
         _programDraft = new FieldDraft(initial.Program);
@@ -172,23 +173,21 @@ internal sealed class CommandDialog : Dialog<bool>
             Value = initial.Stdin,
         };
 
-        // Left column, below the environment: the readiness patterns, one line each (see CommandForm for the rules).
+        // Left column, below the environment: the readiness patterns, one line each (see CommandForm for the rules), then the
+        // secret names, a comma-separated line (see NameListText).
         _readyPattern = Field(12, 12, LeftWidth - 12, _readyDraft);
         _busyPattern = Field(12, 13, LeftWidth - 12, _busyDraft);
-        bool anyReadOnlyLine = new[] { _nameDraft, _programDraft, _cwdDraft, _logPathDraft, _readyDraft, _busyDraft }
+        _secret = Field(12, 14, LeftWidth - 12, NameListText.Format(initial.Secret));
+        _secret.ReadOnly = !secretEditable;
+        bool anyReadOnlyLine = !secretEditable || new[] { _nameDraft, _programDraft, _cwdDraft, _logPathDraft, _readyDraft, _busyDraft }
             .Any(draft => !draft.Editable);
-        // The hint row is just above the button area, which covers the last content rows: the dialog grows by one row to show it.
-        if (anyReadOnlyLine)
-        {
-            Height = DialogHeight + 1;
-        }
 
         _multilineHint = new Label
         {
             X = 0,
-            Y = 14,
+            Y = 15,
             Width = DialogWidth - 4,
-            Text = anyReadOnlyLine ? "Read-only: a value has a line break. Edit it in the JSON." : string.Empty,
+            Text = anyReadOnlyLine ? "Read-only: a value cannot be written here. Edit it in the JSON." : "Secret names are separated by commas.",
         };
 
         View[] root =
@@ -210,6 +209,7 @@ internal sealed class CommandDialog : Dialog<bool>
             Caption("Input", RightX, 12), _stdin,
             Caption("Ready regex", 0, 12), _readyPattern,
             Caption("Busy regex", 0, 13), _busyPattern,
+            Caption("Secret", 0, 14), _secret,
             _multilineHint,
         };
         Add(root);
@@ -270,6 +270,7 @@ internal sealed class CommandDialog : Dialog<bool>
         Stdin: _stdin.Value ?? StdinMode.Pipe,
         ReadyPattern: _readyPattern.Text,
         BusyPattern: _busyPattern.Text,
+        SecretText: _secret.Text,
         KeptArgs: _keptArgs,
         KeptEnv: _keptEnv,
         KeptName: _nameDraft.KeptIfUnchanged(_name.Text),
@@ -278,7 +279,7 @@ internal sealed class CommandDialog : Dialog<bool>
         KeptLogPath: _logPathDraft.KeptIfUnchanged(_logPath.Text),
         KeptReadyPattern: _readyDraft.KeptIfUnchanged(_readyPattern.Text),
         KeptBusyPattern: _busyDraft.KeptIfUnchanged(_busyPattern.Text),
-        Secret: _secret);
+        KeptSecret: _keptSecret);
 
     /// <summary>OK, or Enter in a field: validate and commit, and close only when that succeeds.</summary>
     protected override bool OnAccepting(CommandEventArgs args)
