@@ -16,17 +16,22 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M1. JSON family (Cfgedit.Core)
 
-- [ ] SourceText: BOM detection and stripping (UTF-8 and UTF-16 LE/BE), decoding with the BOM, dominant newline and final
-      newline kept, and re-encoding that is byte-identical.
-- [ ] JSON lexer with dialect flags (JSON / JSONC / JSON5). Tokens keep exact spans, and whitespace and comments are kept
-      as trivia.
-- [ ] Parser to an immutable CST: objects, arrays, members, scalars and comments, with a `MaxDepth` cap. Errors are
-      `CfgeditException`s with whole-file line:col.
-- [ ] Value decoding (string escapes for each dialect, JSON5 line continuations) and number grammar validation for each
-      dialect.
-- [ ] Encoders: minimal string escaping that keeps the original quote character, and JSON5 identifier-key detection.
-- [ ] Round-trip corpus (real configs from SheetKraft, the JSON5 spec examples, the nasty-input corpus): parse, then print
-      the CST, must give identical text. Error-position tests.
+- [x] SourceText: BOM detection and stripping (UTF-8 and UTF-16 LE/BE), decoding with the BOM, dominant newline and final
+      newline kept, and re-encoding that is byte-identical. (72ffc19)
+- [x] JSON lexer with dialect flags (JSON / JSONC / JSON5). Tokens tile the text exactly, so whitespace and comments
+      keep their exact spans. (72ffc19)
+- [x] Parser to an immutable CST: objects, arrays, members, scalars and comments, with a `MaxDepth` cap. Errors are
+      `CfgeditException`s with whole-file line:col. (1720d7b)
+- [x] Value decoding (string escapes for each dialect, JSON5 line continuations) and number grammar validation for each
+      dialect. (72ffc19)
+- [x] Encoders: minimal string escaping that keeps the original quote character, and JSON5 identifier-key detection.
+      (72ffc19)
+- [x] Synthetic fixtures (JSONC, JSON5 spec example, strict, CRLF, BOM, UTF-16), the nasty-input corpus, encode/parse
+      property tests, and error-position tests. (1720d7b)
+- [x] Real configs (SheetKraft) checked by a scratchpad probe: decode/encode round trip, parse, CST invariants. All 361
+      `.json` files pass (20 need Jsonc). (probe, 2026-11-21)
+- [ ] Performance: a 4.4 MB JSON file parses in 0.9 s (about 5 MB/s, linear). Every edit reparses, so profile and
+      speed up the lexer/parser before M5 (target: at least 50 MB/s).
 
 ## M2. XML (Cfgedit.Core)
 

@@ -105,6 +105,38 @@ public sealed class SourceText
         return new SourceText(text, StrictFor(encoding), hasBom);
     }
 
+    /// <summary>
+    /// Creates a source text in any encoding that throws on invalid bytes and unencodable characters, for XML documents
+    /// declaring a code page. UTF-8 and UTF-16 are mapped to their strict forms. A byte order mark is allowed only for
+    /// UTF-8 and UTF-16.
+    /// </summary>
+    /// <exception cref="ArgumentException">
+    /// The encoding does not use exception fallbacks, or a byte order mark is requested for another encoding.
+    /// </exception>
+    internal static SourceText CreateStrict(string text, Encoding encoding, bool hasBom)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(encoding);
+        if (encoding.DecoderFallback is not DecoderExceptionFallback || encoding.EncoderFallback is not EncoderExceptionFallback)
+        {
+            throw new ArgumentException("The encoding must use exception fallbacks.", nameof(encoding));
+        }
+
+        if (hasBom && encoding.CodePage is not (65001 or 1200 or 1201))
+        {
+            throw new ArgumentException("A byte order mark is supported only for UTF-8 and UTF-16.", nameof(encoding));
+        }
+
+        Encoding strict = encoding.CodePage switch
+        {
+            65001 => Utf8Strict,
+            1200 => Utf16LeStrict,
+            1201 => Utf16BeStrict,
+            _ => encoding,
+        };
+        return new SourceText(text, strict, hasBom);
+    }
+
     /// <summary>The same encoding and byte order mark with different text. Newline and EndsWithNewline are recomputed.</summary>
     public SourceText WithText(string text)
     {
@@ -126,9 +158,15 @@ public sealed class SourceText
         }
         catch (EncoderFallbackException ex)
         {
-            LinePosition at = GetPosition(ex.Index);
+            int index = Math.Min(ex.Index, Text.Length - 1);
+            LinePosition at = GetPosition(index);
+            char c = Text[index];
+            bool isPair = char.IsHighSurrogate(c) && index + 1 < Text.Length && char.IsLowSurrogate(Text[index + 1]);
+            string what = char.IsSurrogate(c) && !isPair
+                ? "a lone surrogate"
+                : $"U+{(isPair ? char.ConvertToUtf32(c, Text[index + 1]) : c):X4} cannot be encoded";
             throw new CfgeditException(
-                $"text cannot be saved as {Encoding.EncodingName}: a lone surrogate at line {at.Line}, column {at.Column}",
+                $"text cannot be saved as {Encoding.EncodingName}: {what} at line {at.Line}, column {at.Column}",
                 ex)
             {
                 Line = at.Line,

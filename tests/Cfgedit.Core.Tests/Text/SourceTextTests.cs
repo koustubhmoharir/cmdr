@@ -415,4 +415,57 @@ public sealed class SourceTextTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => text.GetOffset(new LinePosition(1, 5)));
     }
+
+    [Fact]
+    public void Encode_reports_a_character_the_code_page_cannot_represent_with_its_line_and_column()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Encoding windows1252 = Encoding.GetEncoding(1252, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        SourceText text = SourceText.CreateStrict("ab\nc" + (char)0x4E2D, windows1252, hasBom: false);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+
+        Assert.Equal("text cannot be saved as Western European (Windows): U+4E2D cannot be encoded at line 2, column 2", ex.Message);
+        Assert.Equal(2, ex.Line);
+        Assert.Equal(2, ex.Column);
+    }
+
+    [Fact]
+    public void Encode_reports_an_astral_character_the_code_page_cannot_represent_by_its_code_point()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Encoding windows1252 = Encoding.GetEncoding(1252, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        SourceText text = SourceText.CreateStrict("a" + (char)0xD83D + (char)0xDE00, windows1252, hasBom: false);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+
+        Assert.Equal("text cannot be saved as Western European (Windows): U+1F600 cannot be encoded at line 1, column 2", ex.Message);
+        Assert.Equal(1, ex.Line);
+        Assert.Equal(2, ex.Column);
+    }
+
+    [Fact]
+    public void Lone_surrogate_message_names_the_surrogate_case()
+    {
+        SourceText text = SourceText.Create("ab" + (char)0xD800, Encoding.UTF8, false);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+
+        Assert.Equal("text cannot be saved as Unicode (UTF-8): a lone surrogate at line 1, column 3", ex.Message);
+    }
+
+    [Fact]
+    public void CreateStrict_rejects_an_encoding_without_exception_fallbacks()
+    {
+        Assert.Throws<ArgumentException>(() => SourceText.CreateStrict("x", Encoding.Latin1, hasBom: false));
+    }
+
+    [Fact]
+    public void CreateStrict_rejects_a_byte_order_mark_for_a_code_page()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        Encoding windows1252 = Encoding.GetEncoding(1252, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+
+        Assert.Throws<ArgumentException>(() => SourceText.CreateStrict("x", windows1252, hasBom: true));
+    }
 }
