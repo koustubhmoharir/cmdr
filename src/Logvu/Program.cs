@@ -43,10 +43,10 @@ internal static class Program
     // does not load is reported and the TUI is not started.
     private static int Open(string configPath, TextWriter stderr)
     {
-        LogvuConfig config;
+        LogvuConfigFile file;
         try
         {
-            config = LogvuConfig.Load(configPath);
+            file = LogvuConfigFile.Read(configPath);
         }
         catch (LogvuConfigException ex)
         {
@@ -54,9 +54,73 @@ internal static class Program
             return 1;
         }
 
+        LogvuConfig? config = file.HasEnvScript
+            ? ResolveWithCtrlC(file, stderr)
+            : ResolveConfig(file, stderr, CancellationToken.None);
+        if (config is null)
+        {
+            return 1;
+        }
+
         RecentFiles? recent = RecordRecent(config.ConfigPath);
         LogvuHost.Run(config, recent);
         return 0;
+    }
+
+    /// <summary>
+    /// Resolves a config whose <c>envScript</c> runs, with Ctrl+C cancelling the script. The script runs in its own process group or
+    /// job, so a terminal Ctrl+C would not reach it, and logvu would exit and leave it running. The handler is removed on every path.
+    /// </summary>
+    private static LogvuConfig? ResolveWithCtrlC(LogvuConfigFile file, TextWriter stderr)
+    {
+        using var cancel = new CancellationTokenSource();
+        ConsoleCancelEventHandler onCancel = (_, e) =>
+        {
+            // Handled here, so the process does not end before the script is killed.
+            e.Cancel = true;
+            cancel.Cancel();
+        };
+
+        Console.CancelKeyPress += onCancel;
+        try
+        {
+            return ResolveConfig(file, stderr, cancel.Token);
+        }
+        finally
+        {
+            Console.CancelKeyPress -= onCancel;
+        }
+    }
+
+    /// <summary>
+    /// Runs the config's <c>envScript</c>, if it has one, and returns the resolved config. Writes the progress line first, then
+    /// reports a cancel or a failure as <c>logvu: …</c> on <paramref name="stderr"/>. Returns null on a cancel or a failure. A config
+    /// without a script writes nothing and completes at once.
+    /// </summary>
+    /// <param name="file">The config as read.</param>
+    /// <param name="stderr">Receives the progress line and the messages.</param>
+    /// <param name="cancellationToken">Stops the script; its process tree is killed.</param>
+    internal static LogvuConfig? ResolveConfig(LogvuConfigFile file, TextWriter stderr, CancellationToken cancellationToken)
+    {
+        if (file.HasEnvScript)
+        {
+            stderr.WriteLine($"logvu: running envScript of {file.ConfigPath}…");
+        }
+
+        try
+        {
+            return file.ResolveAsync(cancellationToken).GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            stderr.WriteLine("logvu: cancelled");
+            return null;
+        }
+        catch (LogvuConfigException ex)
+        {
+            stderr.WriteLine($"logvu: {ex.Message}");
+            return null;
+        }
     }
 
     // The recent list, or null when there is no store location.

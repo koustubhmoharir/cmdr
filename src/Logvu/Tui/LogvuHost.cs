@@ -71,7 +71,7 @@ internal static class LogvuHost
             app.Init();
 
             LogvuConfig? config;
-            using (var picker = new RecentPicker<LogvuConfig>(app, recent, TryLoad, "Recent configs", PickerHints, openFile: true))
+            using (var picker = new RecentPicker<LogvuConfig>(app, recent, path => TryLoad(app, path), "Recent configs", PickerHints, openFile: true))
             {
                 app.Run(picker);
                 config = picker.Opened;
@@ -103,16 +103,79 @@ internal static class LogvuHost
         }
     }
 
-    // Loads a config for the picker: the config, or the message to show when it does not load.
-    private static (LogvuConfig? Value, string? Error) TryLoad(string path)
+    /// <summary>
+    /// Loads a config for a picker: the config, or the message to show when it does not load. A config with an <c>envScript</c> runs
+    /// it under an <see cref="EnvScriptWaitDialog"/>, so the picker's window stays responsive and Esc or Cancel can stop the script.
+    /// A cancel returns no value and no message, which leaves the picker as it is.
+    /// </summary>
+    /// <param name="app">The running application, which the wait dialog runs on.</param>
+    /// <param name="path">The config file to load.</param>
+    /// <param name="onShown">Called with the wait dialog before it runs, when there is one. A test seam.</param>
+    internal static (LogvuConfig? Value, string? Error) TryLoad(IApplication app, string path, Action<EnvScriptWaitDialog>? onShown = null)
     {
+        LogvuConfigFile file;
         try
         {
-            return (LogvuConfig.Load(path), null);
+            file = LogvuConfigFile.Read(path);
         }
         catch (LogvuConfigException ex)
         {
             return (null, ex.Message);
+        }
+
+        if (!file.HasEnvScript)
+        {
+            // Completes at once without a script, so waiting for it blocks for no time.
+            return ResolveNow(file);
+        }
+
+        return ResolveWithWait(app, file, onShown);
+    }
+
+    // Resolves a config without a script, which completes at once: the config, or the message of the error.
+    private static (LogvuConfig? Value, string? Error) ResolveNow(LogvuConfigFile file)
+    {
+        try
+        {
+            return (file.ResolveAsync(CancellationToken.None).GetAwaiter().GetResult(), null);
+        }
+        catch (LogvuConfigException ex)
+        {
+            return (null, ex.Message);
+        }
+    }
+
+    // Runs the script of a config under the wait dialog. The dialog closes on the UI thread once the script's task has ended, and it
+    // only stops then, so the task is complete when the dialog returns. A cancel gives no value and no message, even when the script
+    // had already finished, because the user asked for it.
+    private static (LogvuConfig? Value, string? Error) ResolveWithWait(IApplication app, LogvuConfigFile file, Action<EnvScriptWaitDialog>? onShown)
+    {
+        using var cancel = new CancellationTokenSource();
+        Task<LogvuConfig> resolving = file.ResolveAsync(cancel.Token);
+
+        using var dialog = new EnvScriptWaitDialog(app, Path.GetFileName(file.ConfigPath), cancel);
+        // The task ends on a thread-pool thread. Invoke queues the close for the UI thread, which runs it in the dialog's loop, even
+        // when the script has already ended by the time the dialog runs.
+        _ = resolving.ContinueWith(_ => app.Invoke(() => dialog.Finish()), TaskScheduler.Default);
+        onShown?.Invoke(dialog);
+        app.Run(dialog);
+
+        if (cancel.IsCancellationRequested)
+        {
+            return (null, null);
+        }
+
+        try
+        {
+            return (resolving.GetAwaiter().GetResult(), null);
+        }
+        catch (LogvuConfigException ex)
+        {
+            return (null, ex.Message);
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, null);
         }
     }
 
@@ -143,7 +206,7 @@ internal static class LogvuHost
     // The picker shown over a running set, on the same application. Esc returns without a choice; Ctrl+Q asks to quit.
     private static (TimelineController.PickOutcome Outcome, LogvuConfig? Config) ShowSetPicker(IApplication app, RecentFiles? recent)
     {
-        using var picker = new RecentPicker<LogvuConfig>(app, recent, TryLoad, "Open log set", SetPickerHints, openFile: true);
+        using var picker = new RecentPicker<LogvuConfig>(app, recent, path => TryLoad(app, path), "Open log set", SetPickerHints, openFile: true);
         app.Run(picker);
 
         if (picker.Opened is { } config)

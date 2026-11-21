@@ -37,7 +37,7 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] FileSet: exclude FIFOs/devices (Linux only) (use FileIdentity.TryGet(path), which only accepts regular files).
 - [x] logvu recent-file history (own store).
 - [x] Config `envScript` (core): a script run at load (`program`, `args`, `cwd`, `timeoutSeconds`) whose JSON output sets variables for `logsDirectory` (`${env:NAME}`, `${configDir}`, `${cwd}`); LogvuConfigFile reads without running and ResolveAsync runs it, cancellable; `LogvuConfig.Load` blocks.
-- [ ] Config `envScript` in the app: startup loads with LogvuConfigFile, shows the script's progress, cancels it, and reports its failure. *(Follows the core change.)*
+- [x] Config `envScript` in the app: startup prints the script's progress and Ctrl+C cancels it; the pickers show a "Running envScript…" window with Esc/Cancel; failures are reported as messages.
 
 ## M3. Catalog
 

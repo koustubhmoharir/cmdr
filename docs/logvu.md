@@ -74,6 +74,10 @@ first, then at logvu's environment. A variable that is unset after that is an er
 set`), so that a missing value cannot silently give a different directory. An empty value is allowed. `${input:…}` is
 not supported in `envScript` or `logsDirectory`.
 
+While the script runs, logvu says so: at startup it prints `logvu: running envScript of <config>…` on stderr, and Ctrl+C
+stops the script and exits. In the pickers a "Running envScript…" window appears; Esc or Cancel stops the script and returns
+to the picker, which shows no error for a cancel.
+
 For example, a build whose artifacts folder is found with `dotnet msbuild`:
 
 ```json
