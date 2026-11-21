@@ -985,3 +985,71 @@ model). It suppresses the obsolete warning as cmdr does.
   - every structure key, with the resulting document text asserted
   - the message line and title marker
 - **pty check** (by the reviewer) of the inline editor, the dialogs and the quit confirmation at 80×24 and 40×12.
+
+## Text mode (M5b)
+
+### Opening files that do not parse
+
+- **DocumentFile.** `DocumentFile.Open` no longer throws for parse errors. It returns a file whose `Document` is null and
+  whose `Text` (SourceText) and `ParseError` (CfgeditException, with line and column) are set.
+- **What still throws.** Decoding errors (invalid bytes, unsupported encodings) still throw, since there is no text to
+  show. So do missing files and access errors.
+- **Program.** A file that does not parse opens the TUI in text mode instead of printing the error. `--check` (below)
+  keeps the command-line behaviour.
+
+### The text view
+
+- **Control.** `TextModeView` is a `TextView` with `TabKeyAddsTab = true`, suppressing the obsolete warning as cmdr
+  does, filling the tree's place in the window. The title gets a `[text]` tag.
+- **Round-trip rule.** `TextView.Text` joins lines with `Environment.NewLine`, so text read from the view gets its line
+  breaks replaced with the document's own newline (`SourceText.Newline`). This is exact only when the source uses one
+  line break style throughout, with no CR outside that style. So text mode is editable only when
+  `WithNewline(Read(view), source.Newline) == source.Text` right after loading. Otherwise the view is read-only, and the
+  message says "text mode is read-only: the file mixes line endings, and editing it here would change them". That
+  still shows the error positions, which is useful.
+- **Leaving with no changes.** If the text read back equals the text that went in, the switch back changes nothing and
+  records no undo step.
+- **Errors.** An open parse error places the cursor at its line and column and shows `line:col: message` in the message
+  line, in the error style.
+
+### Keys in text mode
+
+- **F5** reparses.
+  - Success: switch to the tree. The edit is one undo step (`EditHistory.RecordExternal`), or, when the file never
+    parsed, the history starts from the new document.
+  - Failure: the cursor moves to the error, and the message shows it.
+- **Ctrl+T** switches between tree and text at any time.
+  - Tree → text: the cursor goes to the focused part's source offset (`DocPart.Start`, mapped to line and column).
+  - Text → tree: reparse first, as F5 does. On success the tree focuses the deepest node whose span contains the
+    cursor's offset.
+- **Ctrl+S** in text mode reparses first. If the text parses, the save is the normal one. If it doesn't, the user is
+  asked "<line:col: message>. Save anyway?" with Cancel and Save, Save being the default. The raw text is then saved with
+  `DocumentFile.SaveText(SourceText)`, through the same exact-write path and postcondition as `Save`.
+- **Ctrl+Q and Ctrl+O** use the unsaved-changes flow. Dirty means the current text differs from the bytes last loaded or
+  saved, in text mode as in tree mode.
+- **Ctrl+Z / Ctrl+Y** in text mode are the TextView's own undo and redo of typing. Document-level undo applies in tree
+  mode.
+- **Esc** does nothing in text mode, so it can't lose edits by accident.
+
+### `--check`
+
+- `cfgedit --check <file> [--format …]` parses the file without starting the TUI.
+  - Success: prints nothing and exits 0.
+  - Failure: prints `path:line:col: message` (or `path: message` when there is no position) to stderr and exits 1.
+- Usage errors exit 2.
+- Format resolution is the same as for opening.
+
+### Tests (M5b)
+
+- **DocumentFile:** Open on a parse error gives the text and the error; on a decoding error it throws. SaveText writes
+  exact bytes.
+- **Round-trip rule:** LF, CRLF and CR documents, mixed endings (read-only), a final newline and none, tabs.
+- **TerminalHarness:**
+  - opening a broken file: text mode, cursor at the error, the message
+  - F5 failing, then succeeding: the tree and the undo step
+  - Ctrl+T both ways with cursor mapping (JSON and XML)
+  - Ctrl+S on unparseable text (both answers)
+  - Ctrl+Q dirty in text mode
+  - the read-only mixed-endings case
+- **Program:** `--check` exit codes and output, and a broken file now opening the TUI (through the host delegate).
+- **pty check** by the reviewer.
