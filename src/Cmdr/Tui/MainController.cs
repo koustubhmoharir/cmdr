@@ -57,6 +57,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
 
     // The environment script preparations in progress, UI thread only (see StartPreparation). Several may run at once.
     private readonly List<ActivePreparation> _preparations = new();
+
+    // True while the quit dialogs are open (see RequestQuit). The completions that arrive meanwhile wait in _deferredCompletions.
+    private bool _quitting;
+    private readonly List<Action> _deferredCompletions = new();
     private int _refreshPending;
     private volatile bool _closed;
     private bool _loadErrorsShown;
@@ -1618,15 +1622,22 @@ internal sealed class MainController : IDisposable, IListSearchHost
     }
 
     /// <summary>
-    /// The outcome of a preparation, on the UI thread. Cancelled (by Ctrl+C, quit or the controller's close): "Start cancelled", and nothing
-    /// starts. A failed script: its message, and nothing starts; the session has written the failure into the commands' output. Success:
+    /// The outcome of a preparation, on the UI thread. Cancelled (by Ctrl+C, a committed quit or the controller's close): "Start cancelled", and
+    /// nothing starts. A failed script: its message, and nothing starts; the session has written the failure into the commands' output. Success:
     /// <paramref name="onReady"/>. A preparation cancelled after its scripts finished is treated as cancelled, so that nothing starts after
-    /// the user asked for it. Ignored once the controller is closed.
+    /// the user asked for it. While the quit dialogs are open the outcome is held and handled once they close (see <see cref="RequestQuit"/>),
+    /// so that nothing starts behind them. Ignored once the controller is closed.
     /// </summary>
     private void CompletePreparation(ActivePreparation preparation, EnvPreparation? result, Exception? failure, Action<ScriptValues> onReady)
     {
         if (_closed)
         {
+            return;
+        }
+
+        if (_quitting)
+        {
+            _deferredCompletions.Add(() => CompletePreparation(preparation, result, failure, onReady));
             return;
         }
 
@@ -2046,15 +2057,43 @@ internal sealed class MainController : IDisposable, IListSearchHost
         }
     }
 
+    /// <summary>
+    /// Runs the quit steps. A start still waiting for its environment scripts keeps waiting while they are open, and its completion is held
+    /// (see <see cref="CompletePreparation"/>): backing out leaves the start to go ahead. A committed quit cancels the starts first
+    /// (<see cref="QuitFlow"/> calls <see cref="CancelAllPreparations"/> before it stops the commands), so that none starts after it.
+    /// </summary>
     private void RequestQuit()
     {
-        // A start still waiting for its environment scripts is cancelled before the quit steps: one that completed during them would start commands.
-        CancelAllPreparations();
-        var quit = new QuitFlow(_app, _session, Save);
-        if (quit.Run())
+        bool quit;
+        _quitting = true;
+        try
+        {
+            quit = new QuitFlow(_app, _session, Save, CancelAllPreparations).Run();
+        }
+        finally
+        {
+            _quitting = false;
+            RunDeferredCompletions();
+        }
+
+        if (quit)
         {
             // The quit steps have closed their dialogs, so the current session is the main window.
             _app.RequestStop();
+        }
+    }
+
+    /// <summary>
+    /// Handles the completions held while the quit dialogs were open, in the order they arrived. The list is emptied before the first one
+    /// runs, so each one runs once, and none runs while the dialogs are open again.
+    /// </summary>
+    private void RunDeferredCompletions()
+    {
+        Action[] completions = _deferredCompletions.ToArray();
+        _deferredCompletions.Clear();
+        foreach (Action completion in completions)
+        {
+            completion();
         }
     }
 

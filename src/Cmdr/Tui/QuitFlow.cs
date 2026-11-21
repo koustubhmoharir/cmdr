@@ -10,6 +10,8 @@ namespace Cmdr.Tui;
 /// <summary>
 /// The quit sequence of the main window: unsaved changes first, then running commands. Each step is a modal dialog; the
 /// waiting for processes to exit polls with a timer, so the UI keeps running. Returns true when the application may exit.
+/// Backing out at any step leaves the commands and the pending starts as they were: only a committed quit (the stop or kill
+/// that the flow itself triggers) calls <c>onStopping</c>.
 /// </summary>
 internal sealed class QuitFlow
 {
@@ -18,18 +20,26 @@ internal sealed class QuitFlow
     private readonly IApplication _app;
     private readonly Session _session;
     private readonly Func<bool> _save;
+    private readonly Action _onStopping;
 
     /// <param name="app">The application, for the dialogs and the timer.</param>
     /// <param name="session">The session being quit.</param>
     /// <param name="save">Saves the session, showing any error. Returns false when the save failed.</param>
-    public QuitFlow(IApplication app, Session session, Func<bool> save)
+    /// <param name="onStopping">
+    /// Called just before the quit stops the commands: cancels anything that would start more. Not called when the user backs out.
+    /// </param>
+    public QuitFlow(IApplication app, Session session, Func<bool> save, Action onStopping)
     {
         _app = app;
         _session = session;
         _save = save;
+        _onStopping = onStopping;
     }
 
-    /// <summary>Runs the quit steps. Returns false when the user cancelled or a save failed.</summary>
+    /// <summary>
+    /// Runs the quit steps. Returns false when the user cancelled or a save failed. <c>onStopping</c> runs before each stop or kill
+    /// that the flow starts, so a quit that is cancelled at the waiting dialog has already cancelled the pending starts.
+    /// </summary>
     public bool Run()
     {
         if (_session.IsDirty && !ResolveUnsaved())
@@ -41,6 +51,7 @@ internal sealed class QuitFlow
         if (active == 0)
         {
             // Nothing is running, but a pending restart or a sequence between steps could still start something.
+            _onStopping();
             _session.StopAll();
             return true;
         }
@@ -50,9 +61,11 @@ internal sealed class QuitFlow
         switch (choice)
         {
             case 0:
+                _onStopping();
                 _session.StopAll();
                 return WaitForProcesses();
             case 1:
+                _onStopping();
                 _session.ForceKillAll();
                 return WaitForProcesses();
             default:

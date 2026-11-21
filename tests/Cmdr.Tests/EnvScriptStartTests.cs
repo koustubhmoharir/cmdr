@@ -350,6 +350,166 @@ public sealed class EnvScriptStartTests
         Drain(app, controller, f);
     }
 
+    [Fact]
+    public void Backing_out_of_the_save_prompt_keeps_the_start()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var f = Fixture.Open(dir => new[] { new GroupSpec { Name = "g", EnvScript = Gated(dir), Items = { Sleeper("c") } } });
+        CommandEntry c = f.Session.AllEntries.Single();
+        MakeDirty(f.Session);
+        string gate = Path.Combine(f.Dir, "gate");
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, f.Session);
+        Focus(controller, c);
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Assert.True(controller.OnListKey(Key.Enter));
+        Assert.Equal(1, Preparing(controller));
+
+        // The script finishes while the Save prompt is open: its completion waits there, and the start does not happen yet.
+        bool gateWritten = false;
+        using var prompt = new DialogDriver(app, dialog => HasButton(dialog, "Discard"), () =>
+        {
+            if (!gateWritten)
+            {
+                File.WriteAllText(gate, string.Empty);
+                gateWritten = true;
+                return false;
+            }
+
+            if (Deferred(controller) == 0)
+            {
+                return false;
+            }
+
+            Assert.Equal(ProcessState.NotStarted, State(c));
+            Assert.Equal(1, Preparing(controller));
+            return true;
+        }, "_Cancel", "the completion to wait for the Save prompt");
+
+        Assert.True(controller.OnGlobalKey(Key.Q.WithCtrl));
+
+        prompt.Finish();
+        Assert.Equal(ProcessState.Running, State(c));
+        Assert.Equal(0, Preparing(controller));
+        Assert.Equal(0, Deferred(controller));
+        Assert.Null(Message(controller));
+    }
+
+    [Fact]
+    public void Backing_out_of_the_stop_prompt_keeps_the_start()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var f = Fixture.Open(dir => new[]
+        {
+            new GroupSpec { Name = "running", Items = { Sleeper("r") } },
+            new GroupSpec { Name = "g", EnvScript = Gated(dir), Items = { Sleeper("c") } },
+        });
+        CommandEntry running = f.Session.AllEntries.Single(entry => entry.Name == "r");
+        CommandEntry c = f.Session.AllEntries.Single(entry => entry.Name == "c");
+        Start(f, running, gate: null);
+        string gate = Path.Combine(f.Dir, "gate");
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, f.Session);
+        Focus(controller, c);
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Assert.True(controller.OnListKey(Key.Enter));
+        Assert.Equal(1, Preparing(controller));
+
+        // The script finishes while the Stop prompt is open, which Ctrl+Q shows because a command is running.
+        bool gateWritten = false;
+        using var prompt = new DialogDriver(app, dialog => HasButton(dialog, "Stop and wait"), () =>
+        {
+            if (!gateWritten)
+            {
+                File.WriteAllText(gate, string.Empty);
+                gateWritten = true;
+                return false;
+            }
+
+            if (Deferred(controller) == 0)
+            {
+                return false;
+            }
+
+            Assert.Equal(ProcessState.NotStarted, State(c));
+            return true;
+        }, "_Cancel", "the completion to wait for the Stop prompt");
+
+        Assert.True(controller.OnGlobalKey(Key.Q.WithCtrl));
+
+        prompt.Finish();
+        Assert.Equal(ProcessState.Running, State(running));
+        Assert.Equal(ProcessState.Running, State(c));
+        Assert.Equal(0, Preparing(controller));
+        Assert.Equal(0, Deferred(controller));
+        Assert.Null(Message(controller));
+    }
+
+    [Fact]
+    public void A_committed_quit_cancels_the_start()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var f = Fixture.Open(dir => new[] { new GroupSpec { Name = "g", EnvScript = Gated(dir), Items = { Sleeper("c") } } });
+        CommandEntry c = f.Session.AllEntries.Single();
+        string gate = Path.Combine(f.Dir, "gate");
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var controller = Build(app, f.Session);
+        Focus(controller, c);
+        Field<CommandListView>(controller, "_list").SetFocus();
+        Assert.True(controller.OnListKey(Key.Enter));
+        Assert.Equal(1, Preparing(controller));
+
+        // Nothing is running and nothing is unsaved, so Ctrl+Q quits at once: the loop runs until the quit stops it.
+        bool quitRequested = false;
+        RunLoop(app, controller, () =>
+        {
+            if (!quitRequested)
+            {
+                quitRequested = true;
+                Assert.True(controller.OnGlobalKey(Key.Q.WithCtrl));
+            }
+
+            return false;
+        }, "the main loop to stop after the quit");
+
+        Assert.True(PreparationsCancelled(controller));
+        Assert.Equal(ProcessState.NotStarted, State(c));
+
+        // The script finishes after the cancel: its completion shows the cancellation and starts nothing.
+        File.WriteAllText(gate, string.Empty);
+        RunLoop(app, controller, () => Preparing(controller) == 0, "the cancelled preparation to complete");
+        Assert.Equal(Cancelled, Message(controller));
+        Assert.Equal(ProcessState.NotStarted, State(c));
+    }
+
+    [Fact]
+    public void QuitFlow_calls_onStopping_before_it_stops_the_commands()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        using var f = Fixture.Open(_ => new[] { new GroupSpec { Name = "g", Items = { Sleeper("c") } } });
+        CommandEntry c = f.Session.AllEntries.Single();
+        Start(f, c, gate: null);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        var seen = new List<ProcessState>();
+        using var prompt = new DialogDriver(app, dialog => HasButton(dialog, "Stop and wait"), () => true, "_Stop and wait", "the Stop prompt");
+        var quit = new QuitFlow(app, f.Session, () => true, () => seen.Add(State(c)));
+
+        Assert.True(quit.Run());
+
+        prompt.Finish();
+        // The command was still running when onStopping ran; the stop came after it.
+        Assert.Equal(new[] { ProcessState.Running }, seen);
+        Assert.Empty(f.Session.ActiveEntries);
+    }
+
     /// <summary>
     /// Answers, with Enter (its default, Yes), the confirmation that a call shows while it runs: the call blocks in the dialog's own loop, which
     /// runs this timer. Used for F5 pressed outside <see cref="RunLoop"/>. The timer stays until the application is disposed.
@@ -546,6 +706,103 @@ public sealed class EnvScriptStartTests
     /// <summary>The number of preparations in progress.</summary>
     private static int Preparing(MainController controller) =>
         ((System.Collections.ICollection)Field<object>(controller, "_preparations")).Count;
+
+    /// <summary>The number of completions the controller holds while the quit dialogs are open.</summary>
+    private static int Deferred(MainController controller) =>
+        ((System.Collections.ICollection)Field<object>(controller, "_deferredCompletions")).Count;
+
+    /// <summary>True when every preparation in progress has its cancellation requested (and there is at least one, when the test expects it).</summary>
+    private static bool PreparationsCancelled(MainController controller)
+    {
+        var preparations = (System.Collections.IEnumerable)Field<object>(controller, "_preparations");
+        int count = 0;
+        foreach (object preparation in preparations)
+        {
+            var cancel = (CancellationTokenSource)preparation.GetType().GetProperty("Cancel")!.GetValue(preparation)!;
+            if (!cancel.IsCancellationRequested)
+            {
+                return false;
+            }
+
+            count++;
+        }
+
+        return count > 0;
+    }
+
+    /// <summary>Makes the session unsaved the way the user does: a change in edit mode, then run mode again.</summary>
+    private static void MakeDirty(CmdrSession session)
+    {
+        Assert.Null(session.SwitchToEdit());
+        session.AddGroup(null, new GroupSettings("extra", null, GroupMode.Parallel, null, null));
+        session.SwitchToRun();
+        Assert.True(session.IsDirty);
+    }
+
+    private static bool HasButton(Dialog dialog, string text) => dialog.Buttons.Any(button => button.Text.TrimStart('_') == text);
+
+    /// <summary>
+    /// Watches for a dialog above the main window that <paramref name="matches"/> recognises. While it is open, <paramref name="whileOpen"/> runs
+    /// on the UI thread every 20 ms (the dialog's own loop runs the timer), until it returns true; then the button <paramref name="answer"/> is
+    /// pressed. Used for quit prompts, which block the test thread: the test calls the quit and the timer plays the user. The timer stops
+    /// after the answer. A failure in <paramref name="whileOpen"/> or a timeout still presses the button, so that the quit returns, and
+    /// <see cref="Finish"/> rethrows it.
+    /// </summary>
+    private sealed class DialogDriver : IDisposable
+    {
+        private readonly IApplication _app;
+        private readonly object? _timer;
+        private ExceptionDispatchInfo? _failure;
+
+        public DialogDriver(IApplication app, Func<Dialog, bool> matches, Func<bool> whileOpen, string answer, string waitingFor)
+        {
+            _app = app;
+            string label = answer.TrimStart('_');
+            DateTime deadline = DateTime.UtcNow + Timeout;
+            _timer = app.AddTimeout(TimeSpan.FromMilliseconds(20), () =>
+            {
+                if (app.TopRunnableView is not Dialog dialog || !matches(dialog))
+                {
+                    return true;
+                }
+
+                try
+                {
+                    if (!whileOpen())
+                    {
+                        if (DateTime.UtcNow >= deadline)
+                        {
+                            Assert.Fail("Timed out waiting for " + waitingFor + ".");
+                        }
+
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _failure = ExceptionDispatchInfo.Capture(ex);
+                }
+
+                dialog.Buttons.Single(button => button.Text.TrimStart('_') == label).InvokeCommand(Command.Accept);
+                return false;
+            });
+        }
+
+        /// <summary>Stops the watching and rethrows what <paramref name="whileOpen"/> failed with, if anything.</summary>
+        public void Finish()
+        {
+            Dispose();
+            _failure?.Throw();
+        }
+
+        public void Dispose()
+        {
+            if (_timer is not null)
+            {
+                _app.RemoveTimeout(_timer);
+            }
+        }
+    }
 
     /// <summary>The transient message in the status line, or null when none is shown.</summary>
     private static string? Message(MainController controller) => (string?)typeof(MainController).GetField("_message", Members)!.GetValue(controller);
