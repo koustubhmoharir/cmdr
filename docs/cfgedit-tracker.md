@@ -70,9 +70,16 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M4. Read-only TUI
 
-- [ ] Program and host: open a file, the recent-files picker, and the format choice.
-- [ ] Tree view, plus RowLayout (pure) with parts, colours and XML attribute wrapping.
-- [ ] Navigation, fold, the detail line (path, type, full value) and hints.
+- [x] Program and host: open a file, the recent-files picker (Open file dialog offers cfgedit's extensions), and the
+      format choice. (8f35a55)
+- [x] RowLayout (pure) with parts, styles, glyphs and XML attribute wrapping; DocRows; detail-line PathText. (4c8c075)
+- [x] RowLayout work capped at the width, so a huge value costs O(width) per draw (mutation-checked by allocation).
+      (8f35a55)
+- [x] Tree view and colours. (8f35a55)
+- [x] Navigation, fold, the detail line (path, type, full value) and hints. Checked in a real terminal with the pty
+      driver at 120x30, 60x20 and 40x12. (8f35a55)
+- [ ] A same-line trailing comment shows as its own row after the entry. Consider showing it on the entry's row in M5
+      or later.
 
 ## M5. Editing TUI
 
