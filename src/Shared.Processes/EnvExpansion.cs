@@ -1,3 +1,5 @@
+using System.Collections;
+
 namespace Shared.Processes;
 
 /// <summary>
@@ -28,6 +30,38 @@ public sealed record EnvLevel(IReadOnlyDictionary<string, string?> Env, string C
 public static class EnvExpansion
 {
     /// <summary>
+    /// A new environment: a copy of <paramref name="baseEnvironment"/>, or cmdr's process environment when it is null. Names compare
+    /// case-insensitively on Windows, as they do in its environment block, and exactly on other platforms.
+    /// </summary>
+    public static Dictionary<string, string?> NewEnvironment(IReadOnlyDictionary<string, string?>? baseEnvironment = null)
+    {
+        StringComparer comparer = KeyComparer();
+        if (baseEnvironment is not null)
+        {
+            return new Dictionary<string, string?>(baseEnvironment, comparer);
+        }
+
+        var environment = new Dictionary<string, string?>(comparer);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            environment[(string)entry.Key] = (string?)entry.Value;
+        }
+
+        return environment;
+    }
+
+    /// <summary>A lookup of variable values in <paramref name="environment"/>: the value, or null when the variable is not set.</summary>
+    public static Func<string, string?> Lookup(IReadOnlyDictionary<string, string?> environment)
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+
+        return name => environment.TryGetValue(name, out string? value) ? value : null;
+    }
+
+    /// <summary>The key comparer of an environment on this platform: case-insensitive on Windows.</summary>
+    internal static StringComparer KeyComparer() => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    /// <summary>
     /// Applies the levels to <paramref name="target"/>, outermost first. Within a level every value is expanded against the
     /// environment as it was before that level, so <c>${env:PATH}</c> refers to the value from the outer level. A null value removes
     /// the variable. A literal level (<see cref="EnvLevel.Literal"/>) sets its values without expanding them. Key comparison is left
@@ -48,7 +82,7 @@ public static class EnvExpansion
         ArgumentNullException.ThrowIfNull(levels);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
 
-        StringComparer comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        StringComparer comparer = KeyComparer();
 
         foreach (EnvLevel level in levels)
         {

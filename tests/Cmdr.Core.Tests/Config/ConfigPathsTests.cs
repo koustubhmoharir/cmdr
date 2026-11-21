@@ -1,9 +1,15 @@
 using Cmdr.Core.Config;
+using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Config;
 
 public class ConfigPathsTests
 {
+    /// <summary>The working directory of a command launched from these groups, with no environment levels.</summary>
+    private static string CwdOf(IReadOnlyList<GroupSpec> groups, CommandSpec cmd, string configDir) =>
+        CommandLaunch.From(groups, cmd, configDir, Array.Empty<EnvLevel>()).WorkingDirectory;
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -14,7 +20,7 @@ public class ConfigPathsTests
         var group = new GroupSpec { Name = "g", Cwd = "sub" };
         var cmd = new CommandSpec { Name = "a", Cwd = cwd };
 
-        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "sub")), ConfigPaths.ResolveCwd(new[] { group }, cmd, dir.Path));
+        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "sub")), CwdOf(new[] { group }, cmd, dir.Path));
     }
 
     [Fact]
@@ -22,7 +28,7 @@ public class ConfigPathsTests
     {
         using var dir = new TempDir();
 
-        Assert.Equal(Path.GetFullPath(dir.Path), ConfigPaths.ResolveCwd(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a" }, dir.Path));
+        Assert.Equal(Path.GetFullPath(dir.Path), CwdOf(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a" }, dir.Path));
     }
 
     [Fact]
@@ -34,7 +40,7 @@ public class ConfigPathsTests
         var cmd = new CommandSpec { Name = "run", Cwd = "bin" };
 
         string expected = Path.GetFullPath(Path.Combine(dir.Path, "..", "golang", "nav", "bin"));
-        Assert.Equal(expected, ConfigPaths.ResolveCwd(new[] { outer, inner }, cmd, dir.Path));
+        Assert.Equal(expected, CwdOf(new[] { outer, inner }, cmd, dir.Path));
     }
 
     [Fact]
@@ -46,7 +52,7 @@ public class ConfigPathsTests
         var inner = new GroupSpec { Name = "inner", Cwd = absolute };
         var cmd = new CommandSpec { Name = "run", Cwd = "x" };
 
-        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "root", "x")), ConfigPaths.ResolveCwd(new[] { outer, inner }, cmd, dir.Path));
+        Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "root", "x")), CwdOf(new[] { outer, inner }, cmd, dir.Path));
     }
 
     [Fact]
@@ -57,7 +63,7 @@ public class ConfigPathsTests
         var group = new GroupSpec { Name = "g", Cwd = "sub" };
 
         Assert.Equal(Path.GetFullPath(Path.Combine(dir.Path, "elsewhere")),
-            ConfigPaths.ResolveCwd(new[] { group }, new CommandSpec { Name = "a", Cwd = absolute }, dir.Path));
+            CwdOf(new[] { group }, new CommandSpec { Name = "a", Cwd = absolute }, dir.Path));
     }
 
     [Fact]

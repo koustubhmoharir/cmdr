@@ -1,3 +1,4 @@
+using Cmdr.Core.Processes;
 using Shared.Processes;
 
 namespace Cmdr.Core.Config;
@@ -6,42 +7,21 @@ namespace Cmdr.Core.Config;
 public static class ConfigPaths
 {
     /// <summary>
-    /// Resolves a directory setting against <paramref name="baseDir"/>. Null or blank means <paramref name="baseDir"/>;
-    /// a relative path is combined with it; an absolute path replaces it. The result is normalized.
-    /// This forwards to <see cref="LaunchPaths.ResolveDir"/>, which holds the implementation (the launch layer needs it too).
-    /// </summary>
-    public static string ResolveDir(string? path, string baseDir) => LaunchPaths.ResolveDir(path, baseDir);
-
-    /// <summary>
-    /// The effective working directory of a group: <c>cwd</c> of each group from the outermost one inwards, each
-    /// resolved against the one before it. The first group's parent is <paramref name="configDir"/>.
+    /// The effective working directory of the innermost group of <paramref name="ancestorsIncludingGroup"/> (outermost first), resolved as a
+    /// launch resolves it (see <see cref="CommandLaunch.GroupDirectory"/>): each group's <c>cwd</c> is resolved against the one before it, in
+    /// the environment of <paramref name="fileLevels"/> and of the groups above it. The first group's parent is <paramref name="configDir"/>.
     /// </summary>
     /// <param name="ancestorsIncludingGroup">The group and its ancestors, outermost first.</param>
-    public static string ResolveGroupCwd(IReadOnlyList<GroupSpec> ancestorsIncludingGroup, string configDir)
-    {
-        ArgumentNullException.ThrowIfNull(ancestorsIncludingGroup);
-        ArgumentException.ThrowIfNullOrEmpty(configDir);
-
-        string cwd = Path.GetFullPath(configDir);
-        foreach (GroupSpec group in ancestorsIncludingGroup)
-        {
-            cwd = ResolveDir(group.Cwd, cwd);
-        }
-
-        return cwd;
-    }
-
-    /// <summary>
-    /// The effective working directory of a command: its <c>cwd</c> resolved against the effective working directory of
-    /// its enclosing groups.
-    /// </summary>
-    /// <param name="ancestors">The groups that contain the command, outermost first (empty for a command at the top level).</param>
-    public static string ResolveCwd(IReadOnlyList<GroupSpec> ancestors, CommandSpec cmd, string configDir)
-    {
-        ArgumentNullException.ThrowIfNull(cmd);
-
-        return ResolveDir(cmd.Cwd, ResolveGroupCwd(ancestors, configDir));
-    }
+    /// <param name="configDir">The config directory.</param>
+    /// <param name="fileLevels">The file's environment levels (see <c>ConfigSource.EnvLevels</c>). Empty when none.</param>
+    /// <param name="groupValues">The environment script values of the groups, aligned with <paramref name="ancestorsIncludingGroup"/>; null for none.</param>
+    /// <exception cref="InvalidOperationException">A group's cwd has an <c>${env:NAME}</c> whose variable is not set in that environment.</exception>
+    public static string ResolveGroupCwd(
+        IReadOnlyList<GroupSpec> ancestorsIncludingGroup,
+        string configDir,
+        IReadOnlyList<EnvLevel>? fileLevels = null,
+        IReadOnlyList<IReadOnlyDictionary<string, string?>?>? groupValues = null) =>
+        CommandLaunch.GroupDirectory(ancestorsIncludingGroup, fileLevels ?? Array.Empty<EnvLevel>(), groupValues, configDir);
 
     /// <summary>
     /// Resolves the logs directory: <see cref="CmdrConfig.LogsDir"/> against the config directory, or

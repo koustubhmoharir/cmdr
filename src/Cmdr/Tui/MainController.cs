@@ -2005,6 +2005,10 @@ internal sealed class MainController : IDisposable, IListSearchHost
     internal (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownEnvironmentOf(CommandEntry entry) =>
         _session.KnownLaunchEnvironment(entry);
 
+    /// <summary>The file levels and group values a group's directory is resolved from, with the environment script values that are known (see <see cref="Session.KnownGroupEnvironment"/>).</summary>
+    internal (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownGroupEnvironmentOf(GroupEntry group) =>
+        _session.KnownGroupEnvironment(group);
+
     /// <summary>The labels of the environment scripts of an item that have no successful run, in run order. Empty when all of them have run.</summary>
     internal IReadOnlyList<string> EnvScriptsNotRunFor(ItemEntry item) =>
         _session.EnvScriptOwnersOf(item)

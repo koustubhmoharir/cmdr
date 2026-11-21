@@ -289,7 +289,7 @@ internal static class CommandLineFormatter
             LaunchSpec spec = CommandLaunch.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
             return WindowsBatchCommandLine.ForCopy(spec);
         }
-        catch (ArgumentException)
+        catch (Exception ex) when (DetailsText.IsPathError(ex))
         {
             return null; // the command would not start either; show the plain form
         }

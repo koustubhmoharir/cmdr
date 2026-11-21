@@ -125,6 +125,7 @@ internal static class DetailsText
     /// </param>
     /// <param name="notRunLabels">The labels of the environment scripts of the command that have no successful run, one line each. Null for none.</param>
     /// <param name="secret">The secret names that apply to the command (see <see cref="CmdrSession.SecretNamesFor(ItemEntry)"/>): their values are masked. Null for none.</param>
+    /// <remarks>A cwd with a variable that is not set is shown as written, with a note that it is resolved at start (see <see cref="UnresolvedCwdLine"/>).</remarks>
     public static IReadOnlyList<DetailsLine> CommandLines(
         CommandEntry entry,
         string configDir,
@@ -161,6 +162,11 @@ internal static class DetailsText
             launch = known is { } values
                 ? CommandLaunch.From(ancestors, spec, configDir, values.FileLevels, values.GroupValues)
                 : CommandLaunch.From(ancestors, spec, configDir, entry.Source.EnvLevels);
+        }
+        catch (InvalidOperationException)
+        {
+            // A variable the cwd uses is not set yet, perhaps because the environment script that sets it has not run.
+            lines.Add(UnresolvedCwdLine(spec.Cwd));
         }
         catch (Exception ex) when (IsPathError(ex))
         {
@@ -228,11 +234,16 @@ internal static class DetailsText
     /// </summary>
     /// <param name="lastRun">The last run of the group's script (see <see cref="CmdrSession.LastEnvScriptRun"/>), or null when it has not run.</param>
     /// <param name="secret">The secret names of the group (see <see cref="CmdrSession.SecretNamesFor(ItemEntry)"/>): their values are masked. Null for none.</param>
+    /// <param name="known">
+    /// The file levels and group values the directory is resolved from (see <see cref="CmdrSession.KnownGroupEnvironment"/>). Null uses the
+    /// file's levels without any environment script's values.
+    /// </param>
     public static IReadOnlyList<DetailsLine> GroupLines(
         GroupEntry group,
         string configDir,
         (DateTimeOffset FinishedAt, EnvScriptResult Result)? lastRun = null,
-        IReadOnlySet<string>? secret = null)
+        IReadOnlySet<string>? secret = null,
+        (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues)? known = null)
     {
         ArgumentNullException.ThrowIfNull(group);
         ArgumentException.ThrowIfNullOrEmpty(configDir);
@@ -252,7 +263,14 @@ internal static class DetailsText
         string? resolved = null;
         try
         {
-            resolved = ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir);
+            resolved = known is { } values
+                ? ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir, values.FileLevels, values.GroupValues)
+                : ConfigPaths.ResolveGroupCwd(GroupTree.SpecChain(group), configDir, group.Source.EnvLevels);
+        }
+        catch (InvalidOperationException)
+        {
+            // A variable the cwd uses is not known yet, perhaps because an environment script that sets it has not run.
+            lines.Add(UnresolvedCwdLine(group.Cwd));
         }
         catch (Exception ex) when (IsPathError(ex))
         {
@@ -371,11 +389,26 @@ internal static class DetailsText
         new DetailsSpan(source.DisplayPath, DetailsStyle.Path),
         new DetailsSpan(" (read-only)", DetailsStyle.Faint));
 
-    /// <summary>The exceptions that resolving a configured working directory throws for a path it cannot use. The copy falls back on the same ones.</summary>
-    internal static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException;
+    /// <summary>
+    /// The exceptions that resolving a configured working directory throws for a path it cannot use, or for a variable it uses that is not set.
+    /// The copy falls back on the same ones. A cwd that resolves only once an environment script has run is not an error to show, see <see cref="UnresolvedCwdLine"/>.
+    /// </summary>
+    internal static bool IsPathError(Exception ex) => ex is ArgumentException or NotSupportedException or PathTooLongException or InvalidOperationException;
 
     private static DetailsLine InvalidCwdLine(Exception ex) =>
         Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan("invalid (" + ex.Message + ")", DetailsStyle.Unset));
+
+    /// <summary>
+    /// The cwd line of a directory that cannot be resolved yet, because a variable it uses is not set (its environment script may not have
+    /// run): the setting as written, with a note that it is resolved at start. For an inherited directory, only the note.
+    /// </summary>
+    internal static DetailsLine UnresolvedCwdLine(string? written) =>
+        string.IsNullOrWhiteSpace(written)
+            ? Line(new DetailsSpan("cwd: ", DetailsStyle.Label), new DetailsSpan("(inherited, resolved at start)", DetailsStyle.Faint))
+            : Line(
+                new DetailsSpan("cwd: ", DetailsStyle.Label),
+                new DetailsSpan(written, DetailsStyle.Path),
+                new DetailsSpan(" (resolved at start)", DetailsStyle.Faint));
 
     /// <summary>The lines of a description, with line breaks normalised. Empty for no description.</summary>
     public static List<DetailsLine> DescriptionLines(string? description)

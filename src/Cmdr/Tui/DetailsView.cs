@@ -858,7 +858,8 @@ internal sealed class DetailsView : View, ISearchTarget
             group.Group,
             _configDir,
             _controller.LastEnvScriptRunOf(group.Group),
-            _controller.SecretNamesOf(group.Group)),
+            _controller.SecretNamesOf(group.Group),
+            _controller.KnownGroupEnvironmentOf(group.Group)),
         FileRow file => DetailsText.FileLines(
             file.Source,
             EffectiveEnv.Process(),

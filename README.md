@@ -162,7 +162,7 @@ against the directory of the file.
 | `description` | | Shown in the info pane. |
 | `mode` | `parallel` | `parallel`: Enter starts all items at once. `sequential`: items run one after another (see [Sequences](#sequences)). |
 | `expanded` | `true` | Whether the group starts expanded when the config is loaded. Collapsing it in the UI doesn't change the setting. |
-| `cwd` | | Working directory for everything inside; relative to the parent group's (top level: the config file's directory). |
+| `cwd` | | Working directory for everything inside; relative to the parent group's (top level: the config file's directory). May use placeholders, but not `${cwd}` or inputs (see [Environment](#environment)). |
 | `env` | | Environment variables for everything inside (see [Environment](#environment)). |
 | `envScript` | | A script whose output adds environment variables for everything inside (see [Environment scripts](#environment-scripts)). |
 | `secret` | | Names of variables whose values are never shown or copied, for everything inside (see [Secrets](#secrets)). |
@@ -176,7 +176,7 @@ against the directory of the file.
 | `description` | | Shown in the info pane. |
 | `program` | | Required. The executable. On Windows, `.cmd`/`.bat` shims such as `pnpm` work; a program not found in the working directory or on the command's `PATH` fails to start. |
 | `args` | `[]` | Arguments, one per array element (no shell quoting). May contain [input placeholders](#input-placeholders) and `${env:NAME}`, `${cwd}`, `${configDir}`, `${pathsep}` and `$${` (see [Environment](#environment)). |
-| `cwd` | | Working directory; relative to the group's. |
+| `cwd` | | Working directory; relative to the group's. May use placeholders, but not `${cwd}` or inputs (see [Environment](#environment)). |
 | `env` | | Environment variables (see [Environment](#environment)). |
 | `secret` | | Names of variables whose values are never shown or copied (see [Secrets](#secrets)). |
 | `stop` | `{ "method": "ctrlC" }` | How to stop gracefully: `ctrlC` (SIGINT on Linux, Ctrl+C on Windows) or `input`, which writes `stop.input` to the command's input (e.g. `"q\n"`). |
@@ -209,6 +209,13 @@ Any other `$` is literal. A bare `${NAME}`, such as `${PATH}`, is reported as an
 `${env:NAME}`), and so is any other `${...}` that is not in the table above or is malformed (for example
 `${env:}` or an unclosed `${`). Such text is used as written. Env values may also contain
 [input placeholders](#input-placeholders).
+
+A `cwd` (of a group, a command or an environment script) takes the same placeholders except `${cwd}` and inputs, which
+are config errors. Its `${env:NAME}` sees the environment where the item is defined, never the item's own level: a
+group's cwd sees the file's levels and the groups above it, not its own `env` or script output; a command's cwd sees
+its groups' levels, not its own `env`; an environment script's cwd sees what the script sees. A variable that is not
+set is an error when the item starts: the command shows `failed to start`, and a script fails like any failing script
+(the info pane shows the cwd as written until then).
 
 Arguments take the same placeholders, expanded once when the command starts. `${env:NAME}` in an argument is the
 variable's value in the command's final environment, after all the `env` levels, including its own. `${cwd}` is the
@@ -243,7 +250,7 @@ $token = (az account get-access-token --query accessToken -o tsv)
 |---|---|---|
 | `program` | | Required. The executable, found as a command's would be. |
 | `args` | `[]` | Arguments, with the same placeholders as a command's; `${cwd}` is the script's working directory. |
-| `cwd` | | Working directory; relative to the group's (top level: the file's folder). |
+| `cwd` | | Working directory; relative to the group's (top level: the file's folder). May use placeholders, but not `${cwd}` or inputs (see [Environment](#environment)). |
 | `timeoutSeconds` | `30` | The script is killed, and the start fails, when it runs longer. |
 | `rerun` | `once` | `once`: the result is kept for the session and reused. `eachStart`: the script runs for every start (Enter or F5). |
 

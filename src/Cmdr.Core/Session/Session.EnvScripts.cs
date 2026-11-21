@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Globalization;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
@@ -181,14 +180,33 @@ public sealed partial class Session
 
         lock (_sync)
         {
-            return EnvironmentFor(entry, KnownEnvScriptValues(entry));
+            return EnvironmentFor(entry.Source, entry.Group, KnownEnvScriptValues(entry));
+        }
+    }
+
+    /// <summary>
+    /// The file levels and group values that a group's working directory is resolved from, with the environment script values that are known
+    /// (see <see cref="KnownEnvScriptValues"/>): the group's file, and the group and its ancestors. The group's own levels are not in effect
+    /// for its directory, so its own values do not change it (see <see cref="CommandLaunch.GroupDirectory"/>). For display only.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="group"/> is null.</exception>
+    public (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownGroupEnvironment(
+        GroupEntry group)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+
+        lock (_sync)
+        {
+            return EnvironmentFor(group.Source, group, KnownEnvScriptValues(group));
         }
     }
 
     /// <summary>
     /// The levels <paramref name="owner"/>'s script runs in, given the values produced so far, and the directory its <c>cwd</c> is relative
     /// to. A file's script sees its base's levels only; a group's script sees the file's levels and the groups above it, not its own <c>env</c>.
+    /// The group's directory is resolved in that same environment, which is the one it is defined in (see <see cref="CommandLaunch.GroupLevels"/>).
     /// </summary>
+    /// <exception cref="InvalidOperationException">The group's cwd has an <c>${env:NAME}</c> whose variable is not set.</exception>
     private static (IReadOnlyList<EnvLevel> Levels, string LevelCwd) LevelsBefore(ScriptOwner owner, ScriptValues values)
     {
         if (owner.Chain.Count == 0)
@@ -202,8 +220,21 @@ public sealed partial class Session
         var outerValues = owner.Chain.Take(last)
             .Select(group => values.TryGet(group, out IReadOnlyDictionary<string, string?>? produced) ? produced : null)
             .ToList();
-        levels.AddRange(CommandLaunch.GroupLevels(owner.ChainSpecs.Take(last).ToList(), outerValues, owner.File.Dir, out _));
-        CommandLaunch.GroupLevels(owner.ChainSpecs, null, owner.File.Dir, out string levelCwd);
+        Dictionary<string, string?> environment = EnvExpansion.NewEnvironment();
+        EnvExpansion.ApplyLevels(environment, levels, owner.File.Dir, Path.PathSeparator, inputs: null);
+        levels.AddRange(CommandLaunch.GroupLevels(
+            owner.ChainSpecs.Take(last).ToList(),
+            outerValues,
+            owner.File.Dir,
+            environment,
+            owner.File.Dir,
+            out string outerCwd));
+        string levelCwd = LaunchPaths.ResolveDir(
+            owner.ChainSpecs[last].Cwd,
+            outerCwd,
+            EnvExpansion.Lookup(environment),
+            owner.File.Dir,
+            Path.PathSeparator);
         return (levels, levelCwd);
     }
 
@@ -219,9 +250,20 @@ public sealed partial class Session
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            (IReadOnlyList<EnvLevel> levels, string levelCwd) = LevelsBefore(owner, values);
+            IReadOnlyList<EnvLevel> levels;
+            LaunchSpec launch;
+            try
+            {
+                (levels, string levelCwd) = LevelsBefore(owner, values);
+                launch = CommandLaunch.ForEnvScript(owner.Script, levels, levelCwd, owner.File.Dir, inputs);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // A cwd whose variable is not set: the script cannot be started, which is a failed script, as far as the commands see it.
+                return ReportFailure(owner, EnvScriptResult.Failure(ex.Message, stdErr: "", exitCode: null, TimeSpan.Zero), values, affected);
+            }
+
             Placeholders.CheckInputs(owner.Script.Args.Concat(LevelTexts(levels)), inputs);
-            LaunchSpec launch = CommandLaunch.ForEnvScript(owner.Script, levels, levelCwd, owner.File.Dir, inputs);
             string fingerprint = EnvScriptFingerprint(owner.Script, launch, levels, inputs);
             TimeSpan timeout = TimeSpan.FromSeconds(owner.Script.TimeoutSeconds ?? EnvScriptSpec.DefaultTimeoutSeconds);
 
@@ -278,12 +320,7 @@ public sealed partial class Session
         IReadOnlyList<EnvLevel> levels,
         IReadOnlyDictionary<string, string> inputs)
     {
-        var environment = new Dictionary<string, string?>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            environment[(string)entry.Key] = (string?)entry.Value;
-        }
-
+        Dictionary<string, string?> environment = EnvExpansion.NewEnvironment();
         EnvExpansion.ApplyLevels(environment, levels, launch.ConfigDir, Path.PathSeparator, inputs);
 
         var fields = new List<string?>
@@ -416,21 +453,26 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// The file and group values one command's launch is built from (see <see cref="CommandLaunch.From"/>): the file's levels with
-    /// <paramref name="values"/>, and for each group above the command (outermost first) its values, or null when it has none. Caller holds
-    /// <c>_sync</c>, since it reads the tree.
+    /// The file and group values that a launch is built from (see <see cref="CommandLaunch.From"/>): the file's levels with
+    /// <paramref name="values"/>, and for each group from <paramref name="innermost"/> up to the outermost (outermost first) its values, or
+    /// null when it has none. <paramref name="innermost"/> is the group of a command, or the group itself for its directory; null for none.
+    /// Caller holds <c>_sync</c>, since it reads the tree.
     /// </summary>
     internal static (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) EnvironmentFor(
-        CommandEntry entry,
+        ConfigSource source,
+        GroupEntry? innermost,
         ScriptValues values)
     {
         var groupValues = new List<IReadOnlyDictionary<string, string?>?>();
-        foreach (GroupEntry group in ChainTo(entry.Group))
+        if (innermost is not null)
         {
-            groupValues.Add(values.TryGet(group, out IReadOnlyDictionary<string, string?>? produced) ? produced : null);
+            foreach (GroupEntry group in ChainTo(innermost))
+            {
+                groupValues.Add(values.TryGet(group, out IReadOnlyDictionary<string, string?>? produced) ? produced : null);
+            }
         }
 
-        return (entry.Source.EnvLevelsWith(values), groupValues);
+        return (source.EnvLevelsWith(values), groupValues);
     }
 
     /// <summary>The argument texts of the environment-script owners of a command, which its inputs are asked for.</summary>
