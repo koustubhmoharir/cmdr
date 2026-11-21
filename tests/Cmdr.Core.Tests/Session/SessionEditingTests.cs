@@ -217,6 +217,64 @@ public class SessionEditingTests
         Assert.Equal(new[] { "x", "a2" }, g2.Commands.Select(c => c.Spec.Name));
     }
 
+    // A group with an environment script and a secret, holding one command with its own environment.
+    private static GroupSpec GroupWithEnvScriptSecretAndCommandEnv()
+    {
+        CommandSpec command = Sh("a", "true");
+        command.Env = new Dictionary<string, string?> { ["C"] = "1" };
+        GroupSpec group = Group("g", GroupMode.Parallel, command);
+        group.Env = new Dictionary<string, string?> { ["G"] = "1" };
+        group.EnvScript = new EnvScriptSpec { Program = "sh", Args = new List<string> { "-c", "echo G=1" }, TimeoutSeconds = 5 };
+        group.Secret = new List<string> { "TOKEN" };
+        return group;
+    }
+
+    [Fact]
+    public void UpdateCommand_WithTheCurrentValues_LeavesACleanSessionClean_AndRaisesNothing()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, GroupWithEnvScriptSecretAndCommandEnv());
+        CommandEntry entry = session.Groups[0].Commands[0];
+        int changes = 0;
+        session.StructureChanged += () => changes++;
+
+        session.UpdateCommand(entry, entry.Spec, entry.Group);
+
+        Assert.False(session.IsDirty);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
+    public void UpdateCommand_WithTheCurrentValues_KeepsADirtySessionDirty()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, GroupWithEnvScriptSecretAndCommandEnv());
+        CommandEntry entry = session.Groups[0].Commands[0];
+        session.UpdateCommand(entry, Sh("renamed", "false"), entry.Group);
+        int changes = 0;
+        session.StructureChanged += () => changes++;
+
+        session.UpdateCommand(entry, entry.Spec, entry.Group);
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
+    public void UpdateCommand_ChangingOnlyAnArgument_MarksDirtyAndRaisesStructureChanged()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWith(dir, SessionMode.Edit, GroupWithEnvScriptSecretAndCommandEnv());
+        CommandEntry entry = session.Groups[0].Commands[0];
+        int changes = 0;
+        session.StructureChanged += () => changes++;
+
+        session.UpdateCommand(entry, Sh("a", "false"), entry.Group);
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(1, changes);
+    }
+
     [Fact]
     public void MoveCommand_SwapsWithinGroup_AndRefusesAtBoundaries()
     {

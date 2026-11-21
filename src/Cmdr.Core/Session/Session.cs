@@ -213,7 +213,8 @@ public sealed partial class Session : IDisposable
     /// Changes the settings of a group and, when <paramref name="parent"/> differs from its current parent, moves it to the
     /// end of the new parent's items (or of the top level when <paramref name="parent"/> is null). Every setting of
     /// <paramref name="settings"/> is applied, the environment script and the secret names included: a caller that keeps them
-    /// passes their current values.
+    /// passes their current values. An update that changes nothing in the saved file leaves <see cref="IsDirty"/> as it is and raises
+    /// no event.
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// The session is in run mode; the group comes from a base file; the group would be moved into a group of a base file; the group
@@ -222,6 +223,7 @@ public sealed partial class Session : IDisposable
     /// </exception>
     public void UpdateGroup(GroupEntry group, GroupSettings settings, GroupEntry? parent)
     {
+        bool changed;
         lock (_sync)
         {
             EnsureEditMode();
@@ -254,6 +256,7 @@ public sealed partial class Session : IDisposable
                 }
             }
 
+            byte[] before = SavedBytes();
             if (reparent)
             {
                 Unplace(group);
@@ -268,30 +271,39 @@ public sealed partial class Session : IDisposable
             group.Expanded = settings.Expanded;
             group.EnvScript = settings.EnvScript?.Clone();
             group.Secret = CopyNames(settings.Secret);
-            _isDirty = true;
+            changed = MarkDirtyIfChanged(before);
         }
 
-        RaiseStructureChanged();
+        if (changed)
+        {
+            RaiseStructureChanged();
+        }
     }
 
     /// <summary>
     /// Replaces the opened file's own top-level settings (its <c>env</c>, <c>envScript</c>, <c>baseEnv</c> and <c>secret</c>). The values are
     /// copied. The next start of a command uses the new environment; the file's script runs again when its settings changed (see
     /// <see cref="EnvScriptCache"/>). The file's groups and commands are not changed.
+    /// An update that changes nothing in the saved file leaves <see cref="IsDirty"/> as it is and raises no event.
     /// </summary>
     /// <exception cref="InvalidOperationException">The session is in run mode.</exception>
     public void UpdateFileSettings(FileSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
+        bool changed;
         lock (_sync)
         {
             EnsureEditMode();
+            byte[] before = SavedBytes();
             MainSource.ApplySettings(settings.Env, settings.EnvScript, settings.BaseEnv, settings.Secret);
-            _isDirty = true;
+            changed = MarkDirtyIfChanged(before);
         }
 
-        RaiseStructureChanged();
+        if (changed)
+        {
+            RaiseStructureChanged();
+        }
     }
 
     /// <summary>Removes a group with everything below it and disposes their processes.</summary>
@@ -351,8 +363,10 @@ public sealed partial class Session : IDisposable
     /// <exception cref="InvalidOperationException">
     /// The session is in run mode; the command comes from a base file; or the command would move into a group of a base file.
     /// </exception>
+    /// <remarks>An update that changes nothing in the saved file leaves <see cref="IsDirty"/> as it is and raises no event.</remarks>
     public void UpdateCommand(CommandEntry entry, CommandSpec spec, GroupEntry target)
     {
+        bool changed;
         lock (_sync)
         {
             EnsureEditMode();
@@ -362,6 +376,7 @@ public sealed partial class Session : IDisposable
             EnsureEditable(target);
             ArgumentNullException.ThrowIfNull(spec);
 
+            byte[] before = SavedBytes();
             bool moving = !ReferenceEquals(target, entry.Group);
             entry.Spec = spec.Clone();
 
@@ -371,10 +386,13 @@ public sealed partial class Session : IDisposable
                 target.Attach(entry);
             }
 
-            _isDirty = true;
+            changed = MarkDirtyIfChanged(before);
         }
 
-        RaiseStructureChanged();
+        if (changed)
+        {
+            RaiseStructureChanged();
+        }
     }
 
     /// <summary>Removes a command and disposes its process.</summary>
@@ -861,6 +879,24 @@ public sealed partial class Session : IDisposable
         }
 
         return group.Parent.HasItem(group) && IsAttached(group.Parent);
+    }
+
+    /// <summary>The bytes the opened file would be saved as now (see <see cref="ConfigStore.Serialize"/>). Caller holds <c>_sync</c>.</summary>
+    private byte[] SavedBytes() => ConfigStore.Serialize(BuildConfig());
+
+    /// <summary>
+    /// Sets <see cref="IsDirty"/> when the saved file differs from <paramref name="before"/> (the bytes taken before the change), and
+    /// returns whether it differs. Caller holds <c>_sync</c>.
+    /// </summary>
+    private bool MarkDirtyIfChanged(byte[] before)
+    {
+        if (SavedBytes().AsSpan().SequenceEqual(before))
+        {
+            return false;
+        }
+
+        _isDirty = true;
+        return true;
     }
 
     /// <summary>Raises <see cref="StructureChanged"/>. Call without <c>_sync</c>.</summary>

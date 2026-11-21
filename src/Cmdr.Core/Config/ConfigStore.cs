@@ -443,8 +443,18 @@ public static class ConfigStore
         ArgumentNullException.ThrowIfNull(config);
         ArgumentException.ThrowIfNullOrEmpty(path);
 
-        byte[] json = JsonSerializer.SerializeToUtf8Bytes(config, ConfigJsonContext.Default.CmdrConfig);
-        AtomicFile.Write(path, json);
+        AtomicFile.Write(path, Serialize(config));
+    }
+
+    /// <summary>
+    /// The bytes that <see cref="Save"/> writes for the configuration: indented UTF-8 JSON, no BOM, trailing newline. Two
+    /// configurations with equal bytes are saved as the same file.
+    /// </summary>
+    public static byte[] Serialize(CmdrConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        return JsonSerializer.SerializeToUtf8Bytes(config, ConfigJsonContext.Default.CmdrConfig);
     }
 
     // A group with "commands" is an old-format file (rejected even next to "items", which would silently drop it). Items are read by shape, so this is the only

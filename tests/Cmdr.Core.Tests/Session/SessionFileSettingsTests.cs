@@ -134,4 +134,65 @@ public class SessionFileSettingsTests
 
         Assert.Throws<ArgumentNullException>(() => session.UpdateFileSettings(null!));
     }
+
+    // A file with env, an environment script, a secret, and baseEnv importing from a base file.
+    private static CmdrSession OpenWithFileSettings(TempDir dir)
+    {
+        ConfigStore.Save(
+            new CmdrConfig
+            {
+                Env = new Dictionary<string, string?> { ["IMPORTED"] = "from-base" },
+                Groups = { Group("b", GroupMode.Parallel, Sh("bcmd", "true")) },
+            },
+            dir.File(BaseRel));
+        ConfigStore.Save(
+            new CmdrConfig
+            {
+                Base = BaseRel,
+                Env = new Dictionary<string, string?> { ["TOP"] = "v" },
+                EnvScript = new EnvScriptSpec { Program = "sh", Args = new List<string> { "-c", "echo TOP=v" }, TimeoutSeconds = 5 },
+                BaseEnv = new List<string> { "IMPORTED" },
+                Secret = new List<string> { "TOKEN" },
+                Groups = { Group("m", GroupMode.Parallel, Sh("mcmd", "true")) },
+            },
+            dir.File("cmdr.json"));
+        return CmdrSession.Load(dir.File("cmdr.json"), SessionMode.Edit);
+    }
+
+    [Fact]
+    public void UpdateFileSettings_WithTheCurrentValues_LeavesACleanSessionClean_AndRaisesNothing()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWithFileSettings(dir);
+        int changes = 0;
+        session.StructureChanged += () => changes++;
+
+        session.UpdateFileSettings(new FileSettings(
+            session.MainSource.Env,
+            session.MainSource.EnvScript,
+            session.MainSource.BaseEnv,
+            session.MainSource.Secret));
+
+        Assert.False(session.IsDirty);
+        Assert.Equal(0, changes);
+    }
+
+    [Fact]
+    public void UpdateFileSettings_WithTheCurrentValues_KeepsADirtySessionDirty()
+    {
+        using var dir = new TempDir();
+        using CmdrSession session = OpenWithFileSettings(dir);
+        session.UpdateFileSettings(Settings());
+        int changes = 0;
+        session.StructureChanged += () => changes++;
+
+        session.UpdateFileSettings(new FileSettings(
+            session.MainSource.Env,
+            session.MainSource.EnvScript,
+            session.MainSource.BaseEnv,
+            session.MainSource.Secret));
+
+        Assert.True(session.IsDirty);
+        Assert.Equal(0, changes);
+    }
 }

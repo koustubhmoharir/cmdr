@@ -106,6 +106,24 @@ public sealed class FileDialogTests : IDisposable
     }
 
     [Fact]
+    public void Ok_without_edits_leaves_the_session_clean()
+    {
+        WriteFile();
+        using CmdrSession session = CmdrSession.Load(Path.Combine(_dir, "cmdr.json"), SessionMode.Edit);
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        using var dialog = new FileDialog(app, session.MainSource, settings =>
+        {
+            session.UpdateFileSettings(settings);
+            return null;
+        });
+
+        Assert.True(TryCommit(dialog));
+
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
     public void Edited_fields_reach_the_commit_function_as_typed()
     {
         using TempChain chain = TempChain.Open(SessionMode.Edit);

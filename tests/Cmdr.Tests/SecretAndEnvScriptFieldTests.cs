@@ -160,6 +160,65 @@ public sealed class SecretAndEnvScriptFieldTests
         Assert.Equal(new[] { "A,B" }, Assert.Single(commits).Secret);
     }
 
+    [Fact]
+    public void Group_OK_without_edits_leaves_the_session_clean()
+    {
+        using TempSession temp = TempSession.Open(SessionMode.Edit, GroupWithEnvScriptEnvAndSecret());
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        GroupEntry group = temp.Session.Groups[0];
+        var initial = new GroupSettings(group.Name, group.Description, group.Mode, group.Cwd, group.Env, group.Expanded, group.EnvScript, group.Secret);
+        using var dialog = new GroupDialog(app, temp.Session, "Edit group", group, group.Parent, initial, (parent, settings) =>
+        {
+            temp.Session.UpdateGroup(group, settings, parent);
+            return null;
+        });
+
+        Assert.True(TryCommit(dialog));
+
+        Assert.False(temp.Session.IsDirty);
+    }
+
+    [Fact]
+    public void Command_OK_without_edits_leaves_the_session_clean()
+    {
+        using TempSession temp = TempSession.Open(SessionMode.Edit, GroupWithEnvScriptEnvAndSecret());
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        GroupEntry group = temp.Session.Groups[0];
+        CommandEntry entry = group.Commands[0];
+        using var dialog = new CommandDialog(app, temp.Session, "Edit command", group, entry.Spec, entry, (target, spec) =>
+        {
+            temp.Session.UpdateCommand(entry, spec, target);
+            return null;
+        });
+
+        Assert.True(TryCommit(dialog));
+
+        Assert.False(temp.Session.IsDirty);
+    }
+
+    /// <summary>A group with an environment, an environment script and a secret, holding one command with its own environment and secret.</summary>
+    private static GroupSpec GroupWithEnvScriptEnvAndSecret() => new()
+    {
+        Name = "top",
+        Cwd = "src",
+        Env = new Dictionary<string, string?> { ["G"] = "1" },
+        EnvScript = Script(),
+        Secret = new List<string> { "GROUP_SECRET", "SECOND" },
+        Items =
+        {
+            new CommandSpec
+            {
+                Name = "first",
+                Program = "sh",
+                Args = new List<string> { "-c", "true" },
+                Env = new Dictionary<string, string?> { ["C"] = "2" },
+                Secret = new List<string> { "TOKEN" },
+            },
+        },
+    };
+
     /// <summary>A group as the group dialog starts with it: an environment script and two secret names.</summary>
     private static GroupSettings Initial() =>
         new("top", null, GroupMode.Parallel, "src", null, true, Script(), new[] { "GROUP_SECRET", "SECOND" });
