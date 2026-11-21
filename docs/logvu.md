@@ -42,7 +42,8 @@ file through a file dialog, Esc or Ctrl+Q quits. The picker's last row lists the
 
 | Setting | Meaning |
 |---|---|
-| `logsDirectory` | Required. The directory of the log files, relative to the config file. It may be missing; logvu waits for it. |
+| `envScript` | Optional. `{ "program", "args", "cwd", "timeoutSeconds" }`: a program run each time the config loads; its output, a JSON object of variables, is added to logvu's environment for `logsDirectory`. `program` is required. `args` (default none) take `${env:NAME}`, `${cwd}`, `${configDir}`, `${pathsep}` and `$${`. `cwd` is relative to the config file's folder (default: that folder). `timeoutSeconds` (default 30, above 0) kills the script when it runs longer. See [Environment script](#environment-script). |
+| `logsDirectory` | Required. The directory of the log files, relative to the config file. It may contain `${env:NAME}`, `${configDir}`, `${cwd}` (the config file's folder), `${pathsep}` and `$${`. A variable that is not set is an error. It may be missing; logvu waits for it. |
 | `filePrefix` | Required. A literal prefix every member's file name starts with. |
 | `fileNamePattern` | Required. A regular expression the whole file name must match. Both selectors must match. Only regular files directly in the directory count; compressed files (`.gz`, `.zip`, `.bz2`, `.xz`, `.zst`, `.7z`, `.br`, `.lz4`) are skipped. Names compare case-insensitively on Windows. |
 | `activeFile` | Optional. The fixed name of the file being written (log4net numbered rotation). Without it, the newest file is the live one (date-named files). Numbered backups of the active file (`SheetKraft2.log`) order before lower numbers when their first events have the same time. |
@@ -58,6 +59,40 @@ file through a file dialog, Esc or Ctrl+Q quits. The picker's last row lists the
 | `frameworkPrefixes` | Namespace or package prefixes whose stack frames are dimmed and can be folded. Default: `System.`, `Microsoft.`, `Newtonsoft.`, `log4net.`, `Serilog.`, `runtime.`, `net/http.`, `github.com/labstack/`. |
 
 Unknown settings are errors, so typos are reported.
+
+### Environment script
+
+Some directories differ from one machine to the next, such as a build's artifacts folder. An `envScript` finds them: its
+program prints one JSON object whose values are strings, and `logsDirectory` refers to them as `${env:NAME}`. A `null`
+value removes a variable. The script runs each time the config is loaded, in the config file's folder unless `cwd` says
+otherwise, with logvu's environment. Its stdin is closed. If it exits with an error, prints anything other than such an
+object, or runs past `timeoutSeconds`, the config fails to load, and the message shows the error and the last lines of
+its stderr.
+
+The values are used as they are; they are not expanded again. `${env:NAME}` in `logsDirectory` looks at the script's values
+first, then at logvu's environment. A variable that is unset after that is an error (`logsDirectory: variable 'NAME' is not
+set`), so that a missing value cannot silently give a different directory. An empty value is allowed. `${input:…}` is
+not supported in `envScript` or `logsDirectory`.
+
+For example, a build whose artifacts folder is found with `dotnet msbuild`:
+
+```json
+{
+  "envScript": {
+    "program": "pwsh",
+    "args": ["-NoProfile", "-File", "${configDir}/scripts/artifacts-env.ps1"]
+  },
+  "logsDirectory": "${env:SK_ARTIFACTS}/bin/SheetKraftWebV3/debug/Logs",
+  "filePrefix": "SheetKraft",
+  "fileNamePattern": "^SheetKraft(?:[0-9]+)?[.]log$"
+}
+```
+
+```powershell
+# scripts/artifacts-env.ps1
+$path = dotnet msbuild <project> -getProperty:ArtifactsPath
+@{ SK_ARTIFACTS = $path } | ConvertTo-Json -Compress
+```
 
 ## Screen and keys
 

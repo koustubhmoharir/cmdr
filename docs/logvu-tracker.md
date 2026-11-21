@@ -36,6 +36,8 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 - [x] File set enumeration: regular files directly in the directory, both selectors, compressed files skipped.
 - [x] FileSet: exclude FIFOs/devices (Linux only) (use FileIdentity.TryGet(path), which only accepts regular files).
 - [x] logvu recent-file history (own store).
+- [x] Config `envScript` (core): a script run at load (`program`, `args`, `cwd`, `timeoutSeconds`) whose JSON output sets variables for `logsDirectory` (`${env:NAME}`, `${configDir}`, `${cwd}`); LogvuConfigFile reads without running and ResolveAsync runs it, cancellable; `LogvuConfig.Load` blocks.
+- [ ] Config `envScript` in the app: startup loads with LogvuConfigFile, shows the script's progress, cancels it, and reports its failure. *(Follows the core change.)*
 
 ## M3. Catalog
 
@@ -121,4 +123,4 @@ cmdr is not touched until M12. Shared code starts as copies adapted from cmdr, g
 
 ## M12. Refactoring round (after logvu is done)
 
-- [x] Replace cmdr's copies with the shared components; generalize where the two apps differ. Includes the M0 copies of Osc52, TextSelection and SearchSeed. (`cmdr:` / `core:`) Done: Cmdr.Core uses Shared.Core; cmdr's UI uses Shared.Tui, including HintsLine (now with a right part and messages; one bar style, BarColors, in both apps) and RecentPicker<T> (now with an alternate open key and a cancelled load). Left in cmdr: SelectionText (output-pane selection, no shared equivalent) and the process-control natives.
+- [x] Replace cmdr's copies with the shared components; generalize where the two apps differ. Includes the M0 copies of Osc52, TextSelection and SearchSeed. (`cmdr:` / `core:`) Done: Cmdr.Core uses Shared.Core; cmdr's UI uses Shared.Tui, including HintsLine (now with a right part and messages; one bar style, BarColors, in both apps) and RecentPicker<T> (now with an alternate open key and a cancelled load). Left in cmdr: SelectionText (output-pane selection, no shared equivalent). The process-control natives now live in Shared.Processes, which both apps use.

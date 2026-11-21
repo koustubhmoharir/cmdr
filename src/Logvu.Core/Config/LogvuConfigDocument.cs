@@ -5,6 +5,9 @@ namespace Logvu.Core.Config;
 /// <summary>The JSON shape of a logvu configuration file. Every member is nullable: validation happens after deserialization.</summary>
 internal sealed class LogvuConfigDocument
 {
+    /// <summary>The script whose output adds variables for the logs directory, or null when the file has none.</summary>
+    public EnvScriptDocument? EnvScript { get; set; }
+
     public string? LogsDirectory { get; set; }
 
     public string? FilePrefix { get; set; }
@@ -34,6 +37,18 @@ internal sealed class LogvuConfigDocument
 
     /// <summary>Each message field as a string, validated by the loader.</summary>
     public List<JsonElement>? MessageFields { get; set; }
+}
+
+/// <summary>The JSON shape of the <c>envScript</c> setting. Validated by the loader.</summary>
+internal sealed class EnvScriptDocument
+{
+    public string? Program { get; set; }
+
+    public List<string?>? Args { get; set; }
+
+    public string? Cwd { get; set; }
+
+    public int? TimeoutSeconds { get; set; }
 }
 
 /// <summary>The JSON shape of one configured text scheme.</summary>

@@ -3,18 +3,22 @@ using System.Text.RegularExpressions;
 using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Shared.Core;
+using Shared.Processes;
 
 namespace Logvu.Core.Config;
 
-/// <summary>Reads, parses and validates a logvu configuration file. See <see cref="LogvuConfig.Load"/>.</summary>
+/// <summary>Reads, parses and validates a logvu configuration file. See <see cref="LogvuConfigFile.Read(string)"/>.</summary>
 /// <remarks>
 /// Validation runs once over the members in the order the configuration documents them, and reports the first error. A format or
 /// highlight style that names a scheme or style defined further down is checked against the names alone, so that the error is
-/// reported where the reference is.
+/// reported where the reference is. Nothing is run here: the environment script runs when the file is resolved.
 /// </remarks>
 internal static class LogvuConfigLoader
 {
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
+
+    /// <summary>The timeout of an <c>envScript</c> that does not set <c>timeoutSeconds</c>.</summary>
+    private const int DefaultScriptTimeoutSeconds = 30;
 
     /// <summary>The level names <c>minLevel</c> accepts, ignoring case, besides <c>"any"</c>.</summary>
     private static readonly (string Name, LogLevel Level)[] MinLevelNames =
@@ -28,8 +32,8 @@ internal static class LogvuConfigLoader
         ("fatal", LogLevel.Fatal),
     ];
 
-    /// <summary>Loads and validates the file at <paramref name="configPath"/>.</summary>
-    internal static LogvuConfig Load(string configPath)
+    /// <summary>Reads, parses and validates the file at <paramref name="configPath"/>. <paramref name="runner"/> runs its script later.</summary>
+    internal static LogvuConfigFile Read(string configPath, EnvScriptRunner runner)
     {
         ArgumentException.ThrowIfNullOrEmpty(configPath);
 
@@ -44,7 +48,7 @@ internal static class LogvuConfigLoader
         }
 
         LogvuConfigDocument document = Deserialize(fullPath);
-        return new Builder(fullPath).Build(document);
+        return new Builder(fullPath, runner).Build(document);
     }
 
     private static LogvuConfigDocument Deserialize(string path)
@@ -102,15 +106,20 @@ internal static class LogvuConfigLoader
     }
 
     /// <summary>Validates one loaded document and builds the model. Holds the configuration path for the error messages.</summary>
-    private sealed class Builder(string configPath)
+    private sealed class Builder(string configPath, EnvScriptRunner runner)
     {
         private readonly string _configPath = configPath;
+        private readonly EnvScriptRunner _runner = runner;
 
-        internal LogvuConfig Build(LogvuConfigDocument document)
+        internal LogvuConfigFile Build(LogvuConfigDocument document)
         {
             string configDirectory = Path.GetDirectoryName(_configPath)!;
 
-            string logsDirectory = ResolveDirectory(RequireText(document.LogsDirectory, "logsDirectory"), configDirectory);
+            EnvScriptSpec? envScript = BuildEnvScript(document.EnvScript, configDirectory);
+
+            // The directory is expanded and resolved once the script has run (see LogvuConfigFile.ResolveAsync).
+            string logsDirectoryTemplate = RequireText(document.LogsDirectory, "logsDirectory");
+            CheckPlaceholders(logsDirectoryTemplate, "logsDirectory");
 
             string filePrefix = RequireText(document.FilePrefix, "filePrefix");
 
@@ -162,26 +171,105 @@ internal static class LogvuConfigLoader
                         : throw Error("format", $"unknown scheme '{formatName}'"));
             }
 
-            return new LogvuConfig(
+            return new LogvuConfigFile(
                 _configPath,
-                logsDirectory,
-                filePrefix,
-                fileNamePattern,
-                activeFile,
-                format,
-                schemes,
-                timeZone,
-                recentCapacity,
-                minLevel,
-                columns,
-                highlights,
-                styles,
-                frameworkPrefixes,
-                messageFields);
+                logsDirectoryTemplate,
+                envScript,
+                logsDirectory => new LogvuConfig(
+                    _configPath,
+                    logsDirectory,
+                    filePrefix,
+                    fileNamePattern,
+                    activeFile,
+                    format,
+                    schemes,
+                    timeZone,
+                    recentCapacity,
+                    minLevel,
+                    columns,
+                    highlights,
+                    styles,
+                    frameworkPrefixes,
+                    messageFields),
+                _runner);
+        }
+
+        /// <summary>
+        /// Validates <c>envScript</c>: its program, its arguments (no input placeholders, which cannot be asked for when the file loads),
+        /// its working directory and its timeout. Null when the file has no script.
+        /// </summary>
+        private EnvScriptSpec? BuildEnvScript(EnvScriptDocument? document, string configDirectory)
+        {
+            if (document is null)
+            {
+                return null;
+            }
+
+            string program = RequireText(document.Program, "envScript.program");
+            RejectNul(program, "envScript.program");
+
+            var args = new List<string>();
+            List<string?> argDocuments = document.Args ?? [];
+            for (int i = 0; i < argDocuments.Count; i++)
+            {
+                string argPath = $"envScript.args[{i}]";
+                string? arg = argDocuments[i];
+                if (arg is null)
+                {
+                    throw Error(argPath, "must be a string, not null");
+                }
+
+                RejectNul(arg, argPath);
+                CheckPlaceholders(arg, argPath);
+                args.Add(arg);
+            }
+
+            string? cwd = document.Cwd;
+            if (cwd is not null)
+            {
+                RejectNul(cwd, "envScript.cwd");
+                CheckDirectory(cwd, configDirectory, "envScript.cwd");
+            }
+
+            int timeoutSeconds = document.TimeoutSeconds ?? DefaultScriptTimeoutSeconds;
+            if (timeoutSeconds <= 0)
+            {
+                throw Error("envScript.timeoutSeconds", $"must be greater than 0, got {timeoutSeconds}");
+            }
+
+            return new EnvScriptSpec(program, args, cwd, TimeSpan.FromSeconds(timeoutSeconds));
         }
 
         private LogvuConfigException Error(string jsonPath, string problem) =>
             new($"Configuration file '{_configPath}': {jsonPath}: {problem}");
+
+        /// <summary>Rejects a NUL character, which a process argument, a program or a path cannot carry.</summary>
+        private void RejectNul(string text, string jsonPath)
+        {
+            if (text.Contains('\0'))
+            {
+                throw Error(jsonPath, "must not contain a NUL character");
+            }
+        }
+
+        /// <summary>
+        /// Rejects malformed placeholders and input placeholders in a setting that is expanded when it is used. The first malformed one is
+        /// reported; an input placeholder is refused because nothing asks the user for input here.
+        /// </summary>
+        private void CheckPlaceholders(string text, string jsonPath)
+        {
+            IReadOnlyList<string> errors = Placeholders.Errors(text);
+            if (errors.Count > 0)
+            {
+                throw Error(jsonPath, string.Join("; ", errors));
+            }
+
+            IReadOnlyList<InputRequest> requests = Placeholders.Requests([text]);
+            if (requests.Count > 0)
+            {
+                throw Error(jsonPath, $"input placeholders are not supported here: '${{input:{requests[0].Name}}}'");
+            }
+        }
 
         private string RequireText(string? value, string jsonPath)
         {
@@ -373,15 +461,16 @@ internal static class LogvuConfigLoader
             return path;
         }
 
-        private string ResolveDirectory(string text, string configDirectory)
+        /// <summary>Checks that a directory setting is a valid path once resolved against the configuration file's folder.</summary>
+        private void CheckDirectory(string text, string configDirectory, string jsonPath)
         {
             try
             {
-                return Path.GetFullPath(Path.Combine(configDirectory, text));
+                _ = Path.GetFullPath(Path.Combine(configDirectory, text));
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
             {
-                throw Error("logsDirectory", $"not a valid directory path: {ex.Message}");
+                throw Error(jsonPath, $"not a valid directory path: {ex.Message}");
             }
         }
 

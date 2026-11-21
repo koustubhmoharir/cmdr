@@ -5,7 +5,7 @@ namespace Logvu.Core.Config;
 
 /// <summary>
 /// A validated, immutable logvu configuration: one set of files from one directory, and the settings that read and show them.
-/// Create it with <see cref="Load"/>.
+/// Create it with <see cref="Load"/>, or with <see cref="LogvuConfigFile"/> to run the script with cancellation.
 /// </summary>
 public sealed class LogvuConfig
 {
@@ -124,15 +124,21 @@ public sealed class LogvuConfig
     public IReadOnlyList<string> FrameworkPrefixes { get; }
 
     /// <summary>
-    /// Reads, parses and validates the configuration file at <paramref name="configPath"/>. A relative <c>logsDirectory</c> is resolved
-    /// against the file's own directory.
+    /// Reads, parses and validates the configuration file at <paramref name="configPath"/>, runs its <c>envScript</c> if it has one, and
+    /// resolves <c>logsDirectory</c>: a relative directory is resolved against the file's own directory.
     /// </summary>
+    /// <remarks>
+    /// This blocks the calling thread while the script runs, and the script cannot be cancelled. The application uses
+    /// <see cref="LogvuConfigFile.Read(string)"/> and <see cref="LogvuConfigFile.ResolveAsync"/> instead, so that it can show the
+    /// script's progress and cancel it.
+    /// </remarks>
     /// <exception cref="ArgumentException"><paramref name="configPath"/> is <c>null</c> or empty.</exception>
     /// <exception cref="LogvuConfigException">
-    /// The file cannot be read or is malformed JSON, or a setting is missing, of the wrong type, unknown or invalid. The message names the
-    /// file and the JSON path of the setting.
+    /// The file cannot be read or is malformed JSON, a setting is missing, of the wrong type, unknown or invalid, the script fails, or a
+    /// variable of <c>logsDirectory</c> is not set. The message names the file and the JSON path of the setting.
     /// </exception>
-    public static LogvuConfig Load(string configPath) => LogvuConfigLoader.Load(configPath);
+    public static LogvuConfig Load(string configPath) =>
+        LogvuConfigFile.Read(configPath).ResolveAsync(CancellationToken.None).GetAwaiter().GetResult();
 
     /// <summary>Tells whether <paramref name="regex"/> matches <paramref name="text"/>, treating a match timeout as no match.</summary>
     internal static bool TryMatch(Regex regex, string text)
