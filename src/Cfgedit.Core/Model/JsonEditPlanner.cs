@@ -269,9 +269,23 @@ internal sealed class JsonEditPlanner
         string core = MovedText(parent, main, needsComma, start, end);
         bool lineComment = IsLineComment(children[last]);
         RemoveGroup(parent, first, last, removeComma);
+        DocNode? neighbour = target > 0 ? rest[target - 1] : null;
+        if (target > first && neighbour is not null && !IsLineComment(neighbour) && !EditLayout.HasLineBreak(_text, end, neighbour.Start))
+        {
+            // Moved down past a neighbour that was on the group's line: the group stays on that line, after the neighbour.
+            int at = EditLayout.Extent(parent, IndexOf(parent, neighbour), _text);
+            if (!lineComment || EditLayout.RestOfLineBlank(_text, at))
+            {
+                Replace(at, at, (main >= 0 ? AfterComma(parent) : " ") + core);
+                return;
+            }
+        }
+
         if (target < rest.Count)
         {
-            PlaceBefore(parent, rest[target], target > 0 ? rest[target - 1] : null, core, lineComment, needsComma);
+            // Moved up to a site that was on the group's line: the group goes in front of the site, on that line.
+            bool sameLine = target < first && !EditLayout.HasLineBreak(_text, rest[target].End, start);
+            PlaceBefore(parent, rest[target], neighbour, core, lineComment, needsComma, sameLine);
         }
         else
         {
@@ -438,13 +452,13 @@ internal sealed class JsonEditPlanner
     /// <summary>
     /// Places a piece before a child. On its own line, the piece takes the line above the child, with the previous sibling's
     /// indentation. Otherwise it goes in front of the child, followed by a comma and the separator (or a line break after a
-    /// line comment).
+    /// line comment). <paramref name="sameLine"/> keeps the piece on the child's line even when the child starts a line.
     /// </summary>
-    private void PlaceBefore(DocNode parent, DocNode site, DocNode? previous, string core, bool lineComment, bool commaFollows)
+    private void PlaceBefore(DocNode parent, DocNode site, DocNode? previous, string core, bool lineComment, bool commaFollows, bool sameLine = false)
     {
         int at = site.Start;
         bool document = parent.Kind == NodeKind.Document;
-        if (document || EditLayout.StartsLine(_text, at))
+        if (document || (!sameLine && EditLayout.StartsLine(_text, at)))
         {
             string indent = document ? string.Empty : IndentFor(previous, site, parent);
             int lineStart = EditLayout.LineStart(_text, at);
@@ -523,7 +537,16 @@ internal sealed class JsonEditPlanner
 
         if (AnyEntryAfter(parent, last))
         {
-            Replace(start, children[last + 1].Start, string.Empty);
+            int next = children[last + 1].Start;
+            if (EditLayout.HasLineBreak(_text, end, next))
+            {
+                // The group ends its line and the next sibling starts another one: the line break stays, so the spaces that
+                // separated the group from what comes before it go instead.
+                Replace(HorizontalStart(start), end, string.Empty);
+                return;
+            }
+
+            Replace(start, next, string.Empty);
             return;
         }
 
@@ -560,6 +583,18 @@ internal sealed class JsonEditPlanner
         }
 
         Replace(start, end, string.Empty);
+    }
+
+    /// <summary>The offset of the first space or tab that precedes an offset on its line, or the offset itself.</summary>
+    private int HorizontalStart(int offset)
+    {
+        int i = offset;
+        while (i > 0 && _text[i - 1] is ' ' or '\t')
+        {
+            i--;
+        }
+
+        return i;
     }
 
     /// <summary>The text of a moved group, with its entry's comma set to what the new place needs.</summary>

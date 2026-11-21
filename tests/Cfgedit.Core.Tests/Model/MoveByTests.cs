@@ -122,7 +122,7 @@ public sealed class MoveByTests
         MoveNode move = Move(text, Jsonc, At(Item(0), Comment(0)), 1);
 
         Assert.Equal(2, move.NewIndex);
-        Assert.Equal("{\n  \"a\": 1, /*t2*/\n  /*t1*/\n  \"b\": 2\n}", Edit(text, Jsonc, move));
+        Assert.Equal("{\n  \"a\": 1, /*t2*/ /*t1*/\n  \"b\": 2\n}", Edit(text, Jsonc, move));
     }
 
     [Fact]
