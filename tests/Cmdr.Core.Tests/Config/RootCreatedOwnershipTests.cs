@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using Cmdr.Core.Output;
-using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Config;
 

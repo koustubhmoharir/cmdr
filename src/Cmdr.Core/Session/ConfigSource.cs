@@ -1,4 +1,5 @@
 using Cmdr.Core.Config;
+using Shared.Processes;
 
 namespace Cmdr.Core.Session;
 

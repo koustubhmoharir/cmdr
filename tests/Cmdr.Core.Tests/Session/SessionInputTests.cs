@@ -2,6 +2,7 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Core.Tests.Config;
+using Shared.Processes;
 using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;
 using static Cmdr.Core.Tests.Session.SessionTestHelpers;
 using CmdrSession = Cmdr.Core.Session.Session;

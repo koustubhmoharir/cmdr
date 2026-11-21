@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Shared.Processes;
 
 namespace Cmdr.Core.Config;
 

@@ -2,6 +2,7 @@ using System.Reflection;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Processes;
 using Terminal.Gui.App;
 using Terminal.Gui.Views;
 

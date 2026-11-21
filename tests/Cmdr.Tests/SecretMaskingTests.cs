@@ -1,6 +1,5 @@
 using System.Reflection;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Terminal.Gui.App;

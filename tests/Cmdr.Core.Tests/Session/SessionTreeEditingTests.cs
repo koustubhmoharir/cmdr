@@ -1,5 +1,4 @@
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Core.Tests.Config;
 using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;

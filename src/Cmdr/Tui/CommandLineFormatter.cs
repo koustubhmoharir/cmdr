@@ -2,6 +2,7 @@ using System.Text;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
+using Shared.Processes;
 
 namespace Cmdr.Tui;
 
@@ -276,8 +277,8 @@ internal static class CommandLineFormatter
     {
         IReadOnlyList<GroupSpec> groups = GroupTree.SpecChain(entry.Group);
         return known is { } values
-            ? LaunchSpec.From(groups, entry.Spec, entry.Source.Dir, values.FileLevels, values.GroupValues)
-            : LaunchSpec.From(groups, entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
+            ? CommandLaunch.From(groups, entry.Spec, entry.Source.Dir, values.FileLevels, values.GroupValues)
+            : CommandLaunch.From(groups, entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
     }
 
     /// <summary>The cmd.exe command of a batch-file command that needs it (see <see cref="WindowsBatchCommandLine"/>), or null.</summary>
@@ -285,7 +286,7 @@ internal static class CommandLineFormatter
     {
         try
         {
-            LaunchSpec spec = LaunchSpec.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
+            LaunchSpec spec = CommandLaunch.From(GroupTree.SpecChain(entry.Group), entry.Spec, entry.Source.Dir, entry.Source.EnvLevels);
             return WindowsBatchCommandLine.ForCopy(spec);
         }
         catch (ArgumentException)

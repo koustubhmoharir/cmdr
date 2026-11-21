@@ -1,8 +1,8 @@
 using System.Collections.Concurrent;
-using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
+using Shared.Processes;
 using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;
 
 namespace Cmdr.Core.Tests.Processes;
@@ -683,7 +683,7 @@ public class ManagedProcessTests
             Assert.True(p.CanStart);
 
             // The killed leader's exit callback may run; it must not record an exit for the failed run.
-            WaitUntil(() => LinuxProcessGroupTests.IsProcessGone(leaderPid), "failed leader to be killed", timeout: TimeSpan.FromSeconds(5));
+            WaitUntil(() => IsProcessGone(leaderPid), "failed leader to be killed", timeout: TimeSpan.FromSeconds(5));
             Thread.Sleep(200);
             Assert.Equal(ProcessState.FailedToStart, p.Snapshot.State);
             Assert.DoesNotContain("=== exited", Text(p), StringComparison.Ordinal);

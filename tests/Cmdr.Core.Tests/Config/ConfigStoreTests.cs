@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Config;
 

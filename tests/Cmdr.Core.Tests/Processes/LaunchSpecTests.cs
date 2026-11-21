@@ -1,6 +1,7 @@
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Processes;
 
@@ -11,8 +12,8 @@ public class LaunchSpecTests
     {
         using var dir = new TempDir();
 
-        LaunchSpec console = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p", Stdin = StdinMode.Console }, dir.Path, Array.Empty<EnvLevel>());
-        LaunchSpec pipe = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec console = CommandLaunch.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p", Stdin = StdinMode.Console }, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec pipe = CommandLaunch.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(StdinMode.Console, console.Stdin);
         Assert.Equal(StdinMode.Pipe, pipe.Stdin);
@@ -23,7 +24,7 @@ public class LaunchSpecTests
     {
         using var dir = new TempDir();
 
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(Path.GetFullPath(dir.Path), spec.WorkingDirectory);
         Assert.Equal(Path.GetFullPath(dir.Path), spec.ConfigDir);
@@ -41,7 +42,7 @@ public class LaunchSpecTests
         var deepest = new GroupSpec { Name = "deepest", Env = new Dictionary<string, string?> { ["Z"] = null } };
         var configDir = dir.Path;
 
-        var spec = LaunchSpec.From(new[] { outer, inner, deepest }, cmd, configDir, Array.Empty<EnvLevel>());
+        var spec = CommandLaunch.From(new[] { outer, inner, deepest }, cmd, configDir, Array.Empty<EnvLevel>());
 
         string root = Path.GetFullPath(dir.Path);
         string a = Path.Combine(root, "a");
@@ -72,7 +73,7 @@ public class LaunchSpecTests
         };
         var cmd = new CommandSpec { Name = "run", Env = new Dictionary<string, string?> { ["C"] = "3" } };
 
-        LaunchSpec spec = LaunchSpec.From(groups, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(groups, cmd, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(2, spec.EnvLevels.Count);
         Assert.Equal("2", spec.EnvLevels[0].Env["G"]);
@@ -87,7 +88,7 @@ public class LaunchSpecTests
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["A"] = "1" } };
         var cmd = new CommandSpec { Name = "run", Program = "p", Args = { "x" }, Env = new Dictionary<string, string?> { ["B"] = "2" } };
 
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
         group.Env["A"] = "changed";
         cmd.Env["B"] = "changed";
         cmd.Args.Add("y");
@@ -104,47 +105,9 @@ public class LaunchSpecTests
         string absolute = Path.Combine(dir.Path, "root");
         var groups = new[] { new GroupSpec { Name = "outer", Cwd = "ignored" }, new GroupSpec { Name = "inner", Cwd = absolute } };
 
-        LaunchSpec spec = LaunchSpec.From(groups, new CommandSpec { Name = "run", Cwd = "x" }, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(groups, new CommandSpec { Name = "run", Cwd = "x" }, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(Path.GetFullPath(Path.Combine(absolute, "x")), spec.WorkingDirectory);
-    }
-
-    [Fact]
-    public void Constructor_CopiesArgsLevelsAndReady_SoCallerEditsDoNotReachTheSpec()
-    {
-        var args = new List<string> { "a" };
-        var env = new Dictionary<string, string?> { ["X"] = "1" };
-        var levels = new List<EnvLevel> { new(env, "/w") };
-        var ready = new ReadySpec { Pattern = "up" };
-
-        var spec = new LaunchSpec("p", args, "/w", levels, "/w", StopMethod.CtrlC, null, Ready: ready);
-        args.Add("b");
-        env["X"] = "2";
-        env["Y"] = "3";
-        levels.Add(new EnvLevel(new Dictionary<string, string?>(), "/v"));
-        ready.Pattern = "changed";
-
-        Assert.Equal(new[] { "a" }, spec.Args);
-        Assert.Single(spec.EnvLevels);
-        Assert.Equal("1", spec.EnvLevels[0].Env["X"]);
-        Assert.False(spec.EnvLevels[0].Env.ContainsKey("Y"));
-        Assert.Equal("up", spec.Ready!.Pattern);
-        Assert.IsNotType<List<string>>(spec.Args);
-    }
-
-    [Fact]
-    public void With_CopiesTheReplacedCollections()
-    {
-        var spec = new LaunchSpec("p", new[] { "a" }, "/w", Array.Empty<EnvLevel>(), "/w", StopMethod.CtrlC, null);
-        var args = new List<string> { "b" };
-        var ready = new ReadySpec { Pattern = "up" };
-
-        LaunchSpec changed = spec with { Args = args, Ready = ready };
-        args.Add("c");
-        ready.Pattern = "changed";
-
-        Assert.Equal(new[] { "b" }, changed.Args);
-        Assert.Equal("up", changed.Ready!.Pattern);
     }
 
     [Fact]
@@ -154,7 +117,7 @@ public class LaunchSpecTests
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["G"] = "1" } };
         var cmd = new CommandSpec { Name = "a", Program = "p", Args = new List<string> { "x" }, Env = new Dictionary<string, string?> { ["C"] = "1" }, Ready = new ReadySpec { Pattern = "up" } };
 
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
         group.Env["G"] = "2";
         cmd.Env["C"] = "2";
         cmd.Args.Add("y");
@@ -170,7 +133,7 @@ public class LaunchSpecTests
     public void Inputs_AreAPrivateCopy_AndEmptyByDefault()
     {
         using var dir = new TempDir();
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>());
         Assert.Empty(spec.Inputs);
 
         var values = new Dictionary<string, string> { ["x"] = "1" };
@@ -186,7 +149,7 @@ public class LaunchSpecTests
     public void Inputs_AreNotInToString()
     {
         using var dir = new TempDir();
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>()) with
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), new CommandSpec { Name = "a", Program = "p" }, dir.Path, Array.Empty<EnvLevel>()) with
         {
             Inputs = new Dictionary<string, string> { ["secret"] = "hunter2" },
         };
@@ -211,7 +174,7 @@ public class LaunchSpecTests
                 "${env:FOO}", "${cwd}", "${configDir}", "a${pathsep}b", "$${env:FOO}", "${input:x}", "${input:y?}", "${env:GONE}",
             },
         };
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
         var environment = new Dictionary<string, string?> { ["FOO"] = "looked-up" };
         var inputs = new Dictionary<string, string> { ["x"] = "in", ["y"] = "" };
 
@@ -237,7 +200,7 @@ public class LaunchSpecTests
     {
         using var dir = new TempDir();
         var cmd = new CommandSpec { Name = "c", Program = "p", Args = { "--db=${input:db}", "${cwd}" } };
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), cmd, dir.Path, Array.Empty<EnvLevel>());
 
         string[] args = spec.ExpandArgs(_ => null, '/', inputs: null);
 
@@ -249,7 +212,7 @@ public class LaunchSpecTests
     {
         using var dir = new TempDir();
         var cmd = new CommandSpec { Name = "c", Program = "p", Args = { "${input:x}" } };
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), cmd, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Throws<InvalidOperationException>(() => spec.ExpandArgs(_ => null, '/', new Dictionary<string, string>()));
     }
@@ -262,7 +225,7 @@ public class LaunchSpecTests
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["GROUP"] = "2" } };
         var cmd = new CommandSpec { Name = "c", Program = "p", Env = new Dictionary<string, string?> { ["OWN"] = "3" } };
 
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, new[] { file });
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, new[] { file });
 
         Assert.Equal(3, spec.EnvLevels.Count);
         Assert.Equal(new[] { "FILE" }, spec.EnvLevels[0].Env.Keys);
@@ -277,28 +240,9 @@ public class LaunchSpecTests
         var group = new GroupSpec { Name = "g", Env = new Dictionary<string, string?> { ["GROUP"] = "2" } };
         var cmd = new CommandSpec { Name = "c", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(2, spec.EnvLevels.Count);
-    }
-
-    [Fact]
-    public void Constructor_CopiesImportFromOfEachLevelDeeply()
-    {
-        using var dir = new TempDir();
-        var inner = new EnvLevel(new Dictionary<string, string?> { ["X"] = "deep" }, dir.Path);
-        var importLevel = new EnvLevel(new Dictionary<string, string?> { ["X"] = null }, dir.Path) { ImportFrom = new[] { inner } };
-        var levels = new List<EnvLevel> { importLevel };
-        var spec = new LaunchSpec("p", Array.Empty<string>(), dir.Path, levels, dir.Path, StopMethod.CtrlC, null);
-
-        levels.Clear();
-        EnvLevel copied = Assert.Single(spec.EnvLevels);
-        Assert.NotNull(copied.ImportFrom);
-        Assert.NotSame(importLevel.ImportFrom, copied.ImportFrom);
-        EnvLevel copiedInner = Assert.Single(copied.ImportFrom);
-        Assert.NotSame(inner, copiedInner);
-        Assert.Equal("deep", copiedInner.Env["X"]);
-        Assert.Null(copied.Env["X"]);
     }
 
     [Fact]
@@ -309,7 +253,7 @@ public class LaunchSpecTests
         var fileLevel = new EnvLevel(new Dictionary<string, string?> { ["X"] = null }, dir.Path) { ImportFrom = new[] { baseLevel } };
         var cmd = new CommandSpec { Name = "c", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path, new[] { fileLevel });
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), cmd, dir.Path, new[] { fileLevel });
 
         EnvLevel copied = spec.EnvLevels[0];
         Assert.Equal("base", Assert.Single(copied.ImportFrom!).Env["X"]);
@@ -322,8 +266,8 @@ public class LaunchSpecTests
         string levelCwd = Path.Combine(dir.Path, "base");
         var inputs = new Dictionary<string, string>();
 
-        LaunchSpec relative = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p", Cwd = "sub" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
-        LaunchSpec defaulted = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
+        LaunchSpec relative = CommandLaunch.ForEnvScript(new EnvScriptSpec { Program = "p", Cwd = "sub" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
+        LaunchSpec defaulted = CommandLaunch.ForEnvScript(new EnvScriptSpec { Program = "p" }, Array.Empty<EnvLevel>(), levelCwd, dir.Path, inputs);
 
         Assert.Equal(Path.GetFullPath(Path.Combine(levelCwd, "sub")), relative.WorkingDirectory);
         Assert.Equal(Path.GetFullPath(levelCwd), defaulted.WorkingDirectory);
@@ -337,7 +281,7 @@ public class LaunchSpecTests
         var inputs = new Dictionary<string, string> { ["name"] = "typed" };
         var script = new EnvScriptSpec { Program = "prog", Args = { "a", "${input:name}" } };
 
-        LaunchSpec spec = LaunchSpec.ForEnvScript(script, levels, dir.Path, dir.Path, inputs);
+        LaunchSpec spec = CommandLaunch.ForEnvScript(script, levels, dir.Path, dir.Path, inputs);
 
         Assert.Equal("prog", spec.Program);
         Assert.Equal(new[] { "a", "${input:name}" }, spec.Args);
@@ -348,27 +292,13 @@ public class LaunchSpecTests
     }
 
     [Fact]
-    public void ForEnvScript_UsesAStdinPipe_CtrlCStop_AndTracksLeftovers()
-    {
-        using var dir = new TempDir();
-
-        LaunchSpec spec = LaunchSpec.ForEnvScript(new EnvScriptSpec { Program = "p" }, Array.Empty<EnvLevel>(), dir.Path, dir.Path, new Dictionary<string, string>());
-
-        Assert.Equal(StdinMode.Pipe, spec.Stdin);
-        Assert.Equal(StopMethod.CtrlC, spec.StopMethod);
-        Assert.Null(spec.StopInput);
-        Assert.Equal(LeftoverMode.Track, spec.Leftovers);
-        Assert.Null(spec.Ready);
-    }
-
-    [Fact]
     public void ForEnvScript_CwdPlaceholderIsTheScriptWorkingDirectory()
     {
         using var dir = new TempDir();
         string levelCwd = Path.Combine(dir.Path, "base");
         var script = new EnvScriptSpec { Program = "p", Cwd = "sub", Args = { "${cwd}" } };
 
-        LaunchSpec spec = LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), levelCwd, dir.Path, new Dictionary<string, string>());
+        LaunchSpec spec = CommandLaunch.ForEnvScript(script, Array.Empty<EnvLevel>(), levelCwd, dir.Path, new Dictionary<string, string>());
 
         string[] expanded = spec.ExpandArgs(_ => null, Path.PathSeparator, null);
         Assert.Equal(Path.GetFullPath(Path.Combine(levelCwd, "sub")), expanded[0]);
@@ -380,7 +310,7 @@ public class LaunchSpecTests
         var script = new EnvScriptSpec { Program = "p" };
         var inputs = new Dictionary<string, string>();
 
-        Assert.Throws<ArgumentException>(() => LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), "", "/c", inputs));
-        Assert.Throws<ArgumentException>(() => LaunchSpec.ForEnvScript(script, Array.Empty<EnvLevel>(), "/w", "", inputs));
+        Assert.Throws<ArgumentException>(() => CommandLaunch.ForEnvScript(script, Array.Empty<EnvLevel>(), "", "/c", inputs));
+        Assert.Throws<ArgumentException>(() => CommandLaunch.ForEnvScript(script, Array.Empty<EnvLevel>(), "/w", "", inputs));
     }
 }

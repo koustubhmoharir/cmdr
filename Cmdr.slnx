@@ -3,6 +3,7 @@
     <Project Path="src/Cmdr.Core/Cmdr.Core.csproj" />
     <Project Path="src/Cmdr/Cmdr.csproj" />
     <Project Path="src/Shared.Core/Shared.Core.csproj" />
+    <Project Path="src/Shared.Processes/Shared.Processes.csproj" />
     <Project Path="src/Shared.Tui/Shared.Tui.csproj" />
     <Project Path="src/Logvu.Core/Logvu.Core.csproj" />
     <Project Path="src/Logvu/Logvu.csproj" />
@@ -11,6 +12,7 @@
     <Project Path="tests/Cmdr.Core.Tests/Cmdr.Core.Tests.csproj" />
     <Project Path="tests/Cmdr.Tests/Cmdr.Tests.csproj" />
     <Project Path="tests/Shared.Core.Tests/Shared.Core.Tests.csproj" />
+    <Project Path="tests/Shared.Processes.Tests/Shared.Processes.Tests.csproj" />
     <Project Path="tests/Shared.Tui.Tests/Shared.Tui.Tests.csproj" />
     <Project Path="tests/Logvu.Core.Tests/Logvu.Core.Tests.csproj" />
     <Project Path="tests/Logvu.Tests/Logvu.Tests.csproj" />

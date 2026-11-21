@@ -2,6 +2,7 @@ using System.Globalization;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
+using Shared.Processes;
 using Shared.Tui;
 using CmdrSession = Cmdr.Core.Session.Session;
 
@@ -158,8 +159,8 @@ internal static class DetailsText
         try
         {
             launch = known is { } values
-                ? LaunchSpec.From(ancestors, spec, configDir, values.FileLevels, values.GroupValues)
-                : LaunchSpec.From(ancestors, spec, configDir, entry.Source.EnvLevels);
+                ? CommandLaunch.From(ancestors, spec, configDir, values.FileLevels, values.GroupValues)
+                : CommandLaunch.From(ancestors, spec, configDir, entry.Source.EnvLevels);
         }
         catch (Exception ex) when (IsPathError(ex))
         {

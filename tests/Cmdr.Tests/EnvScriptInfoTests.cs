@@ -1,9 +1,9 @@
 using System.Globalization;
 using System.Reflection;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Processes;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.Views;

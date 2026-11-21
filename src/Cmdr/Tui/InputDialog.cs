@@ -1,4 +1,4 @@
-using Cmdr.Core.Config;
+using Shared.Processes;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;

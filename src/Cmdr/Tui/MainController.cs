@@ -4,6 +4,7 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Shared.Core;
+using Shared.Processes;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;

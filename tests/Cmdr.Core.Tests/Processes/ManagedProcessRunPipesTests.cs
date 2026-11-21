@@ -1,7 +1,7 @@
-using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
+using Shared.Processes;
 using static Cmdr.Core.Tests.Processes.ProcessTestHelpers;
 
 namespace Cmdr.Core.Tests.Processes;

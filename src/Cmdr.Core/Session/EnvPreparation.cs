@@ -1,5 +1,3 @@
-using Cmdr.Core.Config;
-
 namespace Cmdr.Core.Session;
 
 /// <summary>

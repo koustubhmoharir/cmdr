@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
+using Shared.Processes;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;

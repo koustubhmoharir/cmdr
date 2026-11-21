@@ -2,10 +2,10 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using Cmdr;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Shared.Core;
+using Shared.Processes;
 using Shared.Tui;
 
 return Run(args);

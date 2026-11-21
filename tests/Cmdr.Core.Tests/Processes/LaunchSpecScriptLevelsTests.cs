@@ -1,6 +1,7 @@
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Tests.Config;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Processes;
 
@@ -21,7 +22,7 @@ public class LaunchSpecScriptLevelsTests
         var produced = new Dictionary<string, string?> { ["X"] = "script", ["S"] = "${env:NOT_EXPANDED}" };
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(
+        LaunchSpec spec = CommandLaunch.From(
             new[] { group },
             cmd,
             dir.Path,
@@ -49,7 +50,7 @@ public class LaunchSpecScriptLevelsTests
         var produced = new Dictionary<string, string?> { ["P"] = "1" };
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(
+        LaunchSpec spec = CommandLaunch.From(
             new[] { outer, inner },
             cmd,
             dir.Path,
@@ -70,7 +71,7 @@ public class LaunchSpecScriptLevelsTests
         GroupSpec group = Group("g", new Dictionary<string, string?> { ["E"] = "1" });
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(
+        LaunchSpec spec = CommandLaunch.From(
             new[] { group },
             cmd,
             dir.Path,
@@ -89,7 +90,7 @@ public class LaunchSpecScriptLevelsTests
         GroupSpec group = Group("g", new Dictionary<string, string?> { ["E"] = "1" });
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
+        LaunchSpec spec = CommandLaunch.From(new[] { group }, cmd, dir.Path, Array.Empty<EnvLevel>());
 
         Assert.Equal(2, spec.EnvLevels.Count);
         Assert.All(spec.EnvLevels, level => Assert.False(level.Literal));
@@ -102,7 +103,7 @@ public class LaunchSpecScriptLevelsTests
         using var dir = new TempDir();
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        Assert.Throws<ArgumentException>(() => LaunchSpec.From(
+        Assert.Throws<ArgumentException>(() => CommandLaunch.From(
             new[] { Group("g") },
             cmd,
             dir.Path,
@@ -117,7 +118,7 @@ public class LaunchSpecScriptLevelsTests
         var literal = new EnvLevel(new Dictionary<string, string?> { ["L"] = "${cwd}" }, dir.Path) { Literal = true };
         var cmd = new CommandSpec { Name = "a", Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.From(Array.Empty<GroupSpec>(), cmd, dir.Path, new[] { literal });
+        LaunchSpec spec = CommandLaunch.From(Array.Empty<GroupSpec>(), cmd, dir.Path, new[] { literal });
 
         EnvLevel copied = Assert.Single(spec.EnvLevels, level => level.Env.ContainsKey("L"));
         Assert.True(copied.Literal);
@@ -131,7 +132,7 @@ public class LaunchSpecScriptLevelsTests
         var literal = new EnvLevel(new Dictionary<string, string?> { ["L"] = "v" }, dir.Path) { Literal = true };
         var script = new EnvScriptSpec { Program = "p" };
 
-        LaunchSpec spec = LaunchSpec.ForEnvScript(script, new[] { literal }, dir.Path, dir.Path, new Dictionary<string, string>());
+        LaunchSpec spec = CommandLaunch.ForEnvScript(script, new[] { literal }, dir.Path, dir.Path, new Dictionary<string, string>());
 
         EnvLevel level = Assert.Single(spec.EnvLevels);
         Assert.True(level.Literal);

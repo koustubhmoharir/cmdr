@@ -1,5 +1,4 @@
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Shared.Tui;

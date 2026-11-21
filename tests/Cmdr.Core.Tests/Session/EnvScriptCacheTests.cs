@@ -1,6 +1,6 @@
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Session;
 

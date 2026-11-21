@@ -2,6 +2,7 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
+using Shared.Processes;
 
 namespace Cmdr.Tests;
 
@@ -21,7 +22,7 @@ public sealed class SlowTickTests
 
         Assert.False(MainController.ShowsElapsedTime(rows));
 
-        entry.Process.Start(LaunchSpec.From(Array.Empty<GroupSpec>(), spec, temp.Session.ConfigDir, Array.Empty<EnvLevel>()));
+        entry.Process.Start(CommandLaunch.From(Array.Empty<GroupSpec>(), spec, temp.Session.ConfigDir, Array.Empty<EnvLevel>()));
         try
         {
             Assert.Equal(ProcessState.Running, entry.Process.Snapshot.State);

@@ -2,6 +2,7 @@ using System.Collections;
 using System.Globalization;
 using Cmdr.Core.Config;
 using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Session;
 
@@ -170,7 +171,7 @@ public sealed partial class Session
 
     /// <summary>
     /// The file levels and group values that a command's launch is built from, with the values <see cref="KnownEnvScriptValues"/> knows:
-    /// what the launch would use if it started now with those values (the inputs of <c>LaunchSpec.From</c>). For display and copy only.
+    /// what the launch would use if it started now with those values (the inputs of <c>CommandLaunch.From</c>). For display and copy only.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="entry"/> is null.</exception>
     public (IReadOnlyList<EnvLevel> FileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> GroupValues) KnownLaunchEnvironment(
@@ -201,8 +202,8 @@ public sealed partial class Session
         var outerValues = owner.Chain.Take(last)
             .Select(group => values.TryGet(group, out IReadOnlyDictionary<string, string?>? produced) ? produced : null)
             .ToList();
-        levels.AddRange(LaunchSpec.GroupLevels(owner.ChainSpecs.Take(last).ToList(), outerValues, owner.File.Dir, out _));
-        LaunchSpec.GroupLevels(owner.ChainSpecs, null, owner.File.Dir, out string levelCwd);
+        levels.AddRange(CommandLaunch.GroupLevels(owner.ChainSpecs.Take(last).ToList(), outerValues, owner.File.Dir, out _));
+        CommandLaunch.GroupLevels(owner.ChainSpecs, null, owner.File.Dir, out string levelCwd);
         return (levels, levelCwd);
     }
 
@@ -220,7 +221,7 @@ public sealed partial class Session
 
             (IReadOnlyList<EnvLevel> levels, string levelCwd) = LevelsBefore(owner, values);
             Placeholders.CheckInputs(owner.Script.Args.Concat(LevelTexts(levels)), inputs);
-            LaunchSpec launch = LaunchSpec.ForEnvScript(owner.Script, levels, levelCwd, owner.File.Dir, inputs);
+            LaunchSpec launch = CommandLaunch.ForEnvScript(owner.Script, levels, levelCwd, owner.File.Dir, inputs);
             string fingerprint = EnvScriptFingerprint(owner.Script, launch, levels, inputs);
             TimeSpan timeout = TimeSpan.FromSeconds(owner.Script.TimeoutSeconds ?? EnvScriptSpec.DefaultTimeoutSeconds);
 
@@ -415,7 +416,7 @@ public sealed partial class Session
     }
 
     /// <summary>
-    /// The file and group values one command's launch is built from (see <see cref="LaunchSpec.From"/>): the file's levels with
+    /// The file and group values one command's launch is built from (see <see cref="CommandLaunch.From"/>): the file's levels with
     /// <paramref name="values"/>, and for each group above the command (outermost first) its values, or null when it has none. Caller holds
     /// <c>_sync</c>, since it reads the tree.
     /// </summary>

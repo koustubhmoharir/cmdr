@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Cmdr.Core.Config;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Config;
 

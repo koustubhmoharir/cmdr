@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Session;
 

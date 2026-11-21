@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using Cmdr.Core.Config;
 using Cmdr.Core.Output;
+using Shared.Processes;
 
 namespace Cmdr.Core.Processes;
 

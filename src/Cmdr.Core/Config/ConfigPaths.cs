@@ -1,3 +1,5 @@
+using Shared.Processes;
+
 namespace Cmdr.Core.Config;
 
 /// <summary>Resolves working directories and log file paths of items.</summary>
@@ -6,13 +8,9 @@ public static class ConfigPaths
     /// <summary>
     /// Resolves a directory setting against <paramref name="baseDir"/>. Null or blank means <paramref name="baseDir"/>;
     /// a relative path is combined with it; an absolute path replaces it. The result is normalized.
+    /// This forwards to <see cref="LaunchPaths.ResolveDir"/>, which holds the implementation (the launch layer needs it too).
     /// </summary>
-    public static string ResolveDir(string? path, string baseDir)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(baseDir);
-
-        return Path.GetFullPath(string.IsNullOrWhiteSpace(path) ? baseDir : Path.Combine(baseDir, path));
-    }
+    public static string ResolveDir(string? path, string baseDir) => LaunchPaths.ResolveDir(path, baseDir);
 
     /// <summary>
     /// The effective working directory of a group: <c>cwd</c> of each group from the outermost one inwards, each

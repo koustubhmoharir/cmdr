@@ -1,5 +1,6 @@
 using Cmdr.Core.Config;
 using Cmdr.Tui;
+using Shared.Processes;
 
 namespace Cmdr.Tests;
 

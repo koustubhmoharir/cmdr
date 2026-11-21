@@ -1,6 +1,6 @@
-using Cmdr.Core.Config;
 using Cmdr.Core.Output;
 using Cmdr.Core.Processes;
+using Shared.Processes;
 
 namespace Cmdr.Core.Tests.Processes;
 
@@ -53,6 +53,21 @@ internal static class ProcessTestHelpers
             }
 
             Thread.Sleep(20);
+        }
+    }
+
+    /// <summary>True when the process no longer exists or is a zombie (killed, not yet reaped).</summary>
+    internal static bool IsProcessGone(int pid)
+    {
+        try
+        {
+            string stat = File.ReadAllText($"/proc/{pid}/stat");
+            int close = stat.LastIndexOf(')');
+            return close >= 0 && close + 2 < stat.Length && stat[close + 2] is 'Z' or 'X';
+        }
+        catch (IOException)
+        {
+            return true;
         }
     }
 

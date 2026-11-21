@@ -2,7 +2,6 @@ using System.Drawing;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Cmdr.Core.Config;
-using Cmdr.Core.Processes;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Shared.Tui;

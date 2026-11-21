@@ -20,7 +20,7 @@ internal static class GroupTree
 
     /// <summary>
     /// The definitions of the group and its ancestors, outermost first, for <see cref="Cmdr.Core.Config.ConfigPaths"/> and
-    /// <see cref="Cmdr.Core.Processes.LaunchSpec.From"/>. The name, working directory and environment are filled in.
+    /// <see cref="Cmdr.Core.Processes.CommandLaunch.From"/>. The name, working directory and environment are filled in.
     /// </summary>
     public static IReadOnlyList<GroupSpec> SpecChain(GroupEntry? group) =>
         ChainTo(group).Select(g => new GroupSpec

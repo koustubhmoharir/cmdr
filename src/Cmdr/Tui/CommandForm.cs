@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
+using Shared.Processes;
 
 namespace Cmdr.Tui;
 

@@ -1,5 +1,5 @@
 using System.Collections;
-using Cmdr.Core.Config;
+using Shared.Processes;
 
 namespace Cmdr.Tui;
 
