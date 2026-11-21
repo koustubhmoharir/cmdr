@@ -65,14 +65,14 @@ public enum JsonDialect { Json, Jsonc, Json5 }
 | One trailing comma in an object or array | – | ✓ | ✓ |
 | Single-quoted strings, unquoted identifier keys | – | – | ✓ |
 | JSON5 numbers: hex, `+`, leading/trailing `.`, `Infinity`, `NaN` | – | – | ✓ |
-| JSON5 string escapes: `\'`, `\v`, `\0`, `\xHH`, line continuations, any other non-digit char escaping itself; unescaped U+2028/U+2029 | – | – | ✓ |
+| JSON5 string escapes: `\'`, `\v`, `\0`, `\xHH`, line continuations, any other non-digit char escaping itself; unescaped control characters other than CR and LF | – | – | ✓ |
 | JSON5 whitespace: `\v`, `\f`, U+00A0, U+FEFF, U+2028, U+2029, category Zs | – | – | ✓ |
 
 **Strict JSON (RFC 8259)**
 
 - Whitespace is space, tab, LF and CR only.
 - Strings use double quotes. The escapes are `\" \\ \/ \b \f \n \r \t \uXXXX`. Unescaped characters below U+0020 are an
-  error.
+  error; everything from U+0020 up, U+2028 and U+2029 included, is allowed unescaped.
 - Numbers follow RFC 8259: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
 - A `\u` escape may produce a lone surrogate. That is accepted and kept in the decoded value.
 

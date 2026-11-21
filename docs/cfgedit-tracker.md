@@ -9,10 +9,10 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M0. Scaffolding
 
-- [ ] `src/Cfgedit.Core`, `src/Cfgedit` (`cfgedit` executable), `tests/Cfgedit.Core.Tests`, `tests/Cfgedit.Tests`, all
+- [x] `src/Cfgedit.Core`, `src/Cfgedit` (`cfgedit` executable), `tests/Cfgedit.Core.Tests`, `tests/Cfgedit.Tests`, all
       in `Cmdr.slnx`, with the Terminal.Gui fork reference set up like logvu's.
-- [ ] `cfgedit --version`, plus usage for bad arguments, with Program tests like logvu's.
-- [ ] `publish.ps1` publishes and installs `cfgedit`.
+- [x] `cfgedit --version`, plus usage for bad arguments, with Program tests like logvu's.
+- [x] `publish.ps1` publishes and installs `cfgedit`. (575ff85)
 
 ## M1. JSON family (Cfgedit.Core)
 
