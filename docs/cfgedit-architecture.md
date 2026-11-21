@@ -840,3 +840,146 @@ the dimmed ones using `TextStyle.Faint`, as logvu does.
 - **Main window:** layout at 80×24 and 40×12, and the detail line for JSON and XML paths, including quoted keys and
   same-name ordinals.
 - **Program:** arguments, format resolution and sniffing, error output, and exit codes.
+
+## Editing TUI (M5)
+
+### Exact saving (Shared.Core)
+
+`AtomicFile.Write` appends a `'\n'` to the content, as cmdr's and logvu's JSON stores want. cfgedit must write exactly
+the encoded bytes.
+
+- Add `AtomicFile.WriteExact(string path, ReadOnlySpan<byte> content)`, which takes the same paths: symlink resolution,
+  mode, owner and group, the Windows ACL, the in-place fallbacks, and new-file ownership under sudo. The only difference
+  is that no `'\n'` is added.
+- Implement both entry points with one internal method and a `trailingNewline` flag. Do not duplicate the code. Existing
+  callers and their behaviour are unchanged, and all Shared.Core tests stay green.
+- Tests: the exact bytes (with and without a final newline, CRLF content, empty content), plus the main hardened paths
+  repeated for WriteExact (symlink, kept mode, in-place under `CMDR_KEEP_OWNER`).
+
+### DocumentFile (Cfgedit.Core)
+
+`DocumentFile` connects a ConfigDocument to its file on disk.
+
+- **Opening.** `DocumentFile.Open(string path, IConfigFormat format)` reads the bytes once and loads the document. It
+  records a snapshot of what was read: the bytes' SHA-256, the length, `FileIdentity`, and the last write time.
+- **New files.**
+  - `DocumentFile.CreateNew(string path, IConfigFormat format, string? xmlRootName)` builds an unsaved document from the
+    initial text in the design: `{}` for the JSON family; for XML, the declaration plus `<root />` (the given name).
+  - The text is UTF-8 without a BOM, with `Environment.NewLine` and a final newline.
+  - `Exists` is false until the first save.
+- **External changes.** `bool ChangedOnDisk()` compares the current file with the snapshot. Missing vs present counts,
+  as do identity, length and hash. The hash is computed only when the cheap checks pass, so the common case doesn't read
+  the file.
+- **Saving.** `Save(ConfigDocument doc)`:
+  1. Fails with `CfgeditException("the folder … does not exist")` if the parent directory is missing. cfgedit never
+     creates folders.
+  2. Encodes `doc.Source`.
+  3. Writes with `AtomicFile.WriteExact`. `IOException` and `UnauthorizedAccessException` become `CfgeditException`
+     with the path.
+  4. Re-reads the file, and the bytes must equal what was written. Otherwise it fails with "the saved file does not
+     match what was written".
+  5. Updates the snapshot and sets `Exists = true`.
+- **Reloading.** `Reload()` re-opens the file from disk and returns the new document.
+
+### Move helpers (Cfgedit.Core)
+
+`ConfigDocument.MoveBy(NodePath node, int delta) → MoveNode?` moves a node one sibling group up (−1) or down (+1).
+
+- A group is a node together with its attached comments. A free comment is its own group.
+- It returns the MoveNode with the NewIndex convention already applied, or null at the first or last position.
+- `MoveAttributeBy(NodePath element, int index, int delta) → MoveAttribute?` does the same for attributes.
+
+### EditController (Cfgedit, no Terminal.Gui types)
+
+The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, and the last error or info message.
+
+- `Apply(EditOp op, out string? error) → EditResult?` catches `CfgeditException` into `error`.
+- It also has `Undo` and `Redo` (each returning the focus path), `IsDirty`, `Save()` (returning an error string or
+  null), and `Reload()`.
+- A new, unsaved file counts as dirty until its first save.
+- The flows below are methods that take the confirmations as delegates. This keeps them testable without dialogs.
+- **Save flow.** When `ChangedOnDisk()` holds, ask Overwrite / Reload / Cancel, with Overwrite as the default (the user
+  started a save). Reload discards the undo history and asks a second confirmation first, with Reload as the default.
+- **Quit and switch flow** (Ctrl+Q, Ctrl+O). When the file is dirty, ask Save / Discard / Cancel, with Save as the
+  default. A failed save keeps the window open and shows the error.
+
+### Editing in the tree (Cfgedit)
+
+**Inline editor**
+
+- Enter or F2 on an editable part opens a `TextField` over the part's range on its display line. It extends to the
+  right edge of the tree and holds the part's logical value.
+- **Which editor.** Following cmdr's FieldDraft lesson, a value is edited inline only when a TextField round trip
+  reproduces it exactly: set `Text`, read it back, compare. Otherwise:
+  - If a multi-line TextView round trip reproduces it, F2 and Enter open the multi-line editor instead.
+  - If neither does (e.g. a value with a lone CR), the part is read-only in the tree, and the message says "this value
+    can only be edited in text mode (Ctrl+T)".
+- **Keys in the field.**
+  - Enter commits with `SetPart`. Esc cancels.
+  - Tab commits and moves to the next editable part (this row, then later rows), opening the editor there. Shift+Tab
+    goes to the previous one.
+  - F4 switches to the multi-line editor with the current text.
+  - When the text is unchanged, committing just closes the editor.
+- **Errors.** An Apply error is shown in the message line in the error style, and the field stays open with the text as
+  typed.
+- **Bool and null values.** Enter on true or false flips it with `ChangeJsonType`. Enter on null opens the type menu.
+
+**Multi-line editor.** A dialog with a `TextView` (Multiline, `TabKeyAddsTab = false`; cmdr's `FieldDraft.Area` is the
+model). It suppresses the obsolete warning as cmdr does.
+
+- Buttons Cancel and OK; OK is last, so it is the default.
+- Ctrl+Enter or F2 commits, Esc cancels.
+- It is sized from the screen at every layout (the 06-03 lesson). Check it with the pty driver, since dialogs have hidden
+  their bottom rows before.
+
+**Structure keys** (design table):
+
+- **`a` / `A`** add after / before the focused node, using `InsertionIndexAfter/Before`.
+  - On an attribute part they add an attribute: a dialog asks for the name, then the value is edited inline.
+  - XML element, JSON object item, or JSON scalar item with a sibling: no dialog. The new node copies the sibling's shape
+    with empty values, as TableModel.AddRow does (reuse its logic), and the first empty value is opened in the inline
+    editor.
+  - JSON member: a dialog asks for the key and type, and the value editor opens next for string and number.
+  - Anything else: a dialog with the kinds allowed there.
+- **`i`** adds a child at the end: an element's or container's last child. On an XML ElementName part it adds an
+  attribute. **`+`** always adds an attribute to the focused element.
+- **`d` / Delete** delete the focused attribute when an attribute part is focused, otherwise the node, with no
+  confirmation.
+- **Alt+Up/Down and `K`/`J`** use `MoveBy`. **Alt+Left/Right** use `MoveAttributeBy`.
+- **`t`** opens the JSON type menu.
+  - To Number: the current text if it is a valid number, else "0". To String: the current raw text of a scalar, else "".
+  - Container → scalar with children asks first, with Change as the default.
+  - On XML: "types apply to JSON only".
+- **Ctrl+D** duplicates.
+- **Ctrl+Z / `u`** undo. **Ctrl+Y / Ctrl+R** redo.
+- **Ctrl+S** saves.
+
+**Other changes**
+
+- **Focus.** After every op, the tree's `SetDocument` places the cursor on the result's Focus. After an insert, the editor
+  opens on the new node's first value or name, as described above.
+- **Messages.** One message line, the detail line's row, shows a transient error or info message ("Saved", "Nothing to
+  undo") for 4 seconds or until the next key. It invalidates the cached hints so that they come back (the 06-06 lesson).
+- **Title.** It shows `*` after the file name while dirty.
+
+**New files (Program and host)**
+
+- `cfgedit <path>` for a missing path asks "Create <name>?" with Create as the default.
+- The format comes from `--format`, the extension, or a choice dialog.
+- XML asks for the root element name (validated with `IsValidQName`).
+- The window opens dirty and unsaved, and the first Ctrl+S writes the file.
+- The picker's New file action needs a RecentPicker extension and is deferred.
+
+### Tests (M5)
+
+- **Core:** AtomicFile.WriteExact, DocumentFile (open, new, changed on disk in every way, save postcondition, missing
+  folder, reload), and MoveBy/MoveAttributeBy with comment groups.
+- **EditController** flows with fake confirmations: save with an external change (each answer), quit and switch when
+  dirty (each answer, plus a failing save), the dirty state of new files, and undo/redo focus.
+- **TerminalHarness:**
+  - the inline editor opening at the right position (including a wrapped attribute value), committing, cancelling, Tab
+    and Shift+Tab, errors keeping the field, the read-only fallback, F4
+  - the multi-line editor
+  - every structure key, with the resulting document text asserted
+  - the message line and title marker
+- **pty check** (by the reviewer) of the inline editor, the dialogs and the quit confirmation at 80×24 and 40×12.
