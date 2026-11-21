@@ -1,0 +1,20 @@
+// Application settings. Synthetic example.
+{
+  /* Logging levels by category. */
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information", // the floor
+      "Microsoft.AspNetCore": "Warning",
+    },
+  },
+  "AllowedHosts": "*",
+  "Port": 5000,
+  "Features": [
+    "search",
+    /* "beta", */
+    "export",
+  ],
+  "Ratio": 0.75,
+  "Debug": false,
+}
+// end of file

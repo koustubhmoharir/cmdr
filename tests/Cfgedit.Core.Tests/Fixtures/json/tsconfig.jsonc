@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "es2022", // emitted language level
+    "strict": true,
+    "paths": {
+      "@app/*": ["src/*"],
+    },
+    "lib": [
+      "es2022",
+      "dom",
+    ],
+  },
+  // files to include
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

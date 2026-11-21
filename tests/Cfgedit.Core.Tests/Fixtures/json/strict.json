@@ -1,0 +1,8 @@
+{
+  "name": "cfgedit",
+  "version": "1.0.0-rc.1",
+  "tags": ["config", "editor", "tui"],
+  "escapes": "quote \" slash \/ tab \t unicode \u00e9 pair \ud83d\ude00",
+  "nested": {"empty": {}, "list": [], "flags": [true, false, null]},
+  "numbers": [0, -0, 1.0, 1e3, -2.5E-3, 123456789012345678901234567890]
+}
