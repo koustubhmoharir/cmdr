@@ -15,7 +15,10 @@ public interface IConfigFormat
     /// <exception cref="Cfgedit.Core.CfgeditException">The text is not a valid document in this format.</exception>
     ConfigDocument Parse(SourceText source);
 
-    /// <summary>Plans the text edits for an operation. Not implemented before the edit milestone.</summary>
+    /// <summary>
+    /// Plans the text edits for an operation. The JSON family plans every operation; XML planning is not implemented yet and
+    /// throws <see cref="NotImplementedException"/>.
+    /// </summary>
     /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid.</exception>
     IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op);
 

@@ -7,8 +7,17 @@ namespace Cfgedit.Core.Model;
 public sealed class JsonFormat : IConfigFormat
 {
     /// <summary>Creates the format for a dialect.</summary>
-    public JsonFormat(JsonDialect dialect)
+    public JsonFormat(JsonDialect dialect) : this(dialect, null)
     {
+    }
+
+    /// <summary>
+    /// Creates the format with a hook that sees, and may change, the edits planned for each operation. The tests use it to
+    /// check that <see cref="ConfigDocument.Apply"/> catches a planner that is wrong.
+    /// </summary>
+    internal JsonFormat(JsonDialect dialect, Func<EditOp, IReadOnlyList<TextEdit>, IReadOnlyList<TextEdit>>? planHook)
+    {
+        _planHook = planHook;
         Dialect = dialect;
         Name = dialect switch
         {
@@ -18,6 +27,8 @@ public sealed class JsonFormat : IConfigFormat
             _ => throw new ArgumentOutOfRangeException(nameof(dialect), dialect, "Not a JSON dialect."),
         };
     }
+
+    private readonly Func<EditOp, IReadOnlyList<TextEdit>, IReadOnlyList<TextEdit>>? _planHook;
 
     /// <summary>The dialect the text is parsed in.</summary>
     public JsonDialect Dialect { get; }
@@ -34,10 +45,18 @@ public sealed class JsonFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <exception cref="NotImplementedException">Always, until the edit milestone.</exception>
+    /// <exception cref="CfgeditException">The operation is invalid.</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
-        throw new NotImplementedException("Edit planning is not implemented yet.");
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(op);
+        if (document.Syntax is not JsonDocument)
+        {
+            throw new ArgumentException("The document was not parsed as JSON.", nameof(document));
+        }
+
+        IReadOnlyList<TextEdit> edits = new JsonEditPlanner(document, Dialect).Plan(op);
+        return _planHook is null ? edits : _planHook(op, edits);
     }
 
     /// <inheritdoc/>

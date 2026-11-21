@@ -101,21 +101,22 @@ public sealed class ConfigDocumentTests
     }
 
     [Fact]
-    public void Apply_is_not_implemented_yet()
+    public void Apply_on_an_unknown_operation_in_json_is_refused_with_a_user_message()
     {
         ConfigDocument document = ModelTestSupport.Parse("[1]", StrictJson);
 
-        Assert.Throws<NotImplementedException>(() => document.Apply(new TestOp()));
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => document.Apply(new TestOp()));
+
+        Assert.Equal("This edit is not supported for JSON", ex.Message);
     }
 
     [Fact]
-    public void Plan_is_not_implemented_yet_in_either_format()
+    public void Plan_on_xml_is_not_implemented_yet()
     {
-        ConfigDocument json = ModelTestSupport.Parse("[1]", StrictJson);
         ConfigDocument xml = ModelTestSupport.Parse("<r/>", Xml);
 
-        Assert.Throws<NotImplementedException>(() => StrictJson.Plan(json, new TestOp()));
         Assert.Throws<NotImplementedException>(() => Xml.Plan(xml, new TestOp()));
+        Assert.Throws<NotImplementedException>(() => xml.Apply(new TestOp()));
     }
 
     [Fact]
