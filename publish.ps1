@@ -1,13 +1,13 @@
 #!/usr/bin/env pwsh
-# Publishes cmdr and logvu as single framework-dependent executables into publish/<rid>/
-# (Cmdr.exe and logvu.exe on Windows, Cmdr and logvu on Linux), then installs them for the current user.
+# Publishes cmdr, logvu and cfgedit as single framework-dependent executables into publish/<rid>/
+# (Cmdr.exe, logvu.exe and cfgedit.exe on Windows, Cmdr, logvu and cfgedit on Linux), then installs them for the current user.
 #
 #   ./publish.ps1             publish for the current platform only, then install
 #   ./publish.ps1 -All        publish for win-x64 and linux-x64 (and the current platform), then install
 #   ./publish.ps1 -NoInstall  publish without installing
 #
 # Install: on Windows, publish/<rid> is added to the user PATH (new terminals pick it up). On Linux,
-# ~/.local/bin/cmdr and ~/.local/bin/logvu become symbolic links to the published executables.
+# ~/.local/bin/cmdr, ~/.local/bin/logvu and ~/.local/bin/cfgedit become symbolic links to the published executables.
 #
 # Works from a fresh clone: it first fetches the Terminal.Gui submodule (a fork that both build from source)
 # at the commit this repository records. Needs git and the .NET 10 SDK.
@@ -44,7 +44,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 foreach ($rid in $rids) {
-    foreach ($project in 'Cmdr', 'Logvu') {
+    foreach ($project in 'Cmdr', 'Logvu', 'Cfgedit') {
         dotnet publish "$PSScriptRoot/src/$project" -c Release -r $rid -o "$PSScriptRoot/publish/$rid"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
@@ -66,13 +66,13 @@ if ($IsWindows) {
     else {
         [Environment]::SetEnvironmentVariable('Path', (($entries + $outputDir) -join ';'), 'User')
         $env:Path = "$env:Path;$outputDir"
-        Write-Host "Added $outputDir to the user PATH. Open a new terminal to use cmdr and logvu."
+        Write-Host "Added $outputDir to the user PATH. Open a new terminal to use cmdr, logvu and cfgedit."
     }
 }
 else {
     $binDir = Join-Path $HOME '.local/bin'
     New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-    $links = [ordered]@{ cmdr = 'Cmdr'; logvu = 'logvu' }
+    $links = [ordered]@{ cmdr = 'Cmdr'; logvu = 'logvu'; cfgedit = 'cfgedit' }
 
     # Check every link path first, so a blocked one leaves nothing half installed.
     foreach ($name in $links.Keys) {
@@ -97,6 +97,6 @@ else {
 
     $onPath = ($env:PATH -split ':') | Where-Object { $_.TrimEnd('/') -eq $binDir.TrimEnd('/') }
     if (-not $onPath) {
-        Write-Warning "$binDir is not on PATH; add it to use cmdr and logvu by name."
+        Write-Warning "$binDir is not on PATH; add it to use cmdr, logvu and cfgedit by name."
     }
 }

@@ -7,6 +7,8 @@
     <Project Path="src/Shared.Tui/Shared.Tui.csproj" />
     <Project Path="src/Logvu.Core/Logvu.Core.csproj" />
     <Project Path="src/Logvu/Logvu.csproj" />
+    <Project Path="src/Cfgedit.Core/Cfgedit.Core.csproj" />
+    <Project Path="src/Cfgedit/Cfgedit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Cmdr.Core.Tests/Cmdr.Core.Tests.csproj" />
@@ -16,5 +18,7 @@
     <Project Path="tests/Shared.Tui.Tests/Shared.Tui.Tests.csproj" />
     <Project Path="tests/Logvu.Core.Tests/Logvu.Core.Tests.csproj" />
     <Project Path="tests/Logvu.Tests/Logvu.Tests.csproj" />
+    <Project Path="tests/Cfgedit.Core.Tests/Cfgedit.Core.Tests.csproj" />
+    <Project Path="tests/Cfgedit.Tests/Cfgedit.Tests.csproj" />
   </Folder>
 </Solution>

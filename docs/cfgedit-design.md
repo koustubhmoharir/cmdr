@@ -1,0 +1,400 @@
+# cfgedit design (proposal)
+
+cfgedit is a .NET 10 terminal editor for config files on Windows and Linux. It is built next to cmdr and logvu and uses the
+repository's Terminal.Gui fork. It shows a file as a tree and edits it one structural part at a time: a key, a value, an
+element or attribute name, or a text node. The user types the logical value and never deals with escaping.
+
+Phase 1: XML, JSON, JSONC (JSON with comments and trailing commas) and JSON5. Phase 2: .env, TOML and YAML.
+
+## Guiding rule: lossless round trip
+
+Config files are reviewed in diffs, so cfgedit must never reformat a file it did not need to touch.
+
+- Opening a file and saving it without edits produces the same bytes. That covers the encoding, BOM, line endings, the
+  final newline, comments, blank lines, quote style, attribute order, whitespace inside tags, number spelling (`1.0`, `0x1F`,
+  `1e3`), and escapes in values that were not edited.
+- An edit rewrites only the source span of the part it changes. A value edit replaces only the value token. A rename
+  replaces only the name token(s).
+- An inserted node copies formatting from its neighbours: indentation, newline style, separator spacing (`"a": 1` vs
+  `"a":1`), quote character, and whether siblings use trailing commas.
+- Every edit is checked. The new text is reparsed and the edited part must read back as the value the user typed. If the
+  reparse fails or the value differs, the edit is rejected with an internal-error message and the document stays unchanged.
+  A bug in cfgedit can therefore fail an edit, but it cannot corrupt the file.
+
+This rule rules out System.Text.Json (it drops comments, has no JSON5 support, and changes number spelling) and
+saving through XmlDocument/XDocument/XmlWriter (they drop attribute quote style and whitespace inside tags, and expand
+entities). cfgedit has its own lossless JSON parser. For XML, .NET's XmlReader decides what is well-formed and what the
+values decode to, and cfgedit's own scanner only finds where each part's text starts and ends (see XML below).
+
+## Projects
+
+Same layout as logvu:
+
+| Project | Contents |
+|---|---|
+| `src/Cfgedit.Core` | No Terminal.Gui. Source text and encodings, JSON and XML lossless parsers and encoders, the format-neutral document model, edit operations, undo, table detection. |
+| `src/Cfgedit` | The `cfgedit` executable: Program, host, main window, tree and table views, inline editor, dialogs. |
+| `tests/Cfgedit.Core.Tests`, `tests/Cfgedit.Tests` | Unit tests, a round-trip corpus, key-handling tests with the fake driver. |
+
+Reused unchanged: Shared.Core (AtomicFile, FileIdentity, RecentFiles, DisplayWidth, SearchPattern/SearchHistory) and
+Shared.Tui (Confirm, HintsLine/KeyHints, SearchBar, RecentPicker, Osc52, TextWidth, DisplayWidthSetup). Changes: add the
+projects to `Cmdr.slnx`, add `cfgedit` to `publish.ps1`, and link to `docs/cfgedit.md` from the README.
+
+## Command line
+
+```
+cfgedit <file> [--format xml|json|jsonc|json5]
+cfgedit                      # recent-files picker with an Open file action
+cfgedit --version
+```
+
+The format comes from the extension: `.json5` → JSON5. `.json` → JSONC, which accepts comments and trailing commas when
+the file has them (appsettings.json and tsconfig.json do) and never adds them. `.xml .config .csproj .props .targets .xaml
+.resx .nuspec .xsd .xslt .svg` → XML. Other extensions are sniffed by the first non-blank character (`<` → XML, `{`/`[` →
+JSON5 parser). `--format` overrides detection. `--format json` is strict and rejects comments.
+
+**New files.** `cfgedit <path>` for a path that does not exist asks for confirmation (Create is the default), then opens
+an unsaved document. The file is written on the first Ctrl+S, and the folder must already exist. The format comes from
+the extension or `--format`. If neither identifies one, a choice dialog asks. Initial content: `{}` for JSON, JSONC and
+JSON5. For XML it is `<?xml version="1.0" encoding="utf-8"?>` plus an empty root element whose name is asked for. New
+files are UTF-8 without a BOM, with the platform's newline. The recent-files picker also has a **New file** action, which
+asks for a path.
+
+**Files that fail to parse open in text mode.** The text mode is a plain multi-line editor (Terminal.Gui TextView) on the
+source. It puts the cursor at the error position and shows `line:col: message` in the detail line. F5 (and Ctrl+S, before
+writing) reparses. When the text parses, the tree view returns, and the text edits become one undo step. Saving text
+that does not parse needs a Confirm (Save is the default). Ctrl+T switches between tree and text at any time on a file
+that parses, so the source can be viewed or hand-edited. The cursor maps to the source offset of the focused part and
+back. On the command line, `--check` only prints `path:line:col: message` and exits 1, so the parse can be run from
+scripts.
+
+## Architecture (Cfgedit.Core)
+
+```
+bytes ──decode──▶ SourceText ──parse──▶ CST (format-specific, immutable, token spans + trivia)
+                                          │ project
+                                          ▼
+                                     DocTree (format-neutral rows/parts, what the UI sees)
+EditOp ──format.Plan(CST)──▶ TextEdit[] ──splice──▶ new SourceText ──reparse/verify──▶ new CST
+```
+
+- **SourceText** holds the decoded string plus the encoding (detected BOM; for XML, the declared `encoding`, with
+  code-page encodings available through `CodePagesEncodingProvider`), the dominant newline and the final-newline flag.
+  Saving re-encodes with the same encoding.
+- **CST per format.** Each token keeps its exact source span. Whitespace and comments are trivia attached to tokens. The
+  tree is immutable, and offsets refer to the current SourceText.
+- **IConfigFormat** is the extension point that phase 2 formats implement: `Parse(SourceText) → CST`,
+  `Project(CST) → DocTree`, and `Plan(CST, EditOp) → TextEdit[]` (or a validation error). It also provides the
+  encode/decode and validation of each part kind.
+- **Edits are text splices followed by a full reparse.** Config files are small, and reparsing even 1 MB takes
+  milliseconds. Incremental tree updates are therefore unnecessary, and the reparse doubles as the verification step.
+- **Undo/redo** keeps a stack of (text before, text after, cursor path) entries. It is unlimited and cleared on reload.
+- **NodePath** identifies a node across reparses: the chain of (key or element name, ordinal among same-named siblings).
+  For an array item it is the index. The UI keeps its cursor and the collapsed set as NodePaths, so both survive edits and
+  undo.
+
+### DocTree
+
+A `DocNode` has a kind, children, a `Collapsible` flag and an ordered list of **parts**. A part has a kind, a display
+string, a logical value, an `Editable` flag, a style and a source span. One row can have several editable parts.
+
+| Format | Node | Parts on its row |
+|---|---|---|
+| JSON | member of object | key, value (scalar) or summary `{3}` / `[5]` (container) |
+| JSON | array item | index (not editable), value or summary |
+| JSON | comment | comment text |
+| XML | element | start name, then name + value for each attribute, then text content if the element only contains text |
+| XML | end tag row | end name (only when the element has element or mixed children) |
+| XML | text / CDATA | text |
+| XML | comment / PI | comment text / target + data |
+| XML | declaration, DOCTYPE | shown read-only |
+
+## JSON, JSONC and JSON5
+
+- **Dialect flags** on one lexer: comments, trailing commas, single-quoted strings, unquoted identifier keys, JSON5
+  numbers (hex, leading/trailing dot, `+`, `Infinity`, `NaN`), and escaped line continuations. JSON enables none of them,
+  JSONC enables comments and trailing commas, and JSON5 enables all.
+- **Value types.** A scalar's type is kept while its value is edited. A string edit takes any text, including newlines;
+  a number edit is validated against the dialect's number grammar; a bool or null edit is a choice. Changing the type is a
+  separate command (`t`: string / number / true / false / null / object / array). Converting a container to a scalar
+  needs a Confirm when the container is not empty.
+- **Strings** are encoded minimally for the dialect when edited: `\"` or `\'` matching the original quote character,
+  `\\`, control characters as `\n \t \r \b \f` or `\uXXXX`. Everything else, non-ASCII included, is written literally.
+  Unedited strings keep their original escapes.
+- **Keys.** In JSON5, a key that was unquoted stays unquoted after a rename if the new name is a valid ES5 identifier.
+  Otherwise the key is quoted with the file's dominant quote character. A key that duplicates a sibling is rejected.
+- **Comments** are attached as leading trivia to the following member or item, or as trailing trivia when on the same
+  line. They are shown as dim rows, can be edited and deleted, and move and delete together with their node.
+- **Numbers** keep their spelling unless the user edits them. cfgedit never converts the spelling of a number.
+
+## XML
+
+### Parsing: XmlReader is the authority, the scanner finds spans
+
+Probe findings (net10, recorded here because the design depends on them):
+
+- **Positions.** `IXmlLineInfo` positions are 1-based line and UTF-16 column. A tab counts as 1 column and a surrogate pair
+  as 2. CRLF, a lone CR and mixed endings each count as one line break.
+- **Where each node is reported.**
+  - Element, EndElement, Attribute, PI, XmlDeclaration and DocumentType: the start of the name.
+  - Comment and CDATA: the first character of the content.
+  - Text: its first character, or the `&` of a leading reference.
+  - No end positions are reported.
+- **Normalisation.** Values are normalised: CRLF and CR in text become LF, and tab/newline in attribute values become a
+  space.
+- **Errors.** `XmlException.LineNumber/LinePosition` point at the offending character.
+- **String input.** Fed a decoded string through `StringReader`, XmlReader gives the same positions and values as for the
+  byte stream. It ignores the `encoding` declaration, and it rejects a leading U+FEFF, so the BOM must be stripped.
+- **Entities.** `XmlReader.Create` expands custom entities and merges them into the surrounding Text node. An entity whose
+  replacement contains markup produces nodes positioned inside the DOCTYPE. An undeclared entity or namespace prefix is
+  an error.
+
+Pipeline:
+
+1. **Decode.** cfgedit decodes the bytes itself, following XML 1.0 Appendix F: BOM, then a UTF-16 pattern without a BOM,
+   then the `encoding` declaration (code pages through `CodePagesEncodingProvider`), then UTF-8. The BOM is stripped and
+   remembered for saving. As a cross-check, a stream `XmlTextReader` reads the first node, and its `Encoding` must agree
+   with cfgedit's detection.
+2. **Validate.** `XmlReader.Create` runs over a `StringReader` of the decoded text with `DtdProcessing.Parse`,
+   `XmlResolver = null` (never fetches anything), a `MaxCharactersFromEntities` cap and `CheckCharacters`. It checks
+   well-formedness, namespaces and entities and decodes every value. Its errors carry the positions that text mode shows.
+3. **Scan.** cfgedit's scanner tokenises the same text into the CST. It never decides validity, only where things are:
+   - tag internals: name, whitespace, `=`, quoted value, `>` or `/>`
+   - text up to the next `<`
+   - comment, CDATA and PI ends
+   - the end of the DOCTYPE, skipping quoted strings and the bracketed internal subset
+
+   Inside values it decodes only the five predefined entities and character references, and applies the same
+   normalisation as XmlReader.
+4. **Cross-check.** Walk the reader and the CST in step. Every node's kind, name and start position, every attribute and
+   its decoded value, and every text and CDATA value must match. Text is compared after merging adjacent text the way
+   XmlReader does. A mismatch is a cfgedit bug: the file opens in text mode with an "internal parse mismatch" message,
+   never as a possibly wrong tree. The edit check (reparse and verify) runs the same pipeline, so a successful edit is
+   always accepted by .NET's parser.
+
+Limitations accepted for phase 1:
+
+- An entity whose replacement text contains `<` makes the reader report positions inside the DOCTYPE. Such files open in
+  text mode only, with a message saying why.
+- The internal DOCTYPE subset is not parsed by cfgedit. It is kept as raw text and shown read-only.
+- There is no DTD or schema validation beyond what XmlReader does for well-formedness.
+
+### Display and editing
+- **Whitespace-only text** between elements counts as formatting. It is preserved but not shown, and it is the source of
+  indentation when nodes are inserted. Non-whitespace text in mixed content gets its own rows.
+- **Text-only elements** (`<add>value</add>`) show their text as an inline part on the element row, with no end row. An
+  element with child elements gets an end row (`</name>`) once expanded. A collapsed element shows `<name …>…</name>` on
+  one row.
+- **Renaming.** Editing the start name or the end name renames both. Names are validated as XML QNames. Namespace
+  prefixes stay as written, and `xmlns:*` attributes are ordinary attributes. XmlReader treats an undeclared prefix as
+  an error, so a rename to one, or deleting an `xmlns:p` that is still in use, is rejected with that message.
+- **Values.** The predefined entities and character references are decoded for display and editing. On an edited value,
+  attribute values escape `&`, `<` and the quote character in use (and newline/tab as `&#10;`/`&#9;` so they survive
+  attribute-value normalisation). Text escapes `&`, `<` and `>` after `]]`. A CDATA edit containing `]]>` is split into
+  two CDATA sections.
+- **Custom entity references** (`&foo;` declared in a DOCTYPE) are not decoded by the scanner. A part that contains one
+  is shown in **raw mode**: the escaped source with a `raw` marker. It is edited as source text and checked by the
+  reparse. For such parts the cross-check compares positions only, not values.
+- **Attribute wrapping.** Attributes follow the element name on its row. An attribute that does not fit in the remaining
+  width wraps to the next display line, aligned under the first attribute. If that alignment leaves less than 24 columns,
+  the wrap indent is the element's indent + 4 instead. An attribute is never split between lines unless it is wider than
+  a whole line on its own. In that case its value is truncated with `…`, and the full value appears in the detail line
+  and in the editor.
+
+## Screen
+
+```
+╭┤web.config├──────────────────────────────────────────────────────────────╮
+│▾ <configuration>                                                         │
+│    ▾ <appSettings>                                                       │
+│        <add key="Environment" value="Production" />                      │
+│        <add key="ConnectionTimeout" value="30" />                        │
+│      </appSettings>                                                      │
+│    ▸ <system.web targetFramework="4.8" debug="false" …>…</system.web>    │
+│    ▾ <log4net debug="false" threshold="ALL"                              │
+│               update="Merge">                                            │
+│  </configuration>                                                        │
+╰──────────────────────────────────────────────────────────────────────────╯
+/configuration/appSettings/add[2]/@value   string   "30"
+Enter Edit  Space Fold  a Add  d Delete  t Type  T Table  ^Z Undo  ^S Save  ^Q Quit
+```
+
+JSON rows: `▾ servers: {4}`, `port: 8080`, `name: web`. **Strings are shown without quotes** and are told apart by colour.
+An empty string shows as a dim `""`. Newlines and tabs inside values show as dim `⏎` / `→`. JSON has no closing-bracket
+rows, because indentation already shows the nesting.
+
+Colours separate keys/names, strings, numbers, bool/null, punctuation (dim) and comments (dim). The focused part is drawn
+in reverse video, and the rest of its row is lightly highlighted. The detail line shows the path of the focused part
+(XPath-like for XML, `$.a.b[2]` for JSON), its type, and its full value when truncated. The hints line comes from Shared.Tui.
+
+## Keys (tree)
+
+The cursor is a (row, part) pair. Printable shortcuts apply only in the tree, never inside an editor.
+
+| Key | Behaviour |
+|---|---|
+| Up/Down, k/j | Previous / next row. The part index is kept where the new row has one, otherwise the nearest part. |
+| Left/Right, h/l | Previous / next part on the row. Left on the first part goes to the parent row. |
+| Home/End, 0/$ | First / last part of the row |
+| PgUp/PgDn, g/G | Page / top / bottom |
+| Space | Expand / collapse the row's node. On a leaf, toggles its parent. |
+| `*` / `-` | Expand the whole subtree / collapse to the parent |
+| Enter, F2 | Edit the focused part (inline). Values with newlines, or Ctrl+Enter, open the multi-line editor. |
+| a / A | Add after / before the focused node. On an attribute part this adds an attribute, otherwise a sibling node. |
+| i | Add a child (last), or an attribute when an XML element name is focused |
+| d, Delete | Delete the focused node or attribute (undo restores it; no confirmation) |
+| Alt+Up/Down, K/J | Move the node among its siblings. Alt+Left/Right moves an attribute. |
+| t | Change the JSON value type / convert an XML text-only element to element content |
+| T | Open the table editor for the focused array/element (or its parent) |
+| y / Y | Copy the focused value / path (OSC 52) |
+| / or Ctrl+F, n/N, F3 | Search keys, names and values. Matches inside collapsed nodes expand them. |
+| Ctrl+Z / Ctrl+Y (u / Ctrl+R) | Undo / redo |
+| Ctrl+S | Save |
+| Ctrl+Q | Quit. With unsaved changes, Confirm offers Save / Discard / Cancel, with Save as the default. |
+
+**Inline editor.** A text field over the part, extending to the right edge. Enter commits, Esc cancels. Tab commits and
+moves to the next editable part (this row first, then later rows), so a run of values can be filled in without leaving
+edit mode. Invalid input (bad number, invalid name, duplicate key or attribute) shows its message under the field and
+stays in edit mode.
+
+**Add dialog.** It asks only what the context needs. In a JSON object: key, then type. In a JSON array: type. In XML:
+element / attribute / text / comment, then the name. A new node copies the shape of the selected sibling when one exists
+(`a` on an `<add key value/>` creates `<add key="" value=""/>`, with focus on the first value).
+
+## Table editor
+
+**When it is offered.**
+
+- A JSON array whose items are all objects. The columns are the union of their keys, in first-seen order.
+- A JSON array whose items are all scalars, shown as one value column.
+- An XML element with at least two child elements of the same name. Only those children become rows. The columns are the
+  union of their attributes, then text-only child elements that occur at most once per row, then a text column if they
+  have text.
+
+**Layout.** A full-pane view that replaces the tree, titled with the node path. Esc returns to the tree with the cursor
+on the node of the last focused cell. The row-index column stays fixed while the other columns scroll horizontally.
+Column widths are set from the content up to a cap, and long values are truncated with `…` and shown in full in the
+detail line.
+
+**Cells.**
+
+- A scalar cell is edited like a tree part.
+- A nested container shows `{…}` / `[…]` / `<…>` and cannot be edited in the table. Enter jumps to that node in the tree.
+- A missing cell shows as a dim `·`. Editing it adds the key or attribute at the position matching the column order. A
+  missing JSON cell takes the column's most common type.
+- `d` on a cell removes the key or attribute. `d` on the index column deletes the row.
+
+**Rows.** `a`/`A` adds a row after/before, copying the current row's shape with empty values. Alt+Up/Down moves a row.
+There is no sorting in phase 1, because sorting reorders the file.
+
+Undo, save, search and copy work as in the tree.
+
+## Saving and external changes
+
+- Saving goes through `AtomicFile.Write`, which keeps symlinks, ownership, permissions and ACLs.
+- Before saving, cfgedit compares FileIdentity and the content hash taken at load time. If the file changed on disk,
+  Confirm offers Overwrite / Reload / Cancel. Reload drops the undo history after a second Confirm.
+- In phase 1, cfgedit does not watch the file while it is open. A later phase adds watching: reload silently when there
+  are no unsaved changes, and offer Reload / Keep mine when there are.
+
+## Phase 2 notes
+
+- `.env`: flat key/value rows with comments. Quoting rules differ between loaders (dotenv vs docker-compose), so the
+  dialect is a format option.
+- TOML: tables and arrays of tables map to the tree. An array of tables is a natural table-editor case. Inline tables are
+  shown as nested nodes.
+- YAML: block and flow styles, anchors/aliases (shown, not expanded), multi-document streams, and scalar styles (plain,
+  quoted, literal, folded) kept on edit.
+
+All three plug in through IConfigFormat. Nothing in the UI is specific to JSON or XML except the part-kind styling and
+the add-dialog choices, which the format provides.
+
+## Engineering rules (from cmdr's review rounds)
+
+These rules come from `review/COMPLETED-FIXES.md` and the practices in `review/ROUND3-REPORT.md`. They apply from the
+first commit, not after a review.
+
+**Error boundary**
+
+- Every expected failure surfaces as a `CfgeditException` with the path and a message. That includes invalid paths,
+  missing vs inaccessible files, unreadable or undecodable bytes, parse errors and save failures. Callers never see a raw
+  `IOException`, `UnauthorizedAccessException` or `ArgumentException` for a user's input.
+- Parse errors give whole-file `line:col`. The column counts UTF-16 units, as XmlReader does, and the TUI converts it to
+  a display column.
+
+**Untouched data**
+
+- Bytes that the user did not edit are never changed. That rules out trimming, newline normalisation and re-escaping.
+- A value that an editor field cannot represent exactly is read-only in that field, with a hint. For example, the
+  single-line inline editor shows a value with line breaks read-only and offers the multi-line editor instead. Values
+  are never silently altered.
+- A NUL character in a value can be shown, edited and saved where the format allows it. Inputs that a format can't
+  represent are rejected with a message, never dropped.
+
+**Limits**
+
+- Parsers are iterative or have a nesting cap (`MaxDepth` = 256). Deeper input is a parse error, never a stack overflow.
+- Entity expansion is capped. Nothing is resolved externally.
+
+**Text and display**
+
+- All widths go through Shared.Core `DisplayWidth`, which works per grapheme cluster. A tab pads to the next 8 columns,
+  and zero-width graphemes take no column but stay in copies.
+- Wrapping and truncation never split a surrogate pair or a grapheme.
+
+**Saving**
+
+- Saving goes only through `AtomicFile`. That keeps symlinks resolved strictly, mode, owner and group, the Windows ACL,
+  and the ownership of files created under sudo. The guarantee is crash atomicity, not power-loss durability.
+- After a save, cfgedit checks the postcondition: the bytes on disk are re-read and must equal what was written.
+
+**Threading**
+
+- cfgedit is single-threaded: all document state is UI-thread only. Any later background work (file watching, phase 2)
+  posts to the UI thread and carries the document version it was started for. Stale results are dropped.
+
+**TUI**
+
+- Confirm defaults follow Confirm.Ask/Choose: the default button is the action the user started.
+- Dialogs size themselves from the screen at every layout and scroll to the focused field.
+- A transient status message invalidates the cached hints, so the hints come back when the message expires.
+- Layout is checked in a real terminal with the pty driver, because Terminal.Gui reserves bottom rows in dialogs.
+
+**Tests**
+
+- Tests use independent oracles: exact expected output text, driver cells for layout, and an inode check for
+  replace-versus-in-place saves. They never re-implement the code under test.
+- Critical regressions are mutation-checked: remove the guard locally and confirm the test fails.
+- There is a shared corpus of nasty inputs: CR/LF/lone CR, BOM, NUL, empty strings, surrogate pairs, ZWJ emoji, `]]>`,
+  quotes of both kinds, `&` and `<`, very long lines, and deep nesting.
+- Platform-specific tests are visible skips, never early returns. Race tests use gates, never sleeps.
+
+## Testing
+
+- **Round-trip corpus.** Real configs from the SheetKraft repo (web.config, App.config, log4net XML, appsettings.json,
+  tsconfig.json, package.json) and the JSON5 spec examples must parse and re-serialise byte-identically. Tests also cover
+  CRLF, BOM, UTF-16 and windows-1252 XML.
+- **Encoder properties.** For every part kind and dialect, randomised strings (quotes, `]]>`, control characters,
+  surrogates, `&`, `<`) must satisfy encode → splice → reparse → decode = input.
+- **Edit operations.** Each operation is checked against the exact expected output text, including formatting inherited
+  by inserted nodes and comments that move with their node.
+- **Parse errors** are reported with exact line:col positions.
+- **TUI.** RowLayout (rows → display lines with part column ranges, attribute wrapping) is a pure class with its own
+  tests. Key handling is tested with the fake driver, as in Logvu.Tests. Layout is checked with the pty driver.
+
+## Milestones
+
+1. **M0 Scaffolding.** Projects, solution, `cfgedit --version`, publish.ps1.
+2. **M1 JSON family.** Lexer/parser with dialect flags, CST, encoders, round-trip corpus, parse errors.
+3. **M2 XML.** Decoding (Appendix F), XmlReader validation, span scanner, CST, cross-check, encoders, raw-mode parts, round-trip corpus.
+4. **M3 Model and edits.** IConfigFormat, DocTree projection, EditOps (set part, insert, delete, move, change type),
+   verification, undo/redo, NodePath.
+5. **M4 Read-only TUI.** Picker, tree view, RowLayout with wrapping, colours, navigation, fold, detail line.
+6. **M5 Editing TUI.** Inline/multi-line editor, Tab flow, add dialog, delete/move/type, save, quit flow, external-change
+   check, new files.
+7. **M5b Text mode.** Parse-failure fallback, Ctrl+T toggle, cursor mapping, `--check`.
+8. **M6 Search and copy.**
+9. **M7 Table editor.**
+10. **M8 Docs.** `docs/cfgedit.md`, README section, acceptance pass on Windows (by the user).
+
+A tracker (`docs/cfgedit-tracker.md`) is created at M0, in the same style as logvu's.
