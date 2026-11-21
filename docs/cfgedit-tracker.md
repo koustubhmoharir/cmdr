@@ -49,17 +49,24 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       CRLF, BOM, UTF-16, windows-1252) and parse property tests. (1a279f3)
 - [x] Real configs (SheetKraft) checked by a scratchpad probe. All 485 files pass (xaml, xml, csproj, config, resx,
       svg, manifest, props, targets, nuspec, xsd; 223 with a BOM; CRLF, LF and mixed). (probe, 2026-11-21)
-- [ ] Performance: a 1.5 MB file parses in 0.53 s (about 3 MB/s). Profile the whole pipeline (XmlReader pass, scanner,
-      cross-check) before M5 (target: at least 20 MB/s).
+- [x] Performance: allocations halved, scanner 2–3× faster, total 19–32 MB/s on quiet runs (c7cf9a9). The bare XmlReader
+      pass and decoding now set most of the floor.
+- [x] Element nesting capped at 256 like JSON, and scanner exceptions wrapped as the internal mismatch error. (c7cf9a9)
 
 ## M3. Model and edits (Cfgedit.Core)
 
-- [ ] IConfigFormat, DocTree projection and parts for JSON and XML.
-- [ ] NodePath, which survives reparse.
-- [ ] EditOps: set part, insert (formatting inherited from siblings), delete (with comments), move, change type, and XML
-      rename (start and end together).
-- [ ] Verification by reparse and readback. Undo/redo.
-- [ ] Table detection and table model (JSON arrays, XML repeated elements).
+- [x] IConfigFormat, DocTree projection and parts for JSON and XML. (edec9b4)
+- [x] NodePath, which survives reparse. (edec9b4)
+- [x] JSON EditOps: set part, insert (formatting inherited from siblings), delete (with comments), move, duplicate, change
+      type. (7f29fcb)
+- [x] XML EditOps, including rename (start and end together), mixed content, namespaces, and raw parts. (79e4e1e)
+      Known limits: deleting an element that sits between two text nodes in mixed content is refused, because the texts
+      would join; text nodes can't be moved or duplicated; document-level inserts are comments only (no `NewXmlPI`).
+      For M5: `<a/>` has no Text part, so the UI must offer "add text" as `SetPart(Text)` on it, which the planner
+      accepts.
+- [x] Verification by reparse and logical comparison. Undo/redo with content-based dirty state. (7f29fcb)
+- [x] Table detection and table model (JSON arrays, XML repeated elements), with CompositeEdit for multi-step row
+      edits as one undo step. (1874db5)
 
 ## M4. Read-only TUI
 

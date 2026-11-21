@@ -720,3 +720,123 @@ of its rows. The rules are the design's "When it is offered".
 - `Cell(row, column) → (DocNode? node, DocPart? part, bool missing, bool nested)`.
 - The editor (M7) turns a cell edit into an EditOp. Editing a missing cell becomes an `InsertAttribute`, or an
   `InsertNode` at the column-ordered position.
+
+## Read-only TUI (M4)
+
+Projects `src/Cfgedit` (namespace `Cfgedit.Tui`) and `tests/Cfgedit.Tests`. Follow logvu's structure (`LogvuHost`,
+`MainWindow`, custom `View` drawing as in `DetailView`) and reuse Shared.Tui unchanged: `RecentPicker`, `HintsLine` and
+`KeyHints`, `Confirm`, `TextWidth`, `DisplayWidthSetup`, `Osc52` and `SearchBar`. Copy `tests/Logvu.Tests/TerminalHarness.cs`
+whole into `tests/Cfgedit.Tests`, changing only the namespace.
+
+### Program and host
+
+- **Arguments.** `cfgedit <file> [--format xml|json|jsonc|json5]` and `cfgedit` (picker). Options may come before or
+  after the file. `--check` and new files come later (M5b, M5). Until then, a missing file is an error.
+- **Format resolution.**
+  1. `--format`, else `Formats.ForPath`.
+  2. Else sniff the first non-whitespace character of the decoded text (after a BOM): `<` → xml, `{` or `[` → json5.
+  3. Else the error "cannot tell the format of <file>; use --format".
+- **Load errors** (`CfgeditException`) print `cfgedit: <path>:<line>:<col>: <message>` (or without the position when
+  there is none) to stderr and exit 1. Text mode (M5b) replaces this for parse errors later.
+- **Recent files** are `RecentFiles.DefaultStorePathFor("cfgedit")`. A file is recorded after it opens.
+- **`CfgeditHost.Run(ConfigDocument doc, string path, RecentFiles? recent)`** and **`RunPicker(RecentFiles?)`**, as in
+  LogvuHost: `RecentPicker<OpenedFile>` with Open file, and Ctrl+O in the main window shows the picker over the open
+  file. The unsaved-changes check comes in M5. `OpenedFile` is a small record (path, ConfigDocument).
+
+### Rows (pure, no Terminal.Gui types)
+
+`DocRows` flattens the DocTree into visible rows, given a collapsed set:
+
+- A row is `(DocNode Node, bool IsEnd)`. The end row of an expanded XML element that has `EndParts` follows its
+  children.
+- The Document node itself is not a row; its children are top-level rows.
+- **The collapsed set** is a `HashSet<NodePath>`. A node is collapsible when it has children. JSON containers with no
+  children are not collapsible.
+- **Initial state.** Every collapsible node at depth > 3 is collapsed (top-level rows are depth 1), and so is any
+  collapsible node with more than 200 children. Everything else is expanded.
+- After an edit or undo the collapsed set is kept by NodePath. Paths that no longer resolve are dropped.
+
+`RowLayout` turns a row into display lines for a given width:
+
+- **Line layout:**
+  - Each line has an indent (2 columns per depth level) and a fold glyph (`▾`, `▸`, or two spaces), then segments.
+  - A segment is `(string Text, StyleKind Style, int PartIndex)`, where PartIndex is -1 for decoration and an index into
+    the row's Parts (or EndParts for an end row) otherwise.
+  - The result is a list of `DisplayLine(int Indent, IReadOnlyList<Segment> Segments)` plus, for each part, its
+    (line, start column, end column) so that the view can draw the cursor and map mouse clicks.
+- **JSON:**
+  - A member is `key: value`, an item `0: value` (the index dimmed), and a container's value `{3}` / `[5]` (Summary).
+  - Strings have no quotes. An empty string is a dimmed `""`.
+  - Numbers, bools and null are written as they are, each in its own style.
+  - Comments are `// text` or `/* text */`, dimmed.
+- **XML:**
+  - Element: `<name a="v" b="w">`, followed by the text-only text and `</name>`, or ending in `/>` for `<a/>`.
+  - Collapsed element with children: `<name …>…</name>`.
+  - End row: `</name>`.
+  - Text as it is. CDATA as `<![CDATA[text]]>` with dimmed markers. Comments as `<!-- text -->` and PIs as
+    `<?target data?>`.
+  - Declaration and doctype as their source text, dimmed.
+  - Attribute values are shown in double quotes for readability, whatever the source quote, with the logical value
+    inside (no escaping).
+- **Visible control characters.** Inside any value, LF shows as `⏎`, TAB as `→`, CR as `␍`, and other C0 controls as
+  `·`, each in a glyph style. They are one display cell each.
+- **Raw parts.** A part with `IsRaw` is followed by a dimmed ` raw` marker.
+- **Wrapping:**
+  - XML element rows wrap attributes as the design says: an attribute (`name="value"`) that doesn't fit goes to the next
+    line, aligned under the first attribute. If that alignment would leave fewer than 24 columns, the continuation indent
+    is the row indent + 4.
+  - A single attribute wider than a whole line has its value truncated with `…`.
+  - Every other row is one line, truncated with `…` at the width. The cut happens inside the last part, and decoration
+    after it is dropped.
+- **Widths.** All measuring uses `TextWidth`/`DisplayWidth`, per grapheme. Truncation never splits a grapheme or a
+  surrogate pair.
+
+`StyleKind`: Key, Index, String, Number, Bool, Null, Summary, Punctuation, Comment, ElementName, AttributeName,
+AttributeValue, Text, CData, ReadOnly, Glyph, RawMarker, Fold. `TreeColors` maps them to Terminal.Gui attributes, with
+the dimmed ones using `TextStyle.Faint`, as logvu does.
+
+### Tree view
+
+`TreeView : View` draws the visible rows from a top row.
+
+- **Cursor.** The cursor is `(row index, part index)`.
+  - The focused part is drawn in reverse video, and the rest of its row is lightly highlighted (background tint).
+  - Every part is focusable, editable or not.
+  - Moving between rows keeps the part index where the new row has one. Otherwise it goes to the nearest one. A
+    "preferred part index" is remembered across rows that have fewer parts, as editors do for columns.
+- **Keys** (the read-only subset of the design table):
+  - Up/Down and k/j move by row. Left/Right and h/l move by part; Left on the first part goes to the parent row.
+  - Home/End and 0/$ go to the first/last part. PgUp/PgDn move a page; g/G go to the first/last row.
+  - Space folds and unfolds. On a leaf it folds the parent and moves the cursor there.
+  - `*` expands the whole subtree. `-` collapses the parent and moves there.
+- **Mouse.** A click focuses the part under it, or the row's first part when the click misses every part. A click on
+  the fold glyph toggles it. The wheel scrolls 3 rows.
+- **Scrolling.** The viewport keeps the cursor row visible (all of its display lines), scrolling by display lines.
+- **Events.** `CursorChanged` fires for the detail line.
+
+### Main window
+
+- **Layout.** The title is the file name, plus `[json5]` / `[xml]` and so on. The tree fills the window except the
+  bottom two lines.
+- **Detail line:**
+  - The focused part's path: JSON as `$.a.b[2]`, quoting keys that aren't identifiers as `$["a b"]`. XML as
+    `/configuration/appSettings/add[2]/@value`, with `[n]` 1-based and only when same-name siblings exist; text as
+    `text()[n]` and comments as `comment()[n]`.
+  - Then two spaces and the part's kind (string, number, bool, null, object, array, element, attribute, text, comment,
+    CDATA, PI).
+  - Then two spaces and the full logical value with the same glyphs, truncated at the width.
+- **Hints line:** `HintsLine` with the read-only keys: `Space Fold  ←→ Part  ^O Open  ^Q Quit`.
+- **Ctrl+Q** quits.
+
+### Tests (M4)
+
+- **RowLayout:** exact segment lists and part ranges for every node kind and style, plus control-character glyphs, raw
+  markers, truncation at graphemes (ZWJ emoji, CJK wide characters, combining marks), and XML attribute wrapping at
+  several widths (alignment, the 24-column fallback, an oversize attribute).
+- **DocRows:** flattening, end rows, initial collapse rules, and keeping collapse state across an edit (applying an op
+  with `ConfigDocument.Apply`).
+- **Tree view** through `TerminalHarness`: drawn text and attributes for representative JSON and XML, every key above,
+  mouse clicks and the wheel, scrolling with wrapped rows, and the cursor and preferred part.
+- **Main window:** layout at 80×24 and 40×12, and the detail line for JSON and XML paths, including quoted keys and
+  same-name ordinals.
+- **Program:** arguments, format resolution and sniffing, error output, and exit codes.
