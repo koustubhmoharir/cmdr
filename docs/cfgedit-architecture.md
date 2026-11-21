@@ -922,7 +922,9 @@ The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, 
   - When the text is unchanged, committing just closes the editor.
 - **Errors.** An Apply error is shown in the message line in the error style, and the field stays open with the text as
   typed.
-- **Bool and null values.** Enter on true or false flips it with `ChangeJsonType`. Enter on null opens the type menu.
+- **Bool and null values.** Enter or F2 on true, false or null opens the type menu with the current type selected. Enter
+  never changes a value by itself: every edit goes through an editor or menu and an explicit commit (user decision,
+  2026-11-22).
 
 **Multi-line editor.** A dialog with a `TextView` (Multiline, `TabKeyAddsTab = false`; cmdr's `FieldDraft.Area` is the
 model). It suppresses the obsolete warning as cmdr does.
