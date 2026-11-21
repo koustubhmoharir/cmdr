@@ -62,7 +62,7 @@ public static class RowLayout
             var items = FoldItems(row, collapsed);
             items.Add(Fixed("</", StyleKind.Punctuation, -1));
             items.Add(Begin(0));
-            AddText(items, node.EndParts[0].Value, StyleKind.ElementName, 0);
+            AddText(items, node.EndParts[0].Value, StyleKind.ElementName, 0, columns);
             items.Add(End(0));
             items.Add(Fixed(">", StyleKind.Punctuation, -1));
             return SingleLine(indent, items, node.EndParts.Count, columns);
@@ -72,10 +72,10 @@ public static class RowLayout
         {
             NodeKind.XmlElement => LayoutElement(row, collapsed, indent, columns),
             NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.JsonScalar or NodeKind.JsonComment =>
-                SingleLine(indent, JsonItems(row, collapsed), node.Parts.Count, columns),
+                SingleLine(indent, JsonItems(row, collapsed, columns), node.Parts.Count, columns),
             NodeKind.XmlText or NodeKind.XmlCData or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction
                 or NodeKind.XmlDeclaration or NodeKind.XmlDoctype =>
-                SingleLine(indent, XmlItems(row, collapsed), node.Parts.Count, columns),
+                SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns),
             _ => throw new ArgumentException("The document node has no row.", nameof(row)),
         };
     }
@@ -118,27 +118,56 @@ public static class RowLayout
 
     /// <summary>
     /// Adds the text as cells: one per grapheme cluster, with the control characters as glyphs. A glyph is one column, and the
-    /// text keeps the given style.
+    /// text keeps the given style. The cells stop once they are wider than <paramref name="width"/>: the row cannot show more, and
+    /// a cut inside them is the same as with all of them, so a long value costs the width, not its length. The caller adds the
+    /// part's end marker after the cells.
     /// </summary>
-    private static void AddText(List<Item> items, string text, StyleKind style, int part)
+    private static void AddText(List<Item> items, string text, StyleKind style, int part, int width)
     {
+        int columns = 0;
         foreach ((int offset, int length, _) in TextWidth.Graphemes(text))
         {
             string grapheme = text.Substring(offset, length);
-            if (grapheme == "\r\n")
+            if (ControlGlyphs(grapheme) is { } glyphs)
             {
-                items.Add(Fixed(GlyphCarriageReturn, StyleKind.Glyph, part));
-                items.Add(Fixed(GlyphLineFeed, StyleKind.Glyph, part));
-            }
-            else if (length == 1 && char.IsControl(grapheme[0]))
-            {
-                items.Add(Fixed(ControlGlyph(grapheme[0]), StyleKind.Glyph, part));
+                foreach (string glyph in glyphs)
+                {
+                    items.Add(Fixed(glyph, StyleKind.Glyph, part));
+                }
+
+                columns += glyphs.Length;
             }
             else
             {
-                items.Add(new Item(ItemKind.Cell, grapheme, style, part, TextWidth.WidthOf(grapheme.AsSpan())));
+                int cell = TextWidth.WidthOf(grapheme.AsSpan());
+                items.Add(new Item(ItemKind.Cell, grapheme, style, part, cell));
+                columns += cell;
+            }
+
+            if (columns > width)
+            {
+                break;
             }
         }
+    }
+
+    /// <summary>
+    /// The glyphs that show a control grapheme: CR LF as two glyphs, another control character as one. Null for any other grapheme.
+    /// The glyphs are one column each.
+    /// </summary>
+    private static string[]? ControlGlyphs(string grapheme)
+    {
+        if (grapheme == "\r\n")
+        {
+            return [GlyphCarriageReturn, GlyphLineFeed];
+        }
+
+        if (grapheme.Length == 1 && char.IsControl(grapheme[0]))
+        {
+            return [ControlGlyph(grapheme[0])];
+        }
+
+        return null;
     }
 
     private static string ControlGlyph(char c)
@@ -150,6 +179,42 @@ public static class RowLayout
             '\r' => GlyphCarriageReturn,
             _ => GlyphOther,
         };
+    }
+
+    /// <summary>
+    /// A logical value as the rows show it: each control character as its glyph, one column each, and other text as it is. The
+    /// text is cut once it is wider than <paramref name="width"/> (the caller truncates it to its own width), so a long value costs the
+    /// width, not its length. It is the value the detail line shows.
+    /// </summary>
+    /// <param name="value">The logical value.</param>
+    /// <param name="width">The most columns the caller can show.</param>
+    public static string DisplayValue(string value, int width)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var builder = new StringBuilder();
+        int columns = 0;
+        foreach ((int offset, int length, _) in TextWidth.Graphemes(value))
+        {
+            string grapheme = value.Substring(offset, length);
+            if (ControlGlyphs(grapheme) is { } glyphs)
+            {
+                builder.Append(string.Concat(glyphs));
+                columns += glyphs.Length;
+            }
+            else
+            {
+                builder.Append(grapheme);
+                columns += TextWidth.WidthOf(grapheme.AsSpan());
+            }
+
+            if (columns > width)
+            {
+                break;
+            }
+        }
+
+        return builder.ToString();
     }
 
     /// <summary>The raw marker after a part that is edited as source text.</summary>
@@ -171,7 +236,7 @@ public static class RowLayout
 
     // ----- JSON -----
 
-    private static List<Item> JsonItems(Row row, bool collapsed)
+    private static List<Item> JsonItems(Row row, bool collapsed, int width)
     {
         DocNode node = row.Node;
         List<Item> items = FoldItems(row, collapsed);
@@ -182,7 +247,7 @@ public static class RowLayout
             bool block = node.End - comment.End == 2;
             items.Add(Fixed(block ? "/*" : "//", StyleKind.Punctuation, -1));
             items.Add(Begin(0));
-            AddText(items, comment.Value, StyleKind.Comment, 0);
+            AddText(items, comment.Value, StyleKind.Comment, 0, width);
             items.Add(End(0));
             if (block)
             {
@@ -206,14 +271,14 @@ public static class RowLayout
                     }
                     else
                     {
-                        AddText(items, part.Value, StyleKind.Key, i);
+                        AddText(items, part.Value, StyleKind.Key, i, width);
                     }
 
                     items.Add(End(i));
                     break;
                 case PartKind.Index:
                     items.Add(Begin(i));
-                    AddText(items, part.Value, StyleKind.Index, i);
+                    AddText(items, part.Value, StyleKind.Index, i, width);
                     items.Add(End(i));
                     break;
                 case PartKind.Value:
@@ -223,7 +288,7 @@ public static class RowLayout
                     }
 
                     items.Add(Begin(i));
-                    JsonScalarItems(items, node.JsonKind, part.Value, i);
+                    JsonScalarItems(items, node.JsonKind, part.Value, i, width);
                     items.Add(End(i));
                     break;
                 case PartKind.Summary:
@@ -234,7 +299,7 @@ public static class RowLayout
 
                     items.Add(Begin(i));
                     items.Add(Fixed(node.JsonKind == JsonValueKind.Array ? "[" : "{", StyleKind.Punctuation, i));
-                    AddText(items, part.Value, StyleKind.Summary, i);
+                    AddText(items, part.Value, StyleKind.Summary, i, width);
                     items.Add(Fixed(node.JsonKind == JsonValueKind.Array ? "]" : "}", StyleKind.Punctuation, i));
                     items.Add(End(i));
                     break;
@@ -246,7 +311,7 @@ public static class RowLayout
         return items;
     }
 
-    private static void JsonScalarItems(List<Item> items, JsonValueKind? kind, string value, int part)
+    private static void JsonScalarItems(List<Item> items, JsonValueKind? kind, string value, int part, int width)
     {
         switch (kind)
         {
@@ -254,26 +319,26 @@ public static class RowLayout
                 items.Add(Fixed("\"\"", StyleKind.Punctuation, part));
                 break;
             case JsonValueKind.String:
-                AddText(items, value, StyleKind.String, part);
+                AddText(items, value, StyleKind.String, part, width);
                 break;
             case JsonValueKind.Number:
-                AddText(items, value, StyleKind.Number, part);
+                AddText(items, value, StyleKind.Number, part, width);
                 break;
             case JsonValueKind.True or JsonValueKind.False:
-                AddText(items, value, StyleKind.Bool, part);
+                AddText(items, value, StyleKind.Bool, part, width);
                 break;
             case JsonValueKind.Null:
-                AddText(items, value, StyleKind.Null, part);
+                AddText(items, value, StyleKind.Null, part, width);
                 break;
             default:
-                AddText(items, value, StyleKind.ReadOnly, part);
+                AddText(items, value, StyleKind.ReadOnly, part, width);
                 break;
         }
     }
 
     // ----- XML (single line) -----
 
-    private static List<Item> XmlItems(Row row, bool collapsed)
+    private static List<Item> XmlItems(Row row, bool collapsed, int width)
     {
         DocNode node = row.Node;
         List<Item> items = FoldItems(row, collapsed);
@@ -282,28 +347,28 @@ public static class RowLayout
         {
             case NodeKind.XmlText:
                 items.Add(Begin(0));
-                AddText(items, first.Value, StyleKind.Text, 0);
+                AddText(items, first.Value, StyleKind.Text, 0, width);
                 items.Add(End(0));
                 AddRaw(items, first);
                 break;
             case NodeKind.XmlCData:
                 items.Add(Fixed("<![CDATA[", StyleKind.Punctuation, -1));
                 items.Add(Begin(0));
-                AddText(items, first.Value, StyleKind.CData, 0);
+                AddText(items, first.Value, StyleKind.CData, 0, width);
                 items.Add(End(0));
                 items.Add(Fixed("]]>", StyleKind.Punctuation, -1));
                 break;
             case NodeKind.XmlComment:
                 items.Add(Fixed("<!--", StyleKind.Punctuation, -1));
                 items.Add(Begin(0));
-                AddText(items, first.Value, StyleKind.Comment, 0);
+                AddText(items, first.Value, StyleKind.Comment, 0, width);
                 items.Add(End(0));
                 items.Add(Fixed("-->", StyleKind.Punctuation, -1));
                 break;
             case NodeKind.XmlProcessingInstruction:
                 items.Add(Fixed("<?", StyleKind.Punctuation, -1));
                 items.Add(Begin(0));
-                AddText(items, first.Value, StyleKind.ElementName, 0);
+                AddText(items, first.Value, StyleKind.ElementName, 0, width);
                 items.Add(End(0));
                 if (node.Parts[1].Value.Length > 0)
                 {
@@ -311,14 +376,14 @@ public static class RowLayout
                 }
 
                 items.Add(Begin(1));
-                AddText(items, node.Parts[1].Value, StyleKind.Text, 1);
+                AddText(items, node.Parts[1].Value, StyleKind.Text, 1, width);
                 items.Add(End(1));
                 items.Add(Fixed("?>", StyleKind.Punctuation, -1));
                 break;
             case NodeKind.XmlDeclaration:
             case NodeKind.XmlDoctype:
                 items.Add(Begin(0));
-                AddText(items, first.Value, StyleKind.ReadOnly, 0);
+                AddText(items, first.Value, StyleKind.ReadOnly, 0, width);
                 items.Add(End(0));
                 break;
             default:
@@ -347,7 +412,7 @@ public static class RowLayout
         List<Item> head = FoldItems(row, collapsed);
         head.Add(Fixed("<", StyleKind.Punctuation, -1));
         head.Add(Begin(0));
-        AddText(head, name, StyleKind.ElementName, 0);
+        AddText(head, name, StyleKind.ElementName, 0, width);
         head.Add(End(0));
 
         var units = new List<Unit>();
@@ -361,11 +426,11 @@ public static class RowLayout
             int value = ValueIndexOf(parts, parts[p].AttributeIndex);
             var items = new List<Item>();
             items.Add(Begin(p));
-            AddText(items, parts[p].Value, StyleKind.AttributeName, p);
+            AddText(items, parts[p].Value, StyleKind.AttributeName, p, width);
             items.Add(End(p));
             items.Add(Fixed("=\"", StyleKind.Punctuation, -1));
             items.Add(Begin(value));
-            AddText(items, parts[value].Value, StyleKind.AttributeValue, value);
+            AddText(items, parts[value].Value, StyleKind.AttributeValue, value, width);
             items.Add(End(value));
             items.Add(Fixed("\"", StyleKind.Punctuation, -1));
             AddRaw(items, parts[value]);
@@ -377,11 +442,11 @@ public static class RowLayout
             units.Add(new Unit([Fixed(">", StyleKind.Punctuation, -1)], false));
             var text = new List<Item>();
             text.Add(Begin(textIndex));
-            AddText(text, parts[textIndex].Value, StyleKind.Text, textIndex);
+            AddText(text, parts[textIndex].Value, StyleKind.Text, textIndex, width);
             text.Add(End(textIndex));
             AddRaw(text, parts[textIndex]);
             units.Add(new Unit(text, false));
-            units.Add(new Unit(ClosingTag(name), false));
+            units.Add(new Unit(ClosingTag(name, width), false));
         }
         else if (selfClosing)
         {
@@ -391,7 +456,7 @@ public static class RowLayout
         {
             units.Add(new Unit([Fixed(">", StyleKind.Punctuation, -1)], false));
             units.Add(new Unit([Fixed(Ellipsis, StyleKind.Glyph, -1)], false));
-            units.Add(new Unit(ClosingTag(name), false));
+            units.Add(new Unit(ClosingTag(name, width), false));
         }
         else
         {
@@ -475,10 +540,10 @@ public static class RowLayout
         return Finish(lines, parts.Count);
     }
 
-    private static List<Item> ClosingTag(string name)
+    private static List<Item> ClosingTag(string name, int width)
     {
         var items = new List<Item> { Fixed("</", StyleKind.Punctuation, -1) };
-        AddText(items, name, StyleKind.ElementName, -1);
+        AddText(items, name, StyleKind.ElementName, -1, width);
         items.Add(Fixed(">", StyleKind.Punctuation, -1));
         return items;
     }

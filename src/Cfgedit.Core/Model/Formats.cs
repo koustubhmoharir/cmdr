@@ -15,6 +15,9 @@ public static class Formats
         ".xml", ".config", ".csproj", ".props", ".targets", ".xaml", ".resx", ".nuspec", ".xsd", ".xslt", ".svg",
     };
 
+    /// <summary>The file extensions that <see cref="ForPath"/> recognises, lowercase with the dot, JSON family first.</summary>
+    public static IReadOnlyList<string> KnownExtensions { get; } = [".json", ".jsonc", ".json5", .. XmlExtensions.Order(StringComparer.Ordinal)];
+
     /// <summary>
     /// The format named by a format name: <c>json</c> (strict), <c>jsonc</c>, <c>json5</c> or <c>xml</c>. The name is not
     /// case-sensitive. Returns null for any other name.

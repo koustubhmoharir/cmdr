@@ -58,10 +58,16 @@ public sealed class RecentPicker<T> : Window
     /// The key hints on the bottom row. A click on a key's label performs the key, as typing it does. Lists the Open file keys when
     /// <paramref name="openFile"/> is set.
     /// </param>
-    /// <param name="openFile">Whether the Open file action is enabled: <c>o</c> and Ctrl+O show a file dialog for a <c>.json</c> file.</param>
+    /// <param name="openFile">
+    /// Whether the Open file action is enabled: <c>o</c> and Ctrl+O show a file dialog, filtered by <paramref name="fileTypes"/>.
+    /// </param>
     /// <param name="alternate">
     /// An alternate way to open the selected row, or null for none. Its key opens the row with its loader, as Enter opens it with
     /// <paramref name="tryOpen"/>: the file is recorded at the front of the list when it opens, and an error or a cancel is handled the same way.
+    /// </param>
+    /// <param name="fileTypes">
+    /// The file types the Open file dialog offers, the first being selected. Null offers <c>.json</c> config files, as cmdr and logvu
+    /// need.
     /// </param>
     public RecentPicker(
         IApplication app,
@@ -70,8 +76,9 @@ public sealed class RecentPicker<T> : Window
         string title,
         Hint hint,
         bool openFile,
-        PickerOpen<T>? alternate = null)
-        : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null, alternate)
+        PickerOpen<T>? alternate = null,
+        IReadOnlyList<IAllowedType>? fileTypes = null)
+        : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null, alternate, fileTypes)
     {
     }
 
@@ -91,7 +98,8 @@ public sealed class RecentPicker<T> : Window
         bool openFile,
         Action<string>? showError,
         Func<string?>? pickFile,
-        PickerOpen<T>? alternate = null)
+        PickerOpen<T>? alternate = null,
+        IReadOnlyList<IAllowedType>? fileTypes = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(tryOpen);
@@ -104,7 +112,7 @@ public sealed class RecentPicker<T> : Window
         _alternate = alternate;
         _openFile = openFile;
         _showError = showError ?? (message => MessageBox.ErrorQuery(app, "Configuration", message, "_OK"));
-        _pickFile = pickFile ?? (() => ShowOpenDialog(app));
+        _pickFile = pickFile ?? (() => ShowOpenDialog(app, fileTypes ?? [new AllowedType("Config files", ".json")]));
         _home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         // No outer frame: the list has its own border, as the panes of the main window do.
@@ -305,11 +313,11 @@ public sealed class RecentPicker<T> : Window
     }
 
     // The file dialog for a config file, started in the current directory. Returns the chosen path, or null when cancelled.
-    private static string? ShowOpenDialog(IApplication app)
+    private static string? ShowOpenDialog(IApplication app, IReadOnlyList<IAllowedType> fileTypes)
     {
         using var dialog = new OpenDialog
         {
-            AllowedTypes = [new AllowedType("Config files", ".json")],
+            AllowedTypes = [.. fileTypes],
             OpenMode = OpenMode.File,
             AllowsMultipleSelection = false,
             MustExist = true,
