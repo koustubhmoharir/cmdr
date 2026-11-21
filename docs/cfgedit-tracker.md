@@ -83,14 +83,15 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M5. Editing TUI
 
-- [ ] Inline editor (Tab flow, validation messages) and multi-line editor.
+- [x] Inline editor (Tab flow, validation messages) and multi-line editor; message line, dirty marker, undo/redo keys,
+      save and quit/switch prompts. Checked in a real terminal at 80x24 and 40x12. (179696f) *(Windows)*: multi-line
+      line breaks are normalised from `Environment.NewLine` to LF, which has a unit test but has not been run on Windows.
 - [ ] Add dialog; delete, move and change type; undo/redo keys.
 - [x] Save core: `AtomicFile.WriteExact`, DocumentFile (content-based external-change check, read-back postcondition),
       EditController save/reload/quit flows, MoveBy over comment groups. (202b5c3)
 - [ ] Save/quit UI wiring and new files (Create confirmation, format choice, XML root name).
-- [ ] JSON planner: moving a block comment above another comment on the same line joins the next entry onto that line
-      (`"a": 1, /*t1*/ /*t2*/` → `"a": 1, /*t2*/ /*t1*/ "b": 2`). The result is valid but reformatted. Keep line breaks
-      when moving same-line comments.
+- [x] JSON planner: moving a node that shares a line with its neighbour keeps the line breaks where they were (only a
+      line comment forces one). (33e1425)
 - [ ] The Save postcondition mismatch branch has no test, because there is no seam to inject a mismatch.
 
 ## M5b. Text mode
