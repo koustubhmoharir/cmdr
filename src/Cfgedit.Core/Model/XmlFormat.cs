@@ -23,10 +23,27 @@ public sealed class XmlFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <exception cref="NotImplementedException">Always, until the edit milestone.</exception>
+    /// <exception cref="CfgeditException">The operation is invalid or not supported for XML.</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
-        throw new NotImplementedException("Edit planning is not implemented yet.");
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(op);
+        if (document.Syntax is not XmlDocumentSyntax)
+        {
+            throw new ArgumentException("The document was not parsed as XML.", nameof(document));
+        }
+
+        return new XmlEditPlanner(document).Plan(op);
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Every reparse error is the user's except an internal parse mismatch, which is cfgedit's own bug.
+    /// </remarks>
+    public bool IsUserError(CfgeditException reparseError)
+    {
+        ArgumentNullException.ThrowIfNull(reparseError);
+        return !reparseError.Message.StartsWith("internal parse mismatch", StringComparison.Ordinal);
     }
 
     /// <inheritdoc/>

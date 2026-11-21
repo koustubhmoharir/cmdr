@@ -210,6 +210,63 @@ internal static class EditLayout
         return count;
     }
 
+    /// <summary>
+    /// The indentation unit: the most common positive difference in indentation between a line and the nearest previous line
+    /// that is less indented. Tabs stay tabs. The default is two spaces.
+    /// </summary>
+    public static string InferIndentUnit(string text)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var order = new List<string>();
+        var stack = new List<string>();
+        foreach (string line in text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
+        {
+            int length = 0;
+            while (length < line.Length && line[length] is ' ' or '\t')
+            {
+                length++;
+            }
+
+            if (length == line.Length)
+            {
+                continue;
+            }
+
+            string indent = line[..length];
+            while (stack.Count > 0 && stack[^1].Length >= indent.Length)
+            {
+                stack.RemoveAt(stack.Count - 1);
+            }
+
+            if (stack.Count > 0 && indent.StartsWith(stack[^1], StringComparison.Ordinal))
+            {
+                string difference = indent[stack[^1].Length..];
+                if (!counts.ContainsKey(difference))
+                {
+                    counts[difference] = 0;
+                    order.Add(difference);
+                }
+
+                counts[difference]++;
+            }
+
+            stack.Add(indent);
+        }
+
+        string best = "  ";
+        int bestCount = 0;
+        foreach (string difference in order)
+        {
+            if (counts[difference] > bestCount)
+            {
+                best = difference;
+                bestCount = counts[difference];
+            }
+        }
+
+        return best;
+    }
+
     private static bool IsLeadingComment(string text, DocNode comment, int nextStart)
     {
         if (!StartsLine(text, comment.Start) || comment.End > nextStart)
@@ -265,24 +322,82 @@ internal static class LogicalEdit
     private static LogicalNode SetPartAt(ConfigDocument before, LogicalNode root, SetPart set)
     {
         DocNode target = Locate(before, set.Node);
+        if (set.Part == PartKind.Text && target.Kind is (NodeKind.XmlText or NodeKind.XmlCData) && set.Value.Length == 0)
+        {
+            // Empty text is no node: the edit removes the node.
+            return DeleteAt(before, root, set.Node);
+        }
+
+        if (set.Part == PartKind.Text && target.Kind == NodeKind.XmlCData && set.Value.Contains("]]>", StringComparison.Ordinal))
+        {
+            // A CDATA value with ]]> is written as several sections, which the reparse reads as several nodes.
+            return ReplaceWithPieces(before, root, set.Node, CDataPieces(set.Value));
+        }
+
+        // A raw part is source text the user wrote, so its logical value is not known in advance: the wildcard accepts any.
+        bool raw = IsRawPart(target, set.Part, set.AttributeIndex);
         return ChangeAt(before, root, set.Node, node => set.Part switch
         {
             PartKind.Key or PartKind.ElementName or PartKind.EndName or PartKind.PITarget => Renamed(node, set.Value),
-            PartKind.AttributeName => WithAttributes(node, list => list[set.AttributeIndex] = new LogicalAttribute(set.Value, list[set.AttributeIndex].Value)),
-            PartKind.AttributeValue => WithAttributes(node, list => list[set.AttributeIndex] = new LogicalAttribute(list[set.AttributeIndex].Name, set.Value)),
-            PartKind.Text when target.Kind == NodeKind.XmlElement => WithText(node, set.Value),
-            PartKind.Text or PartKind.Value or PartKind.Comment or PartKind.PIData => WithValue(node, set.Value),
+            PartKind.AttributeName => WithAttributes(node, list => list[set.AttributeIndex] = new LogicalAttribute(set.Value, list[set.AttributeIndex].Value, list[set.AttributeIndex].AnyValue)),
+            PartKind.AttributeValue => WithAttributes(node, list => list[set.AttributeIndex] = new LogicalAttribute(list[set.AttributeIndex].Name, set.Value, raw)),
+            PartKind.Text when target.Kind == NodeKind.XmlElement => WithText(node, set.Value, raw),
+            PartKind.Text or PartKind.Value or PartKind.Comment or PartKind.PIData => WithValue(node, set.Value, raw),
             _ => throw new InvalidOperationException("The part " + set.Part + " cannot be set."),
+        });
+    }
+
+    private static bool IsRawPart(DocNode node, PartKind kind, int attributeIndex)
+    {
+        return node.Parts.Any(part => part.Kind == kind && part.AttributeIndex == attributeIndex && part.IsRaw);
+    }
+
+    /// <summary>
+    /// The CDATA sections that hold a value, as the encoder writes them: each <c>]]&gt;</c> ends one section after <c>]]</c>, and
+    /// the next section starts with <c>&gt;</c>.
+    /// </summary>
+    private static List<LogicalNode> CDataPieces(string value)
+    {
+        string[] parts = value.Split("]]>", StringSplitOptions.None);
+        var pieces = new List<LogicalNode>(parts.Length);
+        for (int k = 0; k < parts.Length; k++)
+        {
+            string piece = (k > 0 ? ">" : string.Empty) + parts[k] + (k < parts.Length - 1 ? "]]" : string.Empty);
+            pieces.Add(new LogicalNode(LogicalKind.CData, null, null, piece, [], []));
+        }
+
+        return pieces;
+    }
+
+    private static LogicalNode ReplaceWithPieces(ConfigDocument before, LogicalNode root, NodePath path, List<LogicalNode> pieces)
+    {
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be replaced.");
+        int index = IndexOf(parent, node);
+        return ChangeAt(before, root, parent.Path, container =>
+        {
+            var children = container.Children.ToList();
+            children.RemoveAt(index);
+            children.InsertRange(index, pieces);
+            return WithChildren(container, children);
         });
     }
 
     private static LogicalNode InsertAt(ConfigDocument before, LogicalNode root, InsertNode insert)
     {
         DocNode parent = Locate(before, insert.Parent);
-        LogicalNode created = Create(insert.Node);
+        List<LogicalNode> created = insert.Node is NewXmlText { CData: true } cdata && cdata.Text.Contains("]]>", StringComparison.Ordinal)
+            ? CDataPieces(cdata.Text)
+            : [Create(insert.Node)];
         return ChangeAt(before, root, insert.Parent, node =>
         {
             var children = node.Children.ToList();
+            if (parent.Kind == NodeKind.XmlElement && children.Count == 1 && children[0].Kind == LogicalKind.Text && IsBlankText(children[0].Value))
+            {
+                // Whitespace in an element with no content is formatting: the new content replaces it.
+                children.Clear();
+            }
+
             int position = insert.Index;
             if (parent.Kind == NodeKind.XmlElement && parent.Children.Count == 0 && children.Count > 0)
             {
@@ -295,7 +410,7 @@ internal static class LogicalEdit
                 throw new InvalidOperationException($"Index {position} is outside the children of {insert.Parent}.");
             }
 
-            children.Insert(position, created);
+            children.InsertRange(position, created);
             return WithChildren(node, children);
         });
     }
@@ -480,9 +595,15 @@ internal static class LogicalEdit
         return new LogicalNode(node.Kind, name, node.ScalarKind, node.Value, node.Attributes, node.Children);
     }
 
-    private static LogicalNode WithValue(LogicalNode node, string value)
+    private static LogicalNode WithValue(LogicalNode node, string value, bool anyValue = false)
     {
-        return new LogicalNode(node.Kind, node.Name, node.ScalarKind, value, node.Attributes, node.Children);
+        return new LogicalNode(node.Kind, node.Name, node.ScalarKind, value, node.Attributes, node.Children, anyValue);
+    }
+
+    /// <summary>True for a text value made only of XML whitespace, which the document reads as formatting.</summary>
+    private static bool IsBlankText(string? value)
+    {
+        return value is not null && value.All(c => c is ' ' or '\t' or '\r' or '\n');
     }
 
     private static LogicalNode WithChildren(LogicalNode node, List<LogicalNode> children)
@@ -497,7 +618,7 @@ internal static class LogicalEdit
         return new LogicalNode(node.Kind, node.Name, node.ScalarKind, node.Value, attributes, node.Children);
     }
 
-    private static LogicalNode WithText(LogicalNode element, string text)
+    private static LogicalNode WithText(LogicalNode element, string text, bool anyValue)
     {
         var children = element.Children.ToList();
         bool hasText = children.Count == 1 && children[0].Kind == LogicalKind.Text;
@@ -510,11 +631,11 @@ internal static class LogicalEdit
         }
         else if (hasText)
         {
-            children[0] = WithValue(children[0], text);
+            children[0] = WithValue(children[0], text, anyValue);
         }
         else
         {
-            children.Insert(0, new LogicalNode(LogicalKind.Text, null, null, text, [], []));
+            children.Insert(0, new LogicalNode(LogicalKind.Text, null, null, text, [], [], anyValue));
         }
 
         return WithChildren(element, children);

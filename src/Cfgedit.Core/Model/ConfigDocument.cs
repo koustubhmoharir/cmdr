@@ -88,6 +88,11 @@ public sealed class ConfigDocument
         {
             after = Format.Parse(Source.WithText(text));
         }
+        catch (CfgeditException ex) when (Format.IsUserError(ex))
+        {
+            // The edit made the document invalid, and the message says how: the user's change is refused, not the editor.
+            throw new CfgeditException("this change would make the document invalid: " + ex.Message) { Line = ex.Line, Column = ex.Column };
+        }
         catch (CfgeditException ex)
         {
             throw InternalEditError("the edited text does not parse: " + ex.Message);
@@ -104,7 +109,7 @@ public sealed class ConfigDocument
         }
 
         LogicalNode actual = Format.ToLogical(after);
-        if (!expected.Equals(actual))
+        if (!LogicalNode.Matches(expected, actual))
         {
             throw InternalEditError(
                 "the edited text does not match the operation.\nExpected:\n" + expected + "\nActual:\n" + actual);
@@ -160,6 +165,50 @@ public sealed class ConfigDocument
         }
 
         return NearestSibling(node, path.Steps[depth]) ?? node;
+    }
+
+    /// <summary>
+    /// The index among the parent's children at which an <see cref="InsertNode"/> goes before the node: before the node's
+    /// attached leading comments, so that the new node does not separate them from the node they belong to.
+    /// </summary>
+    /// <param name="node">The node to insert before.</param>
+    /// <exception cref="ArgumentException">There is no such node, or it is the document node.</exception>
+    public int InsertionIndexBefore(NodePath node)
+    {
+        return AttachedGroup(node).First;
+    }
+
+    /// <summary>
+    /// The index among the parent's children at which an <see cref="InsertNode"/> goes after the node: after the node's
+    /// attached trailing comment.
+    /// </summary>
+    /// <param name="node">The node to insert after.</param>
+    /// <exception cref="ArgumentException">There is no such node, or it is the document node.</exception>
+    public int InsertionIndexAfter(NodePath node)
+    {
+        return AttachedGroup(node).Last + 1;
+    }
+
+    /// <summary>The sibling range that moves with a node, as the attachment rules give it.</summary>
+    private (int First, int Last) AttachedGroup(NodePath path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        DocNode node = Resolve(path) ?? throw new ArgumentException($"There is no node at {path}.", nameof(path));
+        DocNode parent = node.Parent ?? throw new ArgumentException("The document node has no insertion index.", nameof(path));
+        return EditLayout.Group(parent, IndexOfChild(parent, node), Source.Text);
+    }
+
+    private static int IndexOfChild(DocNode parent, DocNode child)
+    {
+        for (int k = 0; k < parent.Children.Count; k++)
+        {
+            if (ReferenceEquals(parent.Children[k], child))
+            {
+                return k;
+            }
+        }
+
+        throw new InvalidOperationException("The node is not among its parent's children.");
     }
 
     /// <summary>

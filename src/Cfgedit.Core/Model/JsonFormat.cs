@@ -70,4 +70,12 @@ public sealed class JsonFormat : IConfigFormat
 
         return JsonModelBuilder.BuildLogical(syntax);
     }
+
+    /// <inheritdoc/>
+    /// <remarks>A JSON reparse error is never the user's: the planner checks every JSON edit before it is spliced.</remarks>
+    public bool IsUserError(CfgeditException reparseError)
+    {
+        ArgumentNullException.ThrowIfNull(reparseError);
+        return false;
+    }
 }

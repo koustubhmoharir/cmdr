@@ -42,7 +42,8 @@ public enum LogicalKind
 /// <summary>An attribute of a logical node: a name and its decoded value.</summary>
 /// <param name="Name">The attribute name.</param>
 /// <param name="Value">The decoded value.</param>
-public sealed record LogicalAttribute(string Name, string Value);
+/// <param name="AnyValue">True in an expectation whose value is not known in advance: <see cref="LogicalNode.Matches"/> accepts any value.</param>
+public sealed record LogicalAttribute(string Name, string Value, bool AnyValue = false);
 
 /// <summary>
 /// The content of a document with its formatting removed: kinds, names, decoded values, attributes in order, and children
@@ -58,13 +59,15 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
     /// <param name="value">The decoded value, or the raw number or literal text for JSON scalars. Null when there is none.</param>
     /// <param name="attributes">The attributes in document order.</param>
     /// <param name="children">The children in document order.</param>
+    /// <param name="anyValue">True when the value is a wildcard in an expectation. See <see cref="AnyValue"/>.</param>
     public LogicalNode(
         LogicalKind kind,
         string? name,
         JsonValueKind? scalarKind,
         string? value,
         IReadOnlyList<LogicalAttribute> attributes,
-        IReadOnlyList<LogicalNode> children)
+        IReadOnlyList<LogicalNode> children,
+        bool anyValue = false)
     {
         ArgumentNullException.ThrowIfNull(attributes);
         ArgumentNullException.ThrowIfNull(children);
@@ -74,6 +77,54 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         Value = value;
         Attributes = attributes;
         Children = children;
+        AnyValue = anyValue;
+    }
+
+    /// <summary>
+    /// True when the value is a wildcard: an expectation for a value that is not known in advance, such as raw source text
+    /// written by the user. <see cref="Matches"/> accepts any value for such a node. <see cref="Equals(LogicalNode?)"/> ignores
+    /// the flag, and it is never set on a tree read from a document.
+    /// </summary>
+    public bool AnyValue { get; }
+
+    /// <summary>
+    /// True when <paramref name="actual"/> has the content <paramref name="expected"/> describes. The two must have the same
+    /// kinds, names, scalar kinds, attribute names and child counts. A value must be equal, unless the expected node or
+    /// attribute is a wildcard. <see cref="Equals(LogicalNode?)"/> stays exact.
+    /// </summary>
+    public static bool Matches(LogicalNode expected, LogicalNode actual)
+    {
+        ArgumentNullException.ThrowIfNull(expected);
+        ArgumentNullException.ThrowIfNull(actual);
+        if (expected.Kind != actual.Kind
+            || expected.Name != actual.Name
+            || expected.ScalarKind != actual.ScalarKind
+            || (!expected.AnyValue && expected.Value != actual.Value)
+            || expected.Attributes.Count != actual.Attributes.Count
+            || expected.Children.Count != actual.Children.Count)
+        {
+            return false;
+        }
+
+        for (int k = 0; k < expected.Attributes.Count; k++)
+        {
+            LogicalAttribute want = expected.Attributes[k];
+            LogicalAttribute got = actual.Attributes[k];
+            if (want.Name != got.Name || (!want.AnyValue && want.Value != got.Value))
+            {
+                return false;
+            }
+        }
+
+        for (int k = 0; k < expected.Children.Count; k++)
+        {
+            if (!Matches(expected.Children[k], actual.Children[k]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>The kind of node.</summary>
@@ -163,14 +214,19 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
             builder.Append(" scalar=").Append(scalarKind);
         }
 
-        if (Value is not null)
+        if (AnyValue)
+        {
+            builder.Append(" value=*");
+        }
+        else if (Value is not null)
         {
             builder.Append(" value=").Append(DisplayText.Quote(Value));
         }
 
         foreach (LogicalAttribute attribute in Attributes)
         {
-            builder.Append(" @").Append(attribute.Name).Append('=').Append(DisplayText.Quote(attribute.Value));
+            builder.Append(" @").Append(attribute.Name).Append('=')
+                .Append(attribute.AnyValue ? "*" : DisplayText.Quote(attribute.Value));
         }
 
         builder.Append('\n');

@@ -16,14 +16,21 @@ public interface IConfigFormat
     ConfigDocument Parse(SourceText source);
 
     /// <summary>
-    /// Plans the text edits for an operation. The JSON family plans every operation; XML planning is not implemented yet and
-    /// throws <see cref="NotImplementedException"/>.
+    /// Plans the text edits for an operation. Operations a format does not support are refused with a
+    /// <see cref="Cfgedit.Core.CfgeditException"/> that says so.
     /// </summary>
     /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid.</exception>
     IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op);
 
     /// <summary>The document's logical content, with its formatting removed.</summary>
     LogicalNode ToLogical(ConfigDocument document);
+
+    /// <summary>
+    /// True when a parse error of the edited text is the user's, not cfgedit's: the edit made the document invalid, and the
+    /// message says why. Any other reparse error is an internal edit error.
+    /// </summary>
+    /// <param name="reparseError">The error that <see cref="Parse"/> raised for the edited text.</param>
+    bool IsUserError(CfgeditException reparseError);
 }
 
 /// <summary>A text edit: it replaces the old text in [<see cref="Start"/>, <see cref="End"/>) with <see cref="NewText"/>.</summary>

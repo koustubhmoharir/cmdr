@@ -111,12 +111,15 @@ public sealed class ConfigDocumentTests
     }
 
     [Fact]
-    public void Plan_on_xml_is_not_implemented_yet()
+    public void Apply_on_an_unknown_operation_in_xml_is_refused_with_a_user_message()
     {
         ConfigDocument xml = ModelTestSupport.Parse("<r/>", Xml);
 
-        Assert.Throws<NotImplementedException>(() => Xml.Plan(xml, new TestOp()));
-        Assert.Throws<NotImplementedException>(() => xml.Apply(new TestOp()));
+        CfgeditException plan = Assert.Throws<CfgeditException>(() => Xml.Plan(xml, new TestOp()));
+        CfgeditException apply = Assert.Throws<CfgeditException>(() => xml.Apply(new TestOp()));
+
+        Assert.Equal("This edit is not supported for XML", plan.Message);
+        Assert.Equal("This edit is not supported for XML", apply.Message);
     }
 
     [Fact]

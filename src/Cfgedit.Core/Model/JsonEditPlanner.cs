@@ -24,7 +24,7 @@ internal sealed class JsonEditPlanner
         _dialect = dialect;
         _text = document.Source.Text;
         _newline = document.Source.Newline;
-        _unit = InferIndentUnit(_text);
+        _unit = EditLayout.InferIndentUnit(_text);
     }
 
     /// <summary>Plans an operation. Throws <see cref="CfgeditException"/> when the operation is invalid.</summary>
@@ -1003,62 +1003,5 @@ internal sealed class JsonEditPlanner
     private void Replace(int start, int end, string text)
     {
         _edits.Add(new TextEdit(start, end, text));
-    }
-
-    /// <summary>
-    /// The indentation unit: the most common positive difference in indentation between a line and the nearest previous line
-    /// that is less indented. Tabs stay tabs. The default is two spaces.
-    /// </summary>
-    private static string InferIndentUnit(string text)
-    {
-        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var order = new List<string>();
-        var stack = new List<string>();
-        foreach (string line in text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
-        {
-            int length = 0;
-            while (length < line.Length && line[length] is ' ' or '\t')
-            {
-                length++;
-            }
-
-            if (length == line.Length)
-            {
-                continue;
-            }
-
-            string indent = line[..length];
-            while (stack.Count > 0 && stack[^1].Length >= indent.Length)
-            {
-                stack.RemoveAt(stack.Count - 1);
-            }
-
-            if (stack.Count > 0 && indent.StartsWith(stack[^1], StringComparison.Ordinal))
-            {
-                string difference = indent[stack[^1].Length..];
-                if (!counts.ContainsKey(difference))
-                {
-                    counts[difference] = 0;
-                    order.Add(difference);
-                }
-
-                counts[difference]++;
-            }
-
-            stack.Add(indent);
-        }
-
-        string best = "  ";
-        int bestCount = 0;
-        foreach (string difference in order)
-        {
-            if (counts[difference] > bestCount)
-            {
-                best = difference;
-                bestCount = counts[difference];
-            }
-        }
-
-        return best;
     }
 }
