@@ -57,6 +57,13 @@ public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? V
 /// </summary>
 public sealed record DuplicateNode(NodePath Node) : EditOp;
 
+/// <summary>
+/// Several operations applied in order, each to the document the one before it made. The result is one edit, so
+/// <see cref="EditHistory"/> records it as one undo step. Its focus is the last step's focus. A step that fails throws that
+/// step's exception and the document is left as it was. Composites do not nest, and an empty composite changes nothing.
+/// </summary>
+public sealed record CompositeEdit(IReadOnlyList<EditOp> Steps) : EditOp;
+
 /// <summary>The node inserted by an <see cref="InsertNode"/> operation.</summary>
 public abstract record NewNode;
 

@@ -141,6 +141,7 @@ public sealed class EditHistory
             MoveAttribute moveAttribute => moveAttribute.Element,
             ChangeJsonType change => change.Node,
             DuplicateNode duplicate => duplicate.Node,
+            CompositeEdit { Steps.Count: > 0 } composite => FocusBefore(composite.Steps[0]),
             _ => null,
         };
     }

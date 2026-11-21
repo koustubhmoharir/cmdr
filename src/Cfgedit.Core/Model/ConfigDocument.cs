@@ -71,6 +71,11 @@ public sealed class ConfigDocument
     public EditResult Apply(EditOp op)
     {
         ArgumentNullException.ThrowIfNull(op);
+        if (op is CompositeEdit composite)
+        {
+            return ApplyComposite(composite);
+        }
+
         IReadOnlyList<TextEdit> edits = Format.Plan(this, op);
         if (edits.Count == 0)
         {
@@ -116,6 +121,37 @@ public sealed class ConfigDocument
         }
 
         return new EditResult(after, FocusAfter(after, op));
+    }
+
+    /// <summary>
+    /// Applies the steps of a composite in order. Every step is checked before any is applied, so a nested composite is refused
+    /// without changing anything. Each step is a full <see cref="Apply"/> on the document the previous step made; a failing step
+    /// throws, and this document is kept because documents are immutable.
+    /// </summary>
+    private EditResult ApplyComposite(CompositeEdit composite)
+    {
+        ArgumentNullException.ThrowIfNull(composite.Steps);
+        foreach (EditOp step in composite.Steps)
+        {
+            ArgumentNullException.ThrowIfNull(step, nameof(composite));
+            if (step is CompositeEdit)
+            {
+                throw new ArgumentException("A composite edit cannot contain another composite edit.", nameof(composite));
+            }
+        }
+
+        if (composite.Steps.Count == 0)
+        {
+            return new EditResult(this, null);
+        }
+
+        EditResult result = new(this, null);
+        foreach (EditOp step in composite.Steps)
+        {
+            result = result.Document.Apply(step);
+        }
+
+        return result;
     }
 
     /// <summary>Returns the node at a path, or null when no node is there.</summary>
