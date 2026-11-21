@@ -113,8 +113,12 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M7. Table editor
 
-- [ ] Table view: cells, editing, missing cells, row add/delete/move, and Esc back to the tree.
+- [x] Table view: cells, editing, missing cells, row add/delete/move, and Esc back to the tree. Checked in a real
+      terminal. (9935e45)
+- [ ] Table view has no mouse support and no search; Tab does nothing there.
 
 ## M8. Docs
 
-- [ ] `docs/cfgedit.md`, a README section, and the user's acceptance pass on Windows *(Windows)*.
+- [x] `docs/cfgedit.md` and a README section. (3ce2d37)
+- [ ] The user's acceptance pass on Windows *(Windows)*: open, edit, save and text mode on real configs; multi-line values
+      and text mode on CRLF files; saving keeps the ACL; Ctrl+C/terminal behaviour.
