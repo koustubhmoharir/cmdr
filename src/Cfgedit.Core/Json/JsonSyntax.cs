@@ -176,12 +176,46 @@ public static class JsonSyntax
         return sb.ToString();
     }
 
-    // ----- Internal helpers shared with the lexer -----
+    // ----- Internal helpers shared with the lexer and the parser -----
+
+    /// <summary>
+    /// The decoded value of the string token at <paramref name="start"/>, which the lexer has already validated. It is the
+    /// same value <see cref="DecodeString"/> gives, without validating it again: a token with no backslash is its content
+    /// as it stands. <paramref name="scratch"/> is cleared and used when the token has escapes.
+    /// </summary>
+    internal static string DecodeValidated(string text, int start, int length, JsonDialect dialect, StringBuilder scratch)
+    {
+        ReadOnlySpan<char> content = text.AsSpan(start + 1, length - 2);
+        if (content.IndexOf('\\') < 0)
+        {
+            return content.ToString();
+        }
+
+        scratch.Clear();
+        if (!TryScanString(text, start, dialect, scratch, out _, out _, out _))
+        {
+            throw new InvalidOperationException("a string token that the lexer accepted does not decode");
+        }
+
+        return scratch.ToString();
+    }
 
     /// <summary>True for the quote characters the dialect allows.</summary>
     internal static bool IsQuote(char c, JsonDialect dialect)
     {
         return c == '"' || (c == '\'' && dialect == JsonDialect.Json5);
+    }
+
+    /// <summary>True for an ASCII character that can start an identifier: a letter, <c>$</c> or <c>_</c>.</summary>
+    internal static bool IsAsciiIdentifierStart(char c)
+    {
+        return c == '$' || c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    /// <summary>True for an ASCII character that can continue an identifier: a start character or a digit.</summary>
+    internal static bool IsAsciiIdentifierPart(char c)
+    {
+        return IsAsciiIdentifierStart(c) || (c >= '0' && c <= '9');
     }
 
     /// <summary>
@@ -203,6 +237,11 @@ public static class JsonSyntax
 
         while (true)
         {
+            // A run of ordinary characters is copied in one step. Every other character is handled below.
+            int runStart = i;
+            int stop = text.AsSpan(i).IndexOfAny(StringStops(quote, json5));
+            i = stop < 0 ? text.Length : i + stop;
+            value?.Append(text, runStart, i - runStart);
             if (i >= text.Length)
             {
                 return Fail(start, "unterminated string", out errorIndex, out error);
@@ -378,6 +417,20 @@ public static class JsonSyntax
                 continue;
             }
 
+            char ascii = text[i];
+            if (ascii < 0x80)
+            {
+                if (!(first ? IsAsciiIdentifierStart(ascii) : IsAsciiIdentifierPart(ascii)))
+                {
+                    break;
+                }
+
+                name?.Append(ascii);
+                i++;
+                first = false;
+                continue;
+            }
+
             if (!TryDecodeRune(text, i, out Rune rune, out int width))
             {
                 break;
@@ -504,7 +557,52 @@ public static class JsonSyntax
         return $"'{rune}'";
     }
 
-    private static bool IsValidJsonNumber(string text)
+    /// <summary>The span form of <see cref="IsValidNumber(string, JsonDialect)"/>, which the lexer uses without a copy.</summary>
+    internal static bool IsValidNumber(ReadOnlySpan<char> text, JsonDialect dialect)
+    {
+        return dialect == JsonDialect.Json5 ? IsValidJson5Number(text) : IsValidJsonNumber(text);
+    }
+
+    private static readonly SearchValues<char> DoubleQuoteStops = CreateStringStops('"', json5: false);
+    private static readonly SearchValues<char> DoubleQuoteJson5Stops = CreateStringStops('"', json5: true);
+    private static readonly SearchValues<char> SingleQuoteStops = CreateStringStops('\'', json5: false);
+    private static readonly SearchValues<char> SingleQuoteJson5Stops = CreateStringStops('\'', json5: true);
+
+    /// <summary>
+    /// The characters that end a run of ordinary characters in a string: the quote, a backslash, a line break, and in JSON
+    /// every control character below U+0020, which is an error there.
+    /// </summary>
+    private static SearchValues<char> StringStops(char quote, bool json5)
+    {
+        if (quote == '"')
+        {
+            return json5 ? DoubleQuoteJson5Stops : DoubleQuoteStops;
+        }
+
+        return json5 ? SingleQuoteJson5Stops : SingleQuoteStops;
+    }
+
+    private static SearchValues<char> CreateStringStops(char quote, bool json5)
+    {
+        var stops = new List<char> { quote, '\\' };
+        if (json5)
+        {
+            stops.Add('\n');
+            stops.Add('\r');
+        }
+        else
+        {
+            // Control characters include the two line breaks.
+            for (char c = '\0'; c < 0x20; c++)
+            {
+                stops.Add(c);
+            }
+        }
+
+        return SearchValues.Create(stops.ToArray());
+    }
+
+    private static bool IsValidJsonNumber(ReadOnlySpan<char> text)
     {
         int i = 0;
         if (i < text.Length && text[i] == '-')
@@ -562,7 +660,7 @@ public static class JsonSyntax
         return i == text.Length;
     }
 
-    private static bool IsValidJson5Number(string text)
+    private static bool IsValidJson5Number(ReadOnlySpan<char> text)
     {
         int i = 0;
         if (i < text.Length && (text[i] == '+' || text[i] == '-'))
@@ -570,8 +668,8 @@ public static class JsonSyntax
             i++;
         }
 
-        string unsigned = text[i..];
-        if (unsigned is "Infinity" or "NaN")
+        ReadOnlySpan<char> unsigned = text[i..];
+        if (unsigned.SequenceEqual("Infinity".AsSpan()) || unsigned.SequenceEqual("NaN".AsSpan()))
         {
             return true;
         }
@@ -639,7 +737,7 @@ public static class JsonSyntax
         return i == text.Length;
     }
 
-    private static int SkipDigits(string text, int i)
+    private static int SkipDigits(ReadOnlySpan<char> text, int i)
     {
         while (i < text.Length && IsDigit(text[i]))
         {

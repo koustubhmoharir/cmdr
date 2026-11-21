@@ -18,162 +18,237 @@ public static class JsonLexer
     public static IReadOnlyList<JsonToken> Tokenize(SourceText text, JsonDialect dialect)
     {
         ArgumentNullException.ThrowIfNull(text);
-        string s = text.Text;
+        var scanner = new JsonScanner(text, dialect);
         var tokens = new List<JsonToken>();
-        int i = 0;
-        while (i < s.Length)
+        JsonToken token;
+        do
         {
-            char c = s[i];
-            int start = i;
-
-            if (IsWhitespace(c, dialect))
-            {
-                i = SkipWhitespace(s, i, dialect);
-                tokens.Add(new JsonToken(JsonTokenKind.Whitespace, start, i - start));
-                continue;
-            }
-
-            JsonTokenKind? punctuation = c switch
-            {
-                '{' => JsonTokenKind.LeftBrace,
-                '}' => JsonTokenKind.RightBrace,
-                '[' => JsonTokenKind.LeftBracket,
-                ']' => JsonTokenKind.RightBracket,
-                ':' => JsonTokenKind.Colon,
-                ',' => JsonTokenKind.Comma,
-                _ => null,
-            };
-            if (punctuation is { } kind)
-            {
-                tokens.Add(new JsonToken(kind, start, 1));
-                i++;
-                continue;
-            }
-
-            if (c == '"' || c == '\'')
-            {
-                if (c == '\'' && dialect != JsonDialect.Json5)
-                {
-                    throw Error(text, i, "single-quoted strings are only allowed in JSON5");
-                }
-
-                if (!JsonSyntax.TryScanString(s, i, dialect, null, out int end, out int errorIndex, out string? error))
-                {
-                    throw Error(text, errorIndex, error!);
-                }
-
-                tokens.Add(new JsonToken(JsonTokenKind.String, start, end - start));
-                i = end;
-                continue;
-            }
-
-            if (c == '/')
-            {
-                i = LexComment(text, s, i, dialect, tokens);
-                continue;
-            }
-
-            if (IsDigit(c) || c == '-' || c == '+' || c == '.')
-            {
-                int end = ScanNumberRun(s, i);
-                string raw = s[i..end];
-                if (!JsonSyntax.IsValidNumber(raw, dialect))
-                {
-                    throw Error(text, i, $"invalid number '{raw}'");
-                }
-
-                tokens.Add(new JsonToken(JsonTokenKind.Number, start, end - start));
-                i = end;
-                continue;
-            }
-
-            if (dialect == JsonDialect.Json5 && (c == '\\' || IsIdentifierStartAt(s, i)))
-            {
-                if (!JsonSyntax.TryScanIdentifier(s, i, null, out int end, out int errorIndex, out string? error))
-                {
-                    throw Error(text, errorIndex, error!);
-                }
-
-                string raw = s[i..end];
-                tokens.Add(new JsonToken(Json5WordKind(raw), start, end - start));
-                i = end;
-                continue;
-            }
-
-            if (dialect != JsonDialect.Json5 && IsIdentifierStartAt(s, i))
-            {
-                int end = ScanWordRun(s, i);
-                string word = s[i..end];
-                JsonTokenKind wordKind = word switch
-                {
-                    "true" => JsonTokenKind.True,
-                    "false" => JsonTokenKind.False,
-                    "null" => JsonTokenKind.Null,
-                    _ => throw Error(text, i, $"unquoted name '{word}' is only allowed in JSON5"),
-                };
-                tokens.Add(new JsonToken(wordKind, start, end - start));
-                i = end;
-                continue;
-            }
-
-            throw Error(text, i, $"invalid character {DescribeAt(s, i)}");
+            token = scanner.Next();
+            tokens.Add(token);
         }
+        while (token.Kind != JsonTokenKind.EndOfFile);
 
-        tokens.Add(new JsonToken(JsonTokenKind.EndOfFile, s.Length, 0));
         return tokens;
     }
+}
 
-    private static int LexComment(SourceText text, string s, int i, JsonDialect dialect, List<JsonToken> tokens)
+/// <summary>
+/// Produces the tokens of a text one at a time, for the parser. <see cref="Next"/> returns the token after the previous one,
+/// and the end of the text is an <see cref="JsonTokenKind.EndOfFile"/> token of length 0.
+/// </summary>
+internal sealed class JsonScanner
+{
+    private readonly SourceText _source;
+    private readonly string _s;
+    private readonly JsonDialect _dialect;
+    private int _pos;
+
+    internal JsonScanner(SourceText source, JsonDialect dialect)
     {
-        if (dialect == JsonDialect.Json)
+        _source = source;
+        _s = source.Text;
+        _dialect = dialect;
+    }
+
+    /// <summary>Returns the next token. The first lexical error is thrown when its token is reached.</summary>
+    /// <exception cref="CfgeditException">The text has a lexical error for the dialect.</exception>
+    internal JsonToken Next()
+    {
+        string s = _s;
+        if (_pos >= s.Length)
         {
-            throw Error(text, i, "comments are not allowed in JSON");
+            return new JsonToken(JsonTokenKind.EndOfFile, s.Length, 0);
         }
 
-        char next = i + 1 < s.Length ? s[i + 1] : '\0';
+        int start = _pos;
+        char c = s[start];
+
+        if (IsWhitespace(c, _dialect))
+        {
+            _pos = SkipWhitespace(s, start, _dialect);
+            return new JsonToken(JsonTokenKind.Whitespace, start, _pos - start);
+        }
+
+        JsonTokenKind? punctuation = c switch
+        {
+            '{' => JsonTokenKind.LeftBrace,
+            '}' => JsonTokenKind.RightBrace,
+            '[' => JsonTokenKind.LeftBracket,
+            ']' => JsonTokenKind.RightBracket,
+            ':' => JsonTokenKind.Colon,
+            ',' => JsonTokenKind.Comma,
+            _ => null,
+        };
+        if (punctuation is { } kind)
+        {
+            _pos = start + 1;
+            return new JsonToken(kind, start, 1);
+        }
+
+        if (c == '"' || c == '\'')
+        {
+            if (c == '\'' && _dialect != JsonDialect.Json5)
+            {
+                throw Error(start, "single-quoted strings are only allowed in JSON5");
+            }
+
+            if (!JsonSyntax.TryScanString(s, start, _dialect, null, out int end, out int errorIndex, out string? error))
+            {
+                throw Error(errorIndex, error!);
+            }
+
+            _pos = end;
+            return new JsonToken(JsonTokenKind.String, start, end - start);
+        }
+
+        if (c == '/')
+        {
+            return LexComment(start);
+        }
+
+        if (IsDigit(c) || c == '-' || c == '+' || c == '.')
+        {
+            int end = ScanNumberRun(s, start);
+            if (!JsonSyntax.IsValidNumber(s.AsSpan(start, end - start), _dialect))
+            {
+                throw Error(start, $"invalid number '{s.Substring(start, end - start)}'");
+            }
+
+            _pos = end;
+            return new JsonToken(JsonTokenKind.Number, start, end - start);
+        }
+
+        if (_dialect == JsonDialect.Json5 && (c == '\\' || IsIdentifierStartAt(s, start)))
+        {
+            if (!JsonSyntax.TryScanIdentifier(s, start, null, out int end, out int errorIndex, out string? error))
+            {
+                throw Error(errorIndex, error!);
+            }
+
+            _pos = end;
+            return new JsonToken(Json5WordKind(s.AsSpan(start, end - start)), start, end - start);
+        }
+
+        if (_dialect != JsonDialect.Json5 && IsIdentifierStartAt(s, start))
+        {
+            int end = ScanWordRun(s, start);
+            ReadOnlySpan<char> word = s.AsSpan(start, end - start);
+            JsonTokenKind wordKind;
+            if (word.SequenceEqual("true".AsSpan()))
+            {
+                wordKind = JsonTokenKind.True;
+            }
+            else if (word.SequenceEqual("false".AsSpan()))
+            {
+                wordKind = JsonTokenKind.False;
+            }
+            else if (word.SequenceEqual("null".AsSpan()))
+            {
+                wordKind = JsonTokenKind.Null;
+            }
+            else
+            {
+                throw Error(start, $"unquoted name '{word.ToString()}' is only allowed in JSON5");
+            }
+
+            _pos = end;
+            return new JsonToken(wordKind, start, end - start);
+        }
+
+        throw Error(start, $"invalid character {DescribeAt(s, start)}");
+    }
+
+    /// <summary>
+    /// Returns the next token that is not whitespace: a comment or a significant token. The parser has no use for whitespace,
+    /// so this skips it without making a token of each run.
+    /// </summary>
+    /// <exception cref="CfgeditException">The text has a lexical error for the dialect.</exception>
+    internal JsonToken NextNonWhitespace()
+    {
+        while (true)
+        {
+            JsonToken token = Next();
+            if (token.Kind != JsonTokenKind.Whitespace)
+            {
+                return token;
+            }
+        }
+    }
+
+    /// <summary>Lexes the rest of the text, so that its first lexical error, if there is one, is thrown.</summary>
+    /// <exception cref="CfgeditException">The rest of the text has a lexical error for the dialect.</exception>
+    internal void ScanToEnd()
+    {
+        while (Next().Kind != JsonTokenKind.EndOfFile)
+        {
+        }
+    }
+
+    private JsonToken LexComment(int start)
+    {
+        string s = _s;
+        if (_dialect == JsonDialect.Json)
+        {
+            throw Error(start, "comments are not allowed in JSON");
+        }
+
+        char next = start + 1 < s.Length ? s[start + 1] : '\0';
         if (next == '/')
         {
-            int end = i + 2;
-            while (end < s.Length && !IsLineBreak(s[end], dialect))
+            int end = start + 2;
+            while (end < s.Length && !IsLineBreak(s[end], _dialect))
             {
                 end++;
             }
 
-            tokens.Add(new JsonToken(JsonTokenKind.LineComment, i, end - i));
-            return end;
+            _pos = end;
+            return new JsonToken(JsonTokenKind.LineComment, start, end - start);
         }
 
         if (next == '*')
         {
-            int close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+            int close = s.IndexOf("*/", start + 2, StringComparison.Ordinal);
             if (close < 0)
             {
-                throw Error(text, i, "unterminated block comment");
+                throw Error(start, "unterminated block comment");
             }
 
             int end = close + 2;
-            tokens.Add(new JsonToken(JsonTokenKind.BlockComment, i, end - i));
-            return end;
+            _pos = end;
+            return new JsonToken(JsonTokenKind.BlockComment, start, end - start);
         }
 
-        throw Error(text, i, "invalid character '/'");
+        throw Error(start, "invalid character '/'");
     }
 
-    private static JsonTokenKind Json5WordKind(string raw)
+    private static JsonTokenKind Json5WordKind(ReadOnlySpan<char> raw)
     {
         if (raw.Contains('\\'))
         {
             return JsonTokenKind.Identifier;
         }
 
-        return raw switch
+        if (raw.SequenceEqual("true".AsSpan()))
         {
-            "true" => JsonTokenKind.True,
-            "false" => JsonTokenKind.False,
-            "null" => JsonTokenKind.Null,
-            "Infinity" or "NaN" => JsonTokenKind.Number,
-            _ => JsonTokenKind.Identifier,
-        };
+            return JsonTokenKind.True;
+        }
+
+        if (raw.SequenceEqual("false".AsSpan()))
+        {
+            return JsonTokenKind.False;
+        }
+
+        if (raw.SequenceEqual("null".AsSpan()))
+        {
+            return JsonTokenKind.Null;
+        }
+
+        if (raw.SequenceEqual("Infinity".AsSpan()) || raw.SequenceEqual("NaN".AsSpan()))
+        {
+            return JsonTokenKind.Number;
+        }
+
+        return JsonTokenKind.Identifier;
     }
 
     private static bool IsWhitespace(char c, JsonDialect dialect)
@@ -188,10 +263,14 @@ public static class JsonLexer
             return false;
         }
 
-        return c == '\v'
-            || c == '\f'
-            || c == '\u00A0'
-            || c == '\uFEFF'
+        // The ASCII characters that are JSON5 white space are the two checked here. The rest of ASCII is not white space.
+        if (c < 0x80)
+        {
+            return c == '\v' || c == '\f';
+        }
+
+        return c == ' '
+            || c == '﻿'
             || c == JsonSyntax.LineSeparator
             || c == JsonSyntax.ParagraphSeparator
             || CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.SpaceSeparator;
@@ -224,14 +303,37 @@ public static class JsonLexer
 
     private static bool IsIdentifierStartAt(string s, int i)
     {
+        char c = s[i];
+        if (c < 0x80)
+        {
+            return JsonSyntax.IsAsciiIdentifierStart(c);
+        }
+
         return JsonSyntax.TryDecodeRune(s, i, out Rune rune, out _) && JsonSyntax.IsIdentifierStart(rune);
     }
 
     /// <summary>The end of a run of identifier parts, which is how a bare word in strict JSON is delimited.</summary>
     private static int ScanWordRun(string s, int i)
     {
-        while (i < s.Length && JsonSyntax.TryDecodeRune(s, i, out Rune rune, out int width) && JsonSyntax.IsIdentifierPart(rune))
+        while (i < s.Length)
         {
+            char c = s[i];
+            if (c < 0x80)
+            {
+                if (!JsonSyntax.IsAsciiIdentifierPart(c))
+                {
+                    break;
+                }
+
+                i++;
+                continue;
+            }
+
+            if (!JsonSyntax.TryDecodeRune(s, i, out Rune rune, out int width) || !JsonSyntax.IsIdentifierPart(rune))
+            {
+                break;
+            }
+
             i += width;
         }
 
@@ -249,6 +351,17 @@ public static class JsonLexer
             char c = s[i];
             if (c == '.' || c == '+' || c == '-')
             {
+                i++;
+                continue;
+            }
+
+            if (c < 0x80)
+            {
+                if (!JsonSyntax.IsAsciiIdentifierPart(c))
+                {
+                    break;
+                }
+
                 i++;
                 continue;
             }
@@ -274,9 +387,9 @@ public static class JsonLexer
         return $"U+{(int)s[i]:X4}";
     }
 
-    private static CfgeditException Error(SourceText text, int offset, string message)
+    private CfgeditException Error(int offset, string message)
     {
-        LinePosition at = text.GetPosition(offset);
+        LinePosition at = _source.GetPosition(offset);
         return new CfgeditException(message)
         {
             Line = at.Line,

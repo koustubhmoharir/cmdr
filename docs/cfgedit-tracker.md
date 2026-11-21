@@ -35,14 +35,21 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M2. XML (Cfgedit.Core)
 
-- [ ] Decoding per Appendix F (BOM, UTF-16 without a BOM, the declaration, code pages), cross-checked against
-      `XmlTextReader.Encoding`.
-- [ ] Validation with `XmlReader.Create` over a StringReader, using safe settings. Errors with line:col.
-- [ ] Span scanner to the XML CST: declaration, DOCTYPE (raw), elements, attributes, text, CDATA, comments, PIs.
-- [ ] Cross-check between the reader and the CST. A mismatch is an internal error, and the file opens in text mode.
-      Files with markup-bearing entities are detected.
-- [ ] Encoders for attribute values (by quote character), text, and CDATA split. Raw-mode parts.
-- [ ] Round-trip corpus (SheetKraft web.config, App.config, log4net XML, .csproj; CRLF, BOM, UTF-16, windows-1252).
+- [x] Decoding per Appendix F (BOM, UTF-16 without a BOM, the declaration, code pages), cross-checked against
+      `XmlTextReader.Encoding`. (9fed479)
+- [x] Validation with `XmlReader.Create` over a StringReader, using safe settings. Errors with line:col. (1a279f3)
+- [x] Span scanner to the XML CST: declaration, DOCTYPE (raw), elements, attributes, text, CDATA, comments, PIs.
+      (1a279f3)
+- [x] Cross-check between the reader and the CST. A mismatch is an internal error, and the file opens in text mode.
+      Files with markup-bearing entities are detected. (1a279f3)
+- [x] Encoders for attribute values (by quote character), text, and CDATA split (9fed479). Raw-mode parts are in the
+      CST (1a279f3).
+- [x] Synthetic fixtures (web.config-, App.config-, log4net- and csproj-style, mixed content, DOCTYPE cases; generated
+      CRLF, BOM, UTF-16, windows-1252) and parse property tests. (1a279f3)
+- [x] Real configs (SheetKraft) checked by a scratchpad probe. All 485 files pass (xaml, xml, csproj, config, resx,
+      svg, manifest, props, targets, nuspec, xsd; 223 with a BOM; CRLF, LF and mixed). (probe, 2026-11-21)
+- [ ] Performance: a 1.5 MB file parses in 0.53 s (about 3 MB/s). Profile the whole pipeline (XmlReader pass, scanner,
+      cross-check) before M5 (target: at least 20 MB/s).
 
 ## M3. Model and edits (Cfgedit.Core)
 
