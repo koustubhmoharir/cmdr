@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<?stylesheet type="text/xsl" href="style.xsl"?>
+<doc:root xmlns:doc="urn:example:doc" xmlns:x="urn:example:x" x:flag="on">
+  <doc:para xml:space="preserve">  two  spaces &lt;kept&gt;</doc:para>
+  <doc:mixed>before <b>bold</b> &#x41;&#66; <![CDATA[raw <markup> & ]]> after<?pi data here?> tail</doc:mixed>
+  <x:empty/>
+  <doc:code><![CDATA[line one
+line two]]></doc:code>
+</doc:root>

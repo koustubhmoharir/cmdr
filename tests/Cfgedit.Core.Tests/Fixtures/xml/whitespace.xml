@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<settings
+    owner = 'Team A'
+    notes="first line
+second line"
+    path='C:\temp'
+  >
+  <item   key = "a"   value
+     = 'b' />
+  <item key="multi
+line
+value"	id='3'></item >
+</settings>

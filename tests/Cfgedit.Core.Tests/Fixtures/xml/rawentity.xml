@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<!DOCTYPE note [
+  <!ENTITY company "Contoso Ltd">
+  <!ENTITY signature "&#x2014; the team">
+]>
+<note>
+  <to>Reader</to>
+  <from>&company;</from>
+  <body>Thanks, &company;. Regards, &signature;</body>
+  <tag attr="see &company;"/>
+</note>
