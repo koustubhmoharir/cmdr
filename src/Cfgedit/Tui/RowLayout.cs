@@ -1,11 +1,30 @@
 using System.Text;
 using Cfgedit.Core.Model;
+using Shared.Core;
 using Shared.Tui;
 
 namespace Cfgedit.Tui;
 
-/// <summary>A segment of a display line: its text, its style, and the part it belongs to (-1 for decoration).</summary>
-public sealed record Segment(string Text, StyleKind Style, int PartIndex);
+/// <summary>How a cell is highlighted by a search: not at all, as a match, or as the current match.</summary>
+public enum CellHighlight
+{
+    /// <summary>A cell outside every match.</summary>
+    None,
+
+    /// <summary>A cell of a match that is not the current one.</summary>
+    Match,
+
+    /// <summary>A cell of the current match.</summary>
+    Active,
+}
+
+/// <summary>The matches of one part's logical value, in order, and the index of the current one in them (-1 for none).</summary>
+public sealed record PartMarks(IReadOnlyList<SearchMatch> Matches, int Active);
+
+/// <summary>
+/// A segment of a display line: its text, its style, the part it belongs to (-1 for decoration), and its search highlight.
+/// </summary>
+public sealed record Segment(string Text, StyleKind Style, int PartIndex, CellHighlight Highlight = CellHighlight.None);
 
 /// <summary>One display line: its indent in columns, then its segments. The fold glyph is a segment of the first line.</summary>
 public sealed record DisplayLine(int Indent, IReadOnlyList<Segment> Segments);
@@ -50,7 +69,11 @@ public static class RowLayout
     /// <param name="row">The row.</param>
     /// <param name="collapsed">True when the row's node is collapsed.</param>
     /// <param name="width">The width of the view in columns.</param>
-    public static RowLines Layout(Row row, bool collapsed, int width)
+    /// <param name="marks">
+    /// The search matches of a part of the row, by the part's index in <see cref="DocNode.Parts"/>, or null for a part with none (and for
+    /// no search at all). The cells of a match are marked in the segments. An end row takes no marks: its parts are not searched.
+    /// </param>
+    public static RowLines Layout(Row row, bool collapsed, int width, Func<int, PartMarks?>? marks = null)
     {
         ArgumentNullException.ThrowIfNull(row);
 
@@ -65,17 +88,17 @@ public static class RowLayout
             AddText(items, node.EndParts[0].Value, StyleKind.ElementName, 0, columns);
             items.Add(End(0));
             items.Add(Fixed(">", StyleKind.Punctuation, -1));
-            return SingleLine(indent, items, node.EndParts.Count, columns);
+            return SingleLine(indent, items, node.EndParts.Count, columns, marks: null);
         }
 
         return node.Kind switch
         {
-            NodeKind.XmlElement => LayoutElement(row, collapsed, indent, columns),
+            NodeKind.XmlElement => LayoutElement(row, collapsed, indent, columns, marks),
             NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.JsonScalar or NodeKind.JsonComment =>
-                SingleLine(indent, JsonItems(row, collapsed, columns), node.Parts.Count, columns),
+                SingleLine(indent, JsonItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.XmlText or NodeKind.XmlCData or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction
                 or NodeKind.XmlDeclaration or NodeKind.XmlDoctype =>
-                SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns),
+                SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             _ => throw new ArgumentException("The document node has no row.", nameof(row)),
         };
     }
@@ -93,7 +116,11 @@ public static class RowLayout
         End,
     }
 
-    private readonly record struct Item(ItemKind Kind, string Text, StyleKind Style, int Part, int Width);
+    /// <remarks>
+    /// A cell of a part's text keeps the offset and length (UTF-16) of its grapheme in the part's logical value, so that a search's
+    /// matches can be marked on it. The other items have no source.
+    /// </remarks>
+    private readonly record struct Item(ItemKind Kind, string Text, StyleKind Style, int Part, int Width, int Source = -1, int SourceLength = 0);
 
     /// <summary>A line before its segments are built: its indent, and its items.</summary>
     private sealed record OutLine(int Indent, List<Item> Items);
@@ -132,7 +159,7 @@ public static class RowLayout
             {
                 foreach (string glyph in glyphs)
                 {
-                    items.Add(Fixed(glyph, StyleKind.Glyph, part));
+                    items.Add(new Item(ItemKind.Cell, glyph, StyleKind.Glyph, part, glyph.Length, offset, length));
                 }
 
                 columns += glyphs.Length;
@@ -140,7 +167,7 @@ public static class RowLayout
             else
             {
                 int cell = TextWidth.WidthOf(grapheme.AsSpan());
-                items.Add(new Item(ItemKind.Cell, grapheme, style, part, cell));
+                items.Add(new Item(ItemKind.Cell, grapheme, style, part, cell, offset, length));
                 columns += cell;
             }
 
@@ -400,7 +427,7 @@ public static class RowLayout
     /// ellipsis (<c>&#x2026;</c>) and the closing tag of a collapsed one. The attributes wrap: an attribute that does not fit goes to a new line, aligned
     /// under the first attribute's name, and the tail follows the same rule.
     /// </summary>
-    private static RowLines LayoutElement(Row row, bool collapsed, int indent, int width)
+    private static RowLines LayoutElement(Row row, bool collapsed, int indent, int width, Func<int, PartMarks?>? marks)
     {
         DocNode node = row.Node;
         IReadOnlyList<DocPart> parts = node.Parts;
@@ -480,7 +507,7 @@ public static class RowLayout
                 all.AddRange(unit.Items);
             }
 
-            return SingleLine(indent, all, parts.Count, width);
+            return SingleLine(indent, all, parts.Count, width, marks);
         }
 
         var lines = new List<OutLine> { new(indent, head) };
@@ -534,10 +561,10 @@ public static class RowLayout
             }
 
             current.Items.Add(Fixed(Ellipsis, StyleKind.Glyph, -1));
-            return Finish(lines, parts.Count);
+            return Finish(lines, parts.Count, marks);
         }
 
-        return Finish(lines, parts.Count);
+        return Finish(lines, parts.Count, marks);
     }
 
     private static List<Item> ClosingTag(string name, int width)
@@ -581,19 +608,19 @@ public static class RowLayout
     /// indent, the fold and one more column, the cut ends with an ellipsis. Otherwise the line is cut at the width, so a narrow
     /// view still shows the fold as far as it goes.
     /// </summary>
-    private static RowLines SingleLine(int indent, List<Item> items, int partCount, int width)
+    private static RowLines SingleLine(int indent, List<Item> items, int partCount, int width, Func<int, PartMarks?>? marks)
     {
         int total = indent + Sum(items);
         if (total <= width)
         {
-            return Finish([new OutLine(indent, items)], partCount);
+            return Finish([new OutLine(indent, items)], partCount, marks);
         }
 
         bool ellipsis = width >= indent + FoldColumns + 1;
         int limit = ellipsis ? width - 1 : width;
         if (indent > limit)
         {
-            return Finish([new OutLine(limit, Markers(items).ToList())], partCount);
+            return Finish([new OutLine(limit, Markers(items).ToList())], partCount, marks);
         }
 
         int cut = FindCut(items, indent, limit);
@@ -604,7 +631,7 @@ public static class RowLayout
             kept.Add(Fixed(Ellipsis, StyleKind.Glyph, -1));
         }
 
-        return Finish([new OutLine(indent, kept)], partCount);
+        return Finish([new OutLine(indent, kept)], partCount, marks);
     }
 
     /// <summary>
@@ -649,8 +676,52 @@ public static class RowLayout
         return total;
     }
 
+    /// <summary>
+    /// The highlight of a cell: the match it belongs to, when its part has matches. A cell belongs to a match when its grapheme overlaps
+    /// the match's range, so a match always covers whole graphemes.
+    /// </summary>
+    private static CellHighlight HighlightOf(Item item, Func<int, PartMarks?>? marks)
+    {
+        if (marks is null || item.Part < 0 || item.Source < 0 || marks(item.Part) is not { } partMarks)
+        {
+            return CellHighlight.None;
+        }
+
+        IReadOnlyList<SearchMatch> matches = partMarks.Matches;
+        int end = item.Source + item.SourceLength;
+
+        // The matches are in order and do not overlap, so the first one that ends after the cell starts is found by a search.
+        int low = 0;
+        int high = matches.Count;
+        while (low < high)
+        {
+            int mid = (low + high) / 2;
+            if (matches[mid].End <= item.Source)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        CellHighlight result = CellHighlight.None;
+        for (int i = low; i < matches.Count && matches[i].Start < end; i++)
+        {
+            if (i == partMarks.Active)
+            {
+                return CellHighlight.Active;
+            }
+
+            result = CellHighlight.Match;
+        }
+
+        return result;
+    }
+
     /// <summary>Builds the segments and the part ranges from the lines. Each part has exactly one start and one end marker.</summary>
-    private static RowLines Finish(IReadOnlyList<OutLine> lines, int partCount)
+    private static RowLines Finish(IReadOnlyList<OutLine> lines, int partCount, Func<int, PartMarks?>? marks)
     {
         var begins = new (int Line, int Column)?[partCount];
         var ends = new (int Line, int Column)?[partCount];
@@ -664,7 +735,7 @@ public static class RowLayout
                 switch (item.Kind)
                 {
                     case ItemKind.Cell:
-                        segments.Add(item.Text, item.Style, item.Part);
+                        segments.Add(item.Text, item.Style, item.Part, HighlightOf(item, marks));
                         column += item.Width;
                         break;
                     case ItemKind.Begin:
@@ -697,17 +768,19 @@ public static class RowLayout
         private readonly StringBuilder _text = new();
         private StyleKind _style;
         private int _part;
+        private CellHighlight _highlight;
         private bool _open;
 
-        public void Add(string text, StyleKind style, int part)
+        public void Add(string text, StyleKind style, int part, CellHighlight highlight)
         {
-            if (_open && (style != _style || part != _part))
+            if (_open && (style != _style || part != _part || highlight != _highlight))
             {
                 Flush();
             }
 
             _style = style;
             _part = part;
+            _highlight = highlight;
             _open = true;
             _text.Append(text);
         }
@@ -724,7 +797,7 @@ public static class RowLayout
 
         private void Flush()
         {
-            _segments.Add(new Segment(_text.ToString(), _style, _part));
+            _segments.Add(new Segment(_text.ToString(), _style, _part, _highlight));
             _text.Clear();
             _open = false;
         }

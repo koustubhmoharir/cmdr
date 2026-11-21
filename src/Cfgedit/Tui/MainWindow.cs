@@ -39,10 +39,19 @@ internal enum PickOutcome
 /// document when the window stops (see <see cref="SwitchTo"/>). Both ask about unsaved changes first, through the controller's flows.
 /// </para>
 /// </remarks>
-internal sealed class MainWindow : Window
+internal sealed class MainWindow : Window, ISearchHost
 {
     /// <summary>How long a message stays on the detail line when no key clears it.</summary>
     internal static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(4);
+
+    /// <summary>The message of a copy, when the value is the logical value or the path.</summary>
+    internal const string CopiedValue = "Copied value";
+
+    /// <summary>The message of a copy, when the path is copied.</summary>
+    internal const string CopiedPath = "Copied path";
+
+    /// <summary>The message of a copy whose text is over <see cref="Osc52.MaxBytes"/>, which is not copied.</summary>
+    internal const string TooLargeToCopy = "Too large to copy";
 
     private readonly Func<(PickOutcome Outcome, OpenedFile? File)> _pickFile;
     private readonly Func<TimeSpan, Action, Action> _schedule;
@@ -53,6 +62,7 @@ internal sealed class MainWindow : Window
     private readonly TextModeView _textView;
     private readonly DetailLine _detail;
     private readonly HintsLine _hints;
+    private readonly TreeSearch _search;
     private readonly Action? _onFirstSave;
     private Action? _cancelExpiry;
     private string? _shownHints;
@@ -106,7 +116,16 @@ internal sealed class MainWindow : Window
 
         _detail = new DetailLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        Add(_frame, _detail, _hints);
+        _search = new TreeSearch(this, _tree, _controller);
+
+        // The search bar sits above the detail line. It is shown with the frame one row shorter (see ShowSearchBar).
+        _search.Bar.X = 0;
+        _search.Bar.Y = Pos.AnchorEnd(3);
+        _search.Bar.Width = Dim.Fill();
+        _search.Bar.Height = 1;
+        _search.Bar.Visible = false;
+        Add(_frame, _search.Bar, _detail, _hints);
+        WriteRaw = sequence => App?.Driver?.WriteRaw(sequence);
 
         _tree.CursorChanged += ShowDetail;
         _tree.KeyPressed += ClearMessage;
@@ -152,6 +171,12 @@ internal sealed class MainWindow : Window
 
     /// <summary>The key hints, for the tests.</summary>
     internal HintsLine Hints => _hints;
+
+    /// <summary>
+    /// Writes a raw sequence to the terminal: the application's driver by default. A copy writes its OSC 52 sequence here, and a test
+    /// replaces it to capture the sequence.
+    /// </summary>
+    internal Action<string> WriteRaw { get; set; }
 
     /// <summary>The file chosen with Ctrl+O before the window stopped, or null. The host opens it next.</summary>
     public OpenedFile? SwitchTo { get; private set; }
@@ -241,6 +266,11 @@ internal sealed class MainWindow : Window
             return true;
         }
 
+        if (!_tree.IsEditing && HandleSearchKey(key))
+        {
+            return true;
+        }
+
         if (key == Key.Esc)
         {
             return true;
@@ -249,9 +279,94 @@ internal sealed class MainWindow : Window
         return base.OnKeyDown(key);
     }
 
+    /// <summary>
+    /// The keys that leave an open inline field: each commits it first, and when the commit fails the key does nothing. Opening the search
+    /// (Ctrl+F, F3 and Shift+F3, which reopens the bar) is one of them, since the bar and the editor are never open together.
+    /// </summary>
     private static bool IsLeavingKey(Key key) =>
         key == Key.Q.WithCtrl || key == Key.O.WithCtrl || key == Key.S.WithCtrl || key == Key.Z.WithCtrl || key == Key.Y.WithCtrl
-        || key == Key.R.WithCtrl || key == Key.T.WithCtrl;
+        || key == Key.R.WithCtrl || key == Key.T.WithCtrl || key == Key.F.WithCtrl || key == Key.F3 || key == Key.F3.WithShift;
+
+    // ----- Search and copy -----
+
+    /// <summary>
+    /// The keys of the tree's search and copy: <c>/</c> and Ctrl+F open the bar, <c>n</c> and F3 go to the next match, <c>N</c> and Shift+F3
+    /// to the previous one, <c>y</c> copies the focused value and <c>Y</c> its path. Returns false for a key they do not bind.
+    /// </summary>
+    private bool HandleSearchKey(Key key)
+    {
+        if (IsPlain(key, 'y'))
+        {
+            CopyFocused(valueOnly: true);
+        }
+        else if (IsPlain(key, 'Y'))
+        {
+            CopyFocused(valueOnly: false);
+        }
+        else if (key == Key.F.WithCtrl || IsPlain(key, '/'))
+        {
+            OpenSearch(focusBar: true);
+        }
+        else if (key == Key.F3 || IsPlain(key, 'n'))
+        {
+            _search.Find(next: true);
+        }
+        else if (key == Key.F3.WithShift || IsPlain(key, 'N'))
+        {
+            _search.Find(next: false);
+        }
+        else
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Opens the search bar. An inline field is committed first; when that fails, the bar does not open.</summary>
+    private void OpenSearch(bool focusBar)
+    {
+        if (_tree.IsEditing && !CommitInline())
+        {
+            return;
+        }
+
+        _search.Open(focusBar);
+    }
+
+    /// <summary>
+    /// <c>y</c> and <c>Y</c>: writes the focused part's logical value, or its path, to the clipboard with OSC 52. The value is copied as it
+    /// is, with its control characters. A text over <see cref="Osc52.MaxBytes"/> is not copied.
+    /// </summary>
+    private void CopyFocused(bool valueOnly)
+    {
+        if (!TryCursor(out DocNode node, out DocPart part))
+        {
+            return;
+        }
+
+        string text = valueOnly ? part.Value : PathText.Format(_controller.Document, node, part);
+        if (!Osc52.Fits(text))
+        {
+            ShowMessage(TooLargeToCopy, error: true);
+            return;
+        }
+
+        WriteRaw(Osc52.Build(text));
+        ShowMessage(valueOnly ? CopiedValue : CopiedPath, error: false);
+    }
+
+    /// <summary>The search bar's row and the frame's height: the frame gives the bar one row while it is open.</summary>
+    void ISearchHost.ShowSearchBar(bool open)
+    {
+        _frame.Height = Dim.Fill(open ? 3 : 2);
+        _search.Bar.Visible = open;
+        SetNeedsLayout();
+    }
+
+    void ISearchHost.FocusTree() => _tree.SetFocus();
+
+    void ISearchHost.ShowMessage(string text, bool error) => ShowMessage(text, error);
 
     /// <summary>
     /// The keys in text mode. F5 and Ctrl+T reparse (Ctrl+T also switches back to the tree when the text parses), Ctrl+S saves, Ctrl+Q and
@@ -308,6 +423,7 @@ internal sealed class MainWindow : Window
     /// </summary>
     private void ShowText(int offset)
     {
+        _search.Close();
         SourceText text = _controller.Text!;
         _showingText = true;
         try
@@ -340,6 +456,7 @@ internal sealed class MainWindow : Window
         _textView.Visible = false;
         _tree.Visible = true;
         _tree.SetDocument(_controller.Document, focus);
+        _search.OnDocumentChanged();
         _tree.SetFocus();
         UpdateTitle();
         ShowHints();
@@ -492,6 +609,7 @@ internal sealed class MainWindow : Window
 
     private void OpenInline(string text)
     {
+        _search.Close();
         _tree.OpenEditor(text, HandleFieldKey);
         ShowHints();
     }
@@ -581,6 +699,7 @@ internal sealed class MainWindow : Window
     /// </summary>
     private bool OpenMultiline(DocNode node, DocPart part, string text)
     {
+        _search.Close();
         string title = $"Edit {PathText.KindName(node, part)} {PathText.Format(_controller.Document, node, part)}";
         return MultilineEditor.Ask(Ui, title, text, value =>
         {
@@ -1213,6 +1332,7 @@ internal sealed class MainWindow : Window
     private void Refresh(NodePath? focus)
     {
         _tree.SetDocument(_controller.Document, focus);
+        _search.OnDocumentChanged();
         UpdateTitle();
     }
 

@@ -18,13 +18,17 @@ internal static class CfgeditHints
     /// the row when the left part is cut.
     /// </summary>
     public static Hint Tree { get; } = KeyHints.Join(
+        // Most used first: the line is cut from the right on narrow terminals, and at 80 columns everything up to ^T Text fits.
         KeyHints.Bound(Key.Enter, "Enter Edit"),
-        KeyHints.Bound(Key.Tab, "Tab Next"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
+        KeyHints.Bound('/', "/ Find"),
         KeyHints.Bound(Key.A, "a Add"),
         KeyHints.Bound(Key.D, "d Del"),
         KeyHints.Bound(Key.T, "t Type"),
         KeyHints.Bound(Key.Z.WithCtrl, "^Z Undo"),
-        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
+        KeyHints.Bound(Key.T.WithCtrl, "^T Text"),
+        KeyHints.Bound('y', "y Copy"),
+        KeyHints.Bound(Key.Tab, "Tab Next"),
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
 
     /// <summary>The key hints while the inline editor is open.</summary>

@@ -45,6 +45,7 @@ internal sealed class TreeView : View
     private int _part;
     private int _preferred;
     private int _top;
+    private Func<NodePath, int, PartMarks?>? _marksOf;
 
     /// <summary>Creates the view. It shows nothing until <see cref="SetDocument"/> is called.</summary>
     public TreeView()
@@ -249,6 +250,46 @@ internal sealed class TreeView : View
         Notify();
     }
 
+    /// <summary>
+    /// Sets the search highlights: the matches of a part of a node, by the node's path and the part's index, or null for none. The layouts
+    /// are dropped, so the next draw shows the new highlights. The cursor does not move.
+    /// </summary>
+    /// <param name="marksOf">The marks of a part, or null for no highlights at all.</param>
+    internal void SetHighlights(Func<NodePath, int, PartMarks?>? marksOf)
+    {
+        _marksOf = marksOf;
+        DropLayouts();
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Moves the cursor to a part of a node, and expands every collapsed ancestor of the node so that the row is visible. The collapsed set
+    /// changes, which is not an edit. Returns false, and does nothing, when the node is not in the document.
+    /// </summary>
+    /// <param name="path">The node.</param>
+    /// <param name="part">The part's index in the node's parts.</param>
+    internal bool RevealPart(NodePath path, int part)
+    {
+        DocNode? node = _document?.Resolve(path);
+        if (node is null)
+        {
+            return false;
+        }
+
+        bool expanded = false;
+        for (DocNode? ancestor = node.Parent; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            expanded |= _collapsed.Remove(ancestor.Path);
+        }
+
+        if (expanded)
+        {
+            Rebuild();
+        }
+
+        return MoveCursorTo(path, false, part);
+    }
+
     /// <summary>Handles a key of the tree. Returns <c>false</c> for a key the tree does not bind.</summary>
     /// <param name="key">The key.</param>
     internal bool HandleKey(Key key)
@@ -445,6 +486,12 @@ internal sealed class TreeView : View
         }
 
         _layoutWidth = width;
+        DropLayouts();
+    }
+
+    /// <summary>Forgets every row's layout and the display lines they gave, so that they are laid out again on the next draw.</summary>
+    private void DropLayouts()
+    {
         Array.Clear(_layouts);
         _starts.Clear();
         _starts.Add(0);
@@ -468,7 +515,24 @@ internal sealed class TreeView : View
     /// <summary>The layout of a row at the view's width. It is computed once, then kept until the width or the rows change.</summary>
     private RowLines LayoutOf(int row)
     {
-        return _layouts[row] ??= RowLayout.Layout(_rows[row], _collapsed.Contains(_rows[row].Node.Path), Math.Max(0, Viewport.Width));
+        return _layouts[row] ??= RowLayout.Layout(
+            _rows[row],
+            _collapsed.Contains(_rows[row].Node.Path),
+            Math.Max(0, Viewport.Width),
+            MarksFor(row));
+    }
+
+    /// <summary>The highlights of a row's parts, or null when the row has none (no search, or an end row, whose parts are not searched).</summary>
+    private Func<int, PartMarks?>? MarksFor(int row)
+    {
+        if (_marksOf is null || _rows[row].IsEnd)
+        {
+            return null;
+        }
+
+        NodePath path = _rows[row].Node.Path;
+        Func<NodePath, int, PartMarks?> marksOf = _marksOf;
+        return part => marksOf(path, part);
     }
 
     /// <summary>Makes the display line of each row, up to and including <paramref name="upTo"/>, known.</summary>
@@ -841,6 +905,12 @@ internal sealed class TreeView : View
             }
 
             Attribute attribute = TreeColors.For(segment.Style, normal, background);
+            attribute = segment.Highlight switch
+            {
+                CellHighlight.Match => SearchColors.Match(attribute),
+                CellHighlight.Active => SearchColors.Active(attribute),
+                _ => attribute,
+            };
             if (cursorRow && segment.PartIndex == _part)
             {
                 attribute = TreeColors.Focused(attribute);
