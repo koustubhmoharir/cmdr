@@ -44,6 +44,20 @@ internal static class CfgeditHints
         KeyHints.Bound(Key.T.WithCtrl, "^T Tree"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"));
 
+    /// <summary>The key hints of the table editor, with no editor open. The quit key stays on the right, as in the tree.</summary>
+    public static Hint Table { get; } = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Edit"),
+        KeyHints.Bound('a', "a Row"),
+        KeyHints.Bound('d', "d Clear"),
+        KeyHints.Bound(Key.Esc, "Esc Tree"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"));
+
+    /// <summary>The key hints of the table editor while its inline field or multi-line editor is open.</summary>
+    public static Hint TableEditing { get; } = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Commit"),
+        KeyHints.Bound(Key.Esc, "Esc Cancel"),
+        KeyHints.Bound(Key.F4, "F4 Multi-line"));
+
     /// <summary>The quit key, shown at the right edge of the main window's hints.</summary>
     public static Hint Quit { get; } = KeyHints.Bound(Key.Q.WithCtrl, "^Q Quit");
 

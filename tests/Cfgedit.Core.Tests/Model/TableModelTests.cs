@@ -618,6 +618,87 @@ public sealed class TableModelTests
     }
 
     [Fact]
+    public void MissingKind_is_the_kind_a_missing_member_is_inserted_with_and_null_for_other_tables()
+    {
+        TableModel flags = Table(ParseJson("""[{"a": true}, {"b": 1}]"""), RootValue);
+        Assert.Equal(JsonValueKind.True, flags.MissingKind(0));
+        Assert.Equal(JsonValueKind.Number, flags.MissingKind(1));
+
+        Assert.Null(Table(ParseJson("[1, 2]"), RootValue).MissingKind(0));
+        Assert.Null(Table(ParseXml("""<root><r a="1"/><r a="2"/></root>"""), XmlRoot).MissingKind(0));
+    }
+
+    [Fact]
+    public void A_missing_member_is_inserted_with_the_kind_given_and_a_boolean_ignores_the_value_text()
+    {
+        const string text = """[{"a": true}, {"b": 1}]""";
+        TableModel table = Table(ParseJson(text), RootValue);
+
+        string after = Edit(text, Strict, table.EditCell(1, 0, JsonValueKind.False, "true"));
+
+        Assert.Equal("""[{"a": true}, {"a": false, "b": 1}]""", after);
+    }
+
+    [Fact]
+    public void A_missing_member_takes_a_string_or_a_number_given_with_its_text_whatever_the_column_kind()
+    {
+        const string numbers = """[{"a": 1}, {"b": "x"}]""";
+        Assert.Equal("""[{"a": 1}, {"a": "x", "b": "x"}]""", Edit(numbers, Strict, Table(ParseJson(numbers), RootValue).EditCell(1, 0, JsonValueKind.String, "x")));
+
+        const string strings = """[{"a": "s"}, {}]""";
+        Assert.Equal("""[{"a": "s"}, {"a": 7}]""", Edit(strings, Strict, Table(ParseJson(strings), RootValue).EditCell(1, 0, JsonValueKind.Number, "7")));
+    }
+
+    [Fact]
+    public void An_existing_value_changes_its_type_with_the_kind_given()
+    {
+        const string text = """[{"a": "x"}, {"a": 2}]""";
+        EditOp toNull = Table(ParseJson(text), RootValue).EditCell(0, 0, JsonValueKind.Null, null);
+        Assert.IsType<ChangeJsonType>(toNull);
+        Assert.Equal("""[{"a": null}, {"a": 2}]""", Edit(text, Strict, toNull));
+
+        const string numbers = """[{"a": 2}]""";
+        Assert.Equal("""[{"a": "two"}]""", Edit(numbers, Strict, Table(ParseJson(numbers), RootValue).EditCell(0, 0, JsonValueKind.String, "two")));
+    }
+
+    [Fact]
+    public void An_existing_string_or_number_of_the_same_kind_is_set_with_its_text()
+    {
+        const string text = """[{"a": "x"}]""";
+        EditOp op = Table(ParseJson(text), RootValue).EditCell(0, 0, JsonValueKind.String, "y");
+
+        Assert.IsType<SetPart>(op);
+        Assert.Equal("""[{"a": "y"}]""", Edit(text, Strict, op));
+    }
+
+    [Fact]
+    public void A_boolean_or_null_that_already_has_the_kind_given_is_refused()
+    {
+        TableModel table = Table(ParseJson("""[{"a": true}]"""), RootValue);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => table.EditCell(0, 0, JsonValueKind.True, null));
+        Assert.Equal("this value is already of that type", ex.Message);
+    }
+
+    [Fact]
+    public void The_kind_overload_refuses_XML_nested_cells_and_container_kinds()
+    {
+        Assert.Throws<CfgeditException>(() => Table(ParseXml("""<root><r a="1"/><r a="2"/></root>"""), XmlRoot).EditCell(0, 0, JsonValueKind.String, "x"));
+        Assert.Throws<CfgeditException>(() => Table(ParseJson("""[{"a": {"k": 1}}]"""), RootValue).EditCell(0, 0, JsonValueKind.String, "x"));
+        Assert.Throws<ArgumentException>(() => Table(ParseJson("""[{"a": 1}]"""), RootValue).EditCell(0, 0, JsonValueKind.Object, "x"));
+    }
+
+    [Fact]
+    public void An_array_item_changes_its_type_with_the_kind_given()
+    {
+        const string text = "[1, 2]";
+        EditOp op = Table(ParseJson(text), RootValue).EditCell(0, 0, JsonValueKind.Null, null);
+
+        Assert.IsType<ChangeJsonType>(op);
+        Assert.Equal("[null, 2]", Edit(text, Strict, op));
+    }
+
+    [Fact]
     public void Editing_a_scalar_array_item_sets_its_value()
     {
         const string text = """[1, 2]""";

@@ -37,6 +37,28 @@ public static class PathText
     }
 
     /// <summary>
+    /// The path of a member, attribute or child element that a row does not have yet, for a missing table cell: the row's path, then the
+    /// name in the notation of the path (<c>.name</c> or <c>["name"]</c> in JSON, <c>/@name</c> for an attribute and <c>/name</c> for a
+    /// child element in XML).
+    /// </summary>
+    /// <param name="document">The document the row belongs to.</param>
+    /// <param name="row">The row's node.</param>
+    /// <param name="name">The name of the member, attribute or child element.</param>
+    /// <param name="attribute">True for an XML attribute.</param>
+    public static string WithName(ConfigDocument document, DocNode row, string name, bool attribute)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(row);
+        ArgumentNullException.ThrowIfNull(name);
+        if (document.Format is not XmlFormat)
+        {
+            return JsonPath(row) + (IsIdentifier(name) ? "." + name : "[" + JsonQuote(name) + "]");
+        }
+
+        return XmlPath(row) + (attribute ? "/@" : "/") + name;
+    }
+
+    /// <summary>
     /// The kind of a focused part, for the detail line: <c>string</c>, <c>number</c>, <c>bool</c>, <c>null</c>, <c>object</c>,
     /// <c>array</c>, <c>element</c>, <c>attribute</c>, <c>text</c>, <c>comment</c>, <c>CDATA</c> or <c>PI</c>. A key or an index
     /// is <c>key</c> or <c>index</c>, and a declaration or doctype is <c>declaration</c> or <c>doctype</c>.

@@ -244,6 +244,32 @@ public static class RowLayout
         return builder.ToString();
     }
 
+    /// <summary>
+    /// A logical value as a table cell shows it in a column of <paramref name="width"/> columns: control characters as the rows show them
+    /// (as glyphs), and the text cut with an ellipsis when it is wider than the column. A cut never splits a grapheme. The result is not
+    /// padded, and a width that is not positive gives an empty text.
+    /// </summary>
+    /// <param name="value">The logical value.</param>
+    /// <param name="width">The columns the cell has.</param>
+    public static string CellText(string value, int width)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        if (width <= 0)
+        {
+            return string.Empty;
+        }
+
+        var items = new List<Item>();
+        AddText(items, value, StyleKind.Text, 0, width);
+        if (Sum(items) <= width)
+        {
+            return string.Concat(items.Select(item => item.Text));
+        }
+
+        int cut = FindCut(items, 0, width - 1);
+        return string.Concat(items.Take(cut).Select(item => item.Text)) + Ellipsis;
+    }
+
     /// <summary>The raw marker after a part that is edited as source text.</summary>
     private static void AddRaw(List<Item> items, DocPart part)
     {

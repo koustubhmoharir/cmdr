@@ -18,6 +18,11 @@ internal sealed class DetailLine : View
     private string? _message;
     private bool _messageIsError;
 
+    // The table's cell, when a table cell is shown instead of a part: its path, kind and raw value (null when the tree's part is shown).
+    private string? _cellPath;
+    private string? _cellKind;
+    private string? _cellValue;
+
     /// <summary>Creates the line. It shows nothing until <see cref="Show"/> is called.</summary>
     public DetailLine()
     {
@@ -33,6 +38,28 @@ internal sealed class DetailLine : View
         _document = document;
         _node = node;
         _part = part;
+        _cellPath = null;
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Shows a table cell: its path, its kind and its value. The value is the logical value, with an empty JSON string as <c>""</c>; it
+    /// is cut at the width like a part's value. The cell replaces the part until <see cref="Show"/> is called.
+    /// </summary>
+    /// <param name="path">The path of the cell, or of the row for the index column.</param>
+    /// <param name="kind">The kind, such as <c>string</c>, or <c>missing</c>.</param>
+    /// <param name="value">The logical value, or empty.</param>
+    public void ShowCell(string path, string kind, string value)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(kind);
+        ArgumentNullException.ThrowIfNull(value);
+        _document = null;
+        _node = null;
+        _part = null;
+        _cellPath = path;
+        _cellKind = kind;
+        _cellValue = value;
         SetNeedsDraw();
     }
 
@@ -43,9 +70,12 @@ internal sealed class DetailLine : View
     /// <param name="width">The width in columns.</param>
     public static string Describe(ConfigDocument document, DocNode node, DocPart? part, int width)
     {
-        string text = PathText.Format(document, node, part) + "  " + PathText.KindName(node, part) + "  " + ValueOf(node, part, width);
-        return TextWidth.Truncate(text, width);
+        return Compose(PathText.Format(document, node, part), PathText.KindName(node, part), ValueOf(node, part, width), width);
     }
+
+    /// <summary>The path, the kind and the value, separated by two spaces, cut at the width.</summary>
+    private static string Compose(string path, string kind, string value, int width) =>
+        TextWidth.Truncate(path + "  " + kind + "  " + value, width);
 
     /// <summary>True while a message replaces the detail.</summary>
     public bool HasMessage => _message is not null;
@@ -95,7 +125,9 @@ internal sealed class DetailLine : View
             return true;
         }
 
-        string text = _document is null || _node is null ? string.Empty : Describe(_document, _node, _part, width);
+        string text = _cellPath is not null
+            ? Compose(_cellPath, _cellKind!, RowLayout.DisplayValue(_cellValue!, width), width)
+            : _document is null || _node is null ? string.Empty : Describe(_document, _node, _part, width);
         Move(0, 0);
         SetAttribute(normal);
         AddStr(TextWidth.Fit(text, width));

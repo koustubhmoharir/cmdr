@@ -182,7 +182,10 @@ public sealed class TableModel
         switch (col.Kind)
         {
             case TableColumnKind.Key:
-                return InsertMember(row, column, value);
+            {
+                JsonValueKind kind = MostCommonScalarKind(column);
+                return InsertMember(row, column, kind, kind is JsonValueKind.String or JsonValueKind.Number ? value : null);
+            }
             case TableColumnKind.Attribute:
                 return InsertAttribute(rowNode, column, value);
             case TableColumnKind.ChildElement:
@@ -199,6 +202,71 @@ public sealed class TableModel
             default:
                 throw new InvalidOperationException("A scalar array's cells always have a value part.");
         }
+    }
+
+    /// <summary>
+    /// The JSON kind that <see cref="EditCell(int, int, string)"/> inserts a missing cell of a column with: the column's most common scalar kind.
+    /// Null for a column of a table that is not a JSON object table.
+    /// </summary>
+    /// <param name="column">The column index.</param>
+    /// <exception cref="CfgeditException">The column is outside the table.</exception>
+    public JsonValueKind? MissingKind(int column)
+    {
+        CheckColumn(column);
+        return _shape == TableShape.JsonObjects && Columns[column].Kind == TableColumnKind.Key ? MostCommonScalarKind(column) : null;
+    }
+
+    /// <summary>
+    /// The edit that sets a cell to a JSON value of a given scalar kind, for a JSON table. A missing member is inserted with that kind. An existing
+    /// value of another kind changes its type (<see cref="ChangeJsonType"/>), and of the same kind is set (for a string or a number) as
+    /// <see cref="EditCell(int, int, string)"/> does. The value text is used for a string and a number, and ignored for true, false and null.
+    /// </summary>
+    /// <param name="row">The row index.</param>
+    /// <param name="column">The column index.</param>
+    /// <param name="kind">The scalar kind: string, number, true, false or null.</param>
+    /// <param name="value">The value text for a string or a number, or null.</param>
+    /// <exception cref="CfgeditException">
+    /// The request is invalid: the table is not JSON, the cell is nested, or the value already has the kind (true, false or null).
+    /// </exception>
+    public EditOp EditCell(int row, int column, JsonValueKind kind, string? value)
+    {
+        CheckRow(row);
+        CheckColumn(column);
+        if (!IsScalar(kind))
+        {
+            throw new ArgumentException("A cell takes a scalar kind: string, number, true, false or null.", nameof(kind));
+        }
+
+        if (_shape == TableShape.XmlElements)
+        {
+            throw new CfgeditException("an XML cell has no type; set its text instead");
+        }
+
+        TableCell cell = Cell(row, column);
+        if (cell.IsNested)
+        {
+            throw new CfgeditException("this cell holds a nested value and cannot be edited in the table; edit it in the tree");
+        }
+
+        bool takesText = kind is JsonValueKind.String or JsonValueKind.Number;
+        string? text = takesText ? value ?? string.Empty : null;
+        if (cell.IsMissing)
+        {
+            return InsertMember(row, column, kind, text);
+        }
+
+        DocNode typed = _shape == TableShape.JsonScalars ? _rowNodes[row] : cell.Node!;
+        if (typed.JsonKind != kind)
+        {
+            return new ChangeJsonType(typed.Path, kind, text);
+        }
+
+        if (takesText)
+        {
+            return new SetPart(typed.Path, PartKind.Value, -1, text!);
+        }
+
+        throw new CfgeditException("this value is already of that type");
     }
 
     /// <summary>
@@ -522,10 +590,9 @@ public sealed class TableModel
 
     // ----- Edit helpers -----
 
-    private EditOp InsertMember(int row, int column, string value)
+    private EditOp InsertMember(int row, int column, JsonValueKind kind, string? text)
     {
         DocNode rowNode = _rowNodes[row];
-        JsonValueKind kind = MostCommonScalarKind(column);
         int index = rowNode.Children.Count;
         foreach (DocNode child in rowNode.Children)
         {
@@ -536,7 +603,6 @@ public sealed class TableModel
             }
         }
 
-        string? text = kind is JsonValueKind.String or JsonValueKind.Number ? value : null;
         return new InsertNode(rowNode.Path, index, new NewJsonValue(Columns[column].Name, kind, text));
     }
 

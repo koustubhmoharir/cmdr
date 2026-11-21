@@ -60,6 +60,7 @@ internal sealed class MainWindow : Window, ISearchHost
     private readonly FrameView _frame;
     private readonly TreeView _tree;
     private readonly TextModeView _textView;
+    private readonly TableView _tableView;
     private readonly DetailLine _detail;
     private readonly HintsLine _hints;
     private readonly TreeSearch _search;
@@ -72,6 +73,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
     // True while the window sets the view's text itself, so that the change is not read back as an edit.
     private bool _showingText;
+
+    // The table of the table editor while it is shown, or null in tree and text mode. Its edits go through the controller, as the tree's do.
+    private TableModel? _table;
 
     /// <summary>
     /// Creates the window over a file, with the tree's cursor at its start.
@@ -104,6 +108,7 @@ internal sealed class MainWindow : Window, ISearchHost
 
         _tree = new TreeView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _textView = new TextModeView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(), Visible = false };
+        _tableView = new TableView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(), Visible = false };
         _frame = new FrameView
         {
             BorderStyle = LineStyle.Rounded,
@@ -112,7 +117,7 @@ internal sealed class MainWindow : Window, ISearchHost
             Width = Dim.Fill(),
             Height = Dim.Fill(2),
         };
-        _frame.Add(_tree, _textView);
+        _frame.Add(_tree, _textView, _tableView);
 
         _detail = new DetailLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
@@ -129,6 +134,7 @@ internal sealed class MainWindow : Window, ISearchHost
 
         _tree.CursorChanged += ShowDetail;
         _tree.KeyPressed += ClearMessage;
+        _tableView.CursorChanged += ShowTableDetail;
         _textView.ContentsChanged += (_, _) =>
         {
             if (_showingText)
@@ -163,6 +169,9 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The text view of text mode, for the tests.</summary>
     internal TextModeView TextView => _textView;
 
+    /// <summary>The grid of the table editor, for the tests.</summary>
+    internal TableView Grid => _tableView;
+
     /// <summary>The controller, for the tests.</summary>
     internal EditController Controller => _controller;
 
@@ -196,6 +205,11 @@ internal sealed class MainWindow : Window, ISearchHost
             return HandleTextKey(key);
         }
 
+        if (InTable)
+        {
+            return HandleTableKey(key);
+        }
+
         if (_tree.IsEditing && IsLeavingKey(key) && !CommitInline())
         {
             return true;
@@ -204,6 +218,12 @@ internal sealed class MainWindow : Window, ISearchHost
         if (key == Key.T.WithCtrl)
         {
             EnterTextMode();
+            return true;
+        }
+
+        if (!_tree.IsEditing && IsPlain(key, 'T'))
+        {
+            EnterTable();
             return true;
         }
 
@@ -345,7 +365,12 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        string text = valueOnly ? part.Value : PathText.Format(_controller.Document, node, part);
+        CopyText(valueOnly ? part.Value : PathText.Format(_controller.Document, node, part), valueOnly);
+    }
+
+    /// <summary>Writes a text to the clipboard with OSC 52, and says what was copied. A text over the limit is not copied.</summary>
+    private void CopyText(string text, bool valueOnly)
+    {
         if (!Osc52.Fits(text))
         {
             ShowMessage(TooLargeToCopy, error: true);
@@ -465,6 +490,13 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>Shows whichever mode the controller is in: the tree with its focus, or the text.</summary>
     private void ShowMode(NodePath? focus)
     {
+        if (InTable)
+        {
+            // A save or a reload keeps the table, which is rebuilt from the document (it may stop applying, and then the tree shows).
+            RefreshTable(focus);
+            return;
+        }
+
         if (_controller.Mode == EditMode.Tree)
         {
             ShowTree(focus);
@@ -609,6 +641,13 @@ internal sealed class MainWindow : Window, ISearchHost
 
     private void OpenInline(string text)
     {
+        if (InTable)
+        {
+            _tableView.OpenEditor(text, HandleFieldKey);
+            ShowHints();
+            return;
+        }
+
         _search.Close();
         _tree.OpenEditor(text, HandleFieldKey);
         ShowHints();
@@ -630,15 +669,14 @@ internal sealed class MainWindow : Window, ISearchHost
             return true;
         }
 
-        if (key == Key.Tab)
+        if (key == Key.Tab || key == Key.Tab.WithShift)
         {
-            MoveEditable(1);
-            return true;
-        }
+            // The table has no next editable part: Tab does nothing there, and is not typed into the field.
+            if (!InTable)
+            {
+                MoveEditable(key == Key.Tab ? 1 : -1);
+            }
 
-        if (key == Key.Tab.WithShift)
-        {
-            MoveEditable(-1);
             return true;
         }
 
@@ -657,6 +695,11 @@ internal sealed class MainWindow : Window, ISearchHost
     /// </summary>
     private bool CommitInline()
     {
+        if (InTable)
+        {
+            return CommitTableInline();
+        }
+
         DocNode node = _tree.CursorNode!;
         DocPart part = _tree.CursorDocPart!;
         string? error = SetValue(node.Path, part, _tree.EditorText!, out NodePath? focus);
@@ -677,13 +720,35 @@ internal sealed class MainWindow : Window, ISearchHost
 
     private void CloseInline()
     {
-        _tree.CloseEditor();
+        if (InTable)
+        {
+            _tableView.CloseEditor();
+        }
+        else
+        {
+            _tree.CloseEditor();
+        }
+
         ShowHints();
     }
 
     /// <summary>F4 or Ctrl+Enter in the field: the text as typed goes to the multi-line editor. A cancel brings the field back with that text.</summary>
     private void EditMultilineFromField()
     {
+        if (InTable)
+        {
+            int row = _tableView.CursorRow;
+            int column = _tableView.CursorColumn;
+            string tableText = _tableView.EditorText!;
+            CloseInline();
+            if (!OpenTableMultiline(row, column, tableText))
+            {
+                OpenInline(tableText);
+            }
+
+            return;
+        }
+
         DocNode node = _tree.CursorNode!;
         DocPart part = _tree.CursorDocPart!;
         string text = _tree.EditorText!;
@@ -1125,13 +1190,11 @@ internal sealed class MainWindow : Window, ISearchHost
 
         ConfigDocument doc = _controller.Document;
         string target = PathText.Format(doc, node, null);
-        int? choice = ChoiceDialog.Ask(Ui, "Type of " + target, TypeNames, Array.IndexOf(TypeKinds, current));
-        if (choice is not { } picked || TypeKinds[picked] == current)
+        if (AskKind("Type of " + target, current) is not { } kind || kind == current)
         {
             return;
         }
 
-        JsonValueKind kind = TypeKinds[picked];
         bool container = node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;
         if (container && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
@@ -1146,6 +1209,16 @@ internal sealed class MainWindow : Window, ISearchHost
             _ => null,
         };
         ApplyAndShow(new ChangeJsonType(node.Path, kind, value), node.Path);
+    }
+
+    /// <summary>
+    /// The type menu, with <paramref name="current"/> chosen: the kind picked, or null when the menu was cancelled with Esc. Used for a node's
+    /// type in the tree and for a missing table cell's kind, so that both show the same menu.
+    /// </summary>
+    private JsonValueKind? AskKind(string title, JsonValueKind current)
+    {
+        int? choice = ChoiceDialog.Ask(Ui, title, TypeNames, Array.IndexOf(TypeKinds, current));
+        return choice is { } picked ? TypeKinds[picked] : null;
     }
 
     private static string NumberText(ConfigDocument doc, DocNode node)
@@ -1167,6 +1240,582 @@ internal sealed class MainWindow : Window, ISearchHost
         }
 
         ApplyAndShow(new DuplicateNode(node.Path), node.Path);
+    }
+
+    // ----- Table editor -----
+
+    /// <summary>The message of a search key in the table, which has no search.</summary>
+    internal const string NotInTable = "not available in a table";
+
+    /// <summary>The message when an edit leaves the table without a table in its place.</summary>
+    internal const string TableNoLongerApplies = "the table no longer applies here";
+
+    /// <summary>True while the table editor is shown, in place of the tree.</summary>
+    private bool InTable => _table is not null;
+
+    /// <summary>
+    /// T in the tree: the table of the cursor's node, shown in place of the tree. The cursor goes to the cursor's row (or the first row) and its
+    /// first column. A node that is not a table gives the reason.
+    /// </summary>
+    private void EnterTable()
+    {
+        if (_tree.IsEditing && !CommitInline())
+        {
+            return;
+        }
+
+        DocNode? node = _tree.CursorNode;
+        if (node is null)
+        {
+            return;
+        }
+
+        TableModel? model = TableModel.TryCreate(_controller.Document, node.Path);
+        if (model is null)
+        {
+            ShowMessage("no table here: " + RefusalOfTable(node), error: false);
+            return;
+        }
+
+        _search.Close();
+        _table = model;
+        _tableView.SetTable(model, RowFor(model, node.Path) ?? 0, model.Columns.Count > 0 ? 0 : -1);
+        _tree.Visible = false;
+        _tableView.Visible = true;
+        _tableView.SetFocus();
+        UpdateTitle();
+        ShowHints();
+    }
+
+    /// <summary>Why a node is not a table, as the message of T says it: the list is empty, it is not a list of objects or values, or an element has no repeats.</summary>
+    private static string RefusalOfTable(DocNode node)
+    {
+        if (node.Kind == NodeKind.JsonArray)
+        {
+            return node.Children.All(child => child.Kind == NodeKind.JsonComment) ? "the list is empty" : "not a list of objects or values";
+        }
+
+        return node.Kind == NodeKind.XmlElement ? "no repeated elements" : "not a list of objects or values";
+    }
+
+    /// <summary>
+    /// The table's keys: the table view's cursor keys first, then Enter and F2 (edit), d (clear or delete a row), a and A (add a row), Alt+Up and
+    /// Alt+Down (move a row), y and Y (copy), and Esc (leave). The controller's keys (Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+Q and Ctrl+O) work as in the tree.
+    /// The search keys say they are not available. While the editor is open, the table takes no keys except those.
+    /// </summary>
+    private bool HandleTableKey(Key key)
+    {
+        if (_tableView.IsEditing && IsLeavingKey(key) && !CommitTableInline())
+        {
+            return true;
+        }
+
+        if (key == Key.Q.WithCtrl)
+        {
+            Quit();
+            return true;
+        }
+
+        if (key == Key.O.WithCtrl)
+        {
+            OpenPicker();
+            return true;
+        }
+
+        if (key == Key.S.WithCtrl)
+        {
+            Save();
+            return true;
+        }
+
+        if (key == Key.Z.WithCtrl)
+        {
+            Undo();
+            return true;
+        }
+
+        if (key == Key.Y.WithCtrl)
+        {
+            Redo();
+            return true;
+        }
+
+        if (key == Key.Tab || key == Key.Tab.WithShift)
+        {
+            return true;
+        }
+
+        if (_tableView.IsEditing)
+        {
+            return base.OnKeyDown(key);
+        }
+
+        if (key == Key.Enter || key == Key.F2)
+        {
+            BeginTableEdit(multiline: false);
+            return true;
+        }
+
+        if (key == Key.Enter.WithCtrl)
+        {
+            BeginTableEdit(multiline: true);
+            return true;
+        }
+
+        if (key == Key.Esc)
+        {
+            LeaveTable();
+            return true;
+        }
+
+        if (IsPlain(key, 'd') || key == Key.Delete)
+        {
+            ClearTableCell();
+            return true;
+        }
+
+        if (IsPlain(key, 'a'))
+        {
+            AddTableRow(after: true);
+            return true;
+        }
+
+        if (IsPlain(key, 'A'))
+        {
+            AddTableRow(after: false);
+            return true;
+        }
+
+        if (key == Key.CursorUp.WithAlt)
+        {
+            MoveTableRow(-1);
+            return true;
+        }
+
+        if (key == Key.CursorDown.WithAlt)
+        {
+            MoveTableRow(1);
+            return true;
+        }
+
+        if (IsPlain(key, 'y'))
+        {
+            CopyTableCell(valueOnly: true);
+            return true;
+        }
+
+        if (IsPlain(key, 'Y'))
+        {
+            CopyTableCell(valueOnly: false);
+            return true;
+        }
+
+        if (key == Key.F.WithCtrl || IsPlain(key, '/') || key == Key.F3 || key == Key.F3.WithShift || IsPlain(key, 'n') || IsPlain(key, 'N'))
+        {
+            ShowMessage(NotInTable, error: false);
+            return true;
+        }
+
+        if (_tableView.HandleKey(key))
+        {
+            return true;
+        }
+
+        return base.OnKeyDown(key);
+    }
+
+    /// <summary>
+    /// Esc: the tree comes back with the cursor on the node of the cell the table was on. The tree keeps its collapsed set.
+    /// </summary>
+    private void LeaveTable() => LeaveTableAt(CursorCellPath());
+
+    /// <summary>Shows the tree with the focus on a node, in place of the table, which is gone.</summary>
+    private void LeaveTableAt(NodePath focus)
+    {
+        _tableView.CloseEditor();
+        _table = null;
+        _tableView.Visible = false;
+        ShowTree(focus);
+    }
+
+    /// <summary>The node the table cursor is on: the cell's node when it has one, else the row's. The index column has the row's.</summary>
+    private NodePath CursorCellPath()
+    {
+        TableModel table = _table!;
+        int row = _tableView.CursorRow;
+        NodePath rowPath = table.Rows[row];
+        int column = _tableView.CursorColumn;
+        return column < 0 ? rowPath : (table.Cell(row, column).Node?.Path ?? rowPath);
+    }
+
+    /// <summary>
+    /// Enter or F2 on the cursor's cell. A nested cell leaves the table for the tree at its node. The index column says to select a cell. A
+    /// value opens the editor that its part takes (see <see cref="EditRules"/>), and a missing cell opens an empty one.
+    /// </summary>
+    private void BeginTableEdit(bool multiline)
+    {
+        TableModel table = _table!;
+        int row = _tableView.CursorRow;
+        int column = _tableView.CursorColumn;
+        if (column < 0)
+        {
+            ShowMessage("select a cell", error: false);
+            return;
+        }
+
+        TableCell cell = table.Cell(row, column);
+        if (cell.IsNested)
+        {
+            LeaveTableAt(cell.Node!.Path);
+            return;
+        }
+
+        if (cell.Part is null)
+        {
+            // A column of booleans or nulls has no text to type: a missing cell there takes its kind from the type menu.
+            if (cell.IsMissing && table.MissingKind(column) is { } columnKind
+                && columnKind is JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null)
+            {
+                ChooseMissingKind(row, column, columnKind);
+                return;
+            }
+
+            if (multiline)
+            {
+                OpenTableMultiline(row, column, string.Empty);
+            }
+            else
+            {
+                OpenInline(string.Empty);
+            }
+
+            return;
+        }
+
+        switch (EditRules.KindOf(cell.Node!, cell.Part))
+        {
+            case EditorKind.Type:
+                ChangeTypeOf(cell.Node!);
+                break;
+            case EditorKind.None:
+                ShowMessage(EditRules.RefusalOf(cell.Part), error: false);
+                break;
+            case EditorKind.Multiline:
+                OpenTableMultiline(row, column, cell.Part.Value);
+                break;
+            case EditorKind.Inline when multiline && EditRules.CanEditMultiline(cell.Part.Value):
+                OpenTableMultiline(row, column, cell.Part.Value);
+                break;
+            case EditorKind.Inline:
+                OpenInline(cell.Part.Value);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Enter on a missing cell of a column of booleans or nulls: the type menu, with the column's kind chosen. The chosen kind is inserted, and a
+    /// string or a number then opens its inline editor. Esc changes nothing.
+    /// </summary>
+    private void ChooseMissingKind(int row, int column, JsonValueKind columnKind)
+    {
+        (string path, _, _) = DescribeCell(row, column);
+        if (AskKind("Type of " + path, columnKind) is not { } kind)
+        {
+            return;
+        }
+
+        string? text = kind switch
+        {
+            JsonValueKind.String => string.Empty,
+            JsonValueKind.Number => "0",
+            _ => null,
+        };
+        EditOp op;
+        try
+        {
+            op = _table!.EditCell(row, column, kind, text);
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+            return;
+        }
+
+        if (!ApplyTableOp(op) || _table is null)
+        {
+            return;
+        }
+
+        if (kind is JsonValueKind.String or JsonValueKind.Number)
+        {
+            BeginTableEdit(multiline: false);
+        }
+    }
+
+    /// <summary>Shows the multi-line editor for a cell. Returns true when it committed, and false when it was cancelled.</summary>
+    private bool OpenTableMultiline(int row, int column, string text)
+    {
+        (string path, string kind, _) = DescribeCell(row, column);
+        return MultilineEditor.Ask(Ui, $"Edit {kind} {path}", text, value => SetTableCell(row, column, value));
+    }
+
+    /// <summary>Commits the open field to its cell. Returns true when the field closed; an error keeps it open, and shows the error.</summary>
+    private bool CommitTableInline()
+    {
+        string? error = SetTableCell(_tableView.CursorRow, _tableView.CursorColumn, _tableView.EditorText!);
+        if (error is not null)
+        {
+            ShowMessage(error, error: true);
+            return false;
+        }
+
+        CloseInline();
+        return true;
+    }
+
+    /// <summary>
+    /// Sets a cell to a text, as one edit: an existing part is set, and a missing cell is inserted in the column order (see
+    /// <see cref="TableModel.EditCell"/>). A cell whose text is unchanged is not edited. Returns the error to show, or null when the table is
+    /// shown again with the change.
+    /// </summary>
+    private string? SetTableCell(int row, int column, string value)
+    {
+        TableModel table = _table!;
+        if (table.Cell(row, column).Part is { } part && part.Value == value)
+        {
+            return null;
+        }
+
+        EditOp op;
+        try
+        {
+            op = table.EditCell(row, column, value);
+        }
+        catch (CfgeditException ex)
+        {
+            return ex.Message;
+        }
+
+        if (_controller.Apply(op, out string? error) is null)
+        {
+            return error ?? "the value cannot be changed";
+        }
+
+        RefreshTable(null);
+        return null;
+    }
+
+    /// <summary>
+    /// d: deletes the cursor's row when the cursor is on the index column, else clears the cell (its member, attribute, element or text). A
+    /// missing cell has nothing to clear.
+    /// </summary>
+    private void ClearTableCell()
+    {
+        TableModel table = _table!;
+        int row = _tableView.CursorRow;
+        int column = _tableView.CursorColumn;
+        if (column < 0)
+        {
+            ApplyTableOp(table.DeleteRow(row));
+            return;
+        }
+
+        EditOp? op;
+        try
+        {
+            op = table.ClearCell(row, column);
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+            return;
+        }
+
+        if (op is null)
+        {
+            ShowMessage("the cell is already empty", error: false);
+            return;
+        }
+
+        ApplyTableOp(op);
+    }
+
+    /// <summary>
+    /// a and A: a row after the cursor's row, or before it (after the row above it, for the first row). The editor opens on the new row's first
+    /// cell, when that cell takes a value.
+    /// </summary>
+    private void AddTableRow(bool after)
+    {
+        TableModel table = _table!;
+        int afterRow = after ? _tableView.CursorRow : _tableView.CursorRow - 1;
+        CompositeEdit op;
+        try
+        {
+            op = table.AddRow(afterRow);
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+            return;
+        }
+
+        if (!ApplyTableOp(op) || _table is null)
+        {
+            return;
+        }
+
+        int added = afterRow + 1;
+        int column = _table.Columns.Count > 0 ? 0 : -1;
+        _tableView.Place(added, column);
+        if (column == 0 && !_table.Cell(added, 0).IsNested)
+        {
+            BeginTableEdit(multiline: false);
+        }
+    }
+
+    /// <summary>Alt+Up and Alt+Down: the cursor's row moves among the rows, and the cursor goes with it. At either end it says so.</summary>
+    private void MoveTableRow(int delta)
+    {
+        TableModel table = _table!;
+        int row = _tableView.CursorRow;
+        int target = row + delta;
+        if (target < 0 || target >= table.Rows.Count)
+        {
+            ShowAtEnd(delta);
+            return;
+        }
+
+        if (!ApplyTableOp(table.MoveRow(row, target)))
+        {
+            return;
+        }
+
+        _tableView.Place(target, _tableView.CursorColumn);
+    }
+
+    /// <summary>Applies an edit of the table, and shows the table again. Returns false when the edit was refused (its error is shown) or the table no longer applies.</summary>
+    private bool ApplyTableOp(EditOp op)
+    {
+        if (_controller.Apply(op, out string? error) is null)
+        {
+            ShowMessage(error ?? "the edit cannot be applied", error: true);
+            return false;
+        }
+
+        RefreshTable(null);
+        return InTable;
+    }
+
+    /// <summary>
+    /// Rebuilds the table from the document, as an edit or an undo leaves it, and shows it with the cursor kept (on the row that holds
+    /// <paramref name="focus"/>, when given). When the document no longer has a table there, the tree shows, with the message.
+    /// </summary>
+    private void RefreshTable(NodePath? focus)
+    {
+        NodePath container = _table!.Container;
+        TableModel? model = TableModel.TryCreate(_controller.Document, container);
+        if (model is null)
+        {
+            LeaveTableAt(container);
+            ShowMessage(TableNoLongerApplies, error: false);
+            return;
+        }
+
+        int? focusRow = focus is null ? null : RowFor(model, focus);
+        _table = model;
+        _tableView.SetTable(model, focusRow ?? _tableView.CursorRow, _tableView.CursorColumn);
+        UpdateTitle();
+        ShowHints();
+    }
+
+    /// <summary>The index of the row that holds a node: the row whose path is the node's, or one of the node's ancestors'. Null when no row does.</summary>
+    private static int? RowFor(TableModel model, NodePath node)
+    {
+        for (int row = 0; row < model.Rows.Count; row++)
+        {
+            NodePath rowPath = model.Rows[row];
+            if (node.Count >= rowPath.Count && node.Prefix(rowPath.Count).Equals(rowPath))
+            {
+                return row;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The path, kind and logical value of a cell, as the detail line and the editors show them. The index column has its row's path. A missing
+    /// cell has its row's path followed by the column's name, and the kind <c>missing</c>. An empty JSON string is shown as <c>""</c>.
+    /// </summary>
+    private (string Path, string Kind, string Value) DescribeCell(int row, int column)
+    {
+        TableModel table = _table!;
+        ConfigDocument doc = _controller.Document;
+        DocNode rowNode = doc.Resolve(table.Rows[row])!;
+        if (column < 0)
+        {
+            return (PathText.Format(doc, rowNode, null), PathText.KindName(rowNode, null), string.Empty);
+        }
+
+        TableColumn tableColumn = table.Columns[column];
+        TableCell cell = table.Cell(row, column);
+        if (cell.IsMissing)
+        {
+            string path = PathText.WithName(doc, rowNode, tableColumn.Name, tableColumn.Kind == TableColumnKind.Attribute);
+            return (path, "missing", string.Empty);
+        }
+
+        DocNode node = cell.Node ?? rowNode;
+        if (cell.IsNested)
+        {
+            return (PathText.Format(doc, node, null), PathText.KindName(node, null), cell.Display);
+        }
+
+        if (cell.Part is not { } part)
+        {
+            return (PathText.Format(doc, node, null), PathText.KindName(node, null), string.Empty);
+        }
+
+        string value = node.JsonKind == JsonValueKind.String && part.Value.Length == 0 ? "\"\"" : part.Value;
+        return (PathText.Format(doc, node, part), PathText.KindName(node, part), value);
+    }
+
+    /// <summary>The detail line of the table's cursor.</summary>
+    private void ShowTableDetail()
+    {
+        if (_table is null)
+        {
+            return;
+        }
+
+        (string path, string kind, string value) = DescribeCell(_tableView.CursorRow, _tableView.CursorColumn);
+        _detail.ShowCell(path, kind, value);
+    }
+
+    /// <summary>The path of the table's container, as the title shows it.</summary>
+    private string TablePath()
+    {
+        DocNode container = _controller.Document.Resolve(_table!.Container)!;
+        return PathText.Format(_controller.Document, container, null);
+    }
+
+    /// <summary>
+    /// y and Y in the table: the cell's value (a nested cell's display, and nothing for a missing one), or the cell's path. The index column has
+    /// neither, so it says to select a cell.
+    /// </summary>
+    private void CopyTableCell(bool valueOnly)
+    {
+        int row = _tableView.CursorRow;
+        int column = _tableView.CursorColumn;
+        if (column < 0)
+        {
+            ShowMessage("select a cell", error: false);
+            return;
+        }
+
+        TableCell cell = _table!.Cell(row, column);
+        string value = cell.IsMissing ? string.Empty : cell.IsNested ? cell.Display : cell.Part?.Value ?? string.Empty;
+        CopyText(valueOnly ? value : DescribeCell(row, column).Path, valueOnly);
     }
 
     // ----- Undo, redo, save -----
@@ -1331,6 +1980,12 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>Shows the document after a change, and updates the title.</summary>
     private void Refresh(NodePath? focus)
     {
+        if (InTable)
+        {
+            RefreshTable(focus);
+            return;
+        }
+
         _tree.SetDocument(_controller.Document, focus);
         _search.OnDocumentChanged();
         UpdateTitle();
@@ -1339,7 +1994,9 @@ internal sealed class MainWindow : Window, ISearchHost
     private void UpdateTitle()
     {
         string dirty = _controller.IsDirty ? "*" : string.Empty;
-        string mode = _controller.Mode == EditMode.Tree ? string.Empty : _textReadOnly ? " [text, read-only]" : " [text]";
+        string mode = _table is not null ? $" [table {TablePath()}]"
+            : _controller.Mode == EditMode.Tree ? string.Empty
+            : _textReadOnly ? " [text, read-only]" : " [text]";
         _frame.Title = $"{FileName}{dirty} [{_controller.File.Format.Name}]{mode}";
     }
 
@@ -1385,7 +2042,9 @@ internal sealed class MainWindow : Window, ISearchHost
     {
         Hint hint = _controller.Mode == EditMode.Text
             ? CfgeditHints.TextMode
-            : _tree.IsEditing ? CfgeditHints.Editing : CfgeditHints.Tree;
+            : InTable
+                ? (_tableView.IsEditing ? CfgeditHints.TableEditing : CfgeditHints.Table)
+                : _tree.IsEditing ? CfgeditHints.Editing : CfgeditHints.Tree;
         if (hint.Text == _shownHints)
         {
             return;
