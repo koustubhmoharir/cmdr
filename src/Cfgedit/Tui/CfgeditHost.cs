@@ -2,6 +2,7 @@ using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
 using Cfgedit.Core.Text;
+using Cfgedit.Core.Xml;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
@@ -73,6 +74,128 @@ internal static class CfgeditHost
         {
             app.Dispose();
         }
+    }
+
+    /// <summary>The formats the choice dialog offers when a new file's extension names none, in the order shown.</summary>
+    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml"];
+
+    /// <summary>
+    /// The new-file flow for a path that does not exist. Asks "Create &lt;name&gt;?" (Cancel creates nothing), then the format when neither
+    /// <paramref name="format"/> nor the extension gives one, then the root element's name for XML. The window opens on an unsaved
+    /// document, and the path is recorded in the recent list after its first successful save.
+    /// </summary>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="format">The format named on the command line, or null.</param>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
+    /// <exception cref="CfgeditException">The new document cannot be made from the path.</exception>
+    public static void RunNew(string path, IConfigFormat? format, Func<RecentFiles?> loadRecent)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(loadRecent);
+
+        IApplication app = Application.Create();
+        try
+        {
+            app.Init();
+            NewFileFlow(app, path, format, loadRecent);
+        }
+        finally
+        {
+            app.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The new-file flow in a running application: the questions of <see cref="AskNewFile"/>, then the window of the unsaved document.
+    /// Nothing is created until the window's first save.
+    /// </summary>
+    /// <param name="app">The initialised application.</param>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="format">The format named on the command line, or null.</param>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    internal static void NewFileFlow(IApplication app, string path, IConfigFormat? format, Func<RecentFiles?> loadRecent)
+    {
+        NewFileChoice? choice = AskNewFile(app, path, format);
+        if (choice is null)
+        {
+            return;
+        }
+
+        var file = new OpenedFile(path, DocumentFile.CreateNew(path, choice.Format, choice.RootName));
+        OpenedFile? next = RunDocument(app, file, loadRecent(), RecordOnFirstSave(path, loadRecent));
+        if (next is not null)
+        {
+            RunDocuments(next, following => RunDocument(app, following, loadRecent()));
+        }
+    }
+
+    /// <summary>
+    /// The questions of a new file: "Create &lt;name&gt;?" with Cancel and Create (Create is the default), then the format when neither
+    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5 and xml), then the root element's name for
+    /// XML (validated with <see cref="XmlSyntax.IsValidQName"/>). Returns null when any question is cancelled.
+    /// </summary>
+    /// <param name="app">The running application.</param>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="format">The format named on the command line, or null.</param>
+    internal static NewFileChoice? AskNewFile(IApplication app, string path, IConfigFormat? format)
+    {
+        if (Confirm.Choose(app, "New file", $"Create {Path.GetFileName(path)}?", "Create", "Cancel") != 0)
+        {
+            return null;
+        }
+
+        IConfigFormat? resolved = format ?? Formats.ForPath(path);
+        if (resolved is null)
+        {
+            if (ChoiceDialog.Ask(app, "Format of " + Path.GetFileName(path), FormatNames, 0) is not { } picked)
+            {
+                return null;
+            }
+
+            resolved = Formats.FromName(FormatNames[picked])!;
+        }
+
+        if (resolved is not XmlFormat)
+        {
+            return new NewFileChoice(resolved, null);
+        }
+
+        string? rootName = null;
+        bool named = TextPromptDialog.Ask(app, "New XML file", "Root", string.Empty, name =>
+        {
+            if (!XmlSyntax.IsValidQName(name))
+            {
+                return $"'{name}' is not a valid XML name";
+            }
+
+            rootName = name;
+            return null;
+        });
+        return named && rootName is not null ? new NewFileChoice(resolved, rootName) : null;
+    }
+
+    /// <summary>The action that records a new file in the recent list, for the window's first successful save.</summary>
+    internal static Action RecordOnFirstSave(string path, Func<RecentFiles?> loadRecent) => () => RecordRecent(loadRecent, path);
+
+    /// <summary>
+    /// Moves a file to the front of the recent list and saves the list. Without a store location nothing is recorded; a failed save is
+    /// ignored. The list is loaded fresh, so that a file recorded during a session does not lose the others.
+    /// </summary>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    /// <param name="path">The file to record.</param>
+    /// <returns>The list that was recorded into, or null when there is no store.</returns>
+    internal static RecentFiles? RecordRecent(Func<RecentFiles?> loadRecent, string path)
+    {
+        RecentFiles? recent = loadRecent();
+        if (recent is null)
+        {
+            return null;
+        }
+
+        recent.Add(path);
+        recent.TrySave();
+        return recent;
     }
 
     /// <summary>
@@ -198,9 +321,9 @@ internal static class CfgeditHost
     }
 
     // Shows the document's window, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null.
-    private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent)
+    private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent, Action? onFirstSave = null)
     {
-        using var window = new MainWindow(file, () => ShowPicker(app, recent));
+        using var window = new MainWindow(file, () => ShowPicker(app, recent), onFirstSave: onFirstSave);
         app.Run(window);
         return window.SwitchTo;
     }

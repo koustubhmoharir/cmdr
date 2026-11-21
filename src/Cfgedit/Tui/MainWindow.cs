@@ -1,3 +1,4 @@
+using Cfgedit.Core.Json;
 using Cfgedit.Core.Model;
 using Shared.Tui;
 using Terminal.Gui.App;
@@ -49,6 +50,7 @@ internal sealed class MainWindow : Window
     private readonly TreeView _tree;
     private readonly DetailLine _detail;
     private readonly HintsLine _hints;
+    private readonly Action? _onFirstSave;
     private Action? _cancelExpiry;
     private string? _shownHints;
 
@@ -61,8 +63,13 @@ internal sealed class MainWindow : Window
     /// Runs an action once after a delay on the UI thread, and returns a function that cancels it. Null uses the application's timers.
     /// Tests pass a fake, so that a message's expiry is driven without waiting.
     /// </param>
+    /// <param name="onFirstSave">Called after the file's first successful save, when it was new. The host records it in the recent list then.</param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
-    public MainWindow(OpenedFile file, Func<(PickOutcome Outcome, OpenedFile? File)> pickFile, Func<TimeSpan, Action, Action>? schedule = null)
+    public MainWindow(
+        OpenedFile file,
+        Func<(PickOutcome Outcome, OpenedFile? File)> pickFile,
+        Func<TimeSpan, Action, Action>? schedule = null,
+        Action? onFirstSave = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(pickFile);
@@ -70,6 +77,7 @@ internal sealed class MainWindow : Window
         _opened = file;
         _pickFile = pickFile;
         _schedule = schedule ?? ScheduleOnApp;
+        _onFirstSave = onFirstSave;
         _controller = new EditController(file.File);
 
         // No outer frame: the tree's frame, the detail line and the hints fill the window.
@@ -179,6 +187,11 @@ internal sealed class MainWindow : Window
             return true;
         }
 
+        if (!_tree.IsEditing && HandleStructureKey(key))
+        {
+            return true;
+        }
+
         if (key == Key.Esc)
         {
             return true;
@@ -219,13 +232,8 @@ internal sealed class MainWindow : Window
 
         switch (EditRules.KindOf(node, part))
         {
-            case EditorKind.Flip:
-                ApplyAndShow(
-                    new ChangeJsonType(node.Path, node.JsonKind == JsonValueKind.True ? JsonValueKind.False : JsonValueKind.True, null),
-                    node.Path);
-                break;
             case EditorKind.Type:
-                ShowMessage(EditRules.UseTypeKey, error: false);
+                ChangeTypeOf(node);
                 break;
             case EditorKind.None:
                 ShowMessage(EditRules.RefusalOf(part), error: false);
@@ -405,6 +413,403 @@ internal sealed class MainWindow : Window
         Refresh(result.Focus ?? fallback);
     }
 
+    // ----- Structure keys -----
+
+    /// <summary>
+    /// The structure keys of the tree: add (a, A, i, +), delete (d, Delete), move (Alt+Up/Down, K, J, Alt+Left/Right), change the type (t),
+    /// and duplicate (Ctrl+D). Returns false for a key they do not bind. They apply only while no field is open.
+    /// </summary>
+    private bool HandleStructureKey(Key key)
+    {
+        if (IsPlain(key, 'a'))
+        {
+            AddSibling(after: true);
+        }
+        else if (IsPlain(key, 'A'))
+        {
+            AddSibling(after: false);
+        }
+        else if (IsPlain(key, 'i'))
+        {
+            AddChild();
+        }
+        else if (IsPlain(key, '+'))
+        {
+            AddAttribute();
+        }
+        else if (IsPlain(key, 'd') || key == Key.Delete)
+        {
+            DeleteFocused();
+        }
+        else if (key == Key.CursorUp.WithAlt || IsPlain(key, 'K'))
+        {
+            MoveNodeBy(-1);
+        }
+        else if (key == Key.CursorDown.WithAlt || IsPlain(key, 'J'))
+        {
+            MoveNodeBy(1);
+        }
+        else if (key == Key.CursorLeft.WithAlt)
+        {
+            MoveAttributeBy(-1);
+        }
+        else if (key == Key.CursorRight.WithAlt)
+        {
+            MoveAttributeBy(1);
+        }
+        else if (IsPlain(key, 't'))
+        {
+            ChangeType();
+        }
+        else if (key == Key.D.WithCtrl)
+        {
+            DuplicateFocused();
+        }
+        else
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>Gets the node and part under the cursor. Returns false, with nothing set, when the tree shows nothing.</summary>
+    private bool TryCursor(out DocNode node, out DocPart part)
+    {
+        DocNode? cursorNode = _tree.CursorNode;
+        DocPart? cursorPart = _tree.CursorDocPart;
+        if (cursorNode is null || cursorPart is null)
+        {
+            node = null!;
+            part = null!;
+            return false;
+        }
+
+        node = cursorNode;
+        part = cursorPart;
+        return true;
+    }
+
+    private static bool IsAttributePart(DocPart part) => part.Kind is PartKind.AttributeName or PartKind.AttributeValue;
+
+    private static int AttributeCount(DocNode element) => element.Parts.Count(part => part.Kind == PartKind.AttributeName);
+
+    private string Describe(DocNode node, DocPart part) => PathText.Format(_controller.Document, node, part);
+
+    /// <summary>
+    /// a and A: a sibling after or before the cursor's node. On an attribute part, an attribute after or before that attribute. A new
+    /// element, container item or scalar item copies its sibling's shape with no dialog. Anything else asks for its kind.
+    /// </summary>
+    private void AddSibling(bool after)
+    {
+        if (!TryCursor(out DocNode node, out DocPart part))
+        {
+            return;
+        }
+
+        if (IsAttributePart(part))
+        {
+            AskAttribute(node, part.AttributeIndex + (after ? 1 : 0));
+            return;
+        }
+
+        DocNode? parent = node.Parent;
+        if (parent is null)
+        {
+            ShowMessage("the root has no siblings", error: false);
+            return;
+        }
+
+        int index = after ? _controller.Document.InsertionIndexAfter(node.Path) : _controller.Document.InsertionIndexBefore(node.Path);
+        if (IsShapeSource(node, parent))
+        {
+            AddShaped(node, parent, index);
+            return;
+        }
+
+        AskAdd(parent, index, (after ? "Add after " : "Add before ") + Describe(node, part));
+    }
+
+    /// <summary>i: a child at the end of the cursor's container or element, or an attribute when the cursor is on an element's name.</summary>
+    private void AddChild()
+    {
+        // i always adds a child, whichever part the cursor is on: the name part is where the cursor starts on an element,
+        // so giving i another meaning there would leave <a/> without a way to get a child. Attributes are added with +.
+        if (!TryCursor(out DocNode node, out DocPart part))
+        {
+            return;
+        }
+
+        if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray)
+        {
+            AskAdd(node, node.Children.Count, "Add to " + Describe(node, part));
+            return;
+        }
+
+        ShowMessage("this node has no children", error: false);
+    }
+
+    /// <summary>+: an attribute at the end of the element the cursor is in.</summary>
+    private void AddAttribute()
+    {
+        if (!TryCursor(out DocNode node, out _))
+        {
+            return;
+        }
+
+        if (node.Kind != NodeKind.XmlElement)
+        {
+            ShowMessage("attributes apply to XML elements only", error: false);
+            return;
+        }
+
+        AskAttribute(node, AttributeCount(node));
+    }
+
+    /// <summary>
+    /// True when a new node copies the shape of <paramref name="node"/>: an XML element inside an element, or a JSON scalar, object or
+    /// array inside an array. A JSON member has a key, so it asks for one.
+    /// </summary>
+    private static bool IsShapeSource(DocNode node, DocNode parent)
+    {
+        bool xmlElement = node.Kind == NodeKind.XmlElement && parent.Kind == NodeKind.XmlElement;
+        bool jsonItem = (node.Kind is NodeKind.JsonScalar or NodeKind.JsonObject or NodeKind.JsonArray) && parent.Kind == NodeKind.JsonArray;
+        return xmlElement || jsonItem;
+    }
+
+    /// <summary>Adds a node shaped like the sibling, and opens the editor on its first value.</summary>
+    private void AddShaped(DocNode node, DocNode parent, int index)
+    {
+        ShapedInsert shaped;
+        try
+        {
+            shaped = _controller.Document.ShapeLike(node.Path, parent.Path, index);
+        }
+        catch (ArgumentException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+            return;
+        }
+
+        if (_controller.Apply(shaped.Edit, out string? error) is null)
+        {
+            ShowMessage(error ?? "the node cannot be added", error: true);
+            return;
+        }
+
+        // The edit's focus is its last step's, so the new node is named by the shape, not by the result.
+        Refresh(shaped.Node);
+        OpenFirstValue(shaped.Node);
+    }
+
+    /// <summary>Shows the add dialog for a parent and inserts what it asks for. The new node's first value opens in the editor.</summary>
+    private void AskAdd(DocNode parent, int index, string title)
+    {
+        IReadOnlyList<AddKind> kinds = AddKinds.For(_controller.Document, parent);
+        if (kinds.Count == 0)
+        {
+            ShowMessage("nothing can be added here", error: false);
+            return;
+        }
+
+        NodePath? added = null;
+        bool done = AddDialog.Ask(Ui, title, kinds, parent, request =>
+        {
+            if (_controller.Apply(AddKinds.Build(parent, index, request), out string? error) is not { } result)
+            {
+                return error ?? "the node cannot be added";
+            }
+
+            added = result.Focus;
+            return null;
+        });
+        if (done && added is not null)
+        {
+            Refresh(added);
+            OpenFirstValue(added);
+        }
+    }
+
+    /// <summary>Asks for an attribute's name, inserts the attribute with an empty value, and opens the value's editor.</summary>
+    private void AskAttribute(DocNode element, int index)
+    {
+        bool done = TextPromptDialog.Ask(Ui, "Add attribute", "Name", string.Empty, name =>
+        {
+            if (_controller.Apply(new InsertAttribute(element.Path, index, name, string.Empty), out string? error) is null)
+            {
+                return error ?? "the attribute cannot be added";
+            }
+
+            return null;
+        });
+        if (!done)
+        {
+            return;
+        }
+
+        Refresh(element.Path);
+        DocNode? current = _controller.Document.Resolve(element.Path);
+        FirstValue.Target? value = current is null ? null : FirstValue.AttributeValue(current, index);
+        if (value is { } target && _tree.MoveCursorTo(target.Node.Path, isEnd: false, part: target.Part))
+        {
+            BeginEdit(multiline: false);
+        }
+    }
+
+    /// <summary>Moves the cursor to the first value of a node that was just inserted, and opens its editor, when it has one.</summary>
+    private void OpenFirstValue(NodePath node)
+    {
+        DocNode? created = _controller.Document.Resolve(node);
+        FirstValue.Target? target = created is null ? null : FirstValue.In(created);
+        if (target is { } value && _tree.MoveCursorTo(value.Node.Path, isEnd: false, part: value.Part))
+        {
+            BeginEdit(multiline: false);
+        }
+    }
+
+    /// <summary>d and Delete: the attribute under the cursor, or else the node, with no confirmation. Undo restores it.</summary>
+    private void DeleteFocused()
+    {
+        if (!TryCursor(out DocNode node, out DocPart part))
+        {
+            return;
+        }
+
+        if (IsAttributePart(part))
+        {
+            ApplyAndShow(new DeleteAttribute(node.Path, part.AttributeIndex), node.Path);
+            return;
+        }
+
+        ApplyAndShow(new DeleteNode(node.Path), node.Parent?.Path ?? node.Path);
+    }
+
+    /// <summary>Alt+Up/Down and K/J: the node moves among its siblings. At the end it says so.</summary>
+    private void MoveNodeBy(int delta)
+    {
+        if (!TryCursor(out DocNode node, out _))
+        {
+            return;
+        }
+
+        MoveNode? move = _controller.Document.MoveBy(node.Path, delta);
+        if (move is null)
+        {
+            ShowAtEnd(delta);
+            return;
+        }
+
+        ApplyAndShow(move, node.Path);
+    }
+
+    /// <summary>Alt+Left/Right: the attribute under the cursor moves among its element's attributes. At the end it says so.</summary>
+    private void MoveAttributeBy(int delta)
+    {
+        if (!TryCursor(out DocNode node, out DocPart part))
+        {
+            return;
+        }
+
+        if (!IsAttributePart(part))
+        {
+            ShowMessage("only an attribute moves with Alt+Left and Alt+Right", error: false);
+            return;
+        }
+
+        MoveAttribute? move = _controller.Document.MoveAttributeBy(node.Path, part.AttributeIndex, delta);
+        if (move is null)
+        {
+            ShowAtEnd(delta);
+            return;
+        }
+
+        ApplyAndShow(move, node.Path);
+    }
+
+    private void ShowAtEnd(int delta) => ShowMessage(delta < 0 ? "already first" : "already last", error: false);
+
+    private static readonly JsonValueKind[] TypeKinds =
+    [
+        JsonValueKind.String,
+        JsonValueKind.Number,
+        JsonValueKind.True,
+        JsonValueKind.False,
+        JsonValueKind.Null,
+        JsonValueKind.Object,
+        JsonValueKind.Array,
+    ];
+
+    private static readonly string[] TypeNames = ["string", "number", "true", "false", "null", "object", "array"];
+
+    /// <summary>
+    /// t: the type menu of a JSON value, with the current type chosen. A container that has children asks before its contents are
+    /// dropped. A number keeps the text when it is a valid number, else 0; a string keeps the text of a scalar, else is empty.
+    /// </summary>
+    private void ChangeType()
+    {
+        if (!TryCursor(out DocNode node, out _))
+        {
+            return;
+        }
+
+        ChangeTypeOf(node);
+    }
+
+    /// <summary>The type menu of a node, as <see cref="ChangeType"/> shows it. Enter on a JSON true, false or null opens it too.</summary>
+    private void ChangeTypeOf(DocNode node)
+    {
+        if (node.JsonKind is not { } current)
+        {
+            ShowMessage("types apply to JSON only", error: false);
+            return;
+        }
+
+        ConfigDocument doc = _controller.Document;
+        string target = PathText.Format(doc, node, null);
+        int? choice = ChoiceDialog.Ask(Ui, "Type of " + target, TypeNames, Array.IndexOf(TypeKinds, current));
+        if (choice is not { } picked || TypeKinds[picked] == current)
+        {
+            return;
+        }
+
+        JsonValueKind kind = TypeKinds[picked];
+        bool container = node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;
+        if (container && node.Children.Count > 0
+            && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
+        {
+            return;
+        }
+
+        string? value = kind switch
+        {
+            JsonValueKind.Number => NumberText(doc, node),
+            JsonValueKind.String => ScalarText(node) ?? string.Empty,
+            _ => null,
+        };
+        ApplyAndShow(new ChangeJsonType(node.Path, kind, value), node.Path);
+    }
+
+    private static string NumberText(ConfigDocument doc, DocNode node)
+    {
+        string? text = ScalarText(node);
+        JsonDialect dialect = doc.Format is JsonFormat json ? json.Dialect : JsonDialect.Json;
+        return text is not null && JsonSyntax.IsValidNumber(text, dialect) ? text : "0";
+    }
+
+    /// <summary>The value text of a scalar, as the tree shows it, or null for a container and for an XML node.</summary>
+    private static string? ScalarText(DocNode node) => node.Parts.FirstOrDefault(part => part.Kind == PartKind.Value)?.Value;
+
+    /// <summary>Ctrl+D: a copy of the node after it.</summary>
+    private void DuplicateFocused()
+    {
+        if (!TryCursor(out DocNode node, out _))
+        {
+            return;
+        }
+
+        ApplyAndShow(new DuplicateNode(node.Path), node.Path);
+    }
+
     // ----- Undo, redo, save -----
 
     private void Undo()
@@ -435,11 +840,17 @@ internal sealed class MainWindow : Window
 
     private void Save()
     {
+        bool wasNew = !_controller.File.Exists;
         SaveResult result = _controller.SaveFlow(AskExternalChange, ConfirmReload);
         switch (result.Outcome)
         {
             case SaveOutcome.Saved:
                 Refresh(null);
+                if (wasNew)
+                {
+                    _onFirstSave?.Invoke();
+                }
+
                 ShowMessage("Saved", error: false);
                 break;
             case SaveOutcome.Reloaded:

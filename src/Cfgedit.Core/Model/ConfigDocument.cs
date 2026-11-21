@@ -226,6 +226,22 @@ public sealed class ConfigDocument
     }
 
     /// <summary>
+    /// The insert of a node shaped like a sibling: the same kind and names, with the values emptied (see <see cref="SiblingShape"/>).
+    /// A JSON scalar copies as an empty value of its kind, and a JSON object as an object with its keys. An XML element copies its
+    /// name, attribute names, text and child element names. The insert goes at <paramref name="index"/> among the parent's children.
+    /// </summary>
+    /// <param name="sibling">The node to copy the shape of.</param>
+    /// <param name="parent">The node the new node goes into.</param>
+    /// <param name="index">The position among the parent's children, comments included (see <see cref="InsertionIndexAfter"/>).</param>
+    /// <exception cref="ArgumentException">A path names no node, or the sibling has no shape to copy in that parent (a JSON member needs a key).</exception>
+    public ShapedInsert ShapeLike(NodePath sibling, NodePath parent, int index)
+    {
+        ArgumentNullException.ThrowIfNull(sibling);
+        ArgumentNullException.ThrowIfNull(parent);
+        return SiblingShape.Build(this, sibling, parent, index, keepElement: null);
+    }
+
+    /// <summary>
     /// Moves a node one sibling unit up (<paramref name="delta"/> -1) or down (+1). A unit is an entry with its attached comments
     /// (see <see cref="InsertionIndexBefore"/>), and every other comment is a unit of its own. A comment moves alone. A neighbour
     /// that is part of the node's own unit (a comment attached to the same entry) is passed one child at a time.

@@ -10,9 +10,9 @@ internal static class Program
 {
     private static int Main(string[] args) => Run(args, Console.Out, Console.Error);
 
-    /// <summary>Runs the command line with the recent-files picker and the main window. Returns the process exit code.</summary>
+    /// <summary>Runs the command line with the recent-files picker, the main window and the new-file flow. Returns the process exit code.</summary>
     internal static int Run(string[] args, TextWriter stdout, TextWriter stderr) =>
-        Run(args, stdout, stderr, CfgeditHost.RunPicker, (file, recent) => CfgeditHost.Run(file, recent), LoadRecent);
+        Run(args, stdout, stderr, CfgeditHost.RunPicker, (file, recent) => CfgeditHost.Run(file, recent), LoadRecent, CfgeditHost.RunNew);
 
     /// <summary>
     /// Runs the command line. With no arguments, <paramref name="showPicker"/> is given the recent list (null when there is no store)
@@ -25,13 +25,18 @@ internal static class Program
     /// <param name="showPicker">Shows the picker over the given recent list.</param>
     /// <param name="runDocument">Runs the window of a loaded file, with the recent list that Ctrl+O picks from.</param>
     /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    /// <param name="runNew">
+    /// Runs the new-file flow for a path that does not exist, with the format named on the command line (or null) and the recent list
+    /// loader. Null uses <see cref="CfgeditHost.RunNew"/>.
+    /// </param>
     internal static int Run(
         string[] args,
         TextWriter stdout,
         TextWriter stderr,
         Action<RecentFiles?> showPicker,
         Action<OpenedFile, RecentFiles?> runDocument,
-        Func<RecentFiles?> loadRecent)
+        Func<RecentFiles?> loadRecent,
+        Action<string, IConfigFormat?, Func<RecentFiles?>>? runNew = null)
     {
         if (args is ["--version"])
         {
@@ -61,6 +66,22 @@ internal static class Program
             }
         }
 
+        // A path that does not exist starts the new-file flow, which asks inside the application whether to create it.
+        if (!File.Exists(path!) && !Directory.Exists(path!))
+        {
+            try
+            {
+                (runNew ?? CfgeditHost.RunNew)(path!, format, loadRecent);
+            }
+            catch (CfgeditException ex)
+            {
+                stderr.WriteLine("cfgedit: " + CfgeditHost.Describe(ex));
+                return 1;
+            }
+
+            return 0;
+        }
+
         OpenedFile file;
         try
         {
@@ -72,7 +93,7 @@ internal static class Program
             return 1;
         }
 
-        runDocument(file, RecordRecent(loadRecent, path!));
+        runDocument(file, CfgeditHost.RecordRecent(loadRecent, path!));
         return 0;
     }
 
@@ -112,21 +133,6 @@ internal static class Program
     {
         string? store = RecentFiles.DefaultStorePathFor("cfgedit");
         return store is null ? null : RecentFiles.Load(store);
-    }
-
-    // Moves an opened file to the front of the recent list and returns the list. Without a store location nothing is recorded and the
-    // result is null; a failed save is ignored.
-    private static RecentFiles? RecordRecent(Func<RecentFiles?> loadRecent, string path)
-    {
-        RecentFiles? recent = loadRecent();
-        if (recent is null)
-        {
-            return null;
-        }
-
-        recent.Add(path);
-        recent.TrySave();
-        return recent;
     }
 
     private static int Usage(TextWriter stderr)

@@ -17,10 +17,10 @@ namespace Cfgedit.Tests;
 /// window. Dialogs are answered by a watch whose timer runs inside the dialog's loop, and message expiry is driven by a fake timer.
 /// </summary>
 [Collection("Terminal GUI")]
-public sealed class EditingWindowTests : IDisposable
+public sealed partial class EditingWindowTests : IDisposable
 {
     private const string JsonText = "{\n  \"name\": \"web\",\n  \"port\": 8080\n}";
-    private const string TreeHints = "Enter Edit  Tab Next  ^Z Undo  ^S Save  ^O Open";
+    private const string TreeHints = "Enter Edit  Tab Next  a Add  d Del  t Type  ^Z Undo  ^S Save  ^O Open";
     private const string EditingHints = "Enter Commit  Esc Cancel  Tab Next  F4 Multi-line";
     private const string QuitHint = "^Q Quit";
 
@@ -255,24 +255,115 @@ public sealed class EditingWindowTests : IDisposable
     // ----- Flip, null, no editor -----
 
     [Fact]
-    public void Enter_on_a_json_boolean_flips_it()
+    public void Enter_on_a_json_boolean_opens_the_type_menu_with_its_type_chosen_and_never_flips_it()
     {
         OpenedFile file = Open("settings.json", "{\n  \"on\": true\n}");
+        int? preselected = null;
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter));
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the type menu",
+                    v => v is ChoiceDialog,
+                    v =>
+                    {
+                        preselected = ((ChoiceDialog)v).List.SelectedItem;
+                        PickItem(3)(v);
+                    },
+                    null);
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter);
+                dialog.Finish();
+            });
 
+        Assert.Equal(2, preselected);
         Assert.Equal("{\n  \"on\": false\n}", Text(session));
     }
 
     [Fact]
-    public void Enter_on_a_json_null_says_to_use_the_type_key()
+    public void F2_on_a_json_null_opens_the_type_menu_with_null_chosen_and_a_choice_commits_it()
     {
         OpenedFile file = Open("settings.json", "{\n  \"none\": null\n}");
+        int? preselected = null;
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter));
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the type menu",
+                    v => v is ChoiceDialog,
+                    v =>
+                    {
+                        preselected = ((ChoiceDialog)v).List.SelectedItem;
+                        PickItem(0)(v);
+                    },
+                    null);
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.F2);
+                dialog.Finish();
+            });
 
-        Assert.Equal("{\n  \"none\": null\n}", Text(session));
-        Assert.Equal("use t to change the type", session.Screens[^1].Text(22));
+        Assert.Equal(4, preselected);
+        Assert.Equal("{\n  \"none\": \"null\"\n}", Text(session));
+    }
+
+    [Fact]
+    public void Esc_in_the_type_menu_changes_nothing_and_adds_no_undo_entry()
+    {
+        const string text = "{\n  \"on\": true\n}";
+        OpenedFile file = Open("settings.json", text);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, v => v.NewKeyDownEvent(Key.Esc), null);
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter);
+                dialog.Finish();
+            },
+            (_, w) => Keys(w, Key.Z.WithCtrl));
+
+        Assert.Equal(text, Text(session));
+        Assert.Equal("Nothing to undo", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void Choosing_the_current_type_in_the_menu_is_a_no_op_with_no_undo_entry()
+    {
+        const string text = "{\n  \"on\": true\n}";
+        OpenedFile file = Open("settings.json", text);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(2), null);
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter);
+                dialog.Finish();
+            },
+            (_, w) => Keys(w, Key.Z.WithCtrl));
+
+        Assert.Equal(text, Text(session));
+        Assert.Equal("Nothing to undo", session.Screens[^1].Text(22));
     }
 
     [Fact]

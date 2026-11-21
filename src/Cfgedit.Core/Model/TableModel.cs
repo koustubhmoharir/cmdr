@@ -1,3 +1,5 @@
+using static Cfgedit.Core.Model.SiblingShape;
+
 namespace Cfgedit.Core.Model;
 
 /// <summary>The kinds of table column.</summary>
@@ -258,63 +260,13 @@ public sealed class TableModel
             throw new CfgeditException("there is no row " + afterRow + " to add after");
         }
 
+        // The row is shaped like the row it is added after (or the first row, for the top). Only the table's child-element columns
+        // are copied for an XML row; the shape itself is SiblingShape's, shared with the editor's add keys.
         DocNode source = _rowNodes[Math.Max(afterRow, 0)];
         int index = afterRow < 0
             ? Document.InsertionIndexBefore(_rowPaths[0])
             : Document.InsertionIndexAfter(_rowPaths[afterRow]);
-        var steps = new List<EditOp>();
-        switch (_shape)
-        {
-            case TableShape.JsonScalars:
-            {
-                (JsonValueKind kind, string? text) = EmptyValue(source.JsonKind!.Value);
-                steps.Add(new InsertNode(Container, index, new NewJsonValue(null, kind, text)));
-                break;
-            }
-            case TableShape.JsonObjects:
-            {
-                steps.Add(new InsertNode(Container, index, new NewJsonValue(null, JsonValueKind.Object, null)));
-                NodePath row = Container.Append(new ItemStep(CountBefore(index, child => child.Path.Steps[^1] is ItemStep)));
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                int position = 0;
-                foreach (DocNode member in source.Children)
-                {
-                    if (member.Path.Steps[^1] is not MemberStep step || !seen.Add(step.Key))
-                    {
-                        continue;
-                    }
-
-                    (JsonValueKind memberKind, string? memberText) = EmptyValue(member.JsonKind!.Value);
-                    steps.Add(new InsertNode(row, position++, new NewJsonValue(step.Key, memberKind, memberText)));
-                }
-
-                break;
-            }
-            default:
-            {
-                string name = ElementName(source);
-                List<(string Name, string Value)> attributes = source.Parts
-                    .Where(part => part.Kind == PartKind.AttributeName)
-                    .Select(part => (Name: part.Value, Value: string.Empty))
-                    .ToList();
-                string? text = TextPart(source) is not null ? string.Empty : null;
-                steps.Add(new InsertNode(Container, index, new NewXmlElement(name, attributes, text)));
-                NodePath row = Container.Append(new ElementStep(
-                    name, CountBefore(index, child => child.Kind == NodeKind.XmlElement && ElementName(child) == name)));
-                int position = 0;
-                foreach (DocNode child in source.Children)
-                {
-                    if (child.Kind == NodeKind.XmlElement && ColumnIndex(TableColumnKind.ChildElement, ElementName(child)) >= 0)
-                    {
-                        steps.Add(new InsertNode(row, position++, new NewXmlElement(ElementName(child), [], string.Empty)));
-                    }
-                }
-
-                break;
-            }
-        }
-
-        return new CompositeEdit(steps);
+        return SiblingShape.Build(Document, source.Path, Container, index, keepElement: child => ColumnIndex(TableColumnKind.ChildElement, ElementName(child)) >= 0).Edit;
     }
 
     /// <summary>The edit that deletes a row with its attached comments.</summary>
@@ -658,20 +610,6 @@ public sealed class TableModel
         return new InsertNode(rowNode.Path, index, new NewXmlElement(Columns[column].Name, [], value));
     }
 
-    private int CountBefore(int index, Func<DocNode, bool> predicate)
-    {
-        int count = 0;
-        for (int k = 0; k < index; k++)
-        {
-            if (predicate(_container.Children[k]))
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     private int ColumnIndex(TableColumnKind kind, string name)
     {
         for (int k = 0; k < Columns.Count; k++)
@@ -703,20 +641,6 @@ public sealed class TableModel
 
     // ----- Shared helpers -----
 
-    private static (JsonValueKind Kind, string? Text) EmptyValue(JsonValueKind kind)
-    {
-        return kind switch
-        {
-            JsonValueKind.String => (JsonValueKind.String, string.Empty),
-            JsonValueKind.Number => (JsonValueKind.Number, "0"),
-            JsonValueKind.True or JsonValueKind.False => (JsonValueKind.False, null),
-            JsonValueKind.Null => (JsonValueKind.Null, null),
-            JsonValueKind.Object => (JsonValueKind.Object, null),
-            JsonValueKind.Array => (JsonValueKind.Array, null),
-            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown JSON value kind."),
-        };
-    }
-
     private static bool IsScalar(JsonValueKind? kind)
     {
         return kind is JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null;
@@ -732,20 +656,10 @@ public sealed class TableModel
         return node.Children.Any(child => child.Kind == NodeKind.XmlElement);
     }
 
-    private static string ElementName(DocNode element)
-    {
-        return ((ElementStep)element.Path.Steps[^1]).Name;
-    }
-
     /// <summary>An element is simple when it is text-only or <c>&lt;a/&gt;</c>: it has a text part, or it has no end row.</summary>
     private static bool IsSimple(DocNode element)
     {
         return TextPart(element) is not null || element.EndParts.Count == 0;
-    }
-
-    private static DocPart? TextPart(DocNode node)
-    {
-        return node.Parts.FirstOrDefault(part => part.Kind == PartKind.Text);
     }
 
     private static DocPart ValuePart(DocNode node)

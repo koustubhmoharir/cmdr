@@ -20,8 +20,8 @@ public sealed class MainWindowTests : IDisposable
         "<configuration>\n  <appSettings>\n    <add key=\"a\" value=\"1\"/>\n    <add key=\"b\" value=\"2\"/>\n  </appSettings>\n</configuration>";
 
     // The tree's hints on the left, and the quit key at the right edge. At 40 columns the left part is cut with an ellipsis.
-    private const string HintsAt80 = "Enter Edit  Tab Next  ^Z Undo  ^S Save  ^O Open" + "                          " + "^Q Quit";
-    private const string HintsAt40 = "Enter Edit  Tab Next  ^Z Undo  ^\x2026^Q Quit";
+    private const string HintsAt80 = "Enter Edit  Tab Next  a Add  d Del  t Type  ^Z Undo  ^S Save  ^O Open" + "    " + "^Q Quit";
+    private const string HintsAt40 = "Enter Edit  Tab Next  a Add  d D\x2026^Q Quit";
 
     private readonly List<string> _folders = [];
 

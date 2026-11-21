@@ -18,10 +18,9 @@ internal enum EditorKind
     /// <summary>The multi-line editor dialog.</summary>
     Multiline,
 
-    /// <summary>A JSON boolean: Enter changes it to the other boolean.</summary>
-    Flip,
-
-    /// <summary>A JSON null: Enter asks for the type change, which is the t key.</summary>
+    /// <summary>
+    /// A JSON true, false or null: Enter and F2 open the type menu, with the current type chosen. Enter never changes a value directly.
+    /// </summary>
     Type,
 }
 
@@ -38,8 +37,6 @@ internal static class EditRules
     /// <summary>The message for a value that neither text control holds exactly, such as one with a lone CR.</summary>
     public const string TextModeOnly = "this value can only be edited in text mode (Ctrl+T)";
 
-    /// <summary>The message for Enter on a JSON null.</summary>
-    public const string UseTypeKey = "use t to change the type";
 
     /// <summary>
     /// True when a single-line field holds the text exactly: setting it and reading it back gives the same text, and it has no line break.
@@ -112,12 +109,7 @@ internal static class EditRules
 
         if (part.Kind == PartKind.Value)
         {
-            if (node.JsonKind is JsonValueKind.True or JsonValueKind.False)
-            {
-                return EditorKind.Flip;
-            }
-
-            if (node.JsonKind == JsonValueKind.Null)
+            if (node.JsonKind is JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null)
             {
                 return EditorKind.Type;
             }

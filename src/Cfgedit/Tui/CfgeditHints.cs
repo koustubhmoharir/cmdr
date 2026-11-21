@@ -20,6 +20,9 @@ internal static class CfgeditHints
     public static Hint Tree { get; } = KeyHints.Join(
         KeyHints.Bound(Key.Enter, "Enter Edit"),
         KeyHints.Bound(Key.Tab, "Tab Next"),
+        KeyHints.Bound(Key.A, "a Add"),
+        KeyHints.Bound(Key.D, "d Del"),
+        KeyHints.Bound(Key.T, "t Type"),
         KeyHints.Bound(Key.Z.WithCtrl, "^Z Undo"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));

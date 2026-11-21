@@ -69,13 +69,15 @@ public sealed class EditRulesTests
     }
 
     [Fact]
-    public void A_json_boolean_flips_and_a_json_null_asks_for_the_type_key()
+    public void A_json_boolean_and_a_json_null_open_the_type_menu_and_never_flip_or_edit_inline()
     {
-        ConfigDocument document = TreeFixtures.Parse("{\"on\": true, \"none\": null}", "json");
+        ConfigDocument document = TreeFixtures.Parse("{\"on\": true, \"off\": false, \"none\": null}", "json");
         DocNode on = TreeFixtures.Find(document, new ItemStep(0), new MemberStep("on", 0));
+        DocNode off = TreeFixtures.Find(document, new ItemStep(0), new MemberStep("off", 0));
         DocNode none = TreeFixtures.Find(document, new ItemStep(0), new MemberStep("none", 0));
 
-        Assert.Equal(EditorKind.Flip, EditRules.KindOf(on, ValueOf(document, "on")));
+        Assert.Equal(EditorKind.Type, EditRules.KindOf(on, ValueOf(document, "on")));
+        Assert.Equal(EditorKind.Type, EditRules.KindOf(off, ValueOf(document, "off")));
         Assert.Equal(EditorKind.Type, EditRules.KindOf(none, ValueOf(document, "none")));
     }
 

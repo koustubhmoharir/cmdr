@@ -943,8 +943,8 @@ model). It suppresses the obsolete warning as cmdr does.
     editor.
   - JSON member: a dialog asks for the key and type, and the value editor opens next for string and number.
   - Anything else: a dialog with the kinds allowed there.
-- **`i`** adds a child at the end: an element's or container's last child. On an XML ElementName part it adds an
-  attribute. **`+`** always adds an attribute to the focused element.
+- **`i`** adds a child at the end (an element's or container's last child) from any part of the node, so `<a/>` can get one too.
+  **`+`** adds an attribute to the focused element.
 - **`d` / Delete** delete the focused attribute when an attribute part is focused, otherwise the node, with no
   confirmation.
 - **Alt+Up/Down and `K`/`J`** use `MoveBy`. **Alt+Left/Right** use `MoveAttributeBy`.

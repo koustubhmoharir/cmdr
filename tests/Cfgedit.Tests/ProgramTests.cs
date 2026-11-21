@@ -1,4 +1,5 @@
 using Cfgedit;
+using Cfgedit.Core;
 using Cfgedit.Core.Model;
 using Cfgedit.Tui;
 using Shared.Core;
@@ -159,16 +160,38 @@ public sealed class ProgramTests : IDisposable
     }
 
     [Fact]
-    public void A_missing_file_is_reported_on_stderr_and_returns_1()
+    public void A_missing_file_starts_the_new_file_flow_with_the_format_named_and_returns_0()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"cfgedit-missing-{Guid.NewGuid():N}.json");
+
+        Outcome outcome = Run(path, "--format", "json5");
+
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal(string.Empty, outcome.Stderr);
+        Assert.Equal(new[] { $"{path}|json5" }, outcome.Created);
+        Assert.Empty(outcome.Ran);
+    }
+
+    [Fact]
+    public void A_missing_file_without_a_format_option_passes_no_format_to_the_new_file_flow()
     {
         string path = Path.Combine(Path.GetTempPath(), $"cfgedit-missing-{Guid.NewGuid():N}.json");
 
         Outcome outcome = Run(path);
 
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal(new[] { $"{path}|" }, outcome.Created);
+    }
+
+    [Fact]
+    public void A_new_file_flow_that_fails_is_reported_on_stderr_and_returns_1()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"cfgedit-missing-{Guid.NewGuid():N}.json");
+
+        Outcome outcome = RunWith(new CfgeditException("the new file cannot be made") { Path = path }, path);
+
         Assert.Equal(1, outcome.Code);
-        Assert.Equal(string.Empty, outcome.Stdout);
-        Assert.Equal($"cfgedit: {path}: the file does not exist" + Environment.NewLine, outcome.Stderr);
-        Assert.Empty(outcome.Ran);
+        Assert.Equal($"cfgedit: {path}: the new file cannot be made" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]
@@ -219,14 +242,20 @@ public sealed class ProgramTests : IDisposable
         Assert.Empty(RecentFiles.Load(_store).Files);
     }
 
-    private sealed record Outcome(int Code, string Stdout, string Stderr, List<OpenedFile> Ran, int Pickers);
+    // What the command line passed to the new-file flow, as "path|format name" (the format name is empty when none was given).
+    private sealed record Outcome(int Code, string Stdout, string Stderr, List<OpenedFile> Ran, int Pickers, List<string> Created);
 
-    // Runs the command line with the picker and the window replaced: the window's files are collected, and the recent list is the temp store.
-    private Outcome Run(params string[] args)
+    // Runs the command line with the picker, the window and the new-file flow replaced: the window's files and the new-file calls are
+    // collected, and the recent list is the temp store.
+    private Outcome Run(params string[] args) => RunWith(null, args);
+
+    // As Run, and when failNew is given, the new-file flow throws it.
+    private Outcome RunWith(CfgeditException? failNew, params string[] args)
     {
         var stdout = new StringWriter();
         var stderr = new StringWriter();
         var ran = new List<OpenedFile>();
+        var created = new List<string>();
         int pickers = 0;
         int code = Program.Run(
             args,
@@ -234,8 +263,16 @@ public sealed class ProgramTests : IDisposable
             stderr,
             _ => pickers++,
             (file, _) => ran.Add(file),
-            () => RecentFiles.Load(_store));
-        return new Outcome(code, stdout.ToString(), stderr.ToString(), ran, pickers);
+            () => RecentFiles.Load(_store),
+            (path, format, _) =>
+            {
+                created.Add($"{path}|{format?.Name ?? string.Empty}");
+                if (failNew is not null)
+                {
+                    throw failNew;
+                }
+            });
+        return new Outcome(code, stdout.ToString(), stderr.ToString(), ran, pickers, created);
     }
 
     private string TempFile(string name, string content)
