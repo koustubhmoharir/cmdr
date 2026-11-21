@@ -12,7 +12,7 @@ internal static class Program
 
     /// <summary>Runs the command line with the recent-files picker and the main window. Returns the process exit code.</summary>
     internal static int Run(string[] args, TextWriter stdout, TextWriter stderr) =>
-        Run(args, stdout, stderr, CfgeditHost.RunPicker, (file, recent) => CfgeditHost.Run(file.Document, file.Path, recent), LoadRecent);
+        Run(args, stdout, stderr, CfgeditHost.RunPicker, (file, recent) => CfgeditHost.Run(file, recent), LoadRecent);
 
     /// <summary>
     /// Runs the command line. With no arguments, <paramref name="showPicker"/> is given the recent list (null when there is no store)

@@ -1,4 +1,5 @@
 using Cfgedit.Core;
+using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
 using Cfgedit.Tui;
 
@@ -112,9 +113,9 @@ public sealed class CfgeditHostTests : IDisposable
     [Fact]
     public void Documents_run_in_the_order_they_were_chosen_and_the_loop_ends_with_the_first_run_that_chooses_nothing()
     {
-        var first = new OpenedFile("a.json", TreeFixtures.Parse("{}", "json"));
-        var second = new OpenedFile("b.json", TreeFixtures.Parse("{}", "json"));
-        var third = new OpenedFile("c.json", TreeFixtures.Parse("{}", "json"));
+        var first = Unsaved("a.json");
+        var second = Unsaved("b.json");
+        var third = Unsaved("c.json");
         var ran = new List<OpenedFile>();
 
         CfgeditHost.RunDocuments(first, file =>
@@ -129,7 +130,7 @@ public sealed class CfgeditHostTests : IDisposable
     [Fact]
     public void Choosing_the_document_that_is_open_runs_it_again()
     {
-        var only = new OpenedFile("a.json", TreeFixtures.Parse("{}", "json"));
+        var only = Unsaved("a.json");
         var ran = new List<OpenedFile>();
 
         CfgeditHost.RunDocuments(only, file =>
@@ -140,6 +141,9 @@ public sealed class CfgeditHostTests : IDisposable
 
         Assert.Equal([only, only], ran);
     }
+
+    // A document for a path that is not read: the new file of a format, which exists only in memory.
+    private static OpenedFile Unsaved(string name) => new(name, DocumentFile.CreateNew(name, Formats.ForPath(name)!, null));
 
     private string TempFile(string name, string content)
     {

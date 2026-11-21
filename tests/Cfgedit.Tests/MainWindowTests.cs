@@ -1,4 +1,5 @@
 using System.Text;
+using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
 using Cfgedit.Tui;
 using Terminal.Gui.App;
@@ -11,14 +12,18 @@ namespace Cfgedit.Tests;
 /// Keys go through the window, as the terminal sends them, and Ctrl+O and Ctrl+Q are checked against the picker's outcome.
 /// </summary>
 [Collection("Terminal GUI")]
-public sealed class MainWindowTests
+public sealed class MainWindowTests : IDisposable
 {
     private const string JsonText = "{\n  \"name\": \"web\",\n  \"port\": 8080\n}";
 
     private const string XmlText =
         "<configuration>\n  <appSettings>\n    <add key=\"a\" value=\"1\"/>\n    <add key=\"b\" value=\"2\"/>\n  </appSettings>\n</configuration>";
 
-    private const string Hints = "Space Fold  \x2190\x2192 Part  ^O Open  ^Q Quit";
+    // The tree's hints on the left, and the quit key at the right edge. At 40 columns the left part is cut with an ellipsis.
+    private const string HintsAt80 = "Enter Edit  Tab Next  ^Z Undo  ^S Save  ^O Open" + "                          " + "^Q Quit";
+    private const string HintsAt40 = "Enter Edit  Tab Next  ^Z Undo  ^\x2026^Q Quit";
+
+    private readonly List<string> _folders = [];
 
     [Fact]
     public void At_80_by_24_the_title_has_the_format_tag_the_frame_holds_the_tree_and_the_detail_and_hints_are_on_the_last_rows()
@@ -32,7 +37,7 @@ public sealed class MainWindowTests
         Assert.Equal("\x2570", screen.Cells[21][0].Grapheme);
         Assert.StartsWith("\x2502\x25BE {2}", screen.Text(1), StringComparison.Ordinal);
         Assert.Equal("$  object  2", screen.Text(22));
-        Assert.Equal(Hints, screen.Text(23));
+        Assert.Equal(HintsAt80, screen.Text(23));
     }
 
     [Fact]
@@ -44,7 +49,7 @@ public sealed class MainWindowTests
 
         Assert.Contains("settings.json [jsonc]", screen.Text(0), StringComparison.Ordinal);
         Assert.Equal("$  object  2", screen.Text(10));
-        Assert.Equal(Hints, screen.Text(11));
+        Assert.Equal(HintsAt40, screen.Text(11));
     }
 
     [Fact]
@@ -145,10 +150,33 @@ public sealed class MainWindowTests
 
     // ----- Helpers -----
 
-    private static OpenedFile Opened(string name, string text)
+    private OpenedFile Opened(string name, string text)
     {
+        string path = TempFile(name, text);
         IConfigFormat format = Formats.ForPath(name) ?? throw new ArgumentException(name, nameof(name));
-        return new OpenedFile(Path.Combine(Path.GetTempPath(), name), ConfigDocument.Load(Encoding.UTF8.GetBytes(text), null, format));
+        return new OpenedFile(path, DocumentFile.Open(path, format));
+    }
+
+    private string TempFile(string name, string content)
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"cfgedit-window-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        _folders.Add(dir);
+        string path = Path.Combine(dir, name);
+        File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
+
+    /// <inheritdoc/>
+    public void Dispose()
+    {
+        foreach (string dir in _folders)
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
     }
 
     /// <summary>Runs the window at a size, with the picker answering Back. Each step gets the window; the screens are one after the first draw and one after each step.</summary>

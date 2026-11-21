@@ -27,6 +27,12 @@ internal static class TreeColors
     private static readonly Color NumberValue = new(0xC6, 0x78, 0xDD);
 
     /// <summary>
+    /// The foreground of an error message. It is logvu's error colour (xterm 167): a muted red, since a named ANSI red is too glaring
+    /// on the detail line.
+    /// </summary>
+    public static readonly Color Error = new(0xD7, 0x5F, 0x5F);
+
+    /// <summary>
     /// The background of the cursor row: the tint of the terminal's default colors when it reported them, else of the view's normal
     /// colors when they are explicit, else <see cref="FallbackTint"/>.
     /// </summary>

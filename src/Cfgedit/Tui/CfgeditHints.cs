@@ -13,12 +13,26 @@ internal static class CfgeditHints
     private static Hint OpenFile { get; } = KeyHints.Concat(
         KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file"));
 
-    /// <summary>The key hints of the main window.</summary>
+    /// <summary>
+    /// The key hints of the main window, with no editor open. The quit key is the right part (see <see cref="Quit"/>), so it stays on
+    /// the row when the left part is cut.
+    /// </summary>
     public static Hint Tree { get; } = KeyHints.Join(
-        KeyHints.Bound(Key.Space, "Space Fold"),
-        KeyHints.Concat(KeyHints.Bound(Key.CursorLeft, "\x2190"), KeyHints.Bound(Key.CursorRight, "\x2192"), KeyHints.Plain(" Part")),
-        KeyHints.Concat(KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open")),
-        KeyHints.Concat(KeyHints.Bound(Key.Q.WithCtrl, "^Q"), KeyHints.Plain(" Quit")));
+        KeyHints.Bound(Key.Enter, "Enter Edit"),
+        KeyHints.Bound(Key.Tab, "Tab Next"),
+        KeyHints.Bound(Key.Z.WithCtrl, "^Z Undo"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
+        KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
+
+    /// <summary>The key hints while the inline editor is open.</summary>
+    public static Hint Editing { get; } = KeyHints.Join(
+        KeyHints.Bound(Key.Enter, "Enter Commit"),
+        KeyHints.Bound(Key.Esc, "Esc Cancel"),
+        KeyHints.Bound(Key.Tab, "Tab Next"),
+        KeyHints.Bound(Key.F4, "F4 Multi-line"));
+
+    /// <summary>The quit key, shown at the right edge of the main window's hints.</summary>
+    public static Hint Quit { get; } = KeyHints.Bound(Key.Q.WithCtrl, "^Q Quit");
 
     /// <summary>The key hints of the picker at startup. Esc and Ctrl+Q quit.</summary>
     public static Hint Picker { get; } = KeyHints.Join(

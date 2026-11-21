@@ -28,6 +28,9 @@ internal sealed class TreeView : View
     /// <summary>The display lines the wheel scrolls per event.</summary>
     internal const int WheelLines = 3;
 
+    /// <summary>A part of a row: the row's node, whether the row is the end row, and the part's index in the row.</summary>
+    internal sealed record PartPosition(NodePath Path, bool IsEnd, int Part);
+
     /// <summary>The columns of a fold glyph and the space after it.</summary>
     private const int FoldColumns = 2;
 
@@ -51,6 +54,12 @@ internal sealed class TreeView : View
 
     /// <summary>Raised after the cursor moves, or the document or the collapsed set changes, so that the detail line can follow.</summary>
     public event Action? CursorChanged;
+
+    /// <summary>Raised when a key reaches the tree, before it is handled, so that the window can clear a transient message.</summary>
+    public event Action? KeyPressed;
+
+    /// <summary>The inline editor over the cursor's part, or null when no editor is open.</summary>
+    private InlineEditor? _editor;
 
     /// <summary>The document shown, or null before one is set.</summary>
     public ConfigDocument? Document => _document;
@@ -94,6 +103,120 @@ internal sealed class TreeView : View
     /// <summary>The collapsed nodes, by path.</summary>
     internal IReadOnlySet<NodePath> Collapsed => _collapsed;
 
+    /// <summary>True while the inline editor is open. The tree then takes no keys and no mouse events: the field does.</summary>
+    internal bool IsEditing => _editor is not null;
+
+    /// <summary>The text of the inline editor, or null when none is open.</summary>
+    internal string? EditorText => _editor?.Text;
+
+    /// <summary>
+    /// Opens the inline editor over the cursor's part. The field starts at the part's first column on its display line, runs to the right
+    /// edge, and takes the focus. The part's line is scrolled into view first.
+    /// </summary>
+    /// <param name="text">The text the field starts with.</param>
+    /// <param name="onKey">Handles the keys of the field first (see <see cref="InlineEditor"/>).</param>
+    /// <exception cref="InvalidOperationException">An editor is already open, or the cursor is on no part.</exception>
+    internal InlineEditor OpenEditor(string text, Func<Key, bool> onKey)
+    {
+        ArgumentNullException.ThrowIfNull(onKey);
+        if (_editor is not null)
+        {
+            throw new InvalidOperationException("An editor is already open.");
+        }
+
+        if (_rows.Count == 0 || _part >= LayoutOf(_row).Parts.Count)
+        {
+            throw new InvalidOperationException("The cursor is on no part.");
+        }
+
+        ScrollPartIntoView();
+        var editor = new InlineEditor(text, onKey);
+        _editor = editor;
+        Add(editor);
+        PositionEditor();
+        editor.SetFocus();
+        SetNeedsDraw();
+        return editor;
+    }
+
+    /// <summary>Closes the inline editor, if one is open, and returns the focus to the tree.</summary>
+    internal void CloseEditor()
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        InlineEditor editor = _editor;
+        _editor = null;
+        Remove(editor);
+        editor.Dispose();
+        SetFocus();
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Moves the cursor to a part of a visible row, and makes that the preferred part. Returns false, and does nothing, when the node has no
+    /// visible row of that kind.
+    /// </summary>
+    internal bool MoveCursorTo(NodePath path, bool isEnd, int part)
+    {
+        int row = IndexOf(path, isEnd);
+        if (row < 0)
+        {
+            return false;
+        }
+
+        _row = row;
+        _part = _preferred = ClampPart(_row, part);
+        EnsureCursorVisible();
+        SetNeedsDraw();
+        Notify();
+        return true;
+    }
+
+    /// <summary>
+    /// The next part after the cursor (or the previous one, for a negative direction) that <paramref name="accept"/> takes, in visible-row
+    /// order. Rows that are not visible are not walked. Null when no part after the cursor is taken.
+    /// </summary>
+    /// <param name="direction">1 for the next part, -1 for the previous.</param>
+    /// <param name="accept">Takes a node and one of its parts.</param>
+    internal PartPosition? FindPart(int direction, Func<DocNode, DocPart, bool> accept)
+    {
+        ArgumentNullException.ThrowIfNull(accept);
+        if (direction == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(direction), direction, "The direction must not be zero.");
+        }
+
+        if (_rows.Count == 0)
+        {
+            return null;
+        }
+
+        int row = _row;
+        int part = _part + Math.Sign(direction);
+        while (row >= 0 && row < _rows.Count)
+        {
+            IReadOnlyList<DocPart> parts = PartsOf(row);
+            for (; part >= 0 && part < parts.Count; part += Math.Sign(direction))
+            {
+                if (accept(_rows[row].Node, parts[part]))
+                {
+                    return new PartPosition(_rows[row].Node.Path, _rows[row].IsEnd, part);
+                }
+            }
+
+            row += Math.Sign(direction);
+            if (row >= 0 && row < _rows.Count)
+            {
+                part = direction > 0 ? 0 : PartsOf(row).Count - 1;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>
     /// Shows a document. The first document gets the initial collapsed set (see <see cref="DocRows.Initial"/>); a later one keeps the
     /// collapsed set of the document it replaces (see <see cref="DocRows.Retain"/>), so an edit keeps the folds the user made. The cursor
@@ -130,7 +253,7 @@ internal sealed class TreeView : View
     /// <param name="key">The key.</param>
     internal bool HandleKey(Key key)
     {
-        if (_document is null || _rows.Count == 0)
+        if (_document is null || _rows.Count == 0 || IsEditing)
         {
             return false;
         }
@@ -206,7 +329,7 @@ internal sealed class TreeView : View
     /// <returns><c>true</c> when the event was handled.</returns>
     internal bool HandleMouse(Mouse mouse)
     {
-        if (_document is null || _rows.Count == 0)
+        if (_document is null || _rows.Count == 0 || IsEditing)
         {
             return false;
         }
@@ -261,7 +384,11 @@ internal sealed class TreeView : View
     }
 
     /// <inheritdoc/>
-    protected override bool OnKeyDown(Key key) => HandleKey(key) || base.OnKeyDown(key);
+    protected override bool OnKeyDown(Key key)
+    {
+        KeyPressed?.Invoke();
+        return HandleKey(key) || base.OnKeyDown(key);
+    }
 
     /// <inheritdoc/>
     protected override bool OnMouseEvent(Mouse mouse) => HandleMouse(mouse) || base.OnMouseEvent(mouse);
@@ -285,6 +412,7 @@ internal sealed class TreeView : View
         }
 
         ClampTop();
+        PositionEditor();
         Color tint = TreeColors.CursorRowBackground(normal, App?.Driver?.DefaultAttribute);
         int y = 0;
         int row = RowAt(_top, out int subLine);
@@ -454,6 +582,40 @@ internal sealed class TreeView : View
         }
 
         ClampTop();
+    }
+
+    /// <summary>Scrolls so that the display line of the cursor's part is in view. Used before the inline editor opens over it.</summary>
+    private void ScrollPartIntoView()
+    {
+        int line = LineStartOf(_row) + LayoutOf(_row).Parts[_part].Line;
+        if (line < _top)
+        {
+            _top = line;
+        }
+        else if (line >= _top + ViewportHeight)
+        {
+            _top = line - ViewportHeight + 1;
+        }
+
+        ClampTop();
+    }
+
+    /// <summary>
+    /// Places the inline editor over the cursor's part: on the part's display line, from the part's first column. A part that the width cuts
+    /// to nothing starts at the last column. Does nothing when no editor is open.
+    /// </summary>
+    private void PositionEditor()
+    {
+        if (_editor is null || _rows.Count == 0 || _part >= LayoutOf(_row).Parts.Count)
+        {
+            return;
+        }
+
+        PartRange range = LayoutOf(_row).Parts[_part];
+        int x = Math.Clamp(range.Start, 0, Math.Max(0, Viewport.Width - 1));
+        int y = LineStartOf(_row) + range.Line - _top;
+        _editor.X = x;
+        _editor.Y = y;
     }
 
     private void Notify() => CursorChanged?.Invoke();

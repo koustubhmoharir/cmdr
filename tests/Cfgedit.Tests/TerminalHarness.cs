@@ -92,6 +92,20 @@ internal static class TerminalHarness
         return screens;
     }
 
+    /// <summary>
+    /// Lays out and draws the application now, and captures the screen. For a check that runs while a dialog is open: a dialog's modal loop
+    /// runs the timers, so a watch can read the screen there, where the steps cannot.
+    /// </summary>
+    /// <param name="app">The running application.</param>
+    /// <param name="captured">The view whose attributes the screen reports (the focus and normal roles).</param>
+    /// <param name="width">The screen width in columns.</param>
+    /// <param name="height">The screen height in rows.</param>
+    public static TerminalScreen Snapshot(IApplication app, View captured, int width, int height)
+    {
+        app.LayoutAndDraw();
+        return Capture(app, captured, width, height);
+    }
+
     private static TerminalScreen Capture(IApplication app, View content, int width, int height)
     {
         var driver = app.Driver!;

@@ -1,4 +1,5 @@
 using Cfgedit.Core;
+using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
 using Cfgedit.Core.Text;
 using Shared.Core;
@@ -25,20 +26,18 @@ internal static class CfgeditHost
     /// <summary>
     /// Runs the main window of a document until the user quits. Ctrl+O can switch to another file from <paramref name="recent"/>.
     /// </summary>
-    /// <param name="document">The document to show first.</param>
-    /// <param name="path">The file the document was read from.</param>
+    /// <param name="file">The file to show first, with its document.</param>
     /// <param name="recent">The recent list that the picker uses, or null when there is no store location.</param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
-    public static void Run(ConfigDocument document, string path, RecentFiles? recent)
+    public static void Run(OpenedFile file, RecentFiles? recent)
     {
-        ArgumentNullException.ThrowIfNull(document);
-        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(file);
 
         IApplication app = Application.Create();
         try
         {
             app.Init();
-            RunDocuments(new OpenedFile(path, document), next => RunDocument(app, next, recent));
+            RunDocuments(file, next => RunDocument(app, next, recent));
         }
         finally
         {
@@ -116,11 +115,13 @@ internal static class CfgeditHost
     /// <exception cref="CfgeditException">The file cannot be read, the format cannot be found, or the text does not parse.</exception>
     internal static OpenedFile Load(string path, IConfigFormat? format)
     {
+        // The bytes are read here for the messages about the file (missing, a folder, unreadable) and for sniffing. The document is then
+        // opened with DocumentFile, which keeps the snapshot the save check needs.
         byte[] bytes = ReadBytes(path);
         IConfigFormat resolved = format ?? Formats.ForPath(path) ?? Sniff(bytes, path);
         try
         {
-            return new OpenedFile(path, ConfigDocument.Load(bytes, path, resolved));
+            return new OpenedFile(path, DocumentFile.Open(path, resolved));
         }
         catch (CfgeditException ex) when (ex.Path is null)
         {
