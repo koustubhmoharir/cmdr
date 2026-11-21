@@ -1,5 +1,7 @@
+using Cfgedit.Core;
 using Cfgedit.Core.Json;
 using Cfgedit.Core.Model;
+using Cfgedit.Core.Text;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
@@ -48,11 +50,18 @@ internal sealed class MainWindow : Window
     private readonly EditController _controller;
     private readonly FrameView _frame;
     private readonly TreeView _tree;
+    private readonly TextModeView _textView;
     private readonly DetailLine _detail;
     private readonly HintsLine _hints;
     private readonly Action? _onFirstSave;
     private Action? _cancelExpiry;
     private string? _shownHints;
+
+    // True while the text is shown read-only: the view's text does not round-trip to the file's text (mixed line breaks).
+    private bool _textReadOnly;
+
+    // True while the window sets the view's text itself, so that the change is not read back as an edit.
+    private bool _showingText;
 
     /// <summary>
     /// Creates the window over a file, with the tree's cursor at its start.
@@ -84,6 +93,7 @@ internal sealed class MainWindow : Window
         BorderStyle = LineStyle.None;
 
         _tree = new TreeView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _textView = new TextModeView { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(), Visible = false };
         _frame = new FrameView
         {
             BorderStyle = LineStyle.Rounded,
@@ -92,7 +102,7 @@ internal sealed class MainWindow : Window
             Width = Dim.Fill(),
             Height = Dim.Fill(2),
         };
-        _frame.Add(_tree);
+        _frame.Add(_tree, _textView);
 
         _detail = new DetailLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
@@ -100,14 +110,42 @@ internal sealed class MainWindow : Window
 
         _tree.CursorChanged += ShowDetail;
         _tree.KeyPressed += ClearMessage;
-        _tree.SetDocument(file.Document, null);
-        UpdateTitle();
-        ShowHints();
-        _tree.SetFocus();
+        _textView.ContentsChanged += (_, _) =>
+        {
+            if (_showingText)
+            {
+                return;
+            }
+
+            SyncText();
+            UpdateTitle();
+        };
+
+        if (_controller.Mode == EditMode.Tree)
+        {
+            _tree.SetDocument(_controller.Document, null);
+            _tree.SetFocus();
+            UpdateTitle();
+            ShowHints();
+            return;
+        }
+
+        // A file that does not parse opens in text mode, with the cursor at the error.
+        ShowText(file.File.ParseError is { } error ? ErrorOffset(error) : 0);
+        if (file.File.ParseError is { } parseError)
+        {
+            ShowMessage(EditController.Describe(parseError), error: true);
+        }
     }
 
     /// <summary>The tree, for the tests.</summary>
     internal TreeView Tree => _tree;
+
+    /// <summary>The text view of text mode, for the tests.</summary>
+    internal TextModeView TextView => _textView;
+
+    /// <summary>The controller, for the tests.</summary>
+    internal EditController Controller => _controller;
 
     /// <summary>The detail line, for the tests.</summary>
     internal DetailLine Detail => _detail;
@@ -128,8 +166,19 @@ internal sealed class MainWindow : Window
     protected override bool OnKeyDown(Key key)
     {
         ClearMessage();
+        if (_controller.Mode == EditMode.Text)
+        {
+            return HandleTextKey(key);
+        }
+
         if (_tree.IsEditing && IsLeavingKey(key) && !CommitInline())
         {
+            return true;
+        }
+
+        if (key == Key.T.WithCtrl)
+        {
+            EnterTextMode();
             return true;
         }
 
@@ -202,7 +251,198 @@ internal sealed class MainWindow : Window
 
     private static bool IsLeavingKey(Key key) =>
         key == Key.Q.WithCtrl || key == Key.O.WithCtrl || key == Key.S.WithCtrl || key == Key.Z.WithCtrl || key == Key.Y.WithCtrl
-        || key == Key.R.WithCtrl;
+        || key == Key.R.WithCtrl || key == Key.T.WithCtrl;
+
+    /// <summary>
+    /// The keys in text mode. F5 and Ctrl+T reparse (Ctrl+T also switches back to the tree when the text parses), Ctrl+S saves, Ctrl+Q and
+    /// Ctrl+O use the unsaved-changes flow, and Esc does nothing. Every other key is the text view's: typing, its own undo and redo.
+    /// </summary>
+    private bool HandleTextKey(Key key)
+    {
+        SyncText();
+        if (key == Key.F5 || key == Key.T.WithCtrl)
+        {
+            ReparseText();
+            return true;
+        }
+
+        if (key == Key.S.WithCtrl)
+        {
+            SaveFromText();
+            return true;
+        }
+
+        if (key == Key.Q.WithCtrl)
+        {
+            Quit();
+            return true;
+        }
+
+        if (key == Key.O.WithCtrl)
+        {
+            OpenPicker();
+            return true;
+        }
+
+        if (key == Key.Esc)
+        {
+            return true;
+        }
+
+        return base.OnKeyDown(key);
+    }
+
+    // ----- Text mode -----
+
+    /// <summary>Ctrl+T in the tree: the text of the document, with the cursor at the focused part's place in it.</summary>
+    private void EnterTextMode()
+    {
+        int offset = _tree.CursorDocPart?.Start ?? _tree.CursorNode?.Start ?? 0;
+        _controller.EnterText(offset);
+        ShowText(_controller.CursorOffset);
+    }
+
+    /// <summary>
+    /// Shows the text in the text view, with the cursor at an offset. The text is read-only when the view's text does not come back
+    /// as the file's text, which is the case when the file mixes line breaks.
+    /// </summary>
+    private void ShowText(int offset)
+    {
+        SourceText text = _controller.Text!;
+        _showingText = true;
+        try
+        {
+            _textView.Text = text.Text;
+            _textReadOnly = TextModeRules.WithNewline(_textView.Text, _controller.Newline) != text.Text;
+            _textView.ReadOnly = _textReadOnly;
+            MoveTextCursor(offset);
+        }
+        finally
+        {
+            _showingText = false;
+        }
+
+        _tree.Visible = false;
+        _textView.Visible = true;
+        _textView.SetFocus();
+        UpdateTitle();
+        ShowHints();
+        if (_textReadOnly)
+        {
+            ShowMessage("text mode is read-only: the file mixes line endings, and editing it here would change them", error: false);
+        }
+    }
+
+    /// <summary>Shows the tree, with the focus on a node (or the document when null), and the document as it is.</summary>
+    private void ShowTree(NodePath? focus)
+    {
+        _textReadOnly = false;
+        _textView.Visible = false;
+        _tree.Visible = true;
+        _tree.SetDocument(_controller.Document, focus);
+        _tree.SetFocus();
+        UpdateTitle();
+        ShowHints();
+    }
+
+    /// <summary>Shows whichever mode the controller is in: the tree with its focus, or the text.</summary>
+    private void ShowMode(NodePath? focus)
+    {
+        if (_controller.Mode == EditMode.Tree)
+        {
+            ShowTree(focus);
+            return;
+        }
+
+        ShowText(_controller.CursorOffset);
+    }
+
+    /// <summary>Takes the view's text and cursor into the controller. Nothing is taken while the text is read-only, so it stays the file's text.</summary>
+    private void SyncText()
+    {
+        if (_controller.Mode != EditMode.Text || _textReadOnly)
+        {
+            return;
+        }
+
+        _controller.SetText(_textView.Text, _textView.CurrentRow, _textView.CurrentColumn);
+    }
+
+    /// <summary>Moves the text view's cursor to an offset in the text.</summary>
+    private void MoveTextCursor(int offset)
+    {
+        (int row, int column) = TextModeRules.PositionOf(_controller.Text!.Text, _controller.Newline, offset);
+        _textView.InsertionPoint = new (column, row);
+    }
+
+    /// <summary>The offset in the text of a parse error's line and column, or the end of the text when the position is past it.</summary>
+    private int ErrorOffset(CfgeditException error)
+    {
+        SourceText text = _controller.Text!;
+        if (error.Line is not int line)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return text.GetOffset(new LinePosition(line, error.Column ?? 1));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return text.Text.Length;
+        }
+    }
+
+    /// <summary>
+    /// F5 and Ctrl+T: parses the text. A text that parses shows the tree, with the focus on the node under the cursor. One that does not
+    /// stays in text mode, with the cursor at the error and its message on the message line.
+    /// </summary>
+    private void ReparseText()
+    {
+        NodePath? focus = _controller.Reparse(out CfgeditException? error);
+        if (error is null)
+        {
+            ShowTree(focus);
+            return;
+        }
+
+        MoveTextCursor(ErrorOffset(error));
+        ShowMessage(EditController.Describe(error), error: true);
+    }
+
+    /// <summary>
+    /// Ctrl+S in text mode: the save flow of the text. The text parses, or the user agrees to save it as it is, which is then asked for
+    /// with the error in the question.
+    /// </summary>
+    private void SaveFromText()
+    {
+        bool wasNew = !_controller.File.Exists;
+        SaveResult result = _controller.TextSaveFlow(AskExternalChange, ConfirmReload, AskUnparsedSave);
+        ShowSaveResult(result, wasNew);
+        SyncMode();
+    }
+
+    /// <summary>
+    /// Shows the mode the controller is in when the window shows the other one. A flow can parse the text (which switches to the tree) and
+    /// then be cancelled, so the window checks after each flow.
+    /// </summary>
+    private void SyncMode()
+    {
+        if (_textView.Visible != (_controller.Mode == EditMode.Text))
+        {
+            ShowMode(null);
+        }
+    }
+
+    /// <summary>The question for text that does not parse. The cursor goes to the error, and Save is the default.</summary>
+    private bool AskUnparsedSave(CfgeditException error)
+    {
+        string description = EditController.Describe(error);
+        MoveTextCursor(ErrorOffset(error));
+        ShowMessage(description, error: true);
+        return Confirm.Choose(Ui, "Save", $"{description}. Save anyway?", "Cancel", "Save") == 1;
+    }
 
     private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;
 
@@ -841,20 +1081,34 @@ internal sealed class MainWindow : Window
     private void Save()
     {
         bool wasNew = !_controller.File.Exists;
-        SaveResult result = _controller.SaveFlow(AskExternalChange, ConfirmReload);
+        ShowSaveResult(_controller.SaveFlow(AskExternalChange, ConfirmReload), wasNew);
+    }
+
+    /// <summary>
+    /// Shows what a save flow did: the mode the controller is in now (a reload of a file that no longer parses returns to text), and the
+    /// message. A save of text that does not parse says so, in the error style.
+    /// </summary>
+    private void ShowSaveResult(SaveResult result, bool wasNew)
+    {
         switch (result.Outcome)
         {
             case SaveOutcome.Saved:
-                Refresh(null);
+                ShowMode(null);
                 if (wasNew)
                 {
                     _onFirstSave?.Invoke();
                 }
 
+                if (_controller.File.ParseError is { } parseError)
+                {
+                    ShowMessage("Saved, but it does not parse: " + EditController.Describe(parseError), error: true);
+                    break;
+                }
+
                 ShowMessage("Saved", error: false);
                 break;
             case SaveOutcome.Reloaded:
-                Refresh(null);
+                ShowMode(null);
                 ShowMessage("Reloaded", error: false);
                 break;
             case SaveOutcome.Failed:
@@ -899,11 +1153,11 @@ internal sealed class MainWindow : Window
     /// </summary>
     private CloseOutcome CloseOrKeep(string action)
     {
-        CloseResult result = _controller.CloseFlow(() => AskUnsaved(action), AskExternalChange, ConfirmReload);
+        CloseResult result = _controller.CloseFlow(() => AskUnsaved(action), AskExternalChange, ConfirmReload, AskUnparsedSave);
         switch (result.Outcome)
         {
             case CloseOutcome.Reloaded:
-                Refresh(null);
+                ShowMode(null);
                 ShowMessage("Reloaded", error: false);
                 break;
             case CloseOutcome.Failed:
@@ -912,6 +1166,7 @@ internal sealed class MainWindow : Window
                 break;
         }
 
+        SyncMode();
         return result.Outcome;
     }
 
@@ -964,7 +1219,8 @@ internal sealed class MainWindow : Window
     private void UpdateTitle()
     {
         string dirty = _controller.IsDirty ? "*" : string.Empty;
-        _frame.Title = $"{FileName}{dirty} [{_controller.Document.Format.Name}]";
+        string mode = _controller.Mode == EditMode.Tree ? string.Empty : _textReadOnly ? " [text, read-only]" : " [text]";
+        _frame.Title = $"{FileName}{dirty} [{_controller.File.Format.Name}]{mode}";
     }
 
     // ----- Messages -----
@@ -1007,7 +1263,9 @@ internal sealed class MainWindow : Window
 
     private void ShowHints()
     {
-        Hint hint = _tree.IsEditing ? CfgeditHints.Editing : CfgeditHints.Tree;
+        Hint hint = _controller.Mode == EditMode.Text
+            ? CfgeditHints.TextMode
+            : _tree.IsEditing ? CfgeditHints.Editing : CfgeditHints.Tree;
         if (hint.Text == _shownHints)
         {
             return;

@@ -1,6 +1,7 @@
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
+using Cfgedit.Core.Text;
 
 namespace Cfgedit.Tui;
 
@@ -73,54 +74,122 @@ public enum CloseOutcome
 public sealed record CloseResult(CloseOutcome Outcome, string? Error);
 
 /// <summary>
-/// The state of one open file, with no UI types: its <see cref="DocumentFile"/>, its edit history, and the last message. The UI calls
-/// these methods and shows the results. Each confirmation is a delegate, so the flows can be tested without dialogs. The default
-/// button of each confirmation is the action the user started, and the UI sets it.
+/// The state of one open file, with no UI types: its <see cref="DocumentFile"/>, its edit history, the text mode, and the last message.
+/// The file is in tree mode, where edits go through the history, or in text mode, where the text is the view's text and edits are
+/// typed into it. A file that does not parse starts in text mode, and a file in text mode becomes a tree again when its text parses.
+/// The UI calls these methods and shows the results. Each confirmation is a delegate, so the flows can be tested without dialogs. The
+/// default button of each confirmation is the action the user started, and the UI sets it.
 /// </summary>
+/// <remarks>
+/// Dirty means the current text's encoded bytes differ from the bytes last loaded or saved, in either mode. The history is kept for
+/// the tree; a text-mode edit that parses is recorded as one step with <see cref="EditHistory.RecordExternal"/>.
+/// </remarks>
 public sealed class EditController
 {
-    private readonly EditHistory _history;
+    // Null until the file first parses. In tree mode it is never null.
+    private EditHistory? _history;
 
-    /// <summary>Starts the state for a file. The history starts at the file's document.</summary>
-    /// <param name="file">The file, with the document loaded from it or created for it.</param>
+    // The text in text mode, as the view holds it, with the cursor's offset in it. Null in tree mode.
+    private SourceText? _text;
+    private int _cursorOffset;
+
+    // The line break the text mode keeps: the view's text is written back with this one, whatever the view joins its lines with.
+    private string _newline = Environment.NewLine;
+
+    /// <summary>Starts the state for a file. A file that parses starts in tree mode; one that does not starts in text mode with its text.</summary>
+    /// <param name="file">The file, with the document parsed from it, or with its text and parse error.</param>
     public EditController(DocumentFile file)
     {
         ArgumentNullException.ThrowIfNull(file);
         File = file;
-        _history = new EditHistory(file.Document);
+        if (file.Document is { } document)
+        {
+            _history = new EditHistory(document);
+            return;
+        }
+
+        _text = file.Text;
+        _newline = file.Text.Newline;
     }
 
     /// <summary>The file this state belongs to.</summary>
     public DocumentFile File { get; }
 
-    /// <summary>The current document: the file's document with every edit applied since it was loaded or saved.</summary>
-    public ConfigDocument Document => _history.Current;
-
-    /// <summary>True when an edit can be undone.</summary>
-    public bool CanUndo => _history.CanUndo;
-
-    /// <summary>True when an undone edit can be redone.</summary>
-    public bool CanRedo => _history.CanRedo;
+    /// <summary>
+    /// The mode: <see cref="EditMode.Tree"/> while the document is shown, <see cref="EditMode.Text"/> while the text is.
+    /// </summary>
+    public EditMode Mode => _text is null ? EditMode.Tree : EditMode.Text;
 
     /// <summary>
-    /// True when the document differs from the saved text, or when the file has never been saved. A new file is dirty until its
-    /// first save.
+    /// The current document: the file's document with every edit applied since it was loaded or saved. In text mode it is the last
+    /// document that parsed, which is null for a file that has never parsed (so this throws then).
     /// </summary>
-    public bool IsDirty => !File.Exists || _history.IsDirty;
+    /// <exception cref="InvalidOperationException">The file has never parsed.</exception>
+    public ConfigDocument Document => History.Current;
+
+    /// <summary>In text mode, the text as the view holds it, in the file's encoding and with the file's line breaks. Null in tree mode.</summary>
+    public SourceText? Text => _text;
+
+    /// <summary>In text mode, the cursor's offset in <see cref="Text"/>. Zero in tree mode.</summary>
+    public int CursorOffset => _cursorOffset;
+
+    /// <summary>The line break of the text in text mode, which the view's text is written back with.</summary>
+    public string Newline => _newline;
+
+    /// <summary>True when an edit can be undone. Undo is a tree-mode operation.</summary>
+    public bool CanUndo => Mode == EditMode.Tree && History.CanUndo;
+
+    /// <summary>True when an undone edit can be redone. Redo is a tree-mode operation.</summary>
+    public bool CanRedo => Mode == EditMode.Tree && History.CanRedo;
+
+    /// <summary>
+    /// True when the current text differs from the bytes last loaded or saved, or when the file has never been saved. A new file is
+    /// dirty until its first save. A text that cannot be encoded is dirty.
+    /// </summary>
+    public bool IsDirty
+    {
+        get
+        {
+            if (!File.Exists)
+            {
+                return true;
+            }
+
+            try
+            {
+                return !CurrentSource.Encode().AsSpan().SequenceEqual(File.Text.Encode());
+            }
+            catch (CfgeditException)
+            {
+                return true;
+            }
+        }
+    }
 
     /// <summary>The last error or information message, such as "Saved" or "Nothing to undo". Null when there is none.</summary>
     public string? Message { get; private set; }
 
-    /// <summary>Applies an edit to the current document, as one undo step.</summary>
+    private SourceText CurrentSource => _text ?? History.Current.Source;
+
+    private EditHistory History => _history ?? throw new InvalidOperationException("The file has never parsed, so there is no document.");
+
+    /// <summary>Applies an edit to the current document, as one undo step. Refused in text mode.</summary>
     /// <param name="op">The edit.</param>
     /// <param name="error">The error when the edit is refused, otherwise null. The document is then unchanged.</param>
     /// <returns>The result of the edit, or null when it was refused.</returns>
     public EditResult? Apply(EditOp op, out string? error)
     {
         ArgumentNullException.ThrowIfNull(op);
+        if (Mode == EditMode.Text)
+        {
+            error = "the document cannot be edited in text mode";
+            Message = error;
+            return null;
+        }
+
         try
         {
-            EditResult result = _history.Apply(op);
+            EditResult result = History.Apply(op);
             error = null;
             Message = null;
             return result;
@@ -137,38 +206,123 @@ public sealed class EditController
     /// <returns>The path to focus after the undo, or null when there is nothing to undo (the message then says so).</returns>
     public NodePath? Undo()
     {
-        if (!_history.CanUndo)
+        if (!CanUndo)
         {
             Message = "Nothing to undo";
             return null;
         }
 
         Message = null;
-        return _history.Undo();
+        return History.Undo();
     }
 
     /// <summary>Redoes the last undone edit.</summary>
     /// <returns>The path to focus after the redo, or null when there is nothing to redo (the message then says so).</returns>
     public NodePath? Redo()
     {
-        if (!_history.CanRedo)
+        if (!CanRedo)
         {
             Message = "Nothing to redo";
             return null;
         }
 
         Message = null;
-        return _history.Redo();
+        return History.Redo();
     }
 
-    /// <summary>Writes the current document to the file, without checking for an external change.</summary>
+    /// <summary>
+    /// Switches to text mode with the document's own text, with the cursor at an offset in it. Does nothing in text mode, and needs a
+    /// document otherwise (a file in text mode has one only when it parsed before).
+    /// </summary>
+    /// <param name="cursorOffset">The cursor's offset in the document's text.</param>
+    public void EnterText(int cursorOffset)
+    {
+        if (Mode == EditMode.Text)
+        {
+            return;
+        }
+
+        _text = History.Current.Source;
+        _newline = _text.Newline;
+        _cursorOffset = cursorOffset;
+        Message = null;
+    }
+
+    /// <summary>
+    /// In text mode, takes the view's text and cursor. The text is written back with <see cref="Newline"/> as its line break, and the
+    /// cursor is mapped to an offset in it (see <see cref="TextModeRules"/>). Does nothing in tree mode.
+    /// </summary>
+    /// <param name="viewText">The view's text, with its lines joined by <see cref="Environment.NewLine"/>.</param>
+    /// <param name="row">The view's cursor row, from zero.</param>
+    /// <param name="column">The view's cursor column, in grapheme clusters from zero.</param>
+    public void SetText(string viewText, int row, int column)
+    {
+        ArgumentNullException.ThrowIfNull(viewText);
+        if (_text is null)
+        {
+            return;
+        }
+
+        _text = _text.WithText(TextModeRules.WithNewline(viewText, _newline));
+        _cursorOffset = TextModeRules.OffsetOf(viewText, row, column, _newline);
+    }
+
+    /// <summary>
+    /// Parses the text, in text mode, and on success switches to tree mode. The edit is one undo step of the history, or the history
+    /// starts from the new document when the file had never parsed. A text that does not parse keeps the text mode, and the error says
+    /// where. Does nothing in tree mode.
+    /// </summary>
+    /// <param name="error">The parse error when the text does not parse, otherwise null.</param>
+    /// <returns>The node to focus in the tree after a successful parse (null for the document itself), otherwise null.</returns>
+    public NodePath? Reparse(out CfgeditException? error)
+    {
+        if (_text is null)
+        {
+            error = null;
+            return null;
+        }
+
+        ConfigDocument document;
+        try
+        {
+            document = File.ParseText(_text);
+        }
+        catch (CfgeditException ex)
+        {
+            error = ex;
+            Message = Describe(ex);
+            return null;
+        }
+
+        error = null;
+        NodePath? focus = FocusAt(document, _cursorOffset);
+        if (_history is null)
+        {
+            _history = new EditHistory(document);
+        }
+        else
+        {
+            _history.RecordExternal(document, focusBefore: null, focusAfter: focus);
+        }
+
+        _text = null;
+        Message = null;
+        return focus;
+    }
+
+    /// <summary>Writes the current document to the file, without checking for an external change. Tree mode only.</summary>
     /// <returns>The error when the save failed, otherwise null.</returns>
     public string? Save()
     {
+        if (Mode == EditMode.Text)
+        {
+            return "the document cannot be saved in text mode without reparsing";
+        }
+
         try
         {
-            File.Save(_history.Current);
-            _history.MarkSaved();
+            File.Save(History.Current);
+            History.MarkSaved();
             Message = "Saved";
             return null;
         }
@@ -180,14 +334,61 @@ public sealed class EditController
     }
 
     /// <summary>
-    /// Replaces the document with the file on disk. The undo and redo history is cleared, and the document is clean.
+    /// Writes the text to the file, as it is, whether or not it parses, without checking for an external change. Text mode only. Afterwards
+    /// <see cref="DocumentFile.ParseError"/> says how the saved text parses.
+    /// </summary>
+    /// <returns>The error when the save failed, otherwise null.</returns>
+    public string? SaveText()
+    {
+        if (_text is null)
+        {
+            return "the text cannot be saved in tree mode";
+        }
+
+        try
+        {
+            File.SaveText(_text);
+            Message = "Saved";
+            return null;
+        }
+        catch (CfgeditException ex)
+        {
+            Message = ex.Message;
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Replaces the document with the file on disk. The undo and redo history is cleared, and the document is clean. A file whose text
+    /// does not parse comes back in text mode, as it would when opened.
     /// </summary>
     /// <returns>The error when the file cannot be read, otherwise null.</returns>
     public string? Reload()
     {
         try
         {
-            _history.Reset(File.Reload());
+            ConfigDocument? document = File.Reload();
+            if (document is null)
+            {
+                _history = null;
+                _text = File.Text;
+                _newline = _text.Newline;
+                _cursorOffset = 0;
+            }
+            else
+            {
+                if (_history is null)
+                {
+                    _history = new EditHistory(document);
+                }
+                else
+                {
+                    _history.Reset(document);
+                }
+
+                _text = null;
+            }
+
             Message = "Reloaded";
             return null;
         }
@@ -199,13 +400,93 @@ public sealed class EditController
     }
 
     /// <summary>
-    /// Saves, after checking for a change on disk. When the file changed since it was loaded or last saved, the user chooses:
+    /// Saves the document, after checking for a change on disk. When the file changed since it was loaded or last saved, the user chooses:
     /// Overwrite saves over it; Reload replaces the document with the file (after <paramref name="confirmReload"/> agrees, since the
-    /// undo history is lost); Cancel does nothing.
+    /// undo history is lost); Cancel does nothing. Tree mode.
     /// </summary>
     /// <param name="askExternalChange">Asks Overwrite, Reload or Cancel. Only called when the file changed on disk.</param>
     /// <param name="confirmReload">Asks whether the reload may discard the undo history. Only called after Reload is chosen.</param>
     public SaveResult SaveFlow(Func<ExternalChangeChoice> askExternalChange, Func<bool> confirmReload)
+    {
+        return SaveWith(askExternalChange, confirmReload, Save);
+    }
+
+    /// <summary>
+    /// Saves the text, in text mode. The text is reparsed first (as <see cref="Reparse"/>, which switches to tree mode on success, and then
+    /// the document is saved). When it does not parse, <paramref name="confirmUnparsed"/> is asked with the parse error: Save writes the text
+    /// as it is, and Cancel does nothing. The external-change check of <see cref="SaveFlow"/> applies to both.
+    /// </summary>
+    /// <param name="askExternalChange">Passed to the save check. Only called when the file changed on disk.</param>
+    /// <param name="confirmReload">Passed to the save check.</param>
+    /// <param name="confirmUnparsed">Asks whether to save text that does not parse. Its default button is Save.</param>
+    public SaveResult TextSaveFlow(
+        Func<ExternalChangeChoice> askExternalChange,
+        Func<bool> confirmReload,
+        Func<CfgeditException, bool> confirmUnparsed)
+    {
+        ArgumentNullException.ThrowIfNull(askExternalChange);
+        ArgumentNullException.ThrowIfNull(confirmReload);
+        ArgumentNullException.ThrowIfNull(confirmUnparsed);
+
+        Reparse(out CfgeditException? error);
+        if (error is null)
+        {
+            return SaveFlow(askExternalChange, confirmReload);
+        }
+
+        if (!confirmUnparsed(error))
+        {
+            return new SaveResult(SaveOutcome.Cancelled, null);
+        }
+
+        return SaveWith(askExternalChange, confirmReload, SaveText);
+    }
+
+    /// <summary>
+    /// Closes the file, or switches to another one, when it is dirty: the user chooses Save, Discard or Cancel. A clean file closes
+    /// without asking. Save goes through <see cref="SaveFlow"/>, or <see cref="TextSaveFlow"/> in text mode, so it checks for an external
+    /// change too. A failed save keeps the file open, with the error in <see cref="CloseResult.Error"/>.
+    /// </summary>
+    /// <param name="askUnsaved">Asks Save, Discard or Cancel. Only called when the file is dirty.</param>
+    /// <param name="askExternalChange">Passed to the save flow.</param>
+    /// <param name="confirmReload">Passed to the save flow.</param>
+    /// <param name="confirmUnparsed">
+    /// Passed to <see cref="TextSaveFlow"/> in text mode. The default refuses (Cancel), so text that does not parse is never saved
+    /// without the user agreeing.
+    /// </param>
+    public CloseResult CloseFlow(
+        Func<UnsavedChoice> askUnsaved,
+        Func<ExternalChangeChoice> askExternalChange,
+        Func<bool> confirmReload,
+        Func<CfgeditException, bool>? confirmUnparsed = null)
+    {
+        ArgumentNullException.ThrowIfNull(askUnsaved);
+        if (!IsDirty)
+        {
+            return new CloseResult(CloseOutcome.Closed, null);
+        }
+
+        switch (askUnsaved())
+        {
+            case UnsavedChoice.Discard:
+                return new CloseResult(CloseOutcome.Closed, null);
+            case UnsavedChoice.Save:
+                SaveResult save = Mode == EditMode.Tree
+                    ? SaveFlow(askExternalChange, confirmReload)
+                    : TextSaveFlow(askExternalChange, confirmReload, confirmUnparsed ?? (_ => false));
+                return save.Outcome switch
+                {
+                    SaveOutcome.Saved => new CloseResult(CloseOutcome.Closed, null),
+                    SaveOutcome.Reloaded => new CloseResult(CloseOutcome.Reloaded, null),
+                    SaveOutcome.Failed => new CloseResult(CloseOutcome.Failed, save.Error),
+                    _ => new CloseResult(CloseOutcome.Cancelled, null),
+                };
+            default:
+                return new CloseResult(CloseOutcome.Cancelled, null);
+        }
+    }
+
+    private SaveResult SaveWith(Func<ExternalChangeChoice> askExternalChange, Func<bool> confirmReload, Func<string?> write)
     {
         ArgumentNullException.ThrowIfNull(askExternalChange);
         ArgumentNullException.ThrowIfNull(confirmReload);
@@ -243,41 +524,43 @@ public sealed class EditController
             }
         }
 
-        string? error = Save();
+        string? error = write();
         return error is null ? new SaveResult(SaveOutcome.Saved, null) : new SaveResult(SaveOutcome.Failed, error);
     }
 
-    /// <summary>
-    /// Closes the file, or switches to another one, when it is dirty: the user chooses Save, Discard or Cancel. A clean file closes
-    /// without asking. Save goes through <see cref="SaveFlow"/>, so it checks for an external change too. A failed save keeps the file
-    /// open, with the error in <see cref="CloseResult.Error"/>.
-    /// </summary>
-    /// <param name="askUnsaved">Asks Save, Discard or Cancel. Only called when the file is dirty.</param>
-    /// <param name="askExternalChange">Passed to <see cref="SaveFlow"/>.</param>
-    /// <param name="confirmReload">Passed to <see cref="SaveFlow"/>.</param>
-    public CloseResult CloseFlow(Func<UnsavedChoice> askUnsaved, Func<ExternalChangeChoice> askExternalChange, Func<bool> confirmReload)
+    /// <summary>The message of a parse error: <c>line:col: message</c> when it has a position, else the message.</summary>
+    internal static string Describe(CfgeditException ex)
     {
-        ArgumentNullException.ThrowIfNull(askUnsaved);
-        if (!IsDirty)
-        {
-            return new CloseResult(CloseOutcome.Closed, null);
-        }
+        return ex.Line is int line
+            ? $"{line}:{ex.Column ?? 1}: {ex.Message}"
+            : ex.Message;
+    }
 
-        switch (askUnsaved())
+    /// <summary>The deepest node whose span contains an offset, or null for the document itself.</summary>
+    private static NodePath? FocusAt(ConfigDocument document, int offset)
+    {
+        NodePath? focus = null;
+        DocNode node = document.Root;
+        while (true)
         {
-            case UnsavedChoice.Discard:
-                return new CloseResult(CloseOutcome.Closed, null);
-            case UnsavedChoice.Save:
-                SaveResult save = SaveFlow(askExternalChange, confirmReload);
-                return save.Outcome switch
-                {
-                    SaveOutcome.Saved => new CloseResult(CloseOutcome.Closed, null),
-                    SaveOutcome.Reloaded => new CloseResult(CloseOutcome.Reloaded, null),
-                    SaveOutcome.Failed => new CloseResult(CloseOutcome.Failed, save.Error),
-                    _ => new CloseResult(CloseOutcome.Cancelled, null),
-                };
-            default:
-                return new CloseResult(CloseOutcome.Cancelled, null);
+            DocNode? next = node.Children.FirstOrDefault(child => child.Start <= offset && offset < child.End);
+            if (next is null)
+            {
+                return focus;
+            }
+
+            focus = next.Path;
+            node = next;
         }
     }
+}
+
+/// <summary>Whether the file is shown as its tree, or as its text.</summary>
+public enum EditMode
+{
+    /// <summary>The document is shown as a tree, and edits go through the history.</summary>
+    Tree,
+
+    /// <summary>The text is shown and typed into. The document is parsed from it on demand.</summary>
+    Text,
 }

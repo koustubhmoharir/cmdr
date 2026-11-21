@@ -50,7 +50,7 @@ internal static class Program
             return 0;
         }
 
-        if (!TryParseArguments(args, out string? path, out string? formatName))
+        if (!TryParseArguments(args, out string? path, out string? formatName, out bool check))
         {
             return Usage(stderr);
         }
@@ -64,6 +64,11 @@ internal static class Program
                 stderr.WriteLine($"cfgedit: unknown format '{formatName}'; use xml, json, jsonc or json5");
                 return 2;
             }
+        }
+
+        if (check)
+        {
+            return Check(path!, format, stderr);
         }
 
         // A path that does not exist starts the new-file flow, which asks inside the application whether to create it.
@@ -97,16 +102,45 @@ internal static class Program
         return 0;
     }
 
-    // The file and the --format option, in either order. An option needs its value. Anything else that starts with '-', an empty
-    // argument, a second file and a missing file are usage errors.
-    private static bool TryParseArguments(string[] args, out string? path, out string? format)
+    /// <summary>
+    /// The parse check of <c>--check</c>: loads the file as opening does, without the window. Success prints nothing and returns 0. A file that
+    /// does not load, or whose text does not parse, prints its error as <c>path:line:col: message</c> (or without the position) and returns 1.
+    /// </summary>
+    private static int Check(string path, IConfigFormat? format, TextWriter stderr)
+    {
+        try
+        {
+            CfgeditException? parseError = CfgeditHost.Load(path, format).File.ParseError;
+            if (parseError is null)
+            {
+                return 0;
+            }
+
+            stderr.WriteLine(CfgeditHost.Describe(parseError));
+            return 1;
+        }
+        catch (CfgeditException ex)
+        {
+            stderr.WriteLine(CfgeditHost.Describe(ex));
+            return 1;
+        }
+    }
+
+    // The file, the --format option and the --check flag, in any order. An option needs its value, and --check may appear once. Anything
+    // else that starts with '-', an empty argument, a second file and a missing file are usage errors.
+    private static bool TryParseArguments(string[] args, out string? path, out string? format, out bool check)
     {
         path = null;
         format = null;
+        check = false;
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
-            if (arg == "--format")
+            if (arg == "--check" && !check)
+            {
+                check = true;
+            }
+            else if (arg == "--format")
             {
                 if (i + 1 >= args.Length)
                 {

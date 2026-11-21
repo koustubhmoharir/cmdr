@@ -10,8 +10,9 @@ namespace Cfgedit.Core.Files;
 /// <summary>
 /// A config file and the document that belongs to it. It knows what the file looked like when the document was loaded or last
 /// saved, so that <see cref="ChangedOnDisk"/> can tell whether someone else changed it since. Every expected failure is a
-/// <see cref="CfgeditException"/> with <see cref="Path"/> set. Documents are immutable: a save writes the text of the document
-/// it is given, and the caller keeps the edit history.
+/// <see cref="CfgeditException"/> with <see cref="Path"/> set, except a parse error, which is kept in <see cref="ParseError"/>
+/// so that the text can still be shown and fixed. Documents are immutable: a save writes the text of the document it is given,
+/// and the caller keeps the edit history.
 /// </summary>
 public sealed class DocumentFile
 {
@@ -20,12 +21,15 @@ public sealed class DocumentFile
     // Null after CreateNew until the first save: there is then no file state to compare with.
     private Snapshot? _snapshot;
 
-    private DocumentFile(string path, IConfigFormat format, bool exists, ConfigDocument document, Snapshot? snapshot)
+    private DocumentFile(
+        string path, IConfigFormat format, bool exists, ConfigDocument? document, SourceText text, CfgeditException? parseError, Snapshot? snapshot)
     {
         Path = path;
         Format = format;
         Exists = exists;
         Document = document;
+        Text = text;
+        ParseError = parseError;
         _snapshot = snapshot;
     }
 
@@ -41,22 +45,34 @@ public sealed class DocumentFile
     /// </summary>
     public bool Exists { get; private set; }
 
-    /// <summary>The document as loaded, reloaded or last saved.</summary>
-    public ConfigDocument Document { get; private set; }
+    /// <summary>
+    /// The document as loaded, reloaded or last saved. Null when the text does not parse, in which case <see cref="ParseError"/>
+    /// says why.
+    /// </summary>
+    public ConfigDocument? Document { get; private set; }
 
-    /// <summary>Opens and parses an existing file.</summary>
+    /// <summary>The text as loaded, reloaded or last saved: the decoded source, which is the file's text whether or not it parses.</summary>
+    public SourceText Text { get; private set; }
+
+    /// <summary>The parse error of <see cref="Text"/> as loaded, reloaded or last saved, or null when it parses.</summary>
+    public CfgeditException? ParseError { get; private set; }
+
+    /// <summary>
+    /// Opens an existing file. A file whose text does not parse opens too: <see cref="Document"/> is then null and
+    /// <see cref="ParseError"/> is set.
+    /// </summary>
     /// <param name="path">The path of the file. A relative path is made full.</param>
     /// <param name="format">The format to parse the file as.</param>
     /// <exception cref="CfgeditException">
-    /// The path is not valid, the file does not exist, it is a folder, it cannot be read, or its bytes or text are not a valid
-    /// document. <see cref="CfgeditException.Path"/> is the full path.
+    /// The path is not valid, the file does not exist, it is a folder, it cannot be read, or its bytes cannot be decoded.
+    /// <see cref="CfgeditException.Path"/> is the full path.
     /// </exception>
     public static DocumentFile Open(string path, IConfigFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
         string full = FullPathOf(path);
-        (ConfigDocument document, Snapshot snapshot) = Load(full, format);
-        return new DocumentFile(full, format, exists: true, document, snapshot);
+        Loaded loaded = Load(full, format);
+        return new DocumentFile(full, format, exists: true, loaded.Document, loaded.Text, loaded.ParseError, loaded.Snapshot);
     }
 
     /// <summary>
@@ -74,7 +90,7 @@ public sealed class DocumentFile
         string full = FullPathOf(path);
         string text = InitialText(format, xmlRootName, full);
         ConfigDocument document = ConfigDocument.Parse(SourceText.Create(text, Utf8NoBom, hasBom: false), format);
-        return new DocumentFile(full, format, exists: false, document, snapshot: null);
+        return new DocumentFile(full, format, exists: false, document, document.Source, parseError: null, snapshot: null);
     }
 
     /// <summary>
@@ -111,7 +127,7 @@ public sealed class DocumentFile
     /// <summary>
     /// Writes the document's text to the file, atomically where the file system allows it (see <see cref="AtomicFile"/>). The
     /// parent folder must exist: cfgedit never creates folders. The written bytes are read back and must equal what was written.
-    /// On success the snapshot and <see cref="Document"/> are those of the saved text.
+    /// On success the snapshot, <see cref="Text"/> and <see cref="Document"/> are those of the saved text.
     /// </summary>
     /// <param name="document">The document to save.</param>
     /// <exception cref="CfgeditException">
@@ -121,20 +137,73 @@ public sealed class DocumentFile
     public void Save(ConfigDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
+        byte[] bytes = EncodeFor(document.Source);
+        WriteExact(bytes);
+        Document = document;
+        Text = document.Source;
+        ParseError = null;
+    }
+
+    /// <summary>
+    /// Writes raw text to the file, exactly as <see cref="Save"/> writes a document, whether or not the text parses. The saved
+    /// text becomes <see cref="Text"/>, and <see cref="Document"/> and <see cref="ParseError"/> say how it parses.
+    /// </summary>
+    /// <param name="text">The text to save, in the file's encoding.</param>
+    /// <exception cref="CfgeditException">As for <see cref="Save"/>. On failure the file object is unchanged.</exception>
+    public void SaveText(SourceText text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        byte[] bytes = EncodeFor(text);
+        WriteExact(bytes);
+        Text = text;
+        try
+        {
+            Document = ParseBytes(bytes, Path, Format);
+            ParseError = null;
+        }
+        catch (CfgeditException ex)
+        {
+            Document = null;
+            ParseError = ex;
+        }
+    }
+
+    /// <summary>
+    /// Parses edited text as <see cref="Open"/> parses the file's bytes: the text is encoded as the file's encoding and parsed through
+    /// those bytes. Nothing is changed in this object; the caller decides what to do with the document.
+    /// </summary>
+    /// <param name="text">The text to parse, in the file's encoding.</param>
+    /// <returns>The document.</returns>
+    /// <exception cref="CfgeditException">The text cannot be encoded, or it does not parse. Path, Line and Column say where.</exception>
+    public ConfigDocument ParseText(SourceText text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return ParseBytes(EncodeFor(text), Path, Format);
+    }
+
+    /// <summary>
+    /// Reads the file again from disk, and makes the result the text, the snapshot and the document. A text that does not parse is
+    /// kept as <see cref="ParseError"/>, as <see cref="Open"/> keeps it.
+    /// </summary>
+    /// <returns>The reloaded document, or null when the text does not parse.</returns>
+    /// <exception cref="CfgeditException">As for <see cref="Open"/> apart from parse errors. On failure the file object is unchanged.</exception>
+    public ConfigDocument? Reload()
+    {
+        Loaded loaded = Load(Path, Format);
+        _snapshot = loaded.Snapshot;
+        Exists = true;
+        Document = loaded.Document;
+        Text = loaded.Text;
+        ParseError = loaded.ParseError;
+        return loaded.Document;
+    }
+
+    private void WriteExact(byte[] bytes)
+    {
         string? folder = System.IO.Path.GetDirectoryName(Path);
         if (folder is null || !Directory.Exists(folder))
         {
             throw new CfgeditException($"the folder '{folder}' does not exist") { Path = Path };
-        }
-
-        byte[] bytes;
-        try
-        {
-            bytes = document.Source.Encode();
-        }
-        catch (CfgeditException ex)
-        {
-            throw new CfgeditException(ex.Message, ex) { Path = Path };
         }
 
         try
@@ -154,25 +223,64 @@ public sealed class DocumentFile
 
         _snapshot = snapshot;
         Exists = true;
-        Document = document;
     }
 
-    /// <summary>Reads the file again from disk, and makes the result the document and the snapshot.</summary>
-    /// <returns>The reloaded document.</returns>
-    /// <exception cref="CfgeditException">As for <see cref="Open"/>. On failure the file object is unchanged.</exception>
-    public ConfigDocument Reload()
+    private byte[] EncodeFor(SourceText text)
     {
-        (ConfigDocument document, Snapshot snapshot) = Load(Path, Format);
-        _snapshot = snapshot;
-        Exists = true;
-        Document = document;
-        return document;
+        try
+        {
+            return text.Encode();
+        }
+        catch (CfgeditException ex)
+        {
+            throw new CfgeditException(ex.Message, ex) { Path = Path, Line = ex.Line, Column = ex.Column };
+        }
     }
 
-    private static (ConfigDocument Document, Snapshot Snapshot) Load(string full, IConfigFormat format)
+    private sealed record Loaded(Snapshot Snapshot, SourceText Text, ConfigDocument? Document, CfgeditException? ParseError);
+
+    /// <summary>
+    /// Reads and decodes a file. A decoding error throws. A text that does not decode is no text to keep, so it throws too; a text
+    /// that decodes but does not parse is kept with its error.
+    /// </summary>
+    private static Loaded Load(string full, IConfigFormat format)
     {
         (Snapshot snapshot, byte[] bytes) = Observe(full);
-        return (Decode(bytes, full, format), snapshot);
+        SourceText text = DecodeText(bytes, full, format);
+        try
+        {
+            return new Loaded(snapshot, text, ConfigDocument.Load(bytes, full, format), ParseError: null);
+        }
+        catch (CfgeditException ex)
+        {
+            return new Loaded(snapshot, text, null, Located(ex, full));
+        }
+    }
+
+    private static ConfigDocument ParseBytes(byte[] bytes, string full, IConfigFormat format)
+    {
+        try
+        {
+            return ConfigDocument.Load(bytes, full, format);
+        }
+        catch (CfgeditException ex)
+        {
+            throw Located(ex, full);
+        }
+    }
+
+    private static SourceText DecodeText(byte[] bytes, string full, IConfigFormat format)
+    {
+        return format is XmlFormat
+            ? XmlDecoding.Decode(bytes, full)
+            : SourceText.Decode(bytes, full);
+    }
+
+    private static CfgeditException Located(CfgeditException ex, string full)
+    {
+        return ex.Path is null
+            ? new CfgeditException(ex.Message, ex) { Path = full, Line = ex.Line, Column = ex.Column }
+            : ex;
     }
 
     /// <summary>
@@ -225,18 +333,6 @@ public sealed class DocumentFile
             UnauthorizedAccessException => new CfgeditException($"the file '{full}' cannot be read: access is denied", ex) { Path = full },
             _ => new CfgeditException($"the file '{full}' cannot be read: {ex.Message}", ex) { Path = full },
         };
-    }
-
-    private static ConfigDocument Decode(byte[] bytes, string full, IConfigFormat format)
-    {
-        try
-        {
-            return ConfigDocument.Load(bytes, full, format);
-        }
-        catch (CfgeditException ex) when (ex.Path is null)
-        {
-            throw new CfgeditException(ex.Message, ex) { Path = full, Line = ex.Line, Column = ex.Column };
-        }
     }
 
     private static string FullPathOf(string path)

@@ -34,6 +34,12 @@ internal static class CfgeditHints
         KeyHints.Bound(Key.Tab, "Tab Next"),
         KeyHints.Bound(Key.F4, "F4 Multi-line"));
 
+    /// <summary>The key hints while the text is shown (text mode). The quit key stays on the right, as in the tree.</summary>
+    public static Hint TextMode { get; } = KeyHints.Join(
+        KeyHints.Bound(Key.F5, "F5 Parse"),
+        KeyHints.Bound(Key.T.WithCtrl, "^T Tree"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"));
+
     /// <summary>The quit key, shown at the right edge of the main window's hints.</summary>
     public static Hint Quit { get; } = KeyHints.Bound(Key.Q.WithCtrl, "^Q Quit");
 

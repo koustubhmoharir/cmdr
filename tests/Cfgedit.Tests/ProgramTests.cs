@@ -78,8 +78,8 @@ public sealed class ProgramTests : IDisposable
 
         Assert.Equal(0, before.Code);
         Assert.Equal(0, after.Code);
-        Assert.Equal("json5", Assert.Single(before.Ran).Document.Format.Name);
-        Assert.Equal("json5", Assert.Single(after.Ran).Document.Format.Name);
+        Assert.Equal("json5", Assert.Single(before.Ran).File.Format.Name);
+        Assert.Equal("json5", Assert.Single(after.Ran).File.Format.Name);
         Assert.Equal(path, Assert.Single(after.Ran).Path);
     }
 
@@ -91,7 +91,7 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run(path, "--format", "XML");
 
         Assert.Equal(0, outcome.Code);
-        Assert.Equal("xml", Assert.Single(outcome.Ran).Document.Format.Name);
+        Assert.Equal("xml", Assert.Single(outcome.Ran).File.Format.Name);
     }
 
     [Fact]
@@ -143,7 +143,7 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run(path);
 
         Assert.Equal(0, outcome.Code);
-        Assert.Equal(expected, Assert.Single(outcome.Ran).Document.Format.Name);
+        Assert.Equal(expected, Assert.Single(outcome.Ran).File.Format.Name);
     }
 
     [Fact]
@@ -207,16 +207,77 @@ public sealed class ProgramTests : IDisposable
     }
 
     [Fact]
-    public void A_parse_error_is_reported_with_its_path_line_and_column_and_returns_1()
+    public void A_file_that_does_not_parse_opens_the_window_in_text_mode_and_returns_0()
     {
         string path = TempFile("broken.json", "{\n  \"a\": ,\n}");
 
         Outcome outcome = Run(path, "--format", "json");
 
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal(string.Empty, outcome.Stderr);
+        OpenedFile opened = Assert.Single(outcome.Ran);
+        Assert.Null(opened.Document);
+        Assert.Equal($"{path}:2:8: expected a value but found ','", CfgeditHost.Describe(opened.File.ParseError!));
+    }
+
+    [Fact]
+    public void Check_of_a_file_that_parses_prints_nothing_and_returns_0_without_the_window()
+    {
+        string path = TempFile("good.json", "{\"a\": 1}");
+
+        Outcome outcome = Run("--check", path);
+
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal(string.Empty, outcome.Stdout);
+        Assert.Equal(string.Empty, outcome.Stderr);
+        Assert.Empty(outcome.Ran);
+        Assert.Equal(0, outcome.Pickers);
+    }
+
+    [Fact]
+    public void Check_of_a_parse_error_prints_path_line_and_column_and_returns_1()
+    {
+        string path = TempFile("broken.json", "{\n  \"a\": ,\n}");
+
+        Outcome outcome = Run(path, "--check", "--format", "json");
+
         Assert.Equal(1, outcome.Code);
         Assert.Equal(string.Empty, outcome.Stdout);
-        Assert.Equal($"cfgedit: {path}:2:8: expected a value but found ','" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal($"{path}:2:8: expected a value but found ','" + Environment.NewLine, outcome.Stderr);
         Assert.Empty(outcome.Ran);
+        Assert.Empty(outcome.Created);
+    }
+
+    [Fact]
+    public void Check_of_a_missing_file_prints_the_path_and_returns_1_without_the_new_file_flow()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"cfgedit-missing-{Guid.NewGuid():N}.json");
+
+        Outcome outcome = Run("--check", path);
+
+        Assert.Equal(1, outcome.Code);
+        Assert.Equal($"{path}: the file does not exist" + Environment.NewLine, outcome.Stderr);
+        Assert.Empty(outcome.Created);
+    }
+
+    [Fact]
+    public void Check_with_an_unknown_format_is_a_usage_error_returning_2()
+    {
+        string path = TempFile("good.json", "{}");
+
+        Outcome outcome = Run("--check", path, "--format", "yaml");
+
+        Assert.Equal(2, outcome.Code);
+        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc or json5" + Environment.NewLine, outcome.Stderr);
+    }
+
+    [Fact]
+    public void Check_without_a_file_or_with_two_checks_is_a_usage_error_returning_2()
+    {
+        string path = TempFile("good.json", "{}");
+
+        Assert.Equal(2, Run("--check").Code);
+        Assert.Equal(2, Run("--check", "--check", path).Code);
     }
 
     [Fact]

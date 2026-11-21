@@ -23,7 +23,7 @@ public sealed class CfgeditHostTests : IDisposable
         Assert.Null(error);
         Assert.NotNull(value);
         Assert.Equal(path, value!.Path);
-        Assert.Equal("jsonc", value.Document.Format.Name);
+        Assert.Equal("jsonc", value.File.Format.Name);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public sealed class CfgeditHostTests : IDisposable
         (OpenedFile? value, string? error) = CfgeditHost.TryLoad(path);
 
         Assert.Null(error);
-        Assert.Equal("xml", value!.Document.Format.Name);
+        Assert.Equal("xml", value!.File.Format.Name);
     }
 
     [Fact]
@@ -60,14 +60,17 @@ public sealed class CfgeditHostTests : IDisposable
     }
 
     [Fact]
-    public void Try_load_reports_a_parse_error_with_its_position()
+    public void Try_load_opens_a_file_that_does_not_parse_with_its_parse_error_for_text_mode()
     {
         string path = TempFile("broken.json", "{\n  \"a\": ,\n}");
 
         (OpenedFile? value, string? error) = CfgeditHost.TryLoad(path);
 
-        Assert.Null(value);
-        Assert.Equal($"{path}:2:8: expected a value but found ','", error);
+        Assert.Null(error);
+        Assert.NotNull(value);
+        Assert.Null(value.Document);
+        Assert.Equal("{\n  \"a\": ,\n}", value.File.Text.Text);
+        Assert.Equal($"{path}:2:8: expected a value but found ','", CfgeditHost.Describe(value.File.ParseError!));
     }
 
     [Fact]
@@ -77,18 +80,19 @@ public sealed class CfgeditHostTests : IDisposable
 
         OpenedFile opened = CfgeditHost.Load(path, Formats.FromName("xml"));
 
-        Assert.Equal("xml", opened.Document.Format.Name);
+        Assert.Equal("xml", opened.File.Format.Name);
     }
 
     [Fact]
-    public void Load_of_a_bad_file_throws_with_the_path_on_the_error()
+    public void Load_of_a_file_that_does_not_parse_keeps_its_error_with_the_path_for_text_mode()
     {
         string path = TempFile("data.xml", "<a><b></a>");
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => CfgeditHost.Load(path, null));
+        OpenedFile opened = CfgeditHost.Load(path, null);
 
-        Assert.Equal(path, ex.Path);
-        Assert.NotNull(ex.Line);
+        Assert.Null(opened.Document);
+        Assert.Equal(path, opened.File.ParseError!.Path);
+        Assert.NotNull(opened.File.ParseError.Line);
     }
 
     [Theory]

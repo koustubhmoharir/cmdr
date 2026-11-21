@@ -2,6 +2,7 @@ using System.Text;
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
+using Cfgedit.Core.Text;
 using Cfgedit.Core.Tests.Model;
 using Shared.Core;
 using static Cfgedit.Core.Tests.Model.EditTestSupport;
@@ -31,7 +32,7 @@ public sealed class DocumentFileTests
         Assert.True(file.Exists);
         Assert.Equal(path, file.Path);
         Assert.Same(Strict, file.Format);
-        Assert.Equal("{\"a\": 1}\n", file.Document.Source.Text);
+        Assert.Equal("{\"a\": 1}\n", file.Document!.Source.Text);
     }
 
     [Fact]
@@ -116,17 +117,115 @@ public sealed class DocumentFileTests
     }
 
     [Fact]
-    public void Open_TextThatIsNotAValidDocument_ThrowsAParseErrorWithThePathAndPosition()
+    public void Open_TextThatIsNotAValidDocument_KeepsTheTextAndTheParseErrorWithThePathAndPosition()
     {
         using var dir = new Scratch();
         string path = dir.File("broken.json");
         File.WriteAllText(path, "{\n  \"a\" 1}\n");
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => DocumentFile.Open(path, Strict));
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        Assert.True(file.Exists);
+        Assert.Null(file.Document);
+        Assert.Equal("{\n  \"a\" 1}\n", file.Text.Text);
+        Assert.NotNull(file.ParseError);
+        Assert.Equal(path, file.ParseError.Path);
+        Assert.Equal(2, file.ParseError.Line);
+        Assert.Equal(7, file.ParseError.Column);
+    }
+
+    [Fact]
+    public void Open_ParsableText_HasADocumentAndNoParseError()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("good.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        Assert.NotNull(file.Document);
+        Assert.Null(file.ParseError);
+        Assert.Equal(file.Text.Text, file.Document!.Source.Text);
+    }
+
+    [Fact]
+    public void Open_XmlTextThatIsNotWellFormed_KeepsTheTextAndTheParseError()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("broken.xml");
+        File.WriteAllText(path, "<a>\n  <b></a>\n");
+
+        DocumentFile file = DocumentFile.Open(path, XmlConfig);
+
+        Assert.Null(file.Document);
+        Assert.Equal("<a>\n  <b></a>\n", file.Text.Text);
+        Assert.Equal(path, file.ParseError!.Path);
+        Assert.Equal(2, file.ParseError.Line);
+    }
+
+    [Fact]
+    public void Open_BytesThatDoNotDecodeStillThrowEvenWhenTheyWouldNotParse()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("bad.xml");
+        File.WriteAllBytes(path, [0x3C, 0xFF, 0x3E]);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => DocumentFile.Open(path, XmlConfig));
 
         Assert.Equal(path, ex.Path);
-        Assert.Equal(2, ex.Line);
-        Assert.Equal(7, ex.Column);
+    }
+
+    [Fact]
+    public void SaveText_WritesTheExactBytesOfTheTextAndParsesThemForTheDocument()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\n  \"a\" 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        SourceText fixedText = file.Text.WithText("{\r\n  \"a\": 1}\r\n");
+
+        file.SaveText(fixedText);
+
+        Assert.Equal("{\r\n  \"a\": 1}\r\n", File.ReadAllText(path, Utf8));
+        Assert.Same(fixedText, file.Text);
+        Assert.Null(file.ParseError);
+        Assert.NotNull(file.Document);
+        Assert.False(file.ChangedOnDisk());
+    }
+
+    [Fact]
+    public void SaveText_OfTextThatDoesNotParseWritesIt_AndKeepsTheParseError()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{}");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        SourceText broken = file.Text.WithText("{\"a\" 1}");
+
+        file.SaveText(broken);
+
+        Assert.Equal("{\"a\" 1}", File.ReadAllText(path, Utf8));
+        Assert.Null(file.Document);
+        Assert.NotNull(file.ParseError);
+        Assert.Equal(1, file.ParseError.Line);
+        Assert.Equal(6, file.ParseError.Column);
+    }
+
+    [Fact]
+    public void ParseText_ParsesTheTextThroughItsEncodingWithoutChangingTheFile()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{}");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        ConfigDocument parsed = file.ParseText(file.Text.WithText("{\"b\": 2}"));
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => file.ParseText(file.Text.WithText("{")));
+
+        Assert.Equal("{\"b\": 2}", parsed.Source.Text);
+        Assert.Equal(path, ex.Path);
+        Assert.Equal("{}", File.ReadAllText(path, Utf8));
+        Assert.Equal(file.Text.Text, file.Document!.Source.Text);
     }
 
     [Fact]
@@ -156,8 +255,8 @@ public sealed class DocumentFileTests
         DocumentFile file = DocumentFile.CreateNew(path, Strict, xmlRootName: null);
 
         Assert.False(file.Exists);
-        Assert.False(file.Document.Source.HasBom);
-        Assert.Equal("{}" + Environment.NewLine, file.Document.Source.Text);
+        Assert.False(file.Document!.Source.HasBom);
+        Assert.Equal("{}" + Environment.NewLine, file.Document!.Source.Text);
         Assert.False(File.Exists(path));
         Assert.False(file.ChangedOnDisk());
     }
@@ -172,8 +271,8 @@ public sealed class DocumentFileTests
 
         Assert.Equal(
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>" + Environment.NewLine + "<settings />" + Environment.NewLine,
-            file.Document.Source.Text);
-        Assert.NotNull(file.Document.Resolve(At(Element("settings"))));
+            file.Document!.Source.Text);
+        Assert.NotNull(file.Document!.Resolve(At(Element("settings"))));
     }
 
     [Fact]
@@ -310,7 +409,7 @@ public sealed class DocumentFileTests
         string path = dir.File("config.json");
         File.WriteAllText(path, "{\"a\": 1}\n");
         DocumentFile file = DocumentFile.Open(path, Strict);
-        ConfigDocument edited = file.Document.Apply(new SetPart(At(Item(0), Member("a")), PartKind.Value, -1, "2")).Document;
+        ConfigDocument edited = file.Document!.Apply(new SetPart(At(Item(0), Member("a")), PartKind.Value, -1, "2")).Document;
 
         file.Save(edited);
 
@@ -341,10 +440,10 @@ public sealed class DocumentFileTests
         string path = dir.File("new.xml");
         DocumentFile file = DocumentFile.CreateNew(path, XmlConfig,"settings");
 
-        file.Save(file.Document);
+        file.Save(file.Document!);
 
         Assert.True(file.Exists);
-        Assert.Equal(file.Document.Source.Encode(), File.ReadAllBytes(path));
+        Assert.Equal(file.Document!.Source.Encode(), File.ReadAllBytes(path));
         Assert.False(file.ChangedOnDisk());
     }
 
@@ -356,7 +455,7 @@ public sealed class DocumentFileTests
         string path = System.IO.Path.Combine(folder, "config.json");
         DocumentFile file = DocumentFile.CreateNew(path, Strict, null);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => file.Save(file.Document));
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => file.Save(file.Document!));
 
         Assert.Equal(path, ex.Path);
         Assert.Contains($"the folder '{folder}' does not exist", ex.Message);
@@ -399,7 +498,7 @@ public sealed class DocumentFileTests
         Directory.CreateDirectory(folder);
         string path = System.IO.Path.Combine(folder, "new.json");
         DocumentFile file = DocumentFile.CreateNew(path, Strict, null);
-        ConfigDocument before = file.Document;
+        ConfigDocument before = file.Document!;
         File.SetUnixFileMode(folder, UnixFileMode.UserRead | UnixFileMode.UserExecute);
         try
         {
@@ -434,10 +533,10 @@ public sealed class DocumentFileTests
         File.WriteAllText(path, "{\"b\": 2}\n");
         Assert.True(file.ChangedOnDisk());
 
-        ConfigDocument reloaded = file.Reload();
+        ConfigDocument? reloaded = file.Reload();
 
         Assert.Same(reloaded, file.Document);
-        Assert.Equal("{\"b\": 2}\n", reloaded.Source.Text);
+        Assert.Equal("{\"b\": 2}\n", reloaded!.Source.Text);
         Assert.False(file.ChangedOnDisk());
     }
 
@@ -448,7 +547,7 @@ public sealed class DocumentFileTests
         string path = dir.File("config.json");
         File.WriteAllText(path, "{}");
         DocumentFile file = DocumentFile.Open(path, Strict);
-        ConfigDocument before = file.Document;
+        ConfigDocument before = file.Document!;
         File.Delete(path);
 
         CfgeditException ex = Assert.Throws<CfgeditException>(() => file.Reload());
@@ -458,19 +557,38 @@ public sealed class DocumentFileTests
     }
 
     [Fact]
-    public void Reload_AnInvalidFile_ThrowsWithThePathAndKeepsTheDocument()
+    public void Reload_AnInvalidFile_KeepsTheTextAndTheParseErrorLikeOpen()
     {
         using var dir = new Scratch();
         string path = dir.File("config.json");
         File.WriteAllText(path, "{}");
         DocumentFile file = DocumentFile.Open(path, Strict);
-        ConfigDocument before = file.Document;
         File.WriteAllText(path, "{");
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => file.Reload());
+        ConfigDocument? reloaded = file.Reload();
 
-        Assert.Equal(path, ex.Path);
-        Assert.Same(before, file.Document);
+        Assert.Null(reloaded);
+        Assert.Null(file.Document);
+        Assert.Equal("{", file.Text.Text);
+        Assert.Equal(path, file.ParseError!.Path);
+        Assert.False(file.ChangedOnDisk());
+    }
+
+    [Fact]
+    public void Reload_OfAFileThatNowParses_ReturnsTheDocumentAndClearsTheParseError()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.WriteAllText(path, "{\"a\": 1}");
+
+        ConfigDocument? reloaded = file.Reload();
+
+        Assert.Same(reloaded, file.Document);
+        Assert.NotNull(reloaded);
+        Assert.Null(file.ParseError);
+        Assert.Equal("{\"a\": 1}", file.Text.Text);
     }
 
     /// <summary>True when a file with no permission to read can still be read, which means the process is root.</summary>

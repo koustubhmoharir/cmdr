@@ -8,6 +8,6 @@ namespace Cfgedit.Tui;
 /// <param name="File">The file and its document. It knows what the file held when it was read, for the save check.</param>
 public sealed record OpenedFile(string Path, DocumentFile File)
 {
-    /// <summary>The document as it was read.</summary>
-    public ConfigDocument Document => File.Document;
+    /// <summary>The document as it was read, or null when the text does not parse (the window then opens in text mode).</summary>
+    public ConfigDocument? Document => File.Document;
 }
