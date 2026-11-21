@@ -85,7 +85,13 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 - [ ] Inline editor (Tab flow, validation messages) and multi-line editor.
 - [ ] Add dialog; delete, move and change type; undo/redo keys.
-- [ ] Save (AtomicFile, external-change check, postcondition), quit flow and new files.
+- [x] Save core: `AtomicFile.WriteExact`, DocumentFile (content-based external-change check, read-back postcondition),
+      EditController save/reload/quit flows, MoveBy over comment groups. (202b5c3)
+- [ ] Save/quit UI wiring and new files (Create confirmation, format choice, XML root name).
+- [ ] JSON planner: moving a block comment above another comment on the same line joins the next entry onto that line
+      (`"a": 1, /*t1*/ /*t2*/` → `"a": 1, /*t2*/ /*t1*/ "b": 2`). The result is valid but reformatted. Keep line breaks
+      when moving same-line comments.
+- [ ] The Save postcondition mismatch branch has no test, because there is no seam to inject a mismatch.
 
 ## M5b. Text mode
 
