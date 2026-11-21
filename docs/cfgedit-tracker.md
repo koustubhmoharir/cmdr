@@ -99,8 +99,11 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M5b. Text mode
 
-- [ ] Parse-failure fallback with the cursor at the error, F5 to reparse, and the Ctrl+T toggle with cursor mapping.
-- [ ] `--check`.
+- [x] Parse-failure fallback with the cursor at the error, F5 to reparse, and the Ctrl+T toggle with cursor mapping;
+      saving unparseable text after a confirmation; read-only when line endings would not round-trip (mutation-checked).
+      Checked in a real terminal on a CRLF file. (3722a07) *(Windows)*: newline mapping through `Environment.NewLine` is
+      unit-tested but has not been run on Windows.
+- [x] `--check`. (3722a07)
 
 ## M6. Search and copy
 
