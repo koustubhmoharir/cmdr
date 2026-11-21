@@ -107,7 +107,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M6. Search and copy
 
-- [ ] Search over keys, names and values, which expands collapsed nodes. Copy of the value and of the path (OSC 52).
+- [x] Search over keys, names and values, which expands collapsed nodes. Copy of the value and of the path (OSC 52).
+      Checked in a real terminal. (2f801e9)
+- [ ] Watch: one full Cfgedit.Tests run reportedly hung once during M6 work and did not reproduce in later runs.
 
 ## M7. Table editor
 
