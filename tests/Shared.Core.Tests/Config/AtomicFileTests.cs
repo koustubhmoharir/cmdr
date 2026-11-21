@@ -327,6 +327,242 @@ public class AtomicFileTests
         }
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("{}")]
+    [InlineData("{}\n")]
+    [InlineData("tail\n\n")]
+    [InlineData("a\r\nb\r\n")]
+    [InlineData("lone\rcarriage")]
+    [InlineData("nul\0inside")]
+    public void WriteExact_WritesTheExactBytesWithNoNewlineAdded(string text)
+    {
+        using var dir = new TempDir();
+        string path = dir.File("config.json");
+
+        AtomicFile.WriteExact(path, System.Text.Encoding.UTF8.GetBytes(text));
+
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(text), File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void WriteExact_AndWrite_DifferOnlyByTheTrailingNewline()
+    {
+        using var dir = new TempDir();
+        string exact = dir.File("exact.json");
+        string withNewline = dir.File("newline.json");
+
+        AtomicFile.WriteExact(exact, "[1, 2]"u8);
+        AtomicFile.Write(withNewline, "[1, 2]"u8);
+
+        Assert.Equal("[1, 2]"u8.ToArray(), File.ReadAllBytes(exact));
+        Assert.Equal("[1, 2]\n"u8.ToArray(), File.ReadAllBytes(withNewline));
+    }
+
+    [Fact]
+    public void WriteExact_ShorterContentOverLongerFile_LeavesNoTrailingBytes()
+    {
+        using var dir = new TempDir();
+        string path = dir.File("config.json");
+        AtomicFile.WriteExact(path, System.Text.Encoding.UTF8.GetBytes(new string('x', 500)));
+
+        AtomicFile.WriteExact(path, "3"u8);
+
+        Assert.Equal("3"u8.ToArray(), File.ReadAllBytes(path));
+        Assert.Equal(new[] { "config.json" }, Directory.GetFiles(dir.Path).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void WriteExact_CreatesMissingDirectoryAndLeavesNoTempFiles()
+    {
+        using var dir = new TempDir();
+        string path = Path.Combine(dir.Path, "nested", "deeper", "config.json");
+
+        AtomicFile.WriteExact(path, "{}"u8);
+
+        Assert.Equal("{}"u8.ToArray(), File.ReadAllBytes(path));
+        Assert.Equal(new[] { "config.json" }, Directory.GetFiles(Path.GetDirectoryName(path)!).Select(Path.GetFileName));
+    }
+
+    [Fact]
+    public void WriteExact_KeepsExistingWorldWritableMode()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // The default umask would narrow a mode created from this one, so this proves the mode is set explicitly.
+        const UnixFileMode everyone = UnixFileMode.UserRead | UnixFileMode.UserWrite
+            | UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+            | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+        using var dir = new TempDir();
+        string path = dir.File("config.json");
+        AtomicFile.WriteExact(path, "1"u8);
+        File.SetUnixFileMode(path, everyone);
+
+        AtomicFile.WriteExact(path, "3"u8);
+
+        Assert.Equal(everyone, File.GetUnixFileMode(path));
+        Assert.Equal("3"u8.ToArray(), File.ReadAllBytes(path));
+    }
+
+    [Fact]
+    public void WriteExact_ThroughRelativeSymlink_UpdatesTargetAndKeepsLink()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        string target = dir.File("target.json");
+        string link = dir.File("linked.json");
+        AtomicFile.WriteExact(target, "1"u8);
+        File.CreateSymbolicLink(link, "target.json");
+
+        AtomicFile.WriteExact(link, "5"u8);
+
+        Assert.Equal("target.json", new FileInfo(link).LinkTarget);
+        Assert.Equal("5"u8.ToArray(), File.ReadAllBytes(target));
+        Assert.Equal("5"u8.ToArray(), File.ReadAllBytes(link));
+        Assert.Equal(new[] { "linked.json", "target.json" }, Directory.GetFiles(dir.Path).Select(Path.GetFileName).Order());
+    }
+
+    [Fact]
+    public void WriteExact_ThroughDanglingSymlink_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var dir = new TempDir();
+        Directory.CreateDirectory(dir.File("a"));
+        Directory.CreateDirectory(dir.File("b"));
+        string link = dir.File(Path.Combine("a", "linked.json"));
+        string missing = Path.Combine("..", "b", "missing.json");
+        File.CreateSymbolicLink(link, missing);
+
+        IOException ex = Assert.Throws<IOException>(() => AtomicFile.WriteExact(link, "{}"u8));
+
+        Assert.Contains("which does not exist", ex.Message);
+        Assert.Equal(missing, new FileInfo(link).LinkTarget);
+        Assert.Equal(new[] { "linked.json" }, Directory.GetFiles(dir.File("a")).Select(Path.GetFileName));
+        Assert.Empty(Directory.GetFiles(dir.File("b")));
+    }
+
+    [Fact]
+    public void WriteExact_ThroughLinkWithDotDotAfterAMissingDirectory_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        // Same walk rule as Write: a missing directory on the way is an error, never dropped.
+        using var dir = new TempDir();
+        AtomicFile.WriteExact(dir.File("target.json"), "1"u8);
+        string link = dir.File("linked.json");
+        File.CreateSymbolicLink(link, Path.Combine("missing", "..", "target.json"));
+        byte[] before = File.ReadAllBytes(dir.File("target.json"));
+
+        Assert.Throws<IOException>(() => AtomicFile.WriteExact(link, "2"u8));
+
+        Assert.Equal(before, File.ReadAllBytes(dir.File("target.json")));
+        Assert.Equal(Path.Combine("missing", "..", "target.json"), new FileInfo(link).LinkTarget);
+    }
+
+    [Fact]
+    public void WriteExact_InADirectoryThatIsNotWritable_OverwritesTheWritableFileInPlace()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot())
+        {
+            return; // root can rename into a directory it cannot write, so the in-place branch is not reached
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "config.json");
+        AtomicFile.WriteExact(path, "1"u8);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead);
+        string inode = Inode(path);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute); // no file can be created or removed
+        try
+        {
+            AtomicFile.WriteExact(path, "7"u8);
+
+            Assert.Equal(inode, Inode(path)); // the same file, written in place: a replacement would have a new inode
+            Assert.Equal("7"u8.ToArray(), File.ReadAllBytes(path));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead, File.GetUnixFileMode(path));
+            Assert.Equal(new[] { "config.json" }, Directory.GetFiles(sub).Select(Path.GetFileName));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
+    [Fact]
+    public void WriteExact_InPlaceOverAShorterFile_LeavesNoTrailingBytes()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot())
+        {
+            return; // root replaces the file instead of writing it in place
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "config.json");
+        AtomicFile.WriteExact(path, System.Text.Encoding.UTF8.GetBytes(new string('x', 500)));
+        string inode = Inode(path);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            AtomicFile.WriteExact(path, "3"u8);
+
+            Assert.Equal(inode, Inode(path));
+            Assert.Equal("3"u8.ToArray(), File.ReadAllBytes(path));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
+    [Fact]
+    public void WriteExact_FileThatIsNotWritableInADirectoryThatIsNotWritable_ThrowsAndChangesNothing()
+    {
+        if (OperatingSystem.IsWindows() || IsRoot())
+        {
+            return; // root writes a read-only file, so there is no denial to expect
+        }
+
+        using var dir = new TempDir();
+        string sub = dir.File("locked");
+        Directory.CreateDirectory(sub);
+        string path = Path.Combine(sub, "config.json");
+        AtomicFile.WriteExact(path, "1"u8);
+        File.SetUnixFileMode(path, UnixFileMode.UserRead);
+        UnixFileMode dirMode = File.GetUnixFileMode(sub);
+        File.SetUnixFileMode(sub, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            Assert.Throws<UnauthorizedAccessException>(() => AtomicFile.WriteExact(path, "7"u8));
+
+            Assert.Equal("1"u8.ToArray(), File.ReadAllBytes(path));
+            Assert.Equal(new[] { "config.json" }, Directory.GetFiles(sub).Select(Path.GetFileName));
+        }
+        finally
+        {
+            File.SetUnixFileMode(sub, dirMode);
+        }
+    }
+
     // File.Replace failed with ERROR_UNABLE_TO_MOVE_REPLACEMENT (1176): the destination is gone and the new content is only in the temp file.
     // RecoverFromFailedReplace is called directly, so these run on any OS.
     [Fact]

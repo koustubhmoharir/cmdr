@@ -5,7 +5,8 @@ namespace Shared.Core;
 
 /// <summary>
 /// Replaces a file's content, atomically when it can. The content plus a trailing '\n' is written to a hidden temp file beside the
-/// destination, flushed to disk, and then moved over the destination. Rules:
+/// destination, flushed to disk, and then moved over the destination. <see cref="WriteExact"/> does the same with the bytes written
+/// unchanged, without the '\n'. The rules below apply to both.
 /// <list type="bullet">
 /// <item>A symbolic link is followed. The final target (see <see cref="PhysicalPath"/>) is replaced and the link itself is left
 /// intact. A dangling link is an <see cref="IOException"/>, thrown before anything is created. So is a link whose target goes
@@ -44,27 +45,54 @@ public static class AtomicFile
     /// <exception cref="UnauthorizedAccessException">The file cannot be written.</exception>
     public static void Write(string path, ReadOnlySpan<byte> content)
     {
-        Write(path, content, keepOtherOwners: !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(KeepOwnerVariable)));
+        Write(path, content, keepOtherOwners: KeepOtherOwnersFromEnvironment());
+    }
+
+    /// <summary>
+    /// Replaces the file at <paramref name="path"/> with exactly <paramref name="content"/>: no '\n' is added, so the file holds the
+    /// bytes given and nothing else. Every rule of <see cref="Write(string, ReadOnlySpan{byte})"/> applies.
+    /// </summary>
+    /// <exception cref="IOException">The path is a dangling symbolic link or a link loop, or the file cannot be written or replaced.</exception>
+    /// <exception cref="UnauthorizedAccessException">The file cannot be written.</exception>
+    public static void WriteExact(string path, ReadOnlySpan<byte> content)
+    {
+        WriteExact(path, content, keepOtherOwners: KeepOtherOwnersFromEnvironment());
     }
 
     /// <summary>
     /// <see cref="Write(string, ReadOnlySpan{byte})"/> with the opt-out given explicitly. When <paramref name="keepOtherOwners"/> is
     /// true, an existing file this process does not own (and which is not root) is written in place, so its owner stays the same.
     /// </summary>
-    internal static void Write(string path, ReadOnlySpan<byte> content, bool keepOtherOwners)
+    internal static void Write(string path, ReadOnlySpan<byte> content, bool keepOtherOwners) =>
+        WriteCore(path, content, keepOtherOwners, trailingNewline: true);
+
+    /// <summary>
+    /// <see cref="WriteExact(string, ReadOnlySpan{byte})"/> with the opt-out given explicitly. See <see cref="Write(string, ReadOnlySpan{byte}, bool)"/>.
+    /// </summary>
+    internal static void WriteExact(string path, ReadOnlySpan<byte> content, bool keepOtherOwners) =>
+        WriteCore(path, content, keepOtherOwners, trailingNewline: false);
+
+    private static bool KeepOtherOwnersFromEnvironment() =>
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(KeepOwnerVariable));
+
+    /// <summary>
+    /// The one implementation behind <see cref="Write(string, ReadOnlySpan{byte}, bool)"/> and <see cref="WriteExact(string, ReadOnlySpan{byte}, bool)"/>.
+    /// The only difference is <paramref name="trailingNewline"/>, which decides whether a single '\n' follows the content.
+    /// </summary>
+    private static void WriteCore(string path, ReadOnlySpan<byte> content, bool keepOtherOwners, bool trailingNewline)
     {
         string destination = ResolveDestination(Path.GetFullPath(path));
         UnixOwnership.CreateDirectory(Path.GetDirectoryName(destination)!);
 
         if (!File.Exists(destination))
         {
-            Replace(destination, content, replacing: false, mode: null, owner: null);
+            Replace(destination, content, replacing: false, mode: null, owner: null, trailingNewline);
             return;
         }
 
         if (OperatingSystem.IsWindows())
         {
-            Replace(destination, content, replacing: true, mode: null, owner: null);
+            Replace(destination, content, replacing: true, mode: null, owner: null, trailingNewline);
             return;
         }
 
@@ -73,11 +101,11 @@ public static class AtomicFile
         {
             if (OwnedByThisProcess(destination))
             {
-                Replace(destination, content, replacing: true, mode: File.GetUnixFileMode(destination), owner: null);
+                Replace(destination, content, replacing: true, mode: File.GetUnixFileMode(destination), owner: null, trailingNewline);
             }
             else
             {
-                WriteInPlace(destination, content);
+                WriteInPlace(destination, content, trailingNewline);
             }
 
             return;
@@ -89,7 +117,7 @@ public static class AtomicFile
         {
             if (keepOtherOwners)
             {
-                WriteInPlace(destination, content);
+                WriteInPlace(destination, content, trailingNewline);
                 return;
             }
 
@@ -98,18 +126,18 @@ public static class AtomicFile
 
         // A root save gives the file's own owner the file. Otherwise uint.MaxValue keeps the temp file's owner, the saving user.
         uint uid = root ? file.Uid : uint.MaxValue;
-        Replace(destination, content, replacing: true, mode: file.Mode, owner: (uid, file.Gid));
+        Replace(destination, content, replacing: true, mode: file.Mode, owner: (uid, file.Gid), trailingNewline);
     }
 
     /// <summary>
     /// Replaces <paramref name="destination"/> through a temp file, or writes it in place when the temp file cannot be given the
     /// owner or the rename is denied. A null <paramref name="owner"/> leaves the temp file owned by the saving user.
     /// </summary>
-    private static void Replace(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner)
+    private static void Replace(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner, bool trailingNewline)
     {
-        if (!TryReplaceFile(destination, content, replacing, mode, owner))
+        if (!TryReplaceFile(destination, content, replacing, mode, owner, trailingNewline))
         {
-            WriteInPlace(destination, content);
+            WriteInPlace(destination, content, trailingNewline);
         }
     }
 
@@ -117,7 +145,7 @@ public static class AtomicFile
     /// Writes the temp file and renames it over the destination. Returns false, having deleted the temp file, when the owner cannot
     /// be set, or when <paramref name="replacing"/> is true and the temp file cannot be created or renamed for lack of permission.
     /// </summary>
-    private static bool TryReplaceFile(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner)
+    private static bool TryReplaceFile(string destination, ReadOnlySpan<byte> content, bool replacing, UnixFileMode? mode, (uint Uid, uint Gid)? owner, bool trailingNewline)
     {
         string tempPath = Path.Combine(Path.GetDirectoryName(destination)!, "." + Path.GetFileName(destination) + "." + Guid.NewGuid().ToString("N") + ".tmp");
         bool keepTemp = false;
@@ -142,8 +170,7 @@ public static class AtomicFile
                     File.SetUnixFileMode(stream.SafeFileHandle, unixMode);
                 }
 
-                stream.Write(content);
-                stream.WriteByte((byte)'\n');
+                WriteContent(stream, content, trailingNewline);
 
                 // The write above clears setuid and setgid again for a non-root user, so the mode is set once more. The buffered bytes
                 // go to the file first, so that no write can follow this chmod.
@@ -231,12 +258,11 @@ public static class AtomicFile
     /// Overwrites the existing file's content through the file itself, so its identity, owner and permissions are kept. Not atomic:
     /// a failure part way leaves it partly written. The content is written before the file is shortened, so it is never empty.
     /// </summary>
-    private static void WriteInPlace(string destination, ReadOnlySpan<byte> content)
+    private static void WriteInPlace(string destination, ReadOnlySpan<byte> content, bool trailingNewline)
     {
         UnixFileMode? ownedMode = OperatingSystem.IsWindows() ? null : ModeIfOwned(destination);
         using var stream = new FileStream(destination, FileMode.Open, FileAccess.Write, FileShare.Read);
-        stream.Write(content);
-        stream.WriteByte((byte)'\n');
+        WriteContent(stream, content, trailingNewline);
         stream.SetLength(stream.Position);
 
         // A write or truncate by a non-root user clears setuid and setgid, so the mode is restored on the handle. Best effort: a failure
@@ -254,6 +280,16 @@ public static class AtomicFile
         }
 
         stream.Flush(flushToDisk: true);
+    }
+
+    /// <summary>Writes the content, then a single '\n' when <paramref name="trailingNewline"/> is true.</summary>
+    private static void WriteContent(Stream stream, ReadOnlySpan<byte> content, bool trailingNewline)
+    {
+        stream.Write(content);
+        if (trailingNewline)
+        {
+            stream.WriteByte((byte)'\n');
+        }
     }
 
     /// <summary>The mode of the file when this process owns it, otherwise null. Unix only.</summary>

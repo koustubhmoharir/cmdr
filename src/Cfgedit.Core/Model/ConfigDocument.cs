@@ -225,6 +225,150 @@ public sealed class ConfigDocument
         return AttachedGroup(node).Last + 1;
     }
 
+    /// <summary>
+    /// Moves a node one sibling unit up (<paramref name="delta"/> -1) or down (+1). A unit is an entry with its attached comments
+    /// (see <see cref="InsertionIndexBefore"/>), and every other comment is a unit of its own. A comment moves alone. A neighbour
+    /// that is part of the node's own unit (a comment attached to the same entry) is passed one child at a time.
+    /// </summary>
+    /// <param name="node">The node to move.</param>
+    /// <param name="delta">-1 to move up, +1 to move down.</param>
+    /// <returns>
+    /// The move, with <see cref="MoveNode.NewIndex"/> already applied; or null when the node is at that end of its parent, or cannot
+    /// move at all: a child of the document node other than a comment or a processing instruction (the JSON root value, the XML root
+    /// element, declaration and doctype), or a node that would move above the XML declaration.
+    /// </returns>
+    /// <exception cref="ArgumentException">There is no such node, or it is the document node.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="delta"/> is neither -1 nor 1.</exception>
+    public MoveNode? MoveBy(NodePath node, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        CheckDelta(delta);
+        DocNode target = Resolve(node) ?? throw new ArgumentException($"There is no node at {node}.", nameof(node));
+        DocNode parent = target.Parent ?? throw new ArgumentException("The document node cannot be moved.", nameof(node));
+        if (IsFixed(target))
+        {
+            return null;
+        }
+
+        int position = IndexOfChild(parent, target);
+        (int first, int last) = EditLayout.IsComment(target) ? (position, position) : EditLayout.Group(parent, position, Source.Text);
+        int size = last - first + 1;
+        List<(int First, int Last)> units = SiblingUnits(parent);
+        int newIndex;
+        if (delta < 0)
+        {
+            if (first == 0 || parent.Children[first - 1].Kind == NodeKind.XmlDeclaration)
+            {
+                return null;
+            }
+
+            int before = first - 1;
+            (int unitFirst, int unitLast) = UnitAt(units, before);
+            newIndex = unitLast >= first ? before : unitFirst;
+        }
+        else
+        {
+            if (last == parent.Children.Count - 1)
+            {
+                return null;
+            }
+
+            int after = last + 1;
+            (int unitFirst, int unitLast) = UnitAt(units, after);
+            newIndex = (unitFirst <= last ? after + 1 : unitLast + 1) - size;
+        }
+
+        return new MoveNode(target.Path, newIndex);
+    }
+
+    /// <summary>
+    /// Moves an attribute one position up (<paramref name="delta"/> -1) or down (+1) among its element's attributes.
+    /// </summary>
+    /// <param name="element">The element that holds the attribute.</param>
+    /// <param name="index">The attribute's index among the element's attributes.</param>
+    /// <param name="delta">-1 to move up, +1 to move down.</param>
+    /// <returns>The move, or null when the attribute is already first (for -1) or last (for +1).</returns>
+    /// <exception cref="ArgumentException">There is no such node.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The element has no attribute at <paramref name="index"/>, or delta is neither -1 nor 1.</exception>
+    public MoveAttribute? MoveAttributeBy(NodePath element, int index, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(element);
+        CheckDelta(delta);
+        DocNode node = Resolve(element) ?? throw new ArgumentException($"There is no node at {element}.", nameof(element));
+        int count = node.Parts.Count(part => part.Kind == PartKind.AttributeName);
+        if (index < 0 || index >= count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), index, "There is no attribute at this index.");
+        }
+
+        int newIndex = index + delta;
+        return newIndex < 0 || newIndex >= count ? null : new MoveAttribute(element, index, newIndex);
+    }
+
+    private static void CheckDelta(int delta)
+    {
+        if (delta is not (-1 or 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(delta), delta, "The delta must be -1 or 1.");
+        }
+    }
+
+    /// <summary>The nodes that cannot move: a child of the document node other than a comment or a processing instruction.</summary>
+    private static bool IsFixed(DocNode node)
+    {
+        return node.Parent?.Kind == NodeKind.Document
+            && node.Kind is not (NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction);
+    }
+
+    /// <summary>
+    /// The units of a parent's children, in order. Each entry is a unit with the comments attached to it, and each other comment is a
+    /// unit alone. Together the units cover every child once.
+    /// </summary>
+    private List<(int First, int Last)> SiblingUnits(DocNode parent)
+    {
+        var units = new List<(int First, int Last)>();
+        int count = parent.Children.Count;
+        int k = 0;
+        while (k < count)
+        {
+            int entry = k;
+            while (entry < count && EditLayout.IsComment(parent.Children[entry]))
+            {
+                entry++;
+            }
+
+            (int unitFirst, int unitLast) = entry < count ? EditLayout.Group(parent, entry, Source.Text) : (count, count - 1);
+            unitFirst = Math.Max(unitFirst, k);
+            for (; k < unitFirst; k++)
+            {
+                units.Add((k, k)); // comments that are not attached to the entry after them
+            }
+
+            if (entry == count)
+            {
+                break;
+            }
+
+            units.Add((unitFirst, unitLast));
+            k = unitLast + 1;
+        }
+
+        return units;
+    }
+
+    private static (int First, int Last) UnitAt(List<(int First, int Last)> units, int index)
+    {
+        foreach ((int first, int last) in units)
+        {
+            if (first <= index && index <= last)
+            {
+                return (first, last);
+            }
+        }
+
+        throw new InvalidOperationException($"No sibling unit holds child {index}.");
+    }
+
     /// <summary>The sibling range that moves with a node, as the attachment rules give it.</summary>
     private (int First, int Last) AttachedGroup(NodePath path)
     {

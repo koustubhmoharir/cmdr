@@ -162,6 +162,115 @@ public class AtomicFileOwnershipTests
         Assert.Equal("new\n", File.ReadAllText(file));
     }
 
+    [Fact]
+    public void WriteExact_NotOwner_WithoutOptOut_ReplacesFileAndSavingUserOwnsIt()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot() || SupplementaryGroup() is not uint group || !SudoAvailable()) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        GiveToOtherUser(file, group, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead);
+        Stat before = StatOf(file);
+
+        AtomicFile.WriteExact(file, "new"u8, keepOtherOwners: false);
+
+        Stat after = StatOf(file);
+        Assert.Equal(CurrentUid(), after.Uid);
+        Assert.Equal(before.Gid, after.Gid);
+        Assert.Equal("664", after.Mode);
+        Assert.NotEqual(before.Inode, after.Inode);
+        Assert.Equal("new"u8.ToArray(), File.ReadAllBytes(file));
+        Assert.Equal(["config.json"], FileNames(dir));
+    }
+
+    [Fact]
+    public void WriteExact_NotOwner_WithOptOut_WritesInPlaceAndKeepsOwner()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot() || SupplementaryGroup() is not uint group || !SudoAvailable()) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        GiveToOtherUser(file, group, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead);
+        Stat before = StatOf(file);
+
+        AtomicFile.WriteExact(file, "new"u8, keepOtherOwners: true);
+
+        Stat after = StatOf(file);
+        Assert.Equal(NobodyUid, after.Uid);
+        Assert.Equal(before.Gid, after.Gid);
+        Assert.Equal(before.Inode, after.Inode);
+        Assert.Equal("new"u8.ToArray(), File.ReadAllBytes(file));
+    }
+
+    [Fact]
+    public void WriteExact_NotOwner_NotWritable_ThrowsAndLeavesFileUnchanged()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot() || SupplementaryGroup() is not uint group || !SudoAvailable()) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        GiveToOtherUser(file, group, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        Stat before = StatOf(file);
+
+        Assert.Throws<UnauthorizedAccessException>(() => AtomicFile.WriteExact(file, "new"u8, keepOtherOwners: false));
+
+        Assert.Equal("old\n"u8.ToArray(), File.ReadAllBytes(file));
+        Assert.Equal(before.Inode, StatOf(file).Inode);
+        Assert.Equal(["config.json"], FileNames(dir));
+    }
+
+    [Theory]
+    [InlineData(false, "660")]
+    [InlineData(true, "2660")]
+    public void WriteExact_Owner_NotInFileGroup_KeepsOwnerGroupAndMode(bool setgid, string expectedMode)
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot() || SupplementaryGroup() is not uint group) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        Require("chgrp", group.ToString(), file);
+        UnixFileMode mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite;
+        File.SetUnixFileMode(file, setgid ? mode | UnixFileMode.SetGroup : mode);
+        Stat before = StatOf(file);
+
+        AtomicFile.WriteExact(file, "new"u8, keepOtherOwners: false);
+
+        Stat after = StatOf(file);
+        Assert.Equal(before.Uid, after.Uid);
+        Assert.Equal(before.Gid, after.Gid);
+        Assert.Equal(expectedMode, after.Mode);
+        Assert.NotEqual(before.Inode, after.Inode);
+        Assert.Equal("new"u8.ToArray(), File.ReadAllBytes(file));
+        Assert.Equal(["config.json"], FileNames(dir));
+    }
+
+    [Fact]
+    public void WriteExact_Owner_PrimaryGroupSetuid_KeepsSetuidInMode()
+    {
+        if (!OperatingSystem.IsLinux() || IsRoot()) return;
+
+        using var dir = new TempDir();
+        string file = dir.File("config.json");
+        File.WriteAllText(file, "old\n");
+        File.SetUnixFileMode(file, UnixFileMode.SetUser | UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        Stat before = StatOf(file);
+        Assert.Equal(uint.Parse(Output("id", "-g")), before.Gid);
+
+        AtomicFile.WriteExact(file, "new"u8, keepOtherOwners: false);
+
+        Stat after = StatOf(file);
+        Assert.Equal(CurrentUid(), after.Uid);
+        Assert.Equal(before.Gid, after.Gid);
+        Assert.Equal("4755", after.Mode);
+        Assert.NotEqual(before.Inode, after.Inode);
+        Assert.Equal("new"u8.ToArray(), File.ReadAllBytes(file));
+    }
+
     /// <summary>A file the test user owns in its primary group, with <paramref name="mode"/>, keeps that exact mode through a save.</summary>
     [UnsupportedOSPlatform("windows")]
     private static void AssertOwnedSaveKeepsMode(UnixFileMode mode, string expectedMode)
