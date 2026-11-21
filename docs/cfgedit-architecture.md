@@ -293,8 +293,14 @@ These cases are errors, each naming what was found:
    - `DtdProcessing.Parse`, `XmlResolver = null`, `MaxCharactersFromEntities = 1_000_000`
    - `IgnoreWhitespace/IgnoreComments/IgnoreProcessingInstructions = false`, `CheckCharacters = true`
 
-   The reader is walked to the end, recording a flat list of reader nodes. Each records the kind, name, value, depth,
-   IsEmptyElement, line and column, and for elements their attributes (name, value, quote, line, column, IsDefault).
+   The reader is walked to the end, and each node is compared as it is read: kind, name, value, depth, IsEmptyElement,
+   line and column, and for elements their attributes (name, value, `QuoteChar`, line, column, IsDefault). Neither
+   side's nodes are materialised as a list. The scanner runs first, but its failure is
+   held back, so a well-formedness error from the reader always wins. Unexpected exceptions in the scanner become the
+   internal mismatch error.
+
+   Element nesting is capped at `XmlDocumentSyntax.MaxDepth` = 256 (the root is level 1), as for JSON. Deeper input
+   is a `CfgeditException` "nesting is deeper than 256 levels" at the name of the first element beyond the cap.
 
    An `XmlException` becomes `CfgeditException(message, Line = ex.LineNumber, Column = ex.LinePosition)`. The message is
    `ex.Message` with .NET's trailing " Line n, position m." removed.

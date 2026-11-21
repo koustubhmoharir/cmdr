@@ -136,6 +136,9 @@ public static class XmlDecoding
         }
     }
 
+    /// <summary>The number of leading bytes that the encoding check reads first. See <see cref="FirstNodeEncoding"/>.</summary>
+    private const int FirstNodePrefixLength = 4096;
+
     private enum Start
     {
         Utf8Bom,
@@ -347,7 +350,35 @@ public static class XmlDecoding
         return result;
     }
 
+    /// <summary>
+    /// The first node's encoding as XmlTextReader reports it. Only the first node is read, so a prefix of the bytes is tried
+    /// first, which avoids copying a large document. When the prefix gives no encoding, the whole document is read as before,
+    /// and an XmlException from that read propagates to the caller.
+    /// </summary>
     private static string? FirstNodeEncoding(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length > FirstNodePrefixLength)
+        {
+            string? fromPrefix;
+            try
+            {
+                fromPrefix = TryFirstNodeEncoding(bytes[..FirstNodePrefixLength]);
+            }
+            catch (XmlException)
+            {
+                fromPrefix = null;
+            }
+
+            if (fromPrefix is not null)
+            {
+                return fromPrefix;
+            }
+        }
+
+        return TryFirstNodeEncoding(bytes);
+    }
+
+    private static string? TryFirstNodeEncoding(ReadOnlySpan<byte> bytes)
     {
         using var stream = new MemoryStream(bytes.ToArray(), writable: false);
         using var reader = new XmlTextReader(stream) { DtdProcessing = DtdProcessing.Parse, XmlResolver = null };

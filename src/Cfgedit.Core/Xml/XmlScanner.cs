@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using Cfgedit.Core.Text;
 
@@ -36,15 +38,33 @@ internal sealed class XmlScanResult
 /// </remarks>
 internal sealed class XmlScanner
 {
+    /// <summary>The characters that make a text run need decoding: a reference, and a CR, which is normalised.</summary>
+    private static readonly SearchValues<char> TextSpecials = SearchValues.Create("&\r");
+
+    /// <summary>The characters that make an attribute value need decoding: a reference, and any line break or tab.</summary>
+    private static readonly SearchValues<char> AttributeSpecials = SearchValues.Create("&\r\n\t");
+
+    /// <summary>The XML whitespace characters, as <see cref="IsSpace"/> defines them.</summary>
+    private static readonly SearchValues<char> Whitespace = SearchValues.Create(" \t\r\n");
+
+    /// <summary>The characters that end a name: whitespace, and the punctuation that cannot be part of an XML name.</summary>
+    private static readonly SearchValues<char> NameDelimiters = SearchValues.Create(" \t\r\n=/>\"'<?[]");
+
     private readonly SourceText _source;
     private readonly string _text;
     private readonly XmlScanResult _result = new();
+    private readonly Dictionary<string, string> _names = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> _nameLookup;
+
+    /// <summary>The builder that <see cref="DecodeRange"/> uses. A decode never nests, so one builder serves every value.</summary>
+    private readonly StringBuilder _decoded = new();
     private int _pos;
 
     private XmlScanner(SourceText source)
     {
         _source = source;
         _text = source.Text;
+        _nameLookup = _names.GetAlternateLookup<ReadOnlySpan<char>>();
     }
 
     /// <summary>Scans a source text that XmlReader has accepted.</summary>
@@ -56,17 +76,22 @@ internal sealed class XmlScanner
         return scanner.Run();
     }
 
-    /// <summary>An element on the stack while its children are being scanned.</summary>
-    private sealed class ElementFrame
+    /// <summary>
+    /// An element on the stack while its children are being scanned. Its attributes and children are not held here: they are
+    /// the parts of the scanner's shared lists from <see cref="AttributeBase"/> and <see cref="ChildBase"/> on. Elements nest
+    /// last in, first out, so those parts are always the tops of the lists.
+    /// </summary>
+    private readonly struct ElementFrame
     {
-        public ElementFrame(int start, string name, int nameStart, List<XmlAttributeSyntax> attributes, int startTagEnd, bool isEmpty)
+        public ElementFrame(int start, string name, int nameStart, int attributeBase, int startTagEnd, bool isEmpty, int childBase)
         {
             Start = start;
             Name = name;
             NameStart = nameStart;
-            Attributes = attributes;
+            AttributeBase = attributeBase;
             StartTagEnd = startTagEnd;
             IsEmpty = isEmpty;
+            ChildBase = childBase;
         }
 
         public int Start { get; }
@@ -75,14 +100,20 @@ internal sealed class XmlScanner
 
         public int NameStart { get; }
 
-        public List<XmlAttributeSyntax> Attributes { get; }
+        public int AttributeBase { get; }
 
         public int StartTagEnd { get; }
 
         public bool IsEmpty { get; }
 
-        public List<XmlNodeSyntax> Children { get; } = [];
+        public int ChildBase { get; }
     }
+
+    /// <summary>The attributes of the open elements, each element's from its <see cref="ElementFrame.AttributeBase"/> on.</summary>
+    private readonly List<XmlAttributeSyntax> _attributes = [];
+
+    /// <summary>The children of the open elements, each element's from its <see cref="ElementFrame.ChildBase"/> on.</summary>
+    private readonly List<XmlNodeSyntax> _children = [];
 
     private XmlScanResult Run()
     {
@@ -180,24 +211,36 @@ internal sealed class XmlScanner
             }
             else if (StartsAt(_pos, "<!--"))
             {
-                top.Children.Add(ReadComment());
+                _children.Add(ReadComment());
             }
             else if (StartsAt(_pos, "<![CDATA["))
             {
-                top.Children.Add(ReadCData());
+                _children.Add(ReadCData());
             }
             else if (StartsAt(_pos, "<?"))
             {
-                top.Children.Add(ReadPi());
+                _children.Add(ReadPi());
             }
             else if (_text[_pos] == '<')
             {
+                if (stack.Count >= XmlDocumentSyntax.MaxDepth)
+                {
+                    // A user-facing limit, not a scanner fault: the tree builders and logical comparison above the CST walk
+                    // one level per element, so depth is capped as it is for JSON.
+                    LinePosition at = _source.GetPosition(_pos + 1);
+                    throw new CfgeditException($"nesting is deeper than {XmlDocumentSyntax.MaxDepth} levels")
+                    {
+                        Line = at.Line,
+                        Column = at.Column,
+                    };
+                }
+
                 stack.Push(ReadStartTag());
                 continue;
             }
             else
             {
-                top.Children.Add(ReadText());
+                _children.Add(ReadText());
             }
 
             if (finished is null)
@@ -211,21 +254,26 @@ internal sealed class XmlScanner
                 return finished;
             }
 
-            stack.Peek().Children.Add(finished);
+            _children.Add(finished);
         }
     }
 
-    private static XmlElementSyntax Build(ElementFrame frame, XmlEndTagSyntax? endTag, int end)
+    /// <summary>Builds the element from its frame, and removes its attributes and children from the shared lists.</summary>
+    private XmlElementSyntax Build(ElementFrame frame, XmlEndTagSyntax? endTag, int end)
     {
+        XmlAttributeSyntax[] attributes = CollectionsMarshal.AsSpan(_attributes).Slice(frame.AttributeBase).ToArray();
+        XmlNodeSyntax[] children = CollectionsMarshal.AsSpan(_children).Slice(frame.ChildBase).ToArray();
+        _attributes.RemoveRange(frame.AttributeBase, _attributes.Count - frame.AttributeBase);
+        _children.RemoveRange(frame.ChildBase, _children.Count - frame.ChildBase);
         return new XmlElementSyntax(
             frame.Start,
             end,
             frame.Name,
             frame.NameStart,
-            frame.Attributes.ToArray(),
+            attributes,
             frame.StartTagEnd,
             frame.IsEmpty,
-            frame.Children.ToArray(),
+            children,
             endTag);
     }
 
@@ -236,7 +284,7 @@ internal sealed class XmlScanner
         _pos++;
         int nameStart = _pos;
         string name = ReadName();
-        var attributes = new List<XmlAttributeSyntax>();
+        int attributeBase = _attributes.Count;
         bool isEmpty;
         int startTagEnd;
 
@@ -266,10 +314,10 @@ internal sealed class XmlScanner
                 break;
             }
 
-            attributes.Add(ReadAttribute());
+            _attributes.Add(ReadAttribute());
         }
 
-        return new ElementFrame(start, name, nameStart, attributes, startTagEnd, isEmpty);
+        return new ElementFrame(start, name, nameStart, attributeBase, startTagEnd, isEmpty, _children.Count);
     }
 
     private XmlAttributeSyntax ReadAttribute()
@@ -289,8 +337,11 @@ internal sealed class XmlScanner
         int valueStart = _pos;
         int close = IndexOfOrFail(quote, valueStart + 1);
         int rawStart = valueStart + 1;
-        string raw = _text[rawStart..close];
-        string value = DecodeRange(rawStart, close, isAttribute: true, out bool isRaw);
+        bool isRaw = false;
+        string raw = Slice(rawStart, close);
+        string value = NeedsDecoding(rawStart, close, isAttribute: true)
+            ? DecodeRange(rawStart, close, isAttribute: true, out isRaw)
+            : raw;
         _pos = close + 1;
         return new XmlAttributeSyntax(start, _pos, name, valueStart, quote, raw, isRaw ? raw : value, isRaw);
     }
@@ -318,8 +369,11 @@ internal sealed class XmlScanner
         }
 
         _pos = end;
-        string value = DecodeRange(start, end, isAttribute: false, out bool isRaw);
-        string raw = _text[start..end];
+        bool isRaw = false;
+        string raw = Slice(start, end);
+        string value = NeedsDecoding(start, end, isAttribute: false)
+            ? DecodeRange(start, end, isAttribute: false, out isRaw)
+            : raw;
         bool isWhitespace = !isRaw && AllSpace(start, end);
         return new XmlTextSyntax(start, end, raw, isRaw ? raw : value, isWhitespace, isRaw);
     }
@@ -569,10 +623,25 @@ internal sealed class XmlScanner
     private string DecodeRange(int start, int end, bool isAttribute, out bool isRaw)
     {
         isRaw = false;
-        var sb = new StringBuilder(end - start);
+        StringBuilder sb = _decoded;
+        sb.Clear();
         int i = start;
         while (i < end)
         {
+            // Ordinary characters are copied as runs. Only the characters that DecodeRange changes need a decision.
+            int run = _text.AsSpan(i, end - i).IndexOfAny(isAttribute ? AttributeSpecials : TextSpecials);
+            if (run < 0)
+            {
+                sb.Append(_text, i, end - i);
+                break;
+            }
+
+            if (run > 0)
+            {
+                sb.Append(_text, i, run);
+                i += run;
+            }
+
             char c = _text[i];
             if (c == '\r' || c == '\n')
             {
@@ -597,36 +666,36 @@ internal sealed class XmlScanner
                     Fail("a reference is not terminated", i);
                 }
 
-                string name = _text[(i + 1)..semi];
-                switch (name)
+                // The name is compared as a span, so a predefined reference allocates nothing.
+                ReadOnlySpan<char> name = _text.AsSpan(i + 1, semi - i - 1);
+                if (name.SequenceEqual("lt"))
                 {
-                    case "lt":
-                        sb.Append('<');
-                        break;
-                    case "gt":
-                        sb.Append('>');
-                        break;
-                    case "amp":
-                        sb.Append('&');
-                        break;
-                    case "apos":
-                        sb.Append('\'');
-                        break;
-                    case "quot":
-                        sb.Append('"');
-                        break;
-                    default:
-                        if (name.StartsWith('#'))
-                        {
-                            sb.Append(CharacterReference(name, i));
-                        }
-                        else
-                        {
-                            isRaw = true;
-                            _result.EntityReferences.Add((name, i));
-                        }
-
-                        break;
+                    sb.Append('<');
+                }
+                else if (name.SequenceEqual("gt"))
+                {
+                    sb.Append('>');
+                }
+                else if (name.SequenceEqual("amp"))
+                {
+                    sb.Append('&');
+                }
+                else if (name.SequenceEqual("apos"))
+                {
+                    sb.Append('\'');
+                }
+                else if (name.SequenceEqual("quot"))
+                {
+                    sb.Append('"');
+                }
+                else if (name.Length > 0 && name[0] == '#')
+                {
+                    sb.Append(CharacterReference(name.ToString(), i));
+                }
+                else
+                {
+                    isRaw = true;
+                    _result.EntityReferences.Add((name.ToString(), i));
                 }
 
                 i = semi + 1;
@@ -670,22 +739,14 @@ internal sealed class XmlScanner
 
     private bool AllSpace(int start, int end)
     {
-        for (int i = start; i < end; i++)
-        {
-            if (!IsSpace(_text[i]))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return _text.AsSpan(start, end - start).IndexOfAnyExcept(Whitespace) < 0;
     }
 
     private static bool IsSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
 
     private bool StartsAt(int at, string s)
     {
-        return at >= 0 && at + s.Length <= _text.Length && string.CompareOrdinal(_text, at, s, 0, s.Length) == 0;
+        return at >= 0 && at + s.Length <= _text.Length && _text.AsSpan(at, s.Length).SequenceEqual(s);
     }
 
     private void SkipSpace()
@@ -711,9 +772,37 @@ internal sealed class XmlScanner
             Fail("a name was expected", _pos);
         }
 
-        string name = _text[_pos..end];
+        string name = Intern(_pos, end);
         _pos = end;
         return name;
+    }
+
+    /// <summary>
+    /// The string for the name at [start, end). Names repeat through a document, so each distinct name is allocated once.
+    /// </summary>
+    private string Intern(int start, int end)
+    {
+        ReadOnlySpan<char> span = _text.AsSpan(start, end - start);
+        if (_nameLookup.TryGetValue(span, out string? name))
+        {
+            return name;
+        }
+
+        name = span.ToString();
+        _names.Add(name, name);
+        return name;
+    }
+
+    /// <summary>The text between two offsets, as a new string.</summary>
+    private string Slice(int start, int end) => _text.Substring(start, end - start);
+
+    /// <summary>
+    /// True when the range holds a character that <see cref="DecodeRange"/> changes. A range without one decodes to its own
+    /// text, so the scanner can use that text as it is.
+    /// </summary>
+    private bool NeedsDecoding(int start, int end, bool isAttribute)
+    {
+        return _text.AsSpan(start, end - start).IndexOfAny(isAttribute ? AttributeSpecials : TextSpecials) >= 0;
     }
 
     /// <summary>
@@ -722,17 +811,13 @@ internal sealed class XmlScanner
     /// </summary>
     private int NameEndAt(int i)
     {
-        while (i < _text.Length && !IsNameDelimiter(_text[i]))
+        if (i >= _text.Length)
         {
-            i++;
+            return i;
         }
 
-        return i;
-    }
-
-    private static bool IsNameDelimiter(char c)
-    {
-        return IsSpace(c) || c is '=' or '/' or '>' or '"' or '\'' or '<' or '?' or '[' or ']';
+        int relative = _text.AsSpan(i).IndexOfAny(NameDelimiters);
+        return relative < 0 ? _text.Length : i + relative;
     }
 
     private void Expect(char c, int after = 0)

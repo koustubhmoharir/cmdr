@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Cfgedit.Core.Text;
 
 namespace Cfgedit.Core.Xml;
@@ -18,6 +19,12 @@ public sealed class XmlDocumentSyntax
     }
 
     /// <summary>The source text the tree was parsed from.</summary>
+    /// <summary>
+    /// The deepest element nesting accepted, the root being level 1. Deeper documents are a parse error, as for JSON
+    /// (<c>JsonDocument.MaxDepth</c>), because the layers above the CST walk the tree one level per element.
+    /// </summary>
+    public const int MaxDepth = 256;
+
     public SourceText Source { get; }
 
     /// <summary>The XML declaration, or null when the document has none.</summary>
@@ -59,8 +66,8 @@ public sealed class XmlDocumentSyntax
     }
 
     /// <summary>
-    /// Parses a decoded document. XmlReader validates it and records every node, then the scanner builds the tree, and the two
-    /// are compared node by node.
+    /// Parses a decoded document. The scanner builds the tree, and XmlReader reads the document while each of its nodes is
+    /// compared with the tree's, in document order.
     /// </summary>
     /// <exception cref="CfgeditException">
     /// The document is not well-formed, it contains an entity with markup, or the tree and the reader disagree (an internal
@@ -79,11 +86,32 @@ public sealed class XmlDocumentSyntax
     internal static XmlDocumentSyntax Parse(SourceText source, int? perturbedIndex)
     {
         ArgumentNullException.ThrowIfNull(source);
-        IReadOnlyList<ReaderNode> nodes = XmlReaderValidation.Read(source);
-        XmlScanResult scan = XmlScanner.Scan(source);
-        XmlCrossCheck.RejectMarkupEntities(source, scan, nodes);
-        var document = new XmlDocumentSyntax(source, scan);
-        XmlCrossCheck.Verify(source, document, nodes, perturbedIndex);
-        return document;
+
+        // The scanner runs first, but a failure is held back until XmlReader has read the whole document: a well-formedness
+        // error is reported in preference to a scanner failure, as it always has been.
+        XmlScanResult? scan = null;
+        ExceptionDispatchInfo? scanFailure = null;
+        try
+        {
+            scan = XmlScanner.Scan(source);
+        }
+        catch (CfgeditException ex)
+        {
+            scanFailure = ExceptionDispatchInfo.Capture(ex);
+        }
+        catch (Exception ex) when (ex is IndexOutOfRangeException or ArgumentException or InvalidOperationException)
+        {
+            // A scanner bug on text the reader accepts must still surface as cfgedit's internal mismatch error, never as a raw
+            // runtime exception (on malformed text the reader's error is reported instead, below).
+            scanFailure = ExceptionDispatchInfo.Capture(new CfgeditException(
+                $"internal parse mismatch: scanner: {ex.GetType().Name}: {ex.Message} (please report this)", ex));
+        }
+
+        XmlDocumentSyntax? document = scan is null ? null : new XmlDocumentSyntax(source, scan);
+        var comparison = new XmlCrossCheck.ReaderComparison(source, document, scan, perturbedIndex);
+        XmlReaderValidation.Run(source, comparison);
+        scanFailure?.Throw();
+        comparison.ThrowFirstProblem();
+        return document!;
     }
 }

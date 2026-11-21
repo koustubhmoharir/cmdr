@@ -378,9 +378,52 @@ public sealed class XmlDocumentTests
     // ----- Deep nesting -----
 
     [Fact]
-    public void A_document_10000_elements_deep_parses_without_recursion()
+    public void Nesting_one_level_beyond_the_cap_is_an_error_at_the_element_name()
     {
-        const int depth = 10000;
+        // Each start tag on its own line: the 257th is at line 257, and its name at column 2.
+        var sb = new StringBuilder();
+        for (int i = 0; i < 257; i++)
+        {
+            sb.Append("<a>\n");
+        }
+
+        for (int i = 0; i < 257; i++)
+        {
+            sb.Append("</a>");
+        }
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => Parse(sb.ToString()));
+
+        Assert.Equal("nesting is deeper than 256 levels", ex.Message);
+        Assert.Equal(257, ex.Line);
+        Assert.Equal(2, ex.Column);
+    }
+
+    [Fact]
+    public void A_document_100000_elements_deep_fails_cleanly_with_the_depth_error()
+    {
+        var sb = new StringBuilder();
+        for (int i = 0; i < 100000; i++)
+        {
+            sb.Append("<a>");
+        }
+
+        for (int i = 0; i < 100000; i++)
+        {
+            sb.Append("</a>");
+        }
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => Parse(sb.ToString()));
+
+        Assert.Equal("nesting is deeper than 256 levels", ex.Message);
+        Assert.Equal(1, ex.Line);
+        Assert.Equal((256 * 3) + 2, ex.Column);
+    }
+
+    [Fact]
+    public void A_document_at_the_nesting_cap_parses()
+    {
+        const int depth = 256;
         var sb = new StringBuilder();
         for (int i = 0; i < depth; i++)
         {
