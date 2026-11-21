@@ -30,8 +30,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       property tests, and error-position tests. (1720d7b)
 - [x] Real configs (SheetKraft) checked by a scratchpad probe: decode/encode round trip, parse, CST invariants. All 361
       `.json` files pass (20 need Jsonc). (probe, 2026-11-21)
-- [ ] Performance: a 4.4 MB JSON file parses in 0.9 s (about 5 MB/s, linear). Every edit reparses, so profile and
-      speed up the lexer/parser before M5 (target: at least 50 MB/s).
+- [x] Performance: 5 MB/s, now 22–27 MB/s median on object-heavy input and 190 MB/s on string-heavy input, with half
+      the allocations (56f369b). The rest is per-node CST allocation. Next steps, if edit latency on large files needs
+      them: lazy `StringValue`, folding `JsonKey` into `JsonMember`, exact-size entry arrays.
 
 ## M2. XML (Cfgedit.Core)
 

@@ -567,7 +567,7 @@ public sealed class DocPart
 | JSON item | `Index` (not editable), then `Value` or `Summary` |
 | JSON root value | `Value` or `Summary` only |
 | JSON comment | `Comment` (editable) |
-| XML element | `ElementName`, then `AttributeName`/`AttributeValue` pairs, then `Text` if the element is text-only (no element, comment, CDATA or PI children and exactly one non-empty text child, or `<a></a>`) |
+| XML element | `ElementName`, then `AttributeName`/`AttributeValue` pairs, then `Text` if the element is text-only (no element, comment, CDATA or PI children, and either no text or one text child that is not whitespace containing a line break; `<a></a>` is text-only, `<a>\n</a>` is an empty container with an end row, `<a/>` has neither) |
 | XML element with children shown | `EndParts` = [`EndName`] |
 | XML text/CDATA | `Text`, but whitespace-only text nodes are not DocNodes |
 | XML comment | `Comment` |

@@ -1,0 +1,182 @@
+using System.Text;
+
+namespace Cfgedit.Core.Model;
+
+/// <summary>The kinds of logical node.</summary>
+public enum LogicalKind
+{
+    /// <summary>The document node.</summary>
+    Document,
+
+    /// <summary>A JSON object.</summary>
+    Object,
+
+    /// <summary>A JSON array.</summary>
+    Array,
+
+    /// <summary>A JSON scalar. Its <see cref="LogicalNode.ScalarKind"/> says which.</summary>
+    Scalar,
+
+    /// <summary>A comment, in JSON or XML.</summary>
+    Comment,
+
+    /// <summary>An XML element.</summary>
+    Element,
+
+    /// <summary>XML character data: a text node, or the text of a text-only element.</summary>
+    Text,
+
+    /// <summary>An XML CDATA section.</summary>
+    CData,
+
+    /// <summary>An XML processing instruction. Its name is the target and its value is the data.</summary>
+    ProcessingInstruction,
+
+    /// <summary>The XML declaration. Its attributes are the version, encoding and standalone pseudo-attributes.</summary>
+    Declaration,
+
+    /// <summary>The XML document type declaration. Its name is the root name and its value is the internal subset.</summary>
+    Doctype,
+}
+
+/// <summary>An attribute of a logical node: a name and its decoded value.</summary>
+/// <param name="Name">The attribute name.</param>
+/// <param name="Value">The decoded value.</param>
+public sealed record LogicalAttribute(string Name, string Value);
+
+/// <summary>
+/// The content of a document with its formatting removed: kinds, names, decoded values, attributes in order, and children
+/// (comments included). Two documents with equal logical trees say the same thing, whatever their layout. The tree is
+/// immutable. Equality is by value, and <see cref="ToString"/> is an indented dump for failure messages.
+/// </summary>
+public sealed class LogicalNode : IEquatable<LogicalNode>
+{
+    /// <summary>Creates a logical node.</summary>
+    /// <param name="kind">The kind of node.</param>
+    /// <param name="name">The JSON key, the XML element name, or the processing instruction target. Null when there is none.</param>
+    /// <param name="scalarKind">For a JSON scalar, its kind. Null otherwise.</param>
+    /// <param name="value">The decoded value, or the raw number or literal text for JSON scalars. Null when there is none.</param>
+    /// <param name="attributes">The attributes in document order.</param>
+    /// <param name="children">The children in document order.</param>
+    public LogicalNode(
+        LogicalKind kind,
+        string? name,
+        JsonValueKind? scalarKind,
+        string? value,
+        IReadOnlyList<LogicalAttribute> attributes,
+        IReadOnlyList<LogicalNode> children)
+    {
+        ArgumentNullException.ThrowIfNull(attributes);
+        ArgumentNullException.ThrowIfNull(children);
+        Kind = kind;
+        Name = name;
+        ScalarKind = scalarKind;
+        Value = value;
+        Attributes = attributes;
+        Children = children;
+    }
+
+    /// <summary>The kind of node.</summary>
+    public LogicalKind Kind { get; }
+
+    /// <summary>The key or name, or null.</summary>
+    public string? Name { get; }
+
+    /// <summary>For a JSON scalar, its kind. Null otherwise.</summary>
+    public JsonValueKind? ScalarKind { get; }
+
+    /// <summary>The value, or null when the node has none. An empty string is a value.</summary>
+    public string? Value { get; }
+
+    /// <summary>The attributes in document order.</summary>
+    public IReadOnlyList<LogicalAttribute> Attributes { get; }
+
+    /// <summary>The children in document order, comments included.</summary>
+    public IReadOnlyList<LogicalNode> Children { get; }
+
+    /// <inheritdoc/>
+    public bool Equals(LogicalNode? other)
+    {
+        if (other is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        return Kind == other.Kind
+            && Name == other.Name
+            && ScalarKind == other.ScalarKind
+            && Value == other.Value
+            && Attributes.SequenceEqual(other.Attributes)
+            && Children.SequenceEqual(other.Children);
+    }
+
+    /// <inheritdoc/>
+    public override bool Equals(object? obj)
+    {
+        return obj is LogicalNode other && Equals(other);
+    }
+
+    /// <inheritdoc/>
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Kind);
+        hash.Add(Name);
+        hash.Add(ScalarKind);
+        hash.Add(Value);
+        foreach (LogicalAttribute attribute in Attributes)
+        {
+            hash.Add(attribute);
+        }
+
+        foreach (LogicalNode child in Children)
+        {
+            hash.Add(child);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    /// <summary>An indented dump of the tree, one node per line, for failure messages.</summary>
+    public override string ToString()
+    {
+        var builder = new StringBuilder();
+        Append(builder, 0);
+        return builder.ToString().TrimEnd('\n');
+    }
+
+    private void Append(StringBuilder builder, int depth)
+    {
+        builder.Append(' ', depth * 2).Append(Kind);
+        if (Name is not null)
+        {
+            builder.Append(" name=").Append(DisplayText.Quote(Name));
+        }
+
+        if (ScalarKind is { } scalarKind)
+        {
+            builder.Append(" scalar=").Append(scalarKind);
+        }
+
+        if (Value is not null)
+        {
+            builder.Append(" value=").Append(DisplayText.Quote(Value));
+        }
+
+        foreach (LogicalAttribute attribute in Attributes)
+        {
+            builder.Append(" @").Append(attribute.Name).Append('=').Append(DisplayText.Quote(attribute.Value));
+        }
+
+        builder.Append('\n');
+        foreach (LogicalNode child in Children)
+        {
+            child.Append(builder, depth + 1);
+        }
+    }
+}
