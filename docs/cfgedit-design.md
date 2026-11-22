@@ -333,10 +333,11 @@ Duplicate keys are allowed and shown as they are (loaders disagree on which one 
 
 **Writing a value** chooses the plainest form that every common loader reads the same way: unquoted when the value has
 no leading or trailing whitespace and none of `#`, `'`, `"`, `\`, `$`, a backtick or a line break; otherwise single
-quotes when it has no `'`; otherwise double quotes, with `"` and `\` escaped and line breaks written as real line
-breaks. Editing an existing value keeps its quote style when that style can still hold the new value. A value with
-both a `'` and a `$` or a `\` is written in double quotes and the `$`/`\` are kept; the detail line warns that
-loaders may expand `$`.
+quotes when it has no `'`, no CR, no `\\` pair and no trailing `\` (python-dotenv decodes `\\` and `\'` in single
+quotes, Node's dotenv does not); otherwise double quotes, with `"` and `\` escaped, CR as `\r` and line breaks
+written as real line breaks. Editing an existing value keeps its quote style when that style can still hold the new
+value. Control characters other than tab, LF and CR are refused. A value written in double quotes that contains `$`
+or `\` gets a warning on the detail line: loaders may expand `$`, and they disagree on backslash escapes there.
 
 **Hierarchy.** A key is split on `__` into segments: `Logging__LogLevel__Default` is shown as `Logging` › `LogLevel` ›
 `Default`. A key with an empty segment (`A____B`, a leading or trailing `__`) or a segment that starts or ends with `_`
