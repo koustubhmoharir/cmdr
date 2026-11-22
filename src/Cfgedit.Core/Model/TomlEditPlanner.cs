@@ -88,8 +88,9 @@ internal sealed class TomlEditPlanner
             case DuplicateNode duplicate:
                 PlanDuplicate(duplicate);
                 break;
-            case MoveNode:
-                throw new CfgeditException("moving is not supported in TOML yet");
+            case MoveNode move:
+                PlanMove(move);
+                break;
             case ChangeJsonType:
                 throw new CfgeditException("use the TOML type change");
             case InsertAttribute or DeleteAttribute or MoveAttribute:
@@ -333,6 +334,249 @@ internal sealed class TomlEditPlanner
         {
             DeleteLines(node);
         }
+    }
+
+    // ----- MoveNode -----
+
+    /// <summary>
+    /// Moves a unit among its siblings: a key/value with its attached and trailing comments, a comment on a line of its own, an item or
+    /// member of an array or inline table, or a table with its sections (see <see cref="TomlLayout.Units"/>). The units from the moved one
+    /// to its destination are written back as one span. Each unit keeps its text, and the blank lines (or the spaces and line breaks of an
+    /// array) between the units stay where they are. In an array or an inline table a comma belongs to the item in front of it, and the
+    /// array's last item keeps the trailing comma that the array had.
+    /// </summary>
+    private void PlanMove(MoveNode op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document)
+        {
+            throw new CfgeditException("the root table cannot be moved");
+        }
+
+        if (IsInlineMember(parent) && !IsInline(parent))
+        {
+            throw new CfgeditException("a member of a dotted table inside an inline table cannot move yet");
+        }
+
+        int index = IndexOf(parent, node);
+        List<TomlUnit> units = TomlLayout.Units(_model, parent, _text, index);
+        int moved = units.FindIndex(unit => unit.First <= index && index <= unit.Last);
+        TomlUnit mover = units[moved];
+        if (mover.Refusal is not null)
+        {
+            throw new CfgeditException(mover.Refusal);
+        }
+
+        int destination = TomlLayout.Destination(units, moved, op.NewIndex, parent.Children.Count);
+        if (destination < 0)
+        {
+            throw new CfgeditException("this cannot move there: it would split an entry from its comments");
+        }
+
+        List<int> order = TomlLayout.Order(units.Count, moved, destination);
+        (int lo, int hi) = TomlLayout.Span(order);
+        if (lo < 0)
+        {
+            return;
+        }
+
+        for (int k = lo; k <= hi; k++)
+        {
+            if (k != moved && (units[k].Refusal is not null || !SameKind(mover, units[k])))
+            {
+                throw new CfgeditException(TomlLayout.NeighbourRefusal);
+            }
+        }
+
+        bool tokens = IsStaticArray(parent) || IsInline(parent);
+        List<string> texts;
+        if (tokens)
+        {
+            texts = TokenTexts(parent, units, order, lo, hi);
+        }
+        else
+        {
+            RequireNoAttachment(units, order, lo, hi);
+            texts = LineTexts(units, lo, hi, order);
+        }
+
+        int start = units[lo].Start;
+        int end = units[hi].End;
+        string span = Assemble(units, lo, hi, texts);
+        if (span != _text[start..end])
+        {
+            Replace(start, end, span);
+        }
+    }
+
+    /// <summary>A unit can take another's place only when both are of one kind: tables with tables, entries and comments of one section.</summary>
+    private static bool SameKind(TomlUnit mover, TomlUnit other)
+    {
+        if (mover.Kind == TomlUnitKind.Table)
+        {
+            return other.Kind == TomlUnitKind.Table;
+        }
+
+        return (other.Kind is TomlUnitKind.Entry or TomlUnitKind.Comment) && other.Section == mover.Section;
+    }
+
+    /// <summary>
+    /// The text of the units from <paramref name="lo"/> to <paramref name="hi"/> in their new order, in lines: a unit that is not the last one
+    /// gets a line break when it had none (it was the file's last line), and the last one loses its break when the file must end without one.
+    /// </summary>
+    private List<string> LineTexts(List<TomlUnit> units, int lo, int hi, List<int> order)
+    {
+        bool atEnd = hi == units.Count - 1 && units[hi].End == _text.Length && !EndsWithBreak(_text);
+        var texts = new List<string>();
+        for (int p = lo; p <= hi; p++)
+        {
+            TomlUnit unit = units[order[p]];
+            string text = _text[unit.Start..unit.End];
+            if (p < hi && !EndsWithBreak(text))
+            {
+                text += _newline;
+            }
+
+            if (p == hi && atEnd)
+            {
+                text = WithoutBreak(text);
+            }
+
+            texts.Add(text);
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// The text of the units from <paramref name="lo"/> to <paramref name="hi"/> in their new order, for an array or an inline table. An item
+    /// takes a comma unless it is the last item of the array: that one keeps the comma the array had at its end.
+    /// </summary>
+    private List<string> TokenTexts(DocNode parent, List<TomlUnit> units, List<int> order, int lo, int hi)
+    {
+        int lastEntry = units.FindLastIndex(unit => unit.Kind == TomlUnitKind.Entry);
+        bool hadTrailing = lastEntry >= 0 && ItemSpans(parent, units[lastEntry]).Comma is not null;
+        int newLast = -1;
+        if (lastEntry >= lo && lastEntry <= hi)
+        {
+            for (int p = lo; p <= hi; p++)
+            {
+                if (units[order[p]].Kind == TomlUnitKind.Entry)
+                {
+                    newLast = p;
+                }
+            }
+        }
+
+        var texts = new List<string>();
+        for (int p = lo; p <= hi; p++)
+        {
+            TomlUnit unit = units[order[p]];
+            string text = _text[unit.Start..unit.End];
+            if (unit.Kind == TomlUnitKind.Entry)
+            {
+                bool needComma = p != newLast || hadTrailing;
+                (int valueEnd, TomlSpan? comma) = ItemSpans(parent, unit);
+                if (needComma && comma is null)
+                {
+                    text = text.Insert(valueEnd - unit.Start, ",");
+                }
+                else if (!needComma && comma is { } span)
+                {
+                    text = text[..(valueEnd - unit.Start)] + text[(span.End - unit.Start)..];
+                }
+            }
+
+            texts.Add(text);
+        }
+
+        return texts;
+    }
+
+    /// <summary>The end of a value and the comma after it, for an item of an array or an inline table.</summary>
+    private (int ValueEnd, TomlSpan? Comma) ItemSpans(DocNode parent, TomlUnit unit)
+    {
+        DocNode child = parent.Children[unit.First];
+        return Carrier(child) switch
+        {
+            TomlInlineMember member => (member.Value.End, member.Comma),
+            TomlArrayItem item => (item.Value.End, item.Comma),
+            _ => throw Internal("an item has no syntax"),
+        };
+    }
+
+    /// <summary>
+    /// Refuses a move that would leave a comment on the line before a table header with no blank line between: the comment would then belong to
+    /// that table. The pairs checked are the new neighbours of the span and the units on either side of it.
+    /// </summary>
+    private void RequireNoAttachment(List<TomlUnit> units, List<int> order, int lo, int hi)
+    {
+        if (lo > 0)
+        {
+            RequireNoAttachment(units[lo - 1], units[order[lo]], units[lo - 1].End, units[lo].Start);
+        }
+
+        for (int p = lo; p < hi; p++)
+        {
+            RequireNoAttachment(units[order[p]], units[order[p + 1]], units[p].End, units[p + 1].Start);
+        }
+
+        if (hi + 1 < units.Count)
+        {
+            RequireNoAttachment(units[order[hi]], units[hi + 1], units[hi].End, units[hi + 1].Start);
+        }
+    }
+
+    private void RequireNoAttachment(TomlUnit before, TomlUnit after, int gapStart, int gapEnd)
+    {
+        if (gapStart == gapEnd && after.Kind == TomlUnitKind.Table && EndsWithComment(before))
+        {
+            throw new CfgeditException("this cannot move there: a comment would then sit on the table header below it");
+        }
+    }
+
+    private bool EndsWithComment(TomlUnit unit)
+    {
+        int at = TomlLayout.ItemAt(_model, unit.End - 1);
+        return at >= 0 && _model.Syntax.Items[at] is TomlCommentItem;
+    }
+
+    /// <summary>The text of a span of units, with the original text between them (blank lines, or the spaces and line breaks of an array).</summary>
+    private string Assemble(List<TomlUnit> units, int lo, int hi, List<string> texts)
+    {
+        var builder = new StringBuilder();
+        for (int p = lo; p <= hi; p++)
+        {
+            builder.Append(texts[p - lo]);
+            if (p < hi)
+            {
+                string gap = _text[units[p].End..units[p + 1].Start];
+                if (gap.Any(c => c is not (' ' or '\t' or '\r' or '\n')))
+                {
+                    throw Internal("the text between two units is not blank");
+                }
+
+                builder.Append(gap);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool EndsWithBreak(string text)
+    {
+        return text.Length > 0 && text[^1] is '\r' or '\n';
+    }
+
+    private static string WithoutBreak(string text)
+    {
+        if (text.EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            return text[..^2];
+        }
+
+        return EndsWithBreak(text) ? text[..^1] : text;
     }
 
     // ----- Deleting -----

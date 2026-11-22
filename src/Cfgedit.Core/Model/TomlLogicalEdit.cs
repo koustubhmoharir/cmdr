@@ -154,6 +154,21 @@ internal static class TomlLogicalEdit
                 break;
             }
 
+            case MoveNode move:
+            {
+                MoveLayout layout = LayoutOf(before, move);
+                if (layout.Node.Kind != NodeKind.TomlComment)
+                {
+                    int from = LogicalIndex(layout.Parent, layout.Node);
+                    int to = layout.Position;
+                    data = Modify(data, IndicesOf(layout.Parent), 0, n => WithMoved(n, from, to)) ?? data;
+                }
+
+                List<LogicalNode> old = comments;
+                comments = CommentPermutation(before, layout).Select(rank => old[rank]).ToList();
+                break;
+            }
+
             default:
                 throw new InvalidOperationException("Unknown TOML edit operation: " + op.GetType().Name);
         }
@@ -249,9 +264,136 @@ internal static class TomlLogicalEdit
                 return after.Resolve(path) is null ? null : path;
             }
 
+            case MoveNode move:
+            {
+                MoveLayout layout = LayoutOf(before, move);
+                DocNode node = layout.Node;
+                if (node.Kind == NodeKind.TomlComment)
+                {
+                    return CommentPathAt(after, Array.IndexOf(CommentPermutation(before, layout), CommentRanks(before)[node]));
+                }
+
+                NodePath path = IsKeyed((TomlModel)before.Syntax, layout.Parent)
+                    ? node.Path
+                    : layout.Parent.Path.Append(new ItemStep(layout.Position));
+                return after.Resolve(path) is null ? null : path;
+            }
+
             default:
                 return null;
         }
+    }
+
+    // ----- Moves: where a unit goes, and the comments in their new order -----
+
+    /// <summary>
+    /// A move on the layout of its parent: the units of the parent (see <see cref="TomlLayout.Units"/>), the order of the units after the move,
+    /// and the position of the moved node among the parent's data members (its comments are not data).
+    /// </summary>
+    private sealed record MoveLayout(DocNode Parent, DocNode Node, List<TomlUnit> Units, List<int> Order, int Position);
+
+    private static MoveLayout LayoutOf(ConfigDocument before, MoveNode move)
+    {
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        int index = IndexOf(parent, node);
+        List<TomlUnit> units = TomlLayout.Units((TomlModel)before.Syntax, parent, before.Source.Text, index);
+        int moved = units.FindIndex(unit => unit.First <= index && index <= unit.Last);
+        int destination = TomlLayout.Destination(units, moved, move.NewIndex, parent.Children.Count);
+        if (destination < 0)
+        {
+            throw new InvalidOperationException("A move cannot go inside a unit.");
+        }
+
+        List<int> order = TomlLayout.Order(units.Count, moved, destination);
+
+        // The data members before the moved unit, in the new order, are the members that come before it in the data.
+        int position = 0;
+        foreach (int k in order)
+        {
+            if (k == moved)
+            {
+                break;
+            }
+
+            position += DataCount(parent, units[k]);
+        }
+
+        return new MoveLayout(parent, node, units, order, position);
+    }
+
+    /// <summary>The number of data members (children that are not comments) in a unit.</summary>
+    private static int DataCount(DocNode parent, TomlUnit unit)
+    {
+        int count = 0;
+        for (int k = unit.First; k <= unit.Last; k++)
+        {
+            if (parent.Children[k].Kind != NodeKind.TomlComment)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// The old rank of the comment at each new rank after a move. A move rewrites the span of its units: the comments of each unit (the comments
+    /// whose text lies in the unit) move with it, in the order the units are in. The comments outside the span keep their ranks.
+    /// </summary>
+    private static int[] CommentPermutation(ConfigDocument before, MoveLayout layout)
+    {
+        var comments = new List<DocNode>();
+        CollectComments(before.Root, comments);
+        comments.Sort((a, b) => a.Start.CompareTo(b.Start));
+        var permutation = Enumerable.Range(0, comments.Count).ToArray();
+        (int lo, int hi) = TomlLayout.Span(layout.Order);
+        if (lo < 0)
+        {
+            return permutation;
+        }
+
+        int from = comments.FindIndex(comment => comment.Start >= layout.Units[lo].Start);
+        if (from < 0)
+        {
+            from = comments.Count;
+        }
+
+        int to = Math.Max(from, comments.FindLastIndex(comment => comment.Start < layout.Units[hi].End) + 1);
+        var block = new List<int>();
+        for (int p = lo; p <= hi; p++)
+        {
+            TomlUnit unit = layout.Units[layout.Order[p]];
+            for (int rank = from; rank < to; rank++)
+            {
+                if (comments[rank].Start >= unit.Start && comments[rank].Start < unit.End)
+                {
+                    block.Add(rank);
+                }
+            }
+        }
+
+        if (block.Count != to - from)
+        {
+            throw new InvalidOperationException("A comment is not in any unit of a move.");
+        }
+
+        for (int k = 0; k < block.Count; k++)
+        {
+            permutation[from + k] = block[k];
+        }
+
+        return permutation;
+    }
+
+    /// <summary>The children with one moved from a position to another, as a data member list.</summary>
+    private static LogicalNode WithMoved(LogicalNode node, int from, int to)
+    {
+        var children = node.Children.ToList();
+        LogicalNode child = children[from];
+        children.RemoveAt(from);
+        children.Insert(to, child);
+        return new LogicalNode(node.Kind, node.Name, node.ScalarKind, node.Value, node.Attributes, children, false, node.TomlKind);
     }
 
     // ----- Insert and duplicate: where a new node or a copy goes -----
@@ -1016,4 +1158,392 @@ internal static class TomlLayout
 
         return i == nextStart;
     }
+
+    /// <summary>
+    /// The units of a parent's children, in order, as a move sees them. Each child with its attached comments is a unit, and each other comment
+    /// is a unit alone. A table child is a unit of its own region: its header, its attached comments and every line of its subtree. A table
+    /// that the header of its own does not define (a dotted or implicit table), or whose region holds lines of another node, cannot move, and
+    /// neither can an array of tables among its siblings. In a table the units are whole lines of text. In an array or an inline table a unit
+    /// is the text of its item (its comma and its trailing comment included).
+    /// </summary>
+    /// <param name="model">The model of the document.</param>
+    /// <param name="parent">The table or array whose children are the units.</param>
+    /// <param name="text">The source text.</param>
+    /// <param name="split">The index of a comment child that moves alone, out of the unit it sits in; -1 for none.</param>
+    public static List<TomlUnit> Units(TomlModel model, DocNode parent, string text, int split = -1)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        IReadOnlyList<TomlItem> items = model.Syntax.Items;
+        bool inline = parent.Kind == NodeKind.TomlTable && model.ShapeOf(parent) == TomlContainer.Inline;
+        bool tokens = inline || (parent.Kind == NodeKind.TomlArray && model.ShapeOf(parent) == TomlContainer.Array);
+        List<(int First, int Last)> groups = Groups(parent, text);
+        if (split >= 0 && children[split].Kind == NodeKind.TomlComment)
+        {
+            groups = Split(groups, split);
+        }
+
+        var units = new List<TomlUnit>();
+        Dictionary<TomlNode, DocNode>? owners = null;
+        foreach ((int first, int last) in groups)
+        {
+            int main = first;
+            while (main <= last && children[main].Kind == NodeKind.TomlComment)
+            {
+                main++;
+            }
+
+            if (main > last)
+            {
+                // A comment alone. A comment that shares its line with a value (a table's own header comment) cannot move.
+                if (!EditLayout.StartsLine(text, children[first].Start))
+                {
+                    units.Add(new TomlUnit(TomlUnitKind.Refused, first, last, 0, 0, -1, TrailingRefusal));
+                }
+                else if (tokens)
+                {
+                    units.Add(new TomlUnit(TomlUnitKind.Comment, first, last, children[first].Start, children[last].End, -1, null));
+                }
+                else
+                {
+                    int start = EditLayout.LineStart(text, children[first].Start);
+                    int end = EditLayout.AfterLineBreak(text, children[last].End);
+                    units.Add(new TomlUnit(TomlUnitKind.Comment, first, last, start, end, SectionOf(items, start), null));
+                }
+
+                continue;
+            }
+
+            DocNode child = children[main];
+            if (child.Kind == NodeKind.TomlTable && model.ShapeOf(child) is TomlContainer.Implicit or TomlContainer.Dotted)
+            {
+                units.Add(new TomlUnit(TomlUnitKind.Refused, first, last, 0, 0, -1, SpreadRefusal));
+            }
+            else if (child.Kind == NodeKind.TomlTable && model.ShapeOf(child) == TomlContainer.Header && !tokens)
+            {
+                int start = EditLayout.LineStart(text, child.Start);
+                int end = EditLayout.AfterLineBreak(text, child.End);
+                owners ??= Owners(model);
+                bool whole = Owned(model, items, owners, child, start, end);
+                units.Add(whole
+                    ? new TomlUnit(TomlUnitKind.Table, first, last, start, end, -1, null)
+                    : new TomlUnit(TomlUnitKind.Refused, first, last, 0, 0, -1, SpreadRefusal));
+            }
+            else if (child.Kind == NodeKind.TomlArray && !tokens && model.ShapeOf(child) == TomlContainer.ArrayOfTables)
+            {
+                units.Add(new TomlUnit(TomlUnitKind.Refused, first, last, 0, 0, -1, "an array of tables cannot move among its siblings yet"));
+            }
+            else if (inline)
+            {
+                TomlInlineMember member = MemberOf(model, parent, child);
+                int end = member.Comma?.End ?? member.Value.End;
+                units.Add(new TomlUnit(TomlUnitKind.Entry, first, last, member.Key.Start, end, -1, null));
+            }
+            else if (tokens)
+            {
+                int index = 0;
+                for (int k = 0; k < main; k++)
+                {
+                    index += children[k].Kind == NodeKind.TomlComment ? 0 : 1;
+                }
+
+                TomlArrayItem item = model.ArrayItemSyntaxOf(parent, index);
+                if (item.BeforeComma.Any(node => node is TomlComment))
+                {
+                    units.Add(new TomlUnit(TomlUnitKind.Refused, first, last, 0, 0, -1, "a comment between an item and its comma cannot move"));
+                }
+                else
+                {
+                    units.Add(new TomlUnit(TomlUnitKind.Entry, first, last, children[first].Start, ItemEnd(model, parent, last), -1, null));
+                }
+            }
+            else
+            {
+                int start = EditLayout.LineStart(text, children[first].Start);
+                int end = EditLayout.AfterLineBreak(text, children[last].End);
+                units.Add(new TomlUnit(TomlUnitKind.Entry, first, last, start, end, SectionOf(items, start), null));
+            }
+        }
+
+        return units;
+    }
+
+    /// <summary>The message for a unit that cannot move, or that a move would pass.</summary>
+    public const string NeighbourRefusal = "this cannot move: its neighbour is in another part of the file";
+
+    /// <summary>The message for a table whose lines are not one run, as a dotted, implicit or spread table is.</summary>
+    public const string SpreadRefusal = "this table is spread over the file and cannot move";
+
+    /// <summary>The message for a comment that shares its line with a value, which moves with that value.</summary>
+    public const string TrailingRefusal = "a trailing comment moves with its entry";
+
+    /// <summary>
+    /// The unit that a move puts the moved unit before, as an index into the units, or the number of units for the end of the list. It is -1
+    /// when the position is inside a unit (between a comment and the entry it is attached to, say). <paramref name="newIndex"/> counts the
+    /// children that stay, as <see cref="MoveNode.NewIndex"/> does, and is clamped to them.
+    /// </summary>
+    public static int Destination(IReadOnlyList<TomlUnit> units, int moved, int newIndex, int childCount)
+    {
+        TomlUnit unit = units[moved];
+        int size = unit.Last - unit.First + 1;
+        int restCount = childCount - size;
+        int target = Math.Clamp(newIndex, 0, restCount);
+        if (target == unit.First)
+        {
+            return moved;
+        }
+
+        if (target == restCount)
+        {
+            return units.Count;
+        }
+
+        int childDestination = target < unit.First ? target : target + size;
+        for (int k = 0; k < units.Count; k++)
+        {
+            if (units[k].First == childDestination)
+            {
+                return k;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The units in their order after the moved unit goes before the unit at <paramref name="destination"/> (see <see cref="Destination"/>).</summary>
+    public static List<int> Order(int count, int moved, int destination)
+    {
+        int position = destination > moved ? destination - 1 : destination;
+        var order = Enumerable.Range(0, count).Where(k => k != moved).ToList();
+        order.Insert(position, moved);
+        return order;
+    }
+
+    /// <summary>The first and last positions that an order changes, or (-1, -1) when it changes nothing.</summary>
+    public static (int First, int Last) Span(IReadOnlyList<int> order)
+    {
+        int first = 0;
+        while (first < order.Count && order[first] == first)
+        {
+            first++;
+        }
+
+        if (first == order.Count)
+        {
+            return (-1, -1);
+        }
+
+        int last = order.Count - 1;
+        while (order[last] == last)
+        {
+            last--;
+        }
+
+        return (first, last);
+    }
+
+    /// <summary>The index of the item that holds an offset, or -1 before the first item.</summary>
+    public static int ItemAt(TomlModel model, int offset)
+    {
+        IReadOnlyList<TomlItem> items = model.Syntax.Items;
+        int found = -1;
+        int low = 0;
+        int high = items.Count - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) / 2;
+            if (items[mid].Start <= offset)
+            {
+                found = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return found;
+    }
+
+    /// <summary>The group of a parent's children: each child with the comments attached to it, and each comment alone (see <see cref="Block"/>).</summary>
+    private static List<(int First, int Last)> Groups(DocNode parent, string text)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        var groups = new List<(int First, int Last)>();
+        int count = children.Count;
+        int k = 0;
+        while (k < count)
+        {
+            int entry = k;
+            while (entry < count && children[entry].Kind == NodeKind.TomlComment)
+            {
+                entry++;
+            }
+
+            (int first, int last) = entry < count ? Block(parent, entry, text) : (count, count - 1);
+            first = Math.Max(first, k);
+            for (; k < first; k++)
+            {
+                groups.Add((k, k));
+            }
+
+            if (entry == count)
+            {
+                break;
+            }
+
+            groups.Add((first, last));
+            k = last + 1;
+        }
+
+        return groups;
+    }
+
+    /// <summary>A group with a comment taken out of it: the comment becomes a group alone, and the comments before and after it stay together.</summary>
+    private static List<(int First, int Last)> Split(List<(int First, int Last)> groups, int split)
+    {
+        var result = new List<(int First, int Last)>();
+        foreach ((int first, int last) in groups)
+        {
+            if (split < first || split > last || first == last)
+            {
+                result.Add((first, last));
+                continue;
+            }
+
+            if (first < split)
+            {
+                result.Add((first, split - 1));
+            }
+
+            result.Add((split, split));
+            if (split < last)
+            {
+                result.Add((split + 1, last));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>The item of an inline table that a child of it is: the member whose value starts where the child's value starts.</summary>
+    private static TomlInlineMember MemberOf(TomlModel model, DocNode table, DocNode child)
+    {
+        int valueStart = (model.ValueSyntaxOf(child) ?? throw new InvalidOperationException("An inline member has no value.")).Start;
+        var syntax = (TomlInlineTable)(model.ValueSyntaxOf(table) ?? throw new InvalidOperationException("An inline table has no syntax."));
+        return syntax.Entries.OfType<TomlInlineMember>().First(member => member.Value.Start == valueStart);
+    }
+
+    /// <summary>The section that holds an offset: the offset of its header, or -1 for the root's own section.</summary>
+    private static int SectionOf(IReadOnlyList<TomlItem> items, int offset)
+    {
+        int at = -1;
+        int low = 0;
+        int high = items.Count - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) / 2;
+            if (items[mid].Start <= offset)
+            {
+                at = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        for (int k = at; k >= 0; k--)
+        {
+            if (items[k] is TomlHeaderItem)
+            {
+                return items[k].Start;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The deepest node that each piece of text belongs to: the node that a piece of a table's lines defines or passes through.</summary>
+    private static Dictionary<TomlNode, DocNode> Owners(TomlModel model)
+    {
+        var owners = new Dictionary<TomlNode, DocNode>();
+        var stack = new Stack<DocNode>();
+        stack.Push(model.Tree);
+        while (stack.Count > 0)
+        {
+            DocNode node = stack.Pop();
+            foreach (TomlNode piece in model.PiecesOf(node))
+            {
+                if (!owners.TryGetValue(piece, out DocNode? seen) || node.Path.Count > seen.Path.Count)
+                {
+                    owners[piece] = node;
+                }
+            }
+
+            foreach (DocNode child in node.Children)
+            {
+                stack.Push(child);
+            }
+        }
+
+        return owners;
+    }
+
+    /// <summary>True when every line of a region that is not blank belongs to the table, so that the region is the table's and nothing else's.</summary>
+    private static bool Owned(TomlModel model, IReadOnlyList<TomlItem> items, Dictionary<TomlNode, DocNode> owners, DocNode table, int start, int end)
+    {
+        for (int k = Math.Max(0, ItemAt(model, start)); k < items.Count && items[k].Start < end; k++)
+        {
+            TomlItem item = items[k];
+            if (item is TomlBlankItem)
+            {
+                continue;
+            }
+
+            TomlNode piece = item is TomlCommentItem comment ? comment.Comment! : item;
+            if (!owners.TryGetValue(piece, out DocNode? owner) || !InSubtree(owner, table))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool InSubtree(DocNode node, DocNode ancestor)
+    {
+        for (DocNode? n = node; n is not null; n = n.Parent)
+        {
+            if (ReferenceEquals(n, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }
+
+/// <summary>The kinds of unit that a TOML move works on (see <see cref="TomlLayout.Units"/>).</summary>
+internal enum TomlUnitKind
+{
+    /// <summary>A key/value, a static array or inline table value, an array item or an inline member, with its attached comments.</summary>
+    Entry,
+
+    /// <summary>A comment on a line of its own, or in an array.</summary>
+    Comment,
+
+    /// <summary>A table defined by a header: its region is its header, its attached comments and every line of its subtree.</summary>
+    Table,
+
+    /// <summary>A child that cannot move, with the reason in <see cref="TomlUnit.Refusal"/>.</summary>
+    Refused,
+}
+
+/// <summary>
+/// A unit of a parent's children (see <see cref="TomlLayout.Units"/>): the children <see cref="First"/> to <see cref="Last"/>, the text
+/// <see cref="Start"/> to <see cref="End"/>, the section it is in (the offset of its header, or -1 for the root), and why it cannot move.
+/// </summary>
+internal sealed record TomlUnit(TomlUnitKind Kind, int First, int Last, int Start, int End, int Section, string? Refusal);

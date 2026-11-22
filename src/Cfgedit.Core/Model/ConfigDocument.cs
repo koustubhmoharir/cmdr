@@ -261,7 +261,7 @@ public sealed class ConfigDocument
         CheckDelta(delta);
         DocNode target = Resolve(node) ?? throw new ArgumentException($"There is no node at {node}.", nameof(node));
         DocNode parent = target.Parent ?? throw new ArgumentException("The document node cannot be moved.", nameof(node));
-        if (IsFixed(target))
+        if (IsFixed(target) || IsTomlTrailingComment(target))
         {
             return null;
         }
@@ -280,6 +280,11 @@ public sealed class ConfigDocument
 
             int before = first - 1;
             (int unitFirst, int unitLast) = UnitAt(units, before);
+            if (unitFirst == unitLast && IsTomlTrailingComment(parent.Children[unitFirst]))
+            {
+                return null;
+            }
+
             newIndex = unitLast >= first ? before : unitFirst;
         }
         else
@@ -291,6 +296,11 @@ public sealed class ConfigDocument
 
             int after = last + 1;
             (int unitFirst, int unitLast) = UnitAt(units, after);
+            if (unitFirst == unitLast && IsTomlTrailingComment(parent.Children[unitFirst]))
+            {
+                return null;
+            }
+
             newIndex = (unitFirst <= last ? after + 1 : unitLast + 1) - size;
         }
 
@@ -327,6 +337,14 @@ public sealed class ConfigDocument
         {
             throw new ArgumentOutOfRangeException(nameof(delta), delta, "The delta must be -1 or 1.");
         }
+    }
+
+    /// <summary>
+    /// A TOML comment that does not start its line: it shares the line with a value, and moves with it (a table header's own comment, say).
+    /// </summary>
+    private bool IsTomlTrailingComment(DocNode node)
+    {
+        return node.Kind == NodeKind.TomlComment && !EditLayout.StartsLine(Source.Text, node.Start);
     }
 
     /// <summary>The nodes that cannot move: a child of the document node other than a comment or a processing instruction.</summary>

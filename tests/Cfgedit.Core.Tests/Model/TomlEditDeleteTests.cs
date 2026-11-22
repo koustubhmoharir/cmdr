@@ -323,14 +323,6 @@ public sealed class TomlEditDeleteTests
     }
 
     [Fact]
-    public void Moving_is_not_supported_yet()
-    {
-        CfgeditException error = Fails("a = 1\nb = 2\n", Toml, new MoveNode(Path(Member("a")), 1));
-
-        Assert.Equal("moving is not supported in TOML yet", error.Message);
-    }
-
-    [Fact]
     public void A_JSON_type_change_is_refused_on_TOML()
     {
         CfgeditException error = Fails("a = 1\n", Toml, new ChangeJsonType(Path(Member("a")), Cfgedit.Core.Model.JsonValueKind.String, "x"));
