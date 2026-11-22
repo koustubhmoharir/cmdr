@@ -30,6 +30,8 @@ public sealed class FormatsTests
     [InlineData(".xslt", "xml")]
     [InlineData(".svg", "xml")]
     [InlineData(".SVG", "xml")]
+    [InlineData(".env", "env")]
+    [InlineData(".ENV", "env")]
     public void Every_listed_extension_gives_its_format_in_any_case(string extension, string expectedName)
     {
         IConfigFormat? format = Formats.ForPath("some/dir/file" + extension);
@@ -103,6 +105,55 @@ public sealed class FormatsTests
         Assert.Equal("jsonc", new JsonFormat(JsonDialect.Jsonc).Name);
         Assert.Equal("json5", new JsonFormat(JsonDialect.Json5).Name);
         Assert.Equal("xml", new XmlFormat().Name);
+    }
+
+    [Theory]
+    [InlineData(".env")]
+    [InlineData(".env.local")]
+    [InlineData(".env.production")]
+    [InlineData("prod.env")]
+    [InlineData("/x/.ENV")]
+    [InlineData("C:/app/.Env.Local")]
+    public void Env_file_names_give_the_env_format(string path)
+    {
+        Assert.Equal("env", Formats.ForPath(path)!.Name);
+        Assert.IsType<EnvFormat>(Formats.ForPath(path));
+    }
+
+    [Theory]
+    [InlineData(".env.json", "jsonc")]
+    [InlineData(".env.json5", "json5")]
+    [InlineData(".env.xml", "xml")]
+    [InlineData("x.env.csproj", "xml")]
+    public void A_known_extension_wins_over_the_env_name_rule(string path, string expectedName)
+    {
+        Assert.Equal(expectedName, Formats.ForPath(path)!.Name);
+    }
+
+    [Fact]
+    public void The_env_extension_is_a_known_extension_for_the_open_dialog()
+    {
+        Assert.Contains(".env", Formats.KnownExtensions);
+    }
+
+    [Theory]
+    [InlineData("env")]
+    [InlineData("a.environment")]
+    [InlineData(".envrc")]
+    [InlineData("env.txt")]
+    [InlineData("dir.env/file.txt")]
+    public void Names_that_are_not_env_files_give_null(string path)
+    {
+        Assert.Null(Formats.ForPath(path));
+    }
+
+    [Theory]
+    [InlineData("env")]
+    [InlineData("ENV")]
+    public void The_env_format_name_gives_the_env_format(string name)
+    {
+        Assert.Equal("env", Formats.FromName(name)!.Name);
+        Assert.IsType<EnvFormat>(Formats.FromName(name));
     }
 
     [Fact]

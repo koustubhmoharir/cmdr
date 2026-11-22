@@ -38,4 +38,16 @@ public enum NodeKind
 
     /// <summary>The XML document type declaration. Shown read-only.</summary>
     XmlDoctype,
+
+    /// <summary>
+    /// A .env group: the root of the file, or a virtual node for a key prefix (<c>Logging</c> in <c>Logging__Level</c>). It has no
+    /// line of its own. Its span runs from its first line to its last line.
+    /// </summary>
+    EnvGroup,
+
+    /// <summary>A .env entry: one key, with its value. Its span is its line, or its lines when the value is quoted over lines.</summary>
+    EnvEntry,
+
+    /// <summary>A .env comment line.</summary>
+    EnvComment,
 }

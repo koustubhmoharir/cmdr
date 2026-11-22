@@ -7,10 +7,11 @@ namespace Cfgedit.Core.Model;
 internal static class EditLayout
 {
     /// <summary>True for a JSON or XML comment node.</summary>
-    public static bool IsComment(DocNode node) => node.Kind is NodeKind.JsonComment or NodeKind.XmlComment;
+    public static bool IsComment(DocNode node) => node.Kind is NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.EnvComment;
 
     /// <summary>True for a node whose children are entries that can carry attached comments.</summary>
-    public static bool HasEntries(DocNode node) => node.Kind is NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.XmlElement;
+    public static bool HasEntries(DocNode node) =>
+        node.Kind is NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.XmlElement or NodeKind.EnvGroup;
 
     /// <summary>True for a JSON object or array.</summary>
     public static bool IsJsonContainer(DocNode node) => node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;

@@ -310,7 +310,8 @@ YAML 1.2.
 ### `.env` (dotenv)
 
 **Detection.** A file named `.env`, `.env.<anything>` (`.env.local`, `.env.production`) or `<anything>.env`, or
-`--format env`. A new file starts empty.
+`--format env`. A file whose extension is a known one (`.json`, `.json5`, an XML extension) keeps that format, so `.env.json`
+is JSONC. A new file starts empty.
 
 **Syntax.** Line based. Each line is one of:
 
@@ -341,14 +342,15 @@ or `\` gets a warning on the detail line: loaders may expand `$`, and they disag
 
 **Hierarchy.** A key is split on `__` into segments: `Logging__LogLevel__Default` is shown as `Logging` › `LogLevel` ›
 `Default`. A key with an empty segment (`A____B`, a leading or trailing `__`) or a segment that starts or ends with `_`
-(where the split would not round-trip) is not split. Group nodes are virtual: a group appears where its first entry
+(where the split would not round-trip), or more segments than the JSON nesting cap (256), is not split. Group nodes are virtual: a group appears where its first entry
 is, and every entry with that prefix, adjacent or not, appears under it in file order. Grouping is case-sensitive, as
 dotenv is.
 
 **Tree.** The document has one root node, a group with the `$` marker and a `{n}` count like a JSON root, so an empty
 file still has a row to add to. Groups show their segment and `{n}`; entries show their last segment and the value;
 comments are rows. A comment is shown with the entry below it (inside that entry's group); a comment followed by a
-blank line or the end of the file is a row of the root. The path text on the detail line is the full key
+blank line or the end of the file is a row of the root. A trailing comment (`A=1 # note`) is shown as a comment row right
+after its entry. The path text on the detail line is the full key
 (`Logging__LogLevel__Default`).
 
 **Edits.**
@@ -368,8 +370,9 @@ blank line or the end of the file is a row of the root. The path text on the det
 - Change type: refused ("`.env` values are all strings").
 - Table editor: not offered for `.env` in M9.
 
-**Verification.** The logical tree is the shown hierarchy: groups as objects, entries as string scalars, comments as
-comments, so the existing logical edit checks apply. There is no independent parser to cross-check `.env`; the parser
+**Verification.** The logical tree for `.env` is flat and in file order: the document's children are one string scalar per
+entry, named by its full key (`Logging__LogLevel__Default`), and one comment per comment line. A trailing comment is a comment
+right after its entry's scalar. Blank lines, `export`, quote styles and spacing are formatting and are not in it. There is no independent parser to cross-check `.env`; the parser
 gets property tests over randomised values through the encoder (write, parse, compare).
 
 ### TOML (M10) and YAML (M11)
