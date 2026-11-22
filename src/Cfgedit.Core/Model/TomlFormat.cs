@@ -5,7 +5,7 @@ namespace Cfgedit.Core.Model;
 
 /// <summary>
 /// The TOML format (TOML 1.0). Parsing checks the syntax, the TOML rules about tables and keys, and then the text again with Tomlyn.
-/// Editing is not supported yet: every operation is refused.
+/// Editing covers values, keys, comments, types and deletes; adding, duplicating and moving are not supported yet.
 /// </summary>
 public sealed class TomlFormat : IConfigFormat
 {
@@ -24,12 +24,12 @@ public sealed class TomlFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <exception cref="Cfgedit.Core.CfgeditException">Always: editing TOML files is not supported yet.</exception>
+    /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid, or it is not supported for TOML yet.</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(op);
-        throw new CfgeditException("editing TOML files is not supported yet");
+        return new TomlEditPlanner(document).Plan(op);
     }
 
     /// <inheritdoc/>

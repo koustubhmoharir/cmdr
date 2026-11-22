@@ -1245,7 +1245,7 @@ internal sealed class XmlEditPlanner
 
     private static DocNode Parent(DocNode node)
     {
-        return node.Parent ?? throw new CfgeditException("The document node cannot be edited this way");
+        return node.Parent ?? throw new CfgeditException("the document node cannot be edited this way");
     }
 
     private static int IndexOf(DocNode parent, DocNode child)
@@ -1276,7 +1276,7 @@ internal sealed class XmlEditPlanner
 
     private static CfgeditException Uneditable()
     {
-        return new CfgeditException("This part cannot be edited");
+        return new CfgeditException("this part cannot be edited");
     }
 
     private void Replace(int start, int end, string text)

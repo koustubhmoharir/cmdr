@@ -292,6 +292,6 @@ public sealed class JsonEditChangeTypeTests
     {
         CfgeditException ex = Fails("// c\n[1]", Jsonc, new ChangeJsonType(At(Comment(0)), JsonValueKind.Null, null));
 
-        Assert.Equal("Only a value has a type", ex.Message);
+        Assert.Equal("only a value has a type", ex.Message);
     }
 }

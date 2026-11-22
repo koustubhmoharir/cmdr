@@ -474,6 +474,11 @@ public sealed class ConfigDocument
             return EnvLogicalEdit.FocusAfter(this, after, op);
         }
 
+        if (Format is TomlFormat)
+        {
+            return TomlLogicalEdit.FocusAfter(this, after, op);
+        }
+
         switch (op)
         {
             case SetPart { Part: PartKind.AttributeName or PartKind.AttributeValue } attribute:

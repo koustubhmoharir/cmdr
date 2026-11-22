@@ -316,7 +316,7 @@ public sealed class XmlEditSetPartTests
     {
         CfgeditException ex = Fails("<?xml version=\"1.0\"?><r/>", Xml, new SetPart(At(new DeclarationStep()), PartKind.ElementName, -1, "x"));
 
-        Assert.Equal("This part cannot be edited", ex.Message);
+        Assert.Equal("this part cannot be edited", ex.Message);
     }
 
     [Fact]

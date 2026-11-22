@@ -252,7 +252,7 @@ public sealed class EnvEditSetPartTests
     {
         CfgeditException error = Fails("A=1\n", Env, new SetPart(At(Item(0)), PartKind.Key, -1, "x"));
 
-        Assert.Equal("This part cannot be edited", error.Message);
+        Assert.Equal("this part cannot be edited", error.Message);
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public sealed class EnvEditSetPartTests
     {
         CfgeditException error = Fails("A__X=1\n", Env, new SetPart(Entry("A"), PartKind.Summary, -1, "5"));
 
-        Assert.Equal("This part cannot be edited", error.Message);
+        Assert.Equal("this part cannot be edited", error.Message);
     }
 
     [Fact]

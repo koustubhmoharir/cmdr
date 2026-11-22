@@ -52,6 +52,14 @@ public sealed record MoveAttribute(NodePath Element, int Index, int NewIndex) : 
 public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? Value) : EditOp;
 
 /// <summary>
+/// Changes the TOML type of a value: a scalar, an inline table or an inline array. <see cref="Value"/> is the new scalar's text:
+/// required for DateTime, optional for the others (null means the kind's default, and for the same kind it means no change).
+/// The contents of a container that changes to anything else are dropped. A table defined by headers or dotted keys, and an
+/// array of tables, cannot change type.
+/// </summary>
+public sealed record ChangeTomlType(NodePath Node, TomlNewKind Kind, string? Value) : EditOp;
+
+/// <summary>
 /// Inserts a copy of a node right after the node and its attached comments. A JSON member's copy is renamed
 /// <c>&lt;key&gt;-copy</c>, or <c>&lt;key&gt;-copy2</c>, <c>-copy3</c> and so on, until its key is unique among its siblings.
 /// </summary>

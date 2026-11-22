@@ -317,6 +317,11 @@ internal static class LogicalEdit
             return EnvLogicalEdit.Apply(before, root, op);
         }
 
+        if (before.Format is TomlFormat)
+        {
+            return TomlLogicalEdit.Apply(before, root, op);
+        }
+
         return op switch
         {
             SetPart set => SetPartAt(before, root, set),

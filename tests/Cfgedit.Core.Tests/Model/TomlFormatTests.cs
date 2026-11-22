@@ -6,7 +6,7 @@ using Cfgedit.Core.Text;
 namespace Cfgedit.Core.Tests.Model;
 
 /// <summary>
-/// The TOML format as a format: its name, its refusal of every edit until the planner exists, its user-error rule, the logical tree
+/// The TOML format as a format: its name, its planner's first refusal, its user-error rule, the logical tree
 /// with the comments as an array, and the byte-order mark.
 /// </summary>
 public sealed class TomlFormatTests
@@ -20,13 +20,13 @@ public sealed class TomlFormatTests
     }
 
     [Fact]
-    public void Every_edit_is_refused_until_the_planner_exists()
+    public void Planning_is_done_by_the_TOML_planner_and_the_root_table_cannot_be_deleted()
     {
         ConfigDocument document = Format.Parse(SourceText.Create("a = 1\n", Encoding.UTF8, false));
 
         CfgeditException ex = Assert.Throws<CfgeditException>(() => Format.Plan(document, new DeleteNode(NodePath.Empty.Append(new ItemStep(0)))));
 
-        Assert.Equal("editing TOML files is not supported yet", ex.Message);
+        Assert.Equal("the root table cannot be deleted", ex.Message);
     }
 
     [Theory]

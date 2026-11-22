@@ -298,7 +298,7 @@ internal sealed class JsonEditPlanner
         DocNode node = Node(op.Node);
         if (IsComment(node) || node.JsonKind is null)
         {
-            throw new CfgeditException("Only a value has a type");
+            throw new CfgeditException("only a value has a type");
         }
 
         DocNode parent = Parent(node);
@@ -812,7 +812,7 @@ internal sealed class JsonEditPlanner
 
     private static DocNode Parent(DocNode node)
     {
-        return node.Parent ?? throw new CfgeditException("The document node cannot be edited this way");
+        return node.Parent ?? throw new CfgeditException("the document node cannot be edited this way");
     }
 
     private static int IndexOf(DocNode parent, DocNode child)
@@ -843,7 +843,7 @@ internal sealed class JsonEditPlanner
 
     private static CfgeditException Uneditable()
     {
-        return new CfgeditException("This part cannot be edited");
+        return new CfgeditException("this part cannot be edited");
     }
 
     private static bool IsComment(DocNode node) => EditLayout.IsComment(node);

@@ -211,7 +211,7 @@ public sealed class JsonEditSetPartTests
         CfgeditException ex = EditTestSupport.Fails(
             "{\"a\": {}}", Strict, new SetPart(EditTestSupport.At(EditTestSupport.Item(0), EditTestSupport.Member("a")), PartKind.Value, -1, "x"));
 
-        Assert.Equal("This part cannot be edited", ex.Message);
+        Assert.Equal("this part cannot be edited", ex.Message);
     }
 
     [Fact]
@@ -219,7 +219,7 @@ public sealed class JsonEditSetPartTests
     {
         CfgeditException ex = EditTestSupport.Fails("[1]", Strict, new SetPart(EditTestSupport.At(EditTestSupport.Item(0), EditTestSupport.Item(0)), PartKind.Index, -1, "5"));
 
-        Assert.Equal("This part cannot be edited", ex.Message);
+        Assert.Equal("this part cannot be edited", ex.Message);
     }
 
     [Fact]

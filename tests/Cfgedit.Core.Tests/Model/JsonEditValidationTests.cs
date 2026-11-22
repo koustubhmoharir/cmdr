@@ -117,7 +117,7 @@ public sealed class JsonEditValidationTests
     {
         CfgeditException ex = Fails("[1]", Strict, new SetPart(RootValue, PartKind.Key, -1, "k"));
 
-        Assert.Equal("This part cannot be edited", ex.Message);
+        Assert.Equal("this part cannot be edited", ex.Message);
     }
 
     [Fact]

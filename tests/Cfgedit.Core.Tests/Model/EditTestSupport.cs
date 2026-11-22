@@ -11,6 +11,7 @@ internal static class EditTestSupport
     public static readonly IConfigFormat Json5 = Formats.FromName("json5")!;
     public static readonly IConfigFormat Xml = Formats.FromName("xml")!;
     public static readonly IConfigFormat Env = Formats.FromName("env")!;
+    public static readonly IConfigFormat Toml = new TomlFormat();
 
     /// <summary>The path of the root value of a JSON document.</summary>
     public static readonly NodePath RootValue = At(Item(0));
