@@ -293,6 +293,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
         if (key == Key.Esc)
         {
+            // Enter in the search bar gives the focus back to the tree, so Esc here closes a search that is still open, as cmdr's
+            // panes do. Otherwise it is swallowed (see the window's Esc note).
+            _search.Close();
             return true;
         }
 

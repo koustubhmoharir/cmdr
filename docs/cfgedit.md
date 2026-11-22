@@ -88,7 +88,7 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | `t` | Change a JSON value's type |
 | Ctrl+D | Duplicate the node |
 | `T` | Open the table editor |
-| `/`, Ctrl+F | Find in keys, names and values; n / F3 next, N / Shift+F3 previous |
+| `/`, Ctrl+F | Find in keys, names and values; n / F3 next, N / Shift+F3 previous. Enter goes to the next match; Esc closes the search |
 | `y` / `Y` | Copy the value / the path to the clipboard |
 | Ctrl+Z, `u` / Ctrl+Y, Ctrl+R | Undo / redo |
 | Ctrl+T | Switch between the tree and the text |

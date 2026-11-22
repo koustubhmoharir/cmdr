@@ -202,6 +202,29 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
+    public void Esc_in_the_tree_after_Enter_closes_the_bar_and_the_last_query_stays_for_n()
+    {
+        OpenedFile file = Open("settings.json", SearchJson);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, new Key('/')),
+            (_, w) => Type(w, "web"),
+            (_, w) => Keys(w, Key.Enter),
+            (_, w) => Keys(w, Key.Esc),
+            (_, w) => Keys(w, new Key('n')));
+
+        Assert.StartsWith("Find: web", session.Screens[3].Text(BarRow), StringComparison.Ordinal);
+        Assert.Equal("\x2570", session.Screens[4].Cells[BarRow][0].Grapheme);
+        Assert.Equal(string.Empty, Highlighted(session.Screens[4]));
+        Assert.StartsWith("Find: web", session.Screens[5].Text(BarRow), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void A_match_inside_a_collapsed_node_expands_its_ancestors_and_the_cursor_goes_to_it()
     {
         // "d" is four levels down, so it starts collapsed, and its child "target" is not on screen.
