@@ -261,6 +261,58 @@ public sealed class PathTextTests
         return TreeFixtures.Find(doc, new ItemStep(0), new MemberStep(key, 0));
     }
 
+    [Fact]
+    public void Env_paths_are_the_full_key_with_double_underscores_and_the_root_is_dollar()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("Logging__LogLevel__Default=info\n", "env");
+
+        Assert.Equal("$", Path(doc, new ItemStep(0)));
+        Assert.Equal("Logging", Path(doc, new ItemStep(0), new MemberStep("Logging", 0)));
+        Assert.Equal("Logging__LogLevel", Path(doc, new ItemStep(0), new MemberStep("Logging", 0), new MemberStep("LogLevel", 0)));
+        Assert.Equal(
+            "Logging__LogLevel__Default",
+            Path(doc, new ItemStep(0), new MemberStep("Logging", 0), new MemberStep("LogLevel", 0), new MemberStep("Default", 0)));
+    }
+
+    [Fact]
+    public void Env_comment_paths_are_the_parents_path_and_a_comment_marker_as_in_json()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("#a\nA=1\nLogging__X=2\nLogging__Y=3\n#b\n", "env");
+
+        Assert.Equal("$/#comment[1]", Path(doc, new ItemStep(0), new CommentStep(0)));
+        Assert.Equal("$/#comment[2]", Path(doc, new ItemStep(0), new CommentStep(1)));
+    }
+
+    [Fact]
+    public void Env_comment_inside_a_group_has_the_group_path()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("Logging__X=2\n#c\nLogging__Y=3\n", "env");
+
+        Assert.Equal("Logging/#comment[1]", Path(doc, new ItemStep(0), new MemberStep("Logging", 0), new CommentStep(0)));
+    }
+
+    [Fact]
+    public void Env_kinds_are_root_group_entry_comment_and_for_parts_key_and_string()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("#c\nLogging__Level=info\n", "env");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+        DocNode group = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0));
+        DocNode entry = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0), new MemberStep("Level", 0));
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0), new CommentStep(0));
+
+        Assert.Equal("root", PathText.KindName(root, null));
+        Assert.Equal("root", PathText.KindName(root, root.Parts[0]));
+        Assert.Equal("root", PathText.KindName(root, root.Parts[1]));
+        Assert.Equal("group", PathText.KindName(group, null));
+        Assert.Equal("key", PathText.KindName(group, group.Parts[0]));
+        Assert.Equal("group", PathText.KindName(group, group.Parts[1]));
+        Assert.Equal("entry", PathText.KindName(entry, null));
+        Assert.Equal("key", PathText.KindName(entry, entry.Parts[0]));
+        Assert.Equal("string", PathText.KindName(entry, entry.Parts[1]));
+        Assert.Equal("comment", PathText.KindName(comment, null));
+        Assert.Equal("comment", PathText.KindName(comment, comment.Parts[0]));
+    }
+
     private static string Path(ConfigDocument doc, params PathStep[] steps)
     {
         return PathText.Format(doc, TreeFixtures.Find(doc, steps), null);

@@ -503,7 +503,7 @@ Namespace `Cfgedit.Core.Model`. Everything here is format-neutral, apart from th
 ```csharp
 public interface IConfigFormat
 {
-    string Name { get; }                              // "json", "jsonc", "json5", "xml"
+    string Name { get; }                              // "json", "jsonc", "json5", "xml", "env"
     ConfigDocument Parse(SourceText source);          // CfgeditException on a parse error
     IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op);   // CfgeditException when the op is invalid
     LogicalNode ToLogical(ConfigDocument document);   // see Verification
@@ -721,6 +721,32 @@ of its rows. The rules are the design's "When it is offered".
 - The editor (M7) turns a cell edit into an EditOp. Editing a missing cell becomes an `InsertAttribute`, or an
   `InsertNode` at the column-ordered position.
 
+### `.env` format (M9)
+
+Syntax in `Cfgedit.Core.Env`, the tree and edits in `Cfgedit.Core.Model`. `EnvFormat` is chosen by name (`env`) or by
+`Formats.ForPath` for `.env`, `.env.*` and `*.env`.
+
+- **Syntax.** `EnvDocument` keeps the source and its items in file order: `EnvBlankLine`, `EnvCommentLine` and `EnvEntry`
+  (key and span, value, `EnvQuote` style, trailing `EnvComment`). `EnvParser` is line based; a quoted value can span lines,
+  and a bad line throws a `CfgeditException` with the line and column. `EnvEncoder` writes a value token: `Encode` in the
+  plainest form, `EncodeKeeping` in a given style when it can hold the value, `NeedsLoaderWarning` and `StyleOf` for the note.
+- **Tree.** `EnvModelBuilder.BuildTree` makes one `EnvGroup` per `__` segment, where its first entry is, and `EnvEntry` and
+  `EnvComment` leaves. Groups have a `Key` and `Summary` part, entries a `Key` and `Value` part, and a comment a `Comment`
+  part; the root is an `EnvGroup` with a `Root` part (`$`). Steps are `MemberStep` (with an ordinal for duplicate keys) and
+  `CommentStep`. `ItemsOf(document, node)` returns the items a node covers: a group its entries and comments, and a trailing
+  comment the line of its entry.
+- **Logical tree.** `EnvModelBuilder.BuildLogical` is flat and in file order: a string scalar per entry, named by its full
+  key, and a comment per comment line. It is what `Verification` compares, so formatting is not in it.
+- **Edits.** `EnvEditPlanner` plans every operation: set part, insert (`NewEnvEntry`, `NewEnvComment`), delete, move,
+  duplicate. It refuses change type and attributes. `EnvLayout.Block` decides which children move, copy or delete together
+  (an entry with its attached comments); `EditLayout.Group` delegates to it for a group parent. `EnvLogicalEdit` applies
+  each operation to the logical tree, and its `FocusAfter` is the hook `ConfigDocument` calls for .env, because groups are
+  virtual and a node's place can move with its key.
+- **TUI.** The only format-specific code is by node kind: `RowLayout.EnvItems` (group, entry and comment rows),
+  `PathText.EnvPath` (the full key, `$` for the root, comments as in JSON), `AddKinds` (entry and comment in a group),
+  `FirstValue` (an entry's value opens after an add), and `MainWindow` (the loader note after a value is written, and the
+  refusals of `t` and `T`).
+
 ## Read-only TUI (M4)
 
 Projects `src/Cfgedit` (namespace `Cfgedit.Tui`) and `tests/Cfgedit.Tests`. Follow logvu's structure (`LogvuHost`,
@@ -730,7 +756,7 @@ whole into `tests/Cfgedit.Tests`, changing only the namespace.
 
 ### Program and host
 
-- **Arguments.** `cfgedit <file> [--format xml|json|jsonc|json5]` and `cfgedit` (picker). Options may come before or
+- **Arguments.** `cfgedit <file> [--format xml|json|jsonc|json5|env]` and `cfgedit` (picker). Options may come before or
   after the file. `--check` and new files come later (M5b, M5). Until then, a missing file is an error.
 - **Format resolution.**
   1. `--format`, else `Formats.ForPath`.

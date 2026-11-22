@@ -5,7 +5,7 @@ attribute at a time. You type the value as it should be; cfgedit writes it with 
 you did not edit stays byte-for-byte as it was: comments, blank lines, indentation, quote styles, number spelling,
 encoding, byte order mark and line endings.
 
-Phase 1 reads and writes XML, JSON, JSON with comments (JSONC) and JSON5. Runs on Linux and Windows. Built from this
+Reads and writes XML, JSON, JSON with comments (JSONC), JSON5 and `.env` files (dotenv). Runs on Linux and Windows. Built from this
 repository alongside cmdr; see the main [README](../README.md#install) for the .NET 10 SDK and the Terminal.Gui submodule.
 
 ```sh
@@ -18,7 +18,7 @@ dotnet publish src/Cfgedit -c Release -r win-x64      # or linux-x64 → cfgedit
 ## Usage
 
 ```sh
-cfgedit <file> [--format xml|json|jsonc|json5]
+cfgedit <file> [--format xml|json|jsonc|json5|env]
 cfgedit --check <file> [--format …]
 cfgedit
 cfgedit --version
@@ -26,11 +26,13 @@ cfgedit --version
 
 The format comes from the extension: `.json` and `.jsonc` are JSONC (comments and trailing commas are accepted when the
 file has them, and never added), `.json5` is JSON5, and `.xml .config .csproj .props .targets .xaml .resx .nuspec .xsd
-.xslt .svg` are XML. Any other file is recognised by its first character (`<` is XML, `{` or `[` is JSON5). `--format`
-overrides this; `--format json` is strict JSON and refuses comments.
+.xslt .svg` are XML. A file named `.env`, `.env.<anything>` (`.env.local`) or `<anything>.env` is a `.env` file. A known
+extension wins, so `.env.json` is JSONC. Any other file is recognised by its first character (`<` is XML, `{` or `[` is
+JSON5). `--format` overrides this; `--format json` is strict JSON and refuses comments.
 
-A path that does not exist asks whether to create it; a new XML file asks for the name of its root element. The file is
-written on the first save.
+A path that does not exist asks whether to create it; a new XML file asks for the name of its root element, and a file
+whose format is not known from its name asks for the format (`.env` is one of the choices). The file is written on the
+first save.
 
 `cfgedit --check <file>` only parses the file: it prints nothing and exits 0 when the file is valid, and prints
 `path:line:col: message` and exits 1 when it is not.
@@ -129,6 +131,24 @@ Ctrl+S on text that does not parse asks before saving it anyway.
 
 Text mode is read-only when the file mixes line endings (for example CRLF and LF), because the text editor would change
 them.
+
+## `.env` files
+
+Each line is `NAME=value`, with the usual comments, `export` and quotes. A name is split on `__`, as ASP.NET Core splits
+its environment configuration, so `Logging__LogLevel__Default` is shown as `Logging` › `LogLevel` › `Default`. A group is
+every name that shares a prefix, and it shows where its first entry is, with all its entries below it in file order.
+Grouping is case-sensitive, and the lines of a group do not have to be next to each other.
+
+- **Values** are written in the plainest form that every common loader reads the same way: unquoted, else in single
+  quotes, else in double quotes. An edit keeps the quote style when it still fits. `${VAR}` is shown and kept as written;
+  cfgedit never expands it. A value in double quotes that contains `$` or `\` shows a note, because loaders may expand
+  `$` or read `\` differently there.
+- **Renaming** a group renames every key under it, as one undo step. A new name may not add or remove a `__`, and may not
+  merge with a sibling.
+- **Adding** inside a group writes `Group__Key=`. The dialog offers an entry (its key, with an empty value) or a comment.
+- **Deleting** an entry deletes its line and the comments shown with it. Alt+Up/Down moves an entry among its siblings;
+  the move is refused when either sibling's lines are not next to each other.
+- **Types and tables:** every value is a string, so `t` says so and `T` has no table editor for `.env`.
 
 ## What is kept
 

@@ -102,8 +102,28 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run(path, "--format", "yaml");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc or json5" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc, json5 or env" + Environment.NewLine, outcome.Stderr);
         Assert.Empty(outcome.Ran);
+    }
+
+    [Fact]
+    public void The_env_format_option_opens_a_file_as_env_whatever_its_name()
+    {
+        string path = TempFile("settings.txt", "A=1\n");
+
+        Outcome outcome = Run(path, "--format", "env");
+
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal("env", Assert.Single(outcome.Ran).File.Format.Name);
+    }
+
+    [Fact]
+    public void The_usage_line_lists_env_as_a_format()
+    {
+        Outcome outcome = Run("--bogus");
+
+        Assert.Equal(2, outcome.Code);
+        Assert.StartsWith("usage: cfgedit <file> [--format xml|json|jsonc|json5|env]" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]
@@ -268,7 +288,7 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run("--check", path, "--format", "yaml");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc or json5" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc, json5 or env" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]

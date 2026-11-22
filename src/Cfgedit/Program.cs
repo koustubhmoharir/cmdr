@@ -61,7 +61,7 @@ internal static class Program
             format = Formats.FromName(formatName);
             if (format is null)
             {
-                stderr.WriteLine($"cfgedit: unknown format '{formatName}'; use xml, json, jsonc or json5");
+                stderr.WriteLine($"cfgedit: unknown format '{formatName}'; use xml, json, jsonc, json5 or env");
                 return 2;
             }
         }
@@ -171,7 +171,7 @@ internal static class Program
 
     private static int Usage(TextWriter stderr)
     {
-        stderr.WriteLine("usage: cfgedit <file> [--format xml|json|jsonc|json5]");
+        stderr.WriteLine("usage: cfgedit <file> [--format xml|json|jsonc|json5|env]");
         stderr.WriteLine("       cfgedit               pick a recently used file");
         stderr.WriteLine("       cfgedit --version");
         return 2;

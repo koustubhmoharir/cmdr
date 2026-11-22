@@ -6,7 +6,8 @@ namespace Cfgedit.Tui;
 
 /// <summary>
 /// The detail line's path and kind of a focused part. JSON paths are <c>$.a[2]</c>, with <c>["key"]</c> for keys that are not
-/// identifiers. XML paths are XPath-like: <c>/configuration/add[2]/@value</c>.
+/// identifiers. XML paths are XPath-like: <c>/configuration/add[2]/@value</c>. .env paths are the full key, with <c>__</c> between
+/// its segments (<c>Logging__LogLevel__Default</c>), and <c>$</c> for the root.
 /// </summary>
 public static class PathText
 {
@@ -20,6 +21,11 @@ public static class PathText
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(node);
+
+        if (document.Format is EnvFormat)
+        {
+            return EnvPath(node);
+        }
 
         if (document.Format is not XmlFormat)
         {
@@ -79,11 +85,12 @@ public static class PathText
             PartKind.Root => "root",
             PartKind.Key => "key",
             PartKind.Index => "index",
-            PartKind.Value => ScalarName(node.JsonKind),
+            PartKind.Value => node.Kind == NodeKind.EnvEntry ? "string" : ScalarName(node.JsonKind),
             PartKind.Summary => node.Kind switch
             {
                 NodeKind.JsonArray => "array",
                 NodeKind.XmlElement => "element",
+                NodeKind.EnvGroup => EnvKindName(node),
                 _ => "object",
             },
             PartKind.ElementName or PartKind.EndName => "element",
@@ -111,7 +118,19 @@ public static class PathText
             NodeKind.XmlProcessingInstruction => "PI",
             NodeKind.XmlDeclaration => "declaration",
             NodeKind.XmlDoctype => "doctype",
+            NodeKind.EnvGroup or NodeKind.EnvEntry or NodeKind.EnvComment => EnvKindName(node),
             _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Unknown node kind."),
+        };
+    }
+
+    /// <summary>The kind of a .env node: <c>root</c> for the file's group, else <c>group</c>, <c>entry</c> or <c>comment</c>.</summary>
+    private static string EnvKindName(DocNode node)
+    {
+        return node.Kind switch
+        {
+            NodeKind.EnvGroup => node.Parent?.Kind == NodeKind.Document ? "root" : "group",
+            NodeKind.EnvEntry => "entry",
+            _ => "comment",
         };
     }
 
@@ -231,6 +250,33 @@ public static class PathText
 
         builder.Append('"');
         return builder.ToString();
+    }
+
+    // ----- .env -----
+
+    /// <summary>
+    /// The full key of an entry or group, its segments joined with <c>__</c>, or <c>$</c> for the root. A comment is its parent's path and
+    /// <c>/#comment[n]</c>, as a JSON comment is. A later node with the same key (a duplicate entry) has its 1-based occurrence after the
+    /// segment, as a JSON duplicate key does.
+    /// </summary>
+    private static string EnvPath(DocNode node)
+    {
+        if (node.Path.Steps[^1] is CommentStep comment)
+        {
+            DocNode parent = node.Parent ?? throw new InvalidOperationException("A comment has no parent.");
+            return EnvPath(parent) + "/#comment[" + (comment.Index + 1).ToString(CultureInfo.InvariantCulture) + "]";
+        }
+
+        var segments = new List<string>();
+        foreach (DocNode current in Chain(node))
+        {
+            if (current.Path.Steps[^1] is MemberStep member)
+            {
+                segments.Add(member.Ordinal > 0 ? member.Key + "#" + (member.Ordinal + 1).ToString(CultureInfo.InvariantCulture) : member.Key);
+            }
+        }
+
+        return segments.Count == 0 ? Root : string.Join("__", segments);
     }
 
     // ----- XML -----

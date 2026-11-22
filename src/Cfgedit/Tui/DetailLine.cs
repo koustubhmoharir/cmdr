@@ -134,7 +134,7 @@ internal sealed class DetailLine : View
         return true;
     }
 
-    // The value of the part as the rows show it, with an empty JSON string as "". Nothing for a node without a part.
+    // The value of the part as the rows show it, with an empty JSON string or .env value as "". Nothing for a node without a part.
     private static string ValueOf(DocNode node, DocPart? part, int width)
     {
         // The root marker has no value to show: its kind already says root.
@@ -143,7 +143,8 @@ internal sealed class DetailLine : View
             return string.Empty;
         }
 
-        if (part.Kind == PartKind.Value && node.JsonKind == JsonValueKind.String && part.Value.Length == 0)
+        bool stringValue = node.JsonKind == JsonValueKind.String || node.Kind == NodeKind.EnvEntry;
+        if (part.Kind == PartKind.Value && stringValue && part.Value.Length == 0)
         {
             return "\"\"";
         }

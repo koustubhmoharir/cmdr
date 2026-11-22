@@ -77,7 +77,10 @@ internal static class CfgeditHost
     }
 
     /// <summary>The formats the choice dialog offers when a new file's extension names none, in the order shown.</summary>
-    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml"];
+    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml", "env"];
+
+    /// <summary>The labels the format choice shows, in the order of <see cref="FormatNames"/>: .env is labelled by its extension.</summary>
+    internal static IReadOnlyList<string> FormatLabels { get; } = FormatNames.Select(name => name == "env" ? ".env" : name).ToList();
 
     /// <summary>
     /// The new-file flow for a path that does not exist. Asks "Create &lt;name&gt;?" (Cancel creates nothing), then the format when neither
@@ -132,7 +135,7 @@ internal static class CfgeditHost
 
     /// <summary>
     /// The questions of a new file: "Create &lt;name&gt;?" with Cancel and Create (Create is the default), then the format when neither
-    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5 and xml), then the root element's name for
+    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5, xml and .env), then the root element's name for
     /// XML (validated with <see cref="XmlSyntax.IsValidQName"/>). Returns null when any question is cancelled.
     /// </summary>
     /// <param name="app">The running application.</param>
@@ -148,7 +151,7 @@ internal static class CfgeditHost
         IConfigFormat? resolved = format ?? Formats.ForPath(path);
         if (resolved is null)
         {
-            if (ChoiceDialog.Ask(app, "Format of " + Path.GetFileName(path), FormatNames, 0) is not { } picked)
+            if (ChoiceDialog.Ask(app, "Format of " + Path.GetFileName(path), FormatLabels, 0) is not { } picked)
             {
                 return null;
             }

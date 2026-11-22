@@ -1,4 +1,5 @@
 using Cfgedit.Core;
+using Cfgedit.Core.Env;
 using Cfgedit.Core.Json;
 using Cfgedit.Core.Model;
 using Cfgedit.Core.Text;
@@ -825,7 +826,30 @@ internal sealed class MainWindow : Window, ISearchHost
         }
 
         focus = result.Focus ?? node;
+        if (part.Kind == PartKind.Value && focus is not null)
+        {
+            WarnIfLoadersMayDiffer(focus);
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// After a .env value is written: a note when it is written in double quotes and holds <c>$</c> or <c>\</c>, as loaders may expand or
+    /// escape those differently. The style is read from the entry as it was written, so the note is about what the file says.
+    /// </summary>
+    private void WarnIfLoadersMayDiffer(NodePath entry)
+    {
+        if (_controller.Document.Syntax is not EnvDocument syntax || _controller.Document.Resolve(entry) is not { Kind: NodeKind.EnvEntry } node)
+        {
+            return;
+        }
+
+        EnvEntry? written = syntax.Items.OfType<EnvEntry>().FirstOrDefault(item => item.Start == node.Start);
+        if (written is not null && EnvEncoder.NeedsLoaderWarning(written.Value, written.Quote))
+        {
+            ShowMessage("note: loaders may expand $ or read \\ differently in double quotes", error: false);
+        }
     }
 
     private void ApplyAndShow(EditOp op, NodePath fallback)
@@ -1206,13 +1230,20 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The type menu of a node, as <see cref="ChangeType"/> shows it. Enter on a JSON true, false or null opens it too.</summary>
     private void ChangeTypeOf(DocNode node)
     {
+        ConfigDocument doc = _controller.Document;
+        if (doc.Format is EnvFormat)
+        {
+            // .env values are all strings: an information, not an error (the planner refuses the change with the same words).
+            ShowMessage("`.env` values are all strings", error: false);
+            return;
+        }
+
         if (node.JsonKind is not { } current)
         {
             ShowMessage("types apply to JSON only", error: false);
             return;
         }
 
-        ConfigDocument doc = _controller.Document;
         string target = PathText.Format(doc, node, null);
         if (AskKind("Type of " + target, current) is not { } kind || kind == current)
         {
@@ -1291,6 +1322,12 @@ internal sealed class MainWindow : Window, ISearchHost
         DocNode? node = _tree.CursorNode;
         if (node is null)
         {
+            return;
+        }
+
+        if (_controller.Document.Format is EnvFormat)
+        {
+            ShowMessage("the table editor is not available for .env files", error: false);
             return;
         }
 

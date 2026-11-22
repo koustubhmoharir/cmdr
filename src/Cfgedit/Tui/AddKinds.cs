@@ -3,7 +3,7 @@ using Cfgedit.Core.Model;
 
 namespace Cfgedit.Tui;
 
-/// <summary>What the Add dialog can add: a JSON value (as a member or an item), a JSON comment, or an XML node.</summary>
+/// <summary>What the Add dialog can add: a JSON value (as a member or an item), a JSON comment, an XML node, or a .env entry or comment.</summary>
 internal enum AddKind
 {
     /// <summary>A JSON string, with an empty value.</summary>
@@ -41,6 +41,12 @@ internal enum AddKind
 
     /// <summary>An XML comment with the text the dialog gives.</summary>
     XmlComment,
+
+    /// <summary>A .env entry with the key the dialog gives (relative to the group) and an empty value.</summary>
+    EnvEntry,
+
+    /// <summary>A .env comment line with the text the dialog gives.</summary>
+    EnvComment,
 }
 
 /// <summary>What the Add dialog asked for: the kind, and the key or name and the text when the kind takes them (the others are ignored).</summary>
@@ -77,6 +83,8 @@ internal static class AddKinds
             }
             case NodeKind.XmlElement:
                 return [AddKind.XmlElement, AddKind.XmlText, AddKind.XmlComment];
+            case NodeKind.EnvGroup:
+                return [AddKind.EnvEntry, AddKind.EnvComment];
             case NodeKind.Document when document.Format is XmlFormat:
                 return [AddKind.XmlComment];
             case NodeKind.Document when CommentsAllowed(document):
@@ -101,10 +109,15 @@ internal static class AddKinds
         AddKind.XmlElement => "element",
         AddKind.XmlText => "text",
         AddKind.XmlComment => "comment",
+        AddKind.EnvEntry => "entry",
+        AddKind.EnvComment => "comment",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown kind."),
     };
 
-    /// <summary>The label of the name field for a kind in a parent: "Key" for a JSON member, "Name" for an XML element, and null when the kind takes no name.</summary>
+    /// <summary>
+    /// The label of the name field for a kind in a parent: "Key" for a JSON member or a .env entry, "Name" for an XML element, and null when
+    /// the kind takes no name.
+    /// </summary>
     public static string? NameLabel(DocNode parent, AddKind kind)
     {
         if (kind == AddKind.XmlElement)
@@ -112,11 +125,16 @@ internal static class AddKinds
             return "Name";
         }
 
+        if (kind == AddKind.EnvEntry)
+        {
+            return "Key";
+        }
+
         return parent.Kind == NodeKind.JsonObject && IsJsonValue(kind) ? "Key" : null;
     }
 
     /// <summary>True when the kind is a comment, so that the dialog asks for its text.</summary>
-    public static bool TakesText(AddKind kind) => kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment;
+    public static bool TakesText(AddKind kind) => kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment or AddKind.EnvComment;
 
     /// <summary>
     /// The insert that adds the node at <paramref name="index"/> among the parent's children. A JSON member's key is the request's name
@@ -152,6 +170,10 @@ internal static class AddKinds
                 return new InsertNode(parent.Path, index, new NewXmlText(string.Empty, CData: false));
             case AddKind.XmlComment:
                 return new InsertNode(parent.Path, index, new NewXmlComment(request.Text));
+            case AddKind.EnvEntry:
+                return new InsertNode(parent.Path, index, new NewEnvEntry(request.Name, string.Empty));
+            case AddKind.EnvComment:
+                return new InsertNode(parent.Path, index, new NewEnvComment(request.Text));
             default:
                 throw new ArgumentOutOfRangeException(nameof(request), request.Kind, "Unknown kind.");
         }

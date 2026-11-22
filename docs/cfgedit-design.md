@@ -43,7 +43,7 @@ projects to `Cmdr.slnx`, add `cfgedit` to `publish.ps1`, and link to `docs/cfged
 ## Command line
 
 ```
-cfgedit <file> [--format xml|json|jsonc|json5]
+cfgedit <file> [--format xml|json|jsonc|json5|env]
 cfgedit                      # recent-files picker with an Open file action
 cfgedit --version
 ```

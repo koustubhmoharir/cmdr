@@ -118,6 +118,44 @@ public sealed class EditRulesTests
         Assert.Equal(EditRules.CannotEdit, EditRules.RefusalOf(marker));
     }
 
+    [Fact]
+    public void Env_entry_values_open_the_inline_field_or_the_multi_line_editor_and_never_the_type_menu()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("A=1\nE=\nB='x\ny'\n", "env");
+        DocNode a = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("A", 0));
+        DocNode empty = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("E", 0));
+        DocNode b = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("B", 0));
+
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(a, a.Parts[1]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(empty, empty.Parts[1]));
+        Assert.Equal(EditorKind.Multiline, EditRules.KindOf(b, b.Parts[1]));
+    }
+
+    [Fact]
+    public void Env_keys_of_entries_and_groups_and_comments_open_the_inline_field()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("#c\nLogging__Level=info\n", "env");
+        DocNode group = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0));
+        DocNode entry = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0), new MemberStep("Level", 0));
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0), new CommentStep(0));
+
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(group, group.Parts[0]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(entry, entry.Parts[0]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(comment, comment.Parts[0]));
+    }
+
+    [Fact]
+    public void Env_root_marker_and_summaries_cannot_be_edited()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("Logging__Level=info\n", "env");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+        DocNode group = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0));
+
+        Assert.Equal(EditorKind.None, EditRules.KindOf(root, root.Parts[0]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(root, root.Parts[1]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(group, group.Parts[1]));
+    }
+
     private static DocPart ValueOf(ConfigDocument document, string key)
     {
         DocNode node = TreeFixtures.Find(document, new ItemStep(0), new MemberStep(key, 0));

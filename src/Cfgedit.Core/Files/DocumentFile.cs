@@ -351,6 +351,12 @@ public sealed class DocumentFile
     private static string InitialText(IConfigFormat format, string? xmlRootName, string full)
     {
         string newline = Environment.NewLine;
+        if (format is EnvFormat)
+        {
+            // An empty .env file is a valid document: its root row is still there to add to.
+            return string.Empty;
+        }
+
         if (format is not XmlFormat)
         {
             return "{}" + newline;

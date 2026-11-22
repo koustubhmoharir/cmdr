@@ -96,6 +96,8 @@ public static class RowLayout
             NodeKind.XmlElement => LayoutElement(row, collapsed, indent, columns, marks),
             NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.JsonScalar or NodeKind.JsonComment =>
                 SingleLine(indent, JsonItems(row, collapsed, columns), node.Parts.Count, columns, marks),
+            NodeKind.EnvGroup or NodeKind.EnvEntry or NodeKind.EnvComment =>
+                SingleLine(indent, EnvItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.XmlText or NodeKind.XmlCData or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction
                 or NodeKind.XmlDeclaration or NodeKind.XmlDoctype =>
                 SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
@@ -365,6 +367,77 @@ public static class RowLayout
                     break;
                 default:
                     throw new ArgumentException("A JSON node has an unexpected part: " + part.Kind + ".", nameof(row));
+            }
+        }
+
+        return items;
+    }
+
+    // ----- .env -----
+
+    /// <summary>
+    /// A .env row: a group as its segment and <c>{n}</c> like a JSON member, the root as <c>$ {n}</c> like the JSON root, an entry as
+    /// <c>segment = value</c> with an empty value as <c>""</c>, and a comment as <c>#</c> and its text. The text keeps the spaces after the
+    /// <c>#</c>, as a JSON comment keeps them after <c>//</c>.
+    /// </summary>
+    private static List<Item> EnvItems(Row row, bool collapsed, int width)
+    {
+        DocNode node = row.Node;
+        List<Item> items = FoldItems(row, collapsed);
+        if (node.Kind == NodeKind.EnvComment)
+        {
+            items.Add(Fixed("#", StyleKind.Punctuation, -1));
+            items.Add(Begin(0));
+            AddText(items, node.Parts[0].Value, StyleKind.Comment, 0, width);
+            items.Add(End(0));
+            return items;
+        }
+
+        bool labelled = node.Parts.Any(part => part.Kind == PartKind.Key);
+        for (int i = 0; i < node.Parts.Count; i++)
+        {
+            DocPart part = node.Parts[i];
+            switch (part.Kind)
+            {
+                case PartKind.Root:
+                    items.Add(Begin(i));
+                    items.Add(Fixed(part.Value, StyleKind.ReadOnly, i));
+                    items.Add(End(i));
+                    items.Add(Fixed(" ", StyleKind.Punctuation, -1));
+                    break;
+                case PartKind.Key:
+                    items.Add(Begin(i));
+                    AddText(items, part.Value, StyleKind.Key, i, width);
+                    items.Add(End(i));
+                    break;
+                case PartKind.Value:
+                    items.Add(Fixed(" = ", StyleKind.Punctuation, -1));
+                    items.Add(Begin(i));
+                    if (part.Value.Length == 0)
+                    {
+                        items.Add(Fixed("\"\"", StyleKind.Punctuation, i));
+                    }
+                    else
+                    {
+                        AddText(items, part.Value, StyleKind.String, i, width);
+                    }
+
+                    items.Add(End(i));
+                    break;
+                case PartKind.Summary:
+                    if (labelled)
+                    {
+                        items.Add(Fixed(": ", StyleKind.Punctuation, -1));
+                    }
+
+                    items.Add(Begin(i));
+                    items.Add(Fixed("{", StyleKind.Punctuation, i));
+                    AddText(items, part.Value, StyleKind.Summary, i, width);
+                    items.Add(Fixed("}", StyleKind.Punctuation, i));
+                    items.Add(End(i));
+                    break;
+                default:
+                    throw new ArgumentException(".env node has an unexpected part: " + part.Kind + ".", nameof(row));
             }
         }
 

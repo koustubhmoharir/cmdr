@@ -8,7 +8,7 @@ stopping a command stops everything it started.
 Runs on Linux and Windows.
 
 This repository also contains **logvu**, a terminal viewer for rotated application logs (see [docs/logvu.md](docs/logvu.md)),
-and **cfgedit**, a tree editor for XML and JSON config files that changes only what you edit (see [docs/cfgedit.md](docs/cfgedit.md)).
+and **cfgedit**, a tree editor for XML, JSON and `.env` config files that changes only what you edit (see [docs/cfgedit.md](docs/cfgedit.md)).
 
 ```
 ╭┤cmdr.json├───────────────────╮╭┤servers / web├─────────────────────────────╮

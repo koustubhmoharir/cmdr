@@ -1218,6 +1218,126 @@ public sealed class RowLayoutTests
         Assert.Equal(lines.Lines.Count - 1, lines.Parts[^1].Line);
     }
 
+    // ----- .env -----
+
+    [Fact]
+    public void Env_root_shows_the_marker_and_its_count_like_the_json_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("A=1\nB=2\n", "env");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("2", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 7) }, lines.Parts);
+    }
+
+    [Fact]
+    public void Env_group_shows_its_segment_and_count_like_a_json_member()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("Logging__Level=info\nLogging__Default=x\n", "env");
+        DocNode group = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(group, 1), false, 80);
+
+        Assert.Equal(2, lines.Lines[0].Indent);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("Logging", StyleKind.Key, 0), new Segment(": ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("2", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 4, 11), new PartRange(0, 13, 16) }, lines.Parts);
+    }
+
+    [Fact]
+    public void Env_entry_shows_its_segment_equals_sign_and_value_with_the_value_styled_as_a_string()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("Logging__Level=info\n", "env");
+        DocNode entry = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("Logging", 0), new MemberStep("Level", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(entry, 2), false, 80);
+
+        Assert.Equal(4, lines.Lines[0].Indent);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("Level", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("info", StyleKind.String, 1),
+            },
+            lines.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 6, 11), new PartRange(0, 14, 18) }, lines.Parts);
+    }
+
+    [Fact]
+    public void Env_empty_value_shows_a_pair_of_quotes_in_punctuation_style()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("A=\n", "env");
+        DocNode entry = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("A", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(entry, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("A", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("\"\"", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Env_value_with_a_line_feed_shows_the_line_feed_glyph()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("A='x\ny'\n", "env");
+        DocNode entry = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("A", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(entry, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("A", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("x", StyleKind.String, 1), new Segment("\x23CE", StyleKind.Glyph, 1), new Segment("y", StyleKind.String, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Env_comment_shows_a_hash_and_its_text_as_the_file_has_it()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("#  note\nA=1\n", "env");
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new CommentStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(comment, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("#", StyleKind.Punctuation, -1), new Segment("  note", StyleKind.Comment, 0),
+            },
+            lines.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 5, 11) }, lines.Parts);
+    }
+
+    [Fact]
+    public void Env_trailing_comment_row_looks_like_a_comment_row()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("A=1 # note\n", "env");
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new CommentStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(comment, 1), false, 80);
+
+        Assert.Equal("  # note", TextOf(lines.Lines[0]));
+    }
+
     private static string TextOf(DisplayLine line) => string.Concat(line.Segments.Select(segment => segment.Text));
 
     [Fact]
