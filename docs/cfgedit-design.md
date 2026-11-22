@@ -375,13 +375,76 @@ entry, named by its full key (`Logging__LogLevel__Default`), and one comment per
 right after its entry's scalar. Blank lines, `export`, quote styles and spacing are formatting and are not in it. There is no independent parser to cross-check `.env`; the parser
 gets property tests over randomised values through the encoder (write, parse, compare).
 
-### TOML (M10) and YAML (M11)
+### TOML (M10)
 
-Designed in detail at the start of their milestones. Outline:
+**Version and detection.** TOML 1.0. `.toml`, or `--format toml`. A new file starts empty. A file that is not valid
+TOML 1.0 (including TOML 1.1 additions such as line breaks inside inline tables) opens in text mode at the error.
 
-- TOML: tables and arrays of tables map to the tree; dotted keys are shown as nested nodes; inline tables and arrays
-  are nested nodes. An array of tables is a table-editor case. Every edit is also parsed by Tomlyn and compared with
-  cfgedit's logical tree.
+**Syntax.** A lossless CST, as for JSON: every token keeps its span, whitespace and comments are trivia, printing the
+CST reproduces the bytes. Keys (bare, basic-quoted, literal-quoted, dotted with optional spaces around the dots),
+key/value pairs, `[table]` and `[[array of tables]]` headers, values: the four string forms (basic, literal,
+multi-line basic, multi-line literal, including line-ending backslashes), integers (decimal with `_`, `+`/`-`, `0x`,
+`0o`, `0b`), floats (fraction, exponent, `inf`, `nan`, signs), booleans, the four date-time forms, arrays (multi-line,
+trailing comma, comments inside) and inline tables (one line). Parse errors carry line and column.
+
+**Semantic tree.** The tree shows TOML's data, not its text. The root table has the `$` marker and `{n}`. A table can
+be defined in pieces: its own `[a]` header, `[a.b]` headers below it, `a.b.c = 1` dotted keys, and an implicit
+parent created by a deeper header. Each table node is the merged table; it remembers every *piece* of text that defines
+it (a header section, a dotted-key line, an inline table). Children are in order of first appearance in the file.
+
+- Table: key and `{n}`. Array (inline `[...]`): key and `[n]`. Array of tables (`[[x]]`): key and `[n]`; its items
+  are tables, shown with their index and `{n}`. Inline tables are tables. Scalar: `key = value`, with the value shown
+  as JSON scalars are (strings without quotes, other kinds as written) and its kind on the detail line: `string`,
+  `integer`, `float`, `boolean`, `offset date-time`, `local date-time`, `local date`, `local time`.
+- Comments: a comment line is shown with the key/value or header below it when only comment lines lie between them
+  (like `.env`); otherwise as a row at its place in the table whose section it is in. A trailing comment is a row right
+  after its key/value or header. Comments inside an inline array are rows of the array.
+- Path text: TOML dotted keys, quoted when not bare, with `[n]` for array items: `servers[1].port`,
+  `tool."my.key"`. The root is `$`.
+
+**Edits.**
+
+- Scalar value: validated for its kind (TOML grammar) and written as typed for numbers and date-times. A string keeps
+  its form when the form can hold the new value (literal: no `'`, no control characters; multi-line literal: no `'''`;
+  multi-line forms for values with line breaks); otherwise a new string is written basic (`"…"`, escaped), or literal
+  when it contains `\` or `"` and no `'` or control characters; a value with a line break is written multi-line basic.
+- Key rename: written bare when it can be, else basic-quoted. Renaming a table renames that key in every piece that
+  names it: its headers, deeper headers (`[a.b.c]`), `[[a.b]]` headers and dotted keys. A rename onto an existing
+  sibling key is refused.
+- Add into a table defined by a header (or the root): `key = value` after the last key/value of its first section (for
+  the root, before the first header). Into a table defined only by dotted keys: a dotted key after its last dotted
+  line. Into an implicit table (only deeper headers): a new `[a]` header with the key, placed before its first deeper
+  header. Into an inline table: `, key = value` before the `}`. A new *table* in a header-defined table or the root is
+  written as a `[parent.key]` header section placed after the last section of the parent's subtree; elsewhere as
+  `key = {}`. A new array is `key = []`. The add dialog kinds: string, integer, float, boolean, date-time (asks the
+  text), table, array, comment.
+- Arrays: inline arrays get items as JSON arrays do (commas, same-line or one-per-line style copied, trailing comma
+  kept). An array of tables gets a new item as a `[[x]]` section after the item it follows (or before the one it
+  precedes), shaped like the neighbour item (its keys with empty values), as the table editor's add row does.
+- Delete: a key/value takes its attached and trailing comments. A table deletes every piece that defines it,
+  including its subtables. An array-of-tables item deletes its section and the sections of its subtables.
+- Move (Alt+Up/Down): key/values within one section, items of an inline array, items of an array of tables, and
+  sibling header sections, when the units are contiguous; otherwise refused with a message (as `.env`).
+- Duplicate: as JSON (`-copy` key suffix; bare keys allow `-`); an array-of-tables item is duplicated as a section.
+- Change type: scalars change kind through the type menu (string, integer, float, boolean, date-time, table, array),
+  as JSON. A scalar becomes `{}` or `[]`. A header-defined table or an array of tables cannot change type: delete
+  it instead (message).
+- Table editor: an array of tables, and an inline array of inline tables, open as a table (rows are items).
+
+**Verification.** Two checks for every edit, after cfgedit's own reparse: (1) a TOML logical tree, data (tables as
+objects, arrays, scalars with kind and canonical value) plus the comments in file order, is compared with the edit
+applied to the logical tree before, by a TOML logical edit (as for `.env`); (2) Tomlyn parses the new text, and its
+data, converted to the same logical shape, must equal cfgedit's. Opening a file runs check (2) too: if Tomlyn and
+cfgedit disagree, the file opens in text mode with a message. cfgedit's parser is tested against the toml-test suite
+(github.com/toml-lang/toml-test, MIT): every valid TOML 1.0 case must parse and match Tomlyn, every invalid case must
+be refused.
+
+**Dependency.** `Tomlyn` 2.11.1, referenced by `Cfgedit.Core` only and used only for verification.
+
+### YAML (M11)
+
+Designed in detail at the start of its milestone. Outline:
+
 - YAML, config subset: block and flow mappings and sequences, all scalar styles (plain, single, double, literal,
   folded) kept on edit, comments, multi-document files, anchors, aliases and tags shown and kept but not editable.
   Complex keys (`? `), and anything else outside the subset, open the file in text mode. Every edit is also parsed by

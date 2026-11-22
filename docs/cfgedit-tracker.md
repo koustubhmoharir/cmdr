@@ -136,3 +136,15 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] TUI: rows, path text (the full key), add dialog kinds, styling, new `.env` file, `--format env`; user guide.
       Checked in a real terminal at 80x24: group rename across non-adjacent lines, add inside a group, save. (08de30b)
       *(Windows)*: not run on Windows.
+
+## M10. TOML (design: "Phase 2" › "TOML (M10)")
+
+- [ ] Core syntax: lexer/parser into a lossless CST (keys, headers, all value kinds, arrays, inline tables, comments),
+      string/key encoders, number and date-time validation. Tests: byte-identical round trip, toml-test valid/invalid
+      cases (vendored), encoder property tests.
+- [ ] Core model: `TomlFormat` (`toml`), semantic tree (tables merged from pieces, arrays of tables), logical tree,
+      Tomlyn cross-check on open and after every edit.
+- [ ] Core planner: value, key and table rename, add (all placements), arrays and arrays of tables, delete, move,
+      duplicate, change type; TOML logical edit.
+- [ ] TUI: rows, path text, add dialog kinds, type menu, table editor for arrays of tables, new `.toml` file,
+      `--format toml`; user guide.
