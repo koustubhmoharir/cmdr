@@ -399,6 +399,10 @@ it (a header section, a dotted-key line, an inline table). Children are in order
 - Comments: a comment line is shown with the key/value or header below it when only comment lines lie between them
   (like `.env`); otherwise as a row at its place in the table whose section it is in. A trailing comment is a row right
   after its key/value or header. Comments inside an inline array are rows of the array.
+  Decisions: a comment above a key/value is the row before that key/value, in the table that holds it (for `a.b = 1`,
+  inside `a`). A comment above a header belongs to the table that header defines (or to the new item of `[[x]]`), as its
+  first child; the header's own trailing comment is its next child. A comment between a value and its comma stays in the
+  array, after the item.
 - Path text: TOML dotted keys, quoted when not bare, with `[n]` for array items: `servers[1].port`,
   `tool."my.key"`. The root is `$`.
 
@@ -438,6 +442,16 @@ data, converted to the same logical shape, must equal cfgedit's. Opening a file 
 cfgedit disagree, the file opens in text mode with a message. cfgedit's parser is tested against the toml-test suite
 (github.com/toml-lang/toml-test, MIT): every valid TOML 1.0 case must parse and match Tomlyn, every invalid case must
 be refused.
+
+The logical tree that check (1) compares is the data (objects for tables, arrays for arrays and arrays of tables, and
+scalars with their kind and canonical value) under the document, followed by one array named `#comments` that holds every
+comment in file order. Check (2) compares the data alone: tables by name, since TOML tables have no order, and arrays in
+order. Date-times are compared as written, with `T` for the separator and `Z` in upper case; a float is compared by its
+shortest round-trip form.
+
+A Tomlyn error on text that cfgedit accepts, and any difference, is an internal parse mismatch, as for XML. A syntax or
+semantic error of an edited text is the user's (`IsUserError`). Tomlyn's nesting limit is set above cfgedit's cap: cfgedit
+caps tables and values at 256 levels each, and Tomlyn counts both in one number.
 
 **Dependency.** `Tomlyn` 2.11.1, referenced by `Cfgedit.Core` only and used only for verification.
 

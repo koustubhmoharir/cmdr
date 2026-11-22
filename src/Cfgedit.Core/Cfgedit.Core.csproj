@@ -4,6 +4,11 @@
     <ProjectReference Include="..\Shared.Core\Shared.Core.csproj" />
   </ItemGroup>
 
+  <!-- Verification only: the TOML cross-check parses the same text independently (see docs/cfgedit-design.md, TOML). -->
+  <ItemGroup>
+    <PackageReference Include="Tomlyn" Version="2.11.1" />
+  </ItemGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="Cfgedit.Core.Tests" />
     <InternalsVisibleTo Include="Cfgedit.Tests" />

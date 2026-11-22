@@ -1,20 +1,21 @@
 using System.Globalization;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Cfgedit.Core.Model;
 using Cfgedit.Core.Text;
 using Cfgedit.Core.Toml;
+using JsonValueKind = System.Text.Json.JsonValueKind;
 
 namespace Cfgedit.Core.Tests.Toml;
 
 /// <summary>
-/// The toml-test suite (v2.2.0, the TOML 1.0.0 selection), copied into Fixtures/toml-test. Every valid case parses and round-trips
-/// byte for byte. Every invalid case is refused, or is one of the semantic cases listed in semantic-invalid.txt. The top-level
-/// values of the valid cases that have only top-level key/value pairs are compared with their expected JSON.
+/// The toml-test suite (v2.2.0, the TOML 1.0.0 selection), copied into Fixtures/toml-test. Every valid case parses byte for byte
+/// through the syntax layer, and through the format, where Tomlyn must agree; its data must equal the case's expected JSON. Every
+/// invalid case is refused by the format with cfgedit's own message, not by the Tomlyn cross-check. The top-level values of the valid
+/// cases that have only top-level key/value pairs are also compared with their expected JSON, through the syntax tree.
 /// </summary>
 public sealed class TomlConformanceTests
 {
     private static readonly string FixtureRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures", "toml-test");
-    private static readonly HashSet<string> SemanticInvalid = LoadSemanticList();
 
     public static IEnumerable<object[]> ValidCases()
     {
@@ -54,26 +55,23 @@ public sealed class TomlConformanceTests
     }
 
     [Theory]
-    [MemberData(nameof(InvalidCases))]
-    public void Invalid_case_is_refused_or_is_a_listed_semantic_case(string relative)
+    [MemberData(nameof(ValidCases))]
+    public void Valid_case_is_accepted_by_the_format_and_its_data_matches_the_expected_json(string relative)
     {
-        bool refused = ParseRefused(relative, out _);
-        if (!refused)
-        {
-            Assert.Contains(relative, SemanticInvalid);
-        }
+        var format = new TomlFormat();
+        ConfigDocument document = format.Parse(Decode(relative));
+        LogicalNode data = format.ToLogical(document).Children[0];
+
+        using System.Text.Json.JsonDocument expected = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.ChangeExtension(Path.Combine(FixtureRoot, relative), ".json")));
+        AssertSameData(ExpectedObject(expected.RootElement, null), data, "$");
     }
 
-    [Fact]
-    public void Every_listed_semantic_case_is_an_invalid_case_that_the_parser_accepts()
+    [Theory]
+    [MemberData(nameof(InvalidCases))]
+    public void Invalid_case_is_refused_by_the_format_with_cfgedit_s_own_message(string relative)
     {
-        Assert.NotEmpty(SemanticInvalid);
-        foreach (string entry in SemanticInvalid)
-        {
-            Assert.StartsWith("invalid/", entry, StringComparison.Ordinal);
-            Assert.True(File.Exists(Path.Combine(FixtureRoot, entry)), $"{entry} is not in the fixtures");
-            Assert.False(ParseRefused(entry, out _), $"{entry} is listed but the parser refuses it, so it need not be listed");
-        }
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => new TomlFormat().Parse(Decode(relative)));
+        Assert.False(ex.Message.StartsWith("internal parse mismatch", StringComparison.Ordinal), ex.Message);
     }
 
     [Theory]
@@ -103,33 +101,134 @@ public sealed class TomlConformanceTests
             .Select(path => new object[] { path });
     }
 
-    /// <summary>
-    /// The semantic cases, one relative path per line. The file sits next to this class. It is found from this source file's
-    /// location, so the test reads the checked-in list and not a copy.
-    /// </summary>
-    private static HashSet<string> LoadSemanticList([CallerFilePath] string sourcePath = "")
+    private static SourceText Decode(string relative)
     {
-        string listPath = Path.Combine(Path.GetDirectoryName(sourcePath)!, "semantic-invalid.txt");
-        return File.ReadAllLines(listPath)
-            .Select(line => line.Trim())
-            .Where(line => line.Length > 0)
-            .ToHashSet(StringComparer.Ordinal);
+        return SourceText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative);
     }
 
-    /// <summary>True when the parser refuses the case, with the message. A case that cannot be decoded is refused too.</summary>
-    private static bool ParseRefused(string relative, out string? message)
+    /// <summary>
+    /// The logical data of an expected JSON object, as the format's data is written: a plain object is an object, and an object of a
+    /// <c>type</c> and a <c>value</c>, both strings, is a tagged scalar. The canonical texts come from the same definitions as the
+    /// format's, so the date-times are compared as the canonical form (see <see cref="TomlValues"/>).
+    /// </summary>
+    private static LogicalNode ExpectedObject(JsonElement element, string? name)
     {
-        try
+        var children = new List<LogicalNode>();
+        foreach (JsonProperty property in element.EnumerateObject())
         {
-            SourceText source = SourceText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative);
-            TomlDocument.Parse(source);
-            message = null;
-            return false;
+            children.Add(Expected(property.Value, property.Name));
         }
-        catch (CfgeditException ex)
+
+        return new LogicalNode(LogicalKind.Object, name, null, null, [], children);
+    }
+
+    private static LogicalNode Expected(JsonElement element, string? name)
+    {
+        switch (element.ValueKind)
         {
-            message = ex.Message;
-            return true;
+            case JsonValueKind.Array:
+            {
+                var items = new List<LogicalNode>();
+                foreach (JsonElement item in element.EnumerateArray())
+                {
+                    items.Add(Expected(item, null));
+                }
+
+                return new LogicalNode(LogicalKind.Array, name, null, null, [], items);
+            }
+
+            case JsonValueKind.Object when IsTaggedScalar(element):
+                return ExpectedScalar(name, element.GetProperty("type").GetString()!, element.GetProperty("value").GetString()!);
+
+            case JsonValueKind.Object:
+                return ExpectedObject(element, name);
+
+            default:
+                throw new InvalidOperationException("Unexpected JSON value kind in the expected data: " + element.ValueKind);
+        }
+    }
+
+    private static LogicalNode ExpectedScalar(string? name, string type, string text)
+    {
+        (TomlValueKind kind, string value) = type switch
+        {
+            "string" => (TomlValueKind.String, text),
+            "integer" => (TomlValueKind.Integer, long.Parse(text, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture)),
+            "bool" => (TomlValueKind.Boolean, text),
+            "float" => (TomlValueKind.Float, TomlValues.FloatText(ExpectedFloat(text))),
+            "datetime" => (TomlValueKind.OffsetDateTime, TomlValues.DateTimeText(text)),
+            "datetime-local" => (TomlValueKind.LocalDateTime, TomlValues.DateTimeText(text)),
+            "date-local" => (TomlValueKind.LocalDate, TomlValues.DateTimeText(text)),
+            "time-local" => (TomlValueKind.LocalTime, TomlValues.DateTimeText(text)),
+            _ => throw new InvalidOperationException("Unknown expected type: " + type),
+        };
+        return new LogicalNode(LogicalKind.Scalar, name, null, value, [], [], tomlKind: kind);
+    }
+
+    private static double ExpectedFloat(string text)
+    {
+        return text switch
+        {
+            "nan" or "+nan" or "-nan" => double.NaN,
+            "inf" or "+inf" => double.PositiveInfinity,
+            "-inf" => double.NegativeInfinity,
+            _ => double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture),
+        };
+    }
+
+    /// <summary>
+    /// The value to compare for a node. toml-test writes the fraction of a date-time to milliseconds (<c>56.600</c> for a source
+    /// <c>56.6</c>), where cfgedit keeps the digits as written, so trailing zeros of a fraction are not compared. Every other digit is.
+    /// The exact comparison is the Tomlyn cross-check's.
+    /// </summary>
+    private static string? ForgiveFraction(LogicalNode node)
+    {
+        if (node.TomlKind is not (TomlValueKind.OffsetDateTime or TomlValueKind.LocalDateTime or TomlValueKind.LocalTime) || node.Value is null)
+        {
+            return node.Value;
+        }
+
+        int dot = node.Value.IndexOf('.', StringComparison.Ordinal);
+        if (dot < 0)
+        {
+            return node.Value;
+        }
+
+        int end = dot + 1;
+        while (end < node.Value.Length && char.IsAsciiDigit(node.Value[end]))
+        {
+            end++;
+        }
+
+        string fraction = node.Value[(dot + 1)..end].TrimEnd('0');
+        return node.Value[..dot] + (fraction.Length > 0 ? "." + fraction : string.Empty) + node.Value[end..];
+    }
+
+    /// <summary>
+    /// Asserts that the data equals the expected data: the same kinds, values and member names, and the same items in the same order.
+    /// Tables are compared by name, since TOML tables have no order.
+    /// </summary>
+    private static void AssertSameData(LogicalNode expected, LogicalNode actual, string path)
+    {
+        Assert.True(
+            expected.Kind == actual.Kind && expected.TomlKind == actual.TomlKind && ForgiveFraction(expected) == ForgiveFraction(actual),
+            $"{path}: expected {expected} but found {actual}");
+        if (expected.Kind == LogicalKind.Object)
+        {
+            Assert.Equal(expected.Children.Count, actual.Children.Count);
+            foreach (LogicalNode child in expected.Children)
+            {
+                LogicalNode match = Assert.Single(actual.Children, other => other.Name == child.Name);
+                AssertSameData(child, match, $"{path}.{child.Name}");
+            }
+        }
+        else if (expected.Kind == LogicalKind.Array)
+        {
+            Assert.Equal(expected.Children.Count, actual.Children.Count);
+            for (int i = 0; i < expected.Children.Count; i++)
+            {
+                AssertSameData(expected.Children[i], actual.Children[i], $"{path}[{i}]");
+            }
         }
     }
 

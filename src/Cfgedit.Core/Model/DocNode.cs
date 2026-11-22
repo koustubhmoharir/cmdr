@@ -16,7 +16,8 @@ public sealed class DocNode
         IReadOnlyList<DocPart> endParts,
         int start,
         int end,
-        JsonValueKind? jsonKind)
+        JsonValueKind? jsonKind,
+        TomlValueKind? tomlKind = null)
     {
         Kind = kind;
         Path = path;
@@ -26,6 +27,7 @@ public sealed class DocNode
         Start = start;
         End = end;
         JsonKind = jsonKind;
+        TomlKind = tomlKind;
     }
 
     /// <summary>The kind of node.</summary>
@@ -54,6 +56,9 @@ public sealed class DocNode
 
     /// <summary>The JSON kind of the node's value. Null for XML nodes, comments and the document node.</summary>
     public JsonValueKind? JsonKind { get; }
+
+    /// <summary>The TOML kind of a TOML scalar. Null for every other node.</summary>
+    public TomlValueKind? TomlKind { get; }
 
     internal void AddChild(DocNode child)
     {

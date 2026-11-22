@@ -8,7 +8,7 @@ namespace Cfgedit.Core.Model;
 /// </summary>
 public interface IConfigFormat
 {
-    /// <summary>The format's name: "json", "jsonc", "json5", "xml" or "env".</summary>
+    /// <summary>The format's name: "json", "jsonc", "json5", "xml", "env" or "toml".</summary>
     string Name { get; }
 
     /// <summary>Parses decoded source text.</summary>

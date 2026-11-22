@@ -32,6 +32,9 @@ public sealed class FormatsTests
     [InlineData(".SVG", "xml")]
     [InlineData(".env", "env")]
     [InlineData(".ENV", "env")]
+    [InlineData(".toml", "toml")]
+    [InlineData(".TOML", "toml")]
+    [InlineData(".Toml", "toml")]
     public void Every_listed_extension_gives_its_format_in_any_case(string extension, string expectedName)
     {
         IConfigFormat? format = Formats.ForPath("some/dir/file" + extension);
@@ -43,7 +46,6 @@ public sealed class FormatsTests
     [Theory]
     [InlineData("settings.txt")]
     [InlineData("settings.yaml")]
-    [InlineData("settings.toml")]
     [InlineData("settings.ini")]
     [InlineData("settings")]
     [InlineData("")]
@@ -89,7 +91,6 @@ public sealed class FormatsTests
 
     [Theory]
     [InlineData("yaml")]
-    [InlineData("toml")]
     [InlineData("xml5")]
     [InlineData("")]
     [InlineData(".json")]
@@ -105,6 +106,22 @@ public sealed class FormatsTests
         Assert.Equal("jsonc", new JsonFormat(JsonDialect.Jsonc).Name);
         Assert.Equal("json5", new JsonFormat(JsonDialect.Json5).Name);
         Assert.Equal("xml", new XmlFormat().Name);
+        Assert.Equal("toml", new TomlFormat().Name);
+    }
+
+    [Theory]
+    [InlineData("toml")]
+    [InlineData("TOML")]
+    public void The_toml_format_name_gives_the_toml_format(string name)
+    {
+        Assert.Equal("toml", Formats.FromName(name)!.Name);
+        Assert.IsType<TomlFormat>(Formats.FromName(name));
+    }
+
+    [Fact]
+    public void The_toml_extension_is_a_known_extension_for_the_open_dialog()
+    {
+        Assert.Contains(".toml", Formats.KnownExtensions);
     }
 
     [Theory]
@@ -124,6 +141,7 @@ public sealed class FormatsTests
     [InlineData(".env.json", "jsonc")]
     [InlineData(".env.json5", "json5")]
     [InlineData(".env.xml", "xml")]
+    [InlineData(".env.toml", "toml")]
     [InlineData("x.env.csproj", "xml")]
     public void A_known_extension_wins_over_the_env_name_rule(string path, string expectedName)
     {

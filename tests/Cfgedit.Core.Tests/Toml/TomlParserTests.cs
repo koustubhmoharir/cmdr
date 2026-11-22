@@ -95,6 +95,8 @@ public sealed class TomlParserTests
 
     [Theory]
     [InlineData("1979-13-27", "invalid date-time '1979-13-27': the month must be 01 to 12")]
+    [InlineData("07:32:00.12345678", "invalid date-time '07:32:00.12345678': cfgedit supports at most 7 fractional-second digits")]
+    [InlineData("1979-05-27T07:32:00.12345678Z", "invalid date-time '1979-05-27T07:32:00.12345678Z': cfgedit supports at most 7 fractional-second digits")]
     [InlineData("2023-02-29", "invalid date-time '2023-02-29': the day must be 01 to 28 for that month")]
     [InlineData("1900-02-29", "invalid date-time '1900-02-29': the day must be 01 to 28 for that month")]
     [InlineData("2023-04-31", "invalid date-time '2023-04-31': the day must be 01 to 30 for that month")]

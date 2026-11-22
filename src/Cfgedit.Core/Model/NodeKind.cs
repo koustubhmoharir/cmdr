@@ -50,4 +50,19 @@ public enum NodeKind
 
     /// <summary>A .env comment line.</summary>
     EnvComment,
+
+    /// <summary>
+    /// A TOML table: the document's root, a member table (<c>[a]</c>, a dotted-key table or an implicit parent), an inline table, or
+    /// an item of an array of tables. Its children are its members and comments.
+    /// </summary>
+    TomlTable,
+
+    /// <summary>A TOML array: a static array (<c>[...]</c>) or an array of tables (<c>[[x]]</c>). Its children are its items and comments.</summary>
+    TomlArray,
+
+    /// <summary>A TOML scalar: a string, number, boolean or date-time, as a member or an array item. Its kind is <see cref="DocNode.TomlKind"/>.</summary>
+    TomlScalar,
+
+    /// <summary>A TOML comment.</summary>
+    TomlComment,
 }

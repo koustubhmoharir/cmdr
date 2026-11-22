@@ -159,6 +159,13 @@ internal static class CfgeditHost
             resolved = Formats.FromName(FormatNames[picked])!;
         }
 
+        if (resolved is TomlFormat)
+        {
+            // See RefuseUnfinished: the tree cannot show TOML yet.
+            Confirm.Choose(app, "New file", "TOML editing is not finished yet", "OK");
+            return null;
+        }
+
         if (resolved is not XmlFormat)
         {
             return new NewFileChoice(resolved, null);
@@ -245,6 +252,7 @@ internal static class CfgeditHost
         // opened with DocumentFile, which keeps the snapshot the save check needs.
         byte[] bytes = ReadBytes(path);
         IConfigFormat resolved = format ?? Formats.ForPath(path) ?? Sniff(bytes, path);
+        RefuseUnfinished(resolved, path);
         try
         {
             return new OpenedFile(path, DocumentFile.Open(path, resolved));
@@ -252,6 +260,19 @@ internal static class CfgeditHost
         catch (CfgeditException ex) when (ex.Path is null)
         {
             throw new CfgeditException(ex.Message) { Path = path, Line = ex.Line, Column = ex.Column };
+        }
+    }
+
+    /// <summary>
+    /// Refuses a format whose TUI support is not finished (TOML, until milestone M10's TUI item): Core parses and checks it, but the
+    /// tree cannot show its rows yet. Remove this when the TUI handles TOML.
+    /// </summary>
+    /// <exception cref="CfgeditException">The format is not supported by the TUI yet.</exception>
+    private static void RefuseUnfinished(IConfigFormat format, string path)
+    {
+        if (format is TomlFormat)
+        {
+            throw new CfgeditException("TOML editing is not finished yet") { Path = path };
         }
     }
 

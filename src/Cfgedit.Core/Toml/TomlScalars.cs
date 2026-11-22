@@ -24,10 +24,10 @@ internal static class TomlScalars
     private static readonly Regex SpecialFloat = new(@"\A[+-]?(inf|nan)\z", Options);
 
     private static readonly Regex DateTimePattern = new(
-        @"\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(?:[Tt ](?<time>(?<h>[0-9]{2}):(?<mi>[0-9]{2}):(?<s>[0-9]{2})(?:\.[0-9]+)?)(?<off>[Zz]|(?<oh>[+-][0-9]{2}):(?<om>[0-9]{2}))?)?\z",
+        @"\A(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})(?:[Tt ](?<time>(?<h>[0-9]{2}):(?<mi>[0-9]{2}):(?<s>[0-9]{2})(?:\.(?<frac>[0-9]+))?)(?<off>[Zz]|(?<oh>[+-][0-9]{2}):(?<om>[0-9]{2}))?)?\z",
         Options);
 
-    private static readonly Regex LocalTime = new(@"\A(?<h>[0-9]{2}):(?<mi>[0-9]{2}):(?<s>[0-9]{2})(?:\.[0-9]+)?\z", Options);
+    private static readonly Regex LocalTime = new(@"\A(?<h>[0-9]{2}):(?<mi>[0-9]{2}):(?<s>[0-9]{2})(?:\.(?<frac>[0-9]+))?\z", Options);
 
     /// <summary>The message for an integer that is not valid, or null. On success <paramref name="value"/> and <paramref name="radix"/> are set.</summary>
     internal static string? ValidateInteger(string text, out long value, out int radix)
@@ -136,7 +136,12 @@ internal static class TomlScalars
             }
 
             kind = TomlDateTimeKind.LocalTime;
-            return CheckTime(text, t.Groups["h"].Value, t.Groups["mi"].Value, t.Groups["s"].Value);
+            return CheckFraction(text, t) ?? CheckTime(text, t.Groups["h"].Value, t.Groups["mi"].Value, t.Groups["s"].Value);
+        }
+
+        if (CheckFraction(text, m) is { } fractionError)
+        {
+            return fractionError;
         }
 
         string? dateError = CheckDate(text, m);
@@ -175,6 +180,22 @@ internal static class TomlScalars
         }
 
         return null;
+    }
+
+    /// <summary>The most fractional-second digits cfgedit accepts. Tomlyn, its cross-check, refuses more.</summary>
+    internal const int MaxFractionDigits = 7;
+
+    /// <summary>
+    /// The message for fractional seconds longer than <see cref="MaxFractionDigits"/>, or null. TOML leaves precision beyond
+    /// milliseconds to the implementation; Tomlyn refuses more than seven digits, so cfgedit says so plainly rather than reporting a
+    /// cross-check mismatch.
+    /// </summary>
+    private static string? CheckFraction(string text, Match m)
+    {
+        Group fraction = m.Groups["frac"];
+        return fraction.Success && fraction.Length > MaxFractionDigits
+            ? $"invalid date-time '{text}': cfgedit supports at most {MaxFractionDigits} fractional-second digits"
+            : null;
     }
 
     /// <summary>True when the year is a leap year in the proleptic Gregorian calendar, year 0 included.</summary>

@@ -56,6 +56,11 @@ internal static class ModelTestSupport
             builder.Append(" json=").Append(jsonKind);
         }
 
+        if (node.TomlKind is { } tomlKind)
+        {
+            builder.Append(" toml=").Append(tomlKind);
+        }
+
         foreach (DocPart part in node.Parts)
         {
             builder.Append(' ').Append(Part(part));

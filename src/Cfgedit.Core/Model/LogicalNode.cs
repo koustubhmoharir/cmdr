@@ -60,6 +60,7 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
     /// <param name="attributes">The attributes in document order.</param>
     /// <param name="children">The children in document order.</param>
     /// <param name="anyValue">True when the value is a wildcard in an expectation. See <see cref="AnyValue"/>.</param>
+    /// <param name="tomlKind">For a TOML scalar, its kind. Null otherwise.</param>
     public LogicalNode(
         LogicalKind kind,
         string? name,
@@ -67,7 +68,8 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         string? value,
         IReadOnlyList<LogicalAttribute> attributes,
         IReadOnlyList<LogicalNode> children,
-        bool anyValue = false)
+        bool anyValue = false,
+        TomlValueKind? tomlKind = null)
     {
         ArgumentNullException.ThrowIfNull(attributes);
         ArgumentNullException.ThrowIfNull(children);
@@ -78,7 +80,11 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         Attributes = attributes;
         Children = children;
         AnyValue = anyValue;
+        TomlKind = tomlKind;
     }
+
+    /// <summary>For a TOML scalar, its kind. Null otherwise.</summary>
+    public TomlValueKind? TomlKind { get; }
 
     /// <summary>
     /// True when the value is a wildcard: an expectation for a value that is not known in advance, such as raw source text
@@ -99,6 +105,7 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         if (expected.Kind != actual.Kind
             || expected.Name != actual.Name
             || expected.ScalarKind != actual.ScalarKind
+            || expected.TomlKind != actual.TomlKind
             || (!expected.AnyValue && expected.Value != actual.Value)
             || expected.Attributes.Count != actual.Attributes.Count
             || expected.Children.Count != actual.Children.Count)
@@ -161,6 +168,7 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         return Kind == other.Kind
             && Name == other.Name
             && ScalarKind == other.ScalarKind
+            && TomlKind == other.TomlKind
             && Value == other.Value
             && Attributes.SequenceEqual(other.Attributes)
             && Children.SequenceEqual(other.Children);
@@ -179,6 +187,7 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         hash.Add(Kind);
         hash.Add(Name);
         hash.Add(ScalarKind);
+        hash.Add(TomlKind);
         hash.Add(Value);
         foreach (LogicalAttribute attribute in Attributes)
         {
@@ -212,6 +221,11 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         if (ScalarKind is { } scalarKind)
         {
             builder.Append(" scalar=").Append(scalarKind);
+        }
+
+        if (TomlKind is { } tomlKind)
+        {
+            builder.Append(" toml=").Append(tomlKind);
         }
 
         if (AnyValue)
