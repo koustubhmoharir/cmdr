@@ -297,17 +297,91 @@ Undo, save, search and copy work as in the tree.
 - In phase 1, cfgedit does not watch the file while it is open. A later phase adds watching: reload silently when there
   are no unsaved changes, and offer Reload / Keep mine when there are.
 
-## Phase 2 notes
+## Phase 2
 
-- `.env`: flat key/value rows with comments. Quoting rules differ between loaders (dotenv vs docker-compose), so the
-  dialect is a format option.
-- TOML: tables and arrays of tables map to the tree. An array of tables is a natural table-editor case. Inline tables are
-  shown as nested nodes.
-- YAML: block and flow styles, anchors/aliases (shown, not expanded), multi-document streams, and scalar styles (plain,
-  quoted, literal, folded) kept on edit.
+Order: `.env` (M9), TOML (M10), YAML (M11). All three plug in through IConfigFormat. Nothing in the UI is specific to a
+format except the part-kind styling, the path text and the add-dialog choices, which follow the node kinds.
 
-All three plug in through IConfigFormat. Nothing in the UI is specific to JSON or XML except the part-kind styling and
-the add-dialog choices, which the format provides.
+Decisions (user, 2026-11-23): one `.env` dialect, dotenv, with `__` as a hierarchy separator (as ASP.NET Core's
+environment configuration reads it); TOML and YAML edits are cross-checked by an independent parser (Tomlyn,
+YamlDotNet), used only as verifiers, as .NET's XmlReader is for XML; YAML covers the config subset below, not all of
+YAML 1.2.
+
+### `.env` (dotenv)
+
+**Detection.** A file named `.env`, `.env.<anything>` (`.env.local`, `.env.production`) or `<anything>.env`, or
+`--format env`. A new file starts empty.
+
+**Syntax.** Line based. Each line is one of:
+
+- blank;
+- a comment: optional whitespace, `#`, the rest of the line;
+- an entry: optional whitespace, optional `export` and whitespace, a key, optional spaces, `=`, optional spaces, a value,
+  optional whitespace and a trailing comment (`# …`) after an unquoted value only when preceded by whitespace, and after
+  a quoted value.
+
+Keys are `[A-Za-z_][A-Za-z0-9_.-]*`. Values are:
+
+- unquoted: up to a ` #` comment or the end of the line, trailing whitespace not part of the value; may be empty;
+- single-quoted: literal, no escapes, may span lines;
+- double-quoted: may span lines; the escapes `\n`, `\r`, `\t`, `\"`, `\\` are decoded; any other backslash is kept
+  as written.
+
+Anything else (a `KEY: value` line, backtick quotes, an unterminated quote, an invalid key) is a parse error: the file
+opens in text mode at that line. `${VAR}` references are shown and kept as written; cfgedit never expands them.
+Duplicate keys are allowed and shown as they are (loaders disagree on which one wins).
+
+**Writing a value** chooses the plainest form that every common loader reads the same way: unquoted when the value has
+no leading or trailing whitespace and none of `#`, `'`, `"`, `\`, `$`, a backtick or a line break; otherwise single
+quotes when it has no `'`; otherwise double quotes, with `"` and `\` escaped and line breaks written as real line
+breaks. Editing an existing value keeps its quote style when that style can still hold the new value. A value with
+both a `'` and a `$` or a `\` is written in double quotes and the `$`/`\` are kept; the detail line warns that
+loaders may expand `$`.
+
+**Hierarchy.** A key is split on `__` into segments: `Logging__LogLevel__Default` is shown as `Logging` › `LogLevel` ›
+`Default`. A key with an empty segment (`A____B`, a leading or trailing `__`) or a segment that starts or ends with `_`
+(where the split would not round-trip) is not split. Group nodes are virtual: a group appears where its first entry
+is, and every entry with that prefix, adjacent or not, appears under it in file order. Grouping is case-sensitive, as
+dotenv is.
+
+**Tree.** The document has one root node, a group with the `$` marker and a `{n}` count like a JSON root, so an empty
+file still has a row to add to. Groups show their segment and `{n}`; entries show their last segment and the value;
+comments are rows. A comment is shown with the entry below it (inside that entry's group); a comment followed by a
+blank line or the end of the file is a row of the root. The path text on the detail line is the full key
+(`Logging__LogLevel__Default`).
+
+**Edits.**
+
+- Value: rewrites the value (see "Writing a value").
+- Key of an entry: renames its last segment. Key of a group: renames that segment in every key under the group, one
+  text edit per line, as one undo step. The new segment must be a valid key piece and must not create or remove a
+  split (no `__`, no leading or trailing `_`); a rename that would merge with an existing sibling is refused.
+- Add (`a`/`i`/`A`/`I`): the dialog offers *entry* (asks the key, value empty) and *comment*. Inside a group the line
+  written is `<group prefix>__<key>=`; the key typed may itself contain `__`, which creates nested groups. A new line
+  goes after the last line of the sibling it follows (before the first line of the sibling it precedes), and copies
+  that line's `export` prefix and spacing around `=`.
+- Delete: an entry deletes its line and the comments shown with it; a group deletes all its lines.
+- Move (Alt+Up/Down): swaps the lines of two adjacent siblings. A move is refused, with a message, when either
+  sibling's lines are not contiguous in the file.
+- Duplicate: copies the entry's line below it with the key suffixed as JSON members are.
+- Change type: refused ("`.env` values are all strings").
+- Table editor: not offered for `.env` in M9.
+
+**Verification.** The logical tree is the shown hierarchy: groups as objects, entries as string scalars, comments as
+comments, so the existing logical edit checks apply. There is no independent parser to cross-check `.env`; the parser
+gets property tests over randomised values through the encoder (write, parse, compare).
+
+### TOML (M10) and YAML (M11)
+
+Designed in detail at the start of their milestones. Outline:
+
+- TOML: tables and arrays of tables map to the tree; dotted keys are shown as nested nodes; inline tables and arrays
+  are nested nodes. An array of tables is a table-editor case. Every edit is also parsed by Tomlyn and compared with
+  cfgedit's logical tree.
+- YAML, config subset: block and flow mappings and sequences, all scalar styles (plain, single, double, literal,
+  folded) kept on edit, comments, multi-document files, anchors, aliases and tags shown and kept but not editable.
+  Complex keys (`? `), and anything else outside the subset, open the file in text mode. Every edit is also parsed by
+  YamlDotNet and compared.
 
 ## Engineering rules (from cmdr's review rounds)
 

@@ -122,3 +122,13 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] `docs/cfgedit.md` and a README section. (3ce2d37)
 - [ ] The user's acceptance pass on Windows *(Windows)*: open, edit, save and text mode on real configs; multi-line values
       and text mode on CRLF files; saving keeps the ACL; Ctrl+C/terminal behaviour.
+
+## M9. `.env` (design: "Phase 2" › "`.env` (dotenv)")
+
+- [ ] Core syntax: line lexer/parser into a lossless CST (entries, comments, blank lines, `export`, quote styles,
+      multi-line quoted values, trailing comments), value decoding and the value encoder; parse errors with line and
+      column. Tests: fixtures, round trip (parse then print is byte-identical), encoder property tests.
+- [ ] Core model: `EnvFormat` (`env`), detection by file name, `__` hierarchy with virtual groups and the root node,
+      logical tree, edit planner (value, key and group rename, insert, delete, move, duplicate; change type refused).
+      Tests: tree dumps and exact-output edit tests like the JSON ones.
+- [ ] TUI: rows, path text (the full key), add dialog kinds, styling, new `.env` file, `--format env`; user guide.
