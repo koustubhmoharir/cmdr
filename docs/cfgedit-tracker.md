@@ -125,9 +125,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M9. `.env` (design: "Phase 2" › "`.env` (dotenv)")
 
-- [ ] Core syntax: line lexer/parser into a lossless CST (entries, comments, blank lines, `export`, quote styles,
+- [x] Core syntax: line lexer/parser into a lossless CST (entries, comments, blank lines, `export`, quote styles,
       multi-line quoted values, trailing comments), value decoding and the value encoder; parse errors with line and
-      column. Tests: fixtures, round trip (parse then print is byte-identical), encoder property tests.
+      column. Tests: fixtures, round trip (parse then print is byte-identical), encoder property tests. (fc2ff57)
 - [ ] Core model: `EnvFormat` (`env`), detection by file name, `__` hierarchy with virtual groups and the root node,
       logical tree, edit planner (value, key and group rename, insert, delete, move, duplicate; change type refused).
       Tests: tree dumps and exact-output edit tests like the JSON ones.
