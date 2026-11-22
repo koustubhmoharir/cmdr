@@ -139,9 +139,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M10. TOML (design: "Phase 2" › "TOML (M10)")
 
-- [ ] Core syntax: lexer/parser into a lossless CST (keys, headers, all value kinds, arrays, inline tables, comments),
+- [x] Core syntax: lexer/parser into a lossless CST (keys, headers, all value kinds, arrays, inline tables, comments),
       string/key encoders, number and date-time validation. Tests: byte-identical round trip, toml-test valid/invalid
-      cases (vendored), encoder property tests.
+      cases (vendored), encoder property tests. (6415f0a)
 - [ ] Core model: `TomlFormat` (`toml`), semantic tree (tables merged from pieces, arrays of tables), logical tree,
       Tomlyn cross-check on open and after every edit.
 - [ ] Core planner: value, key and table rename, add (all placements), arrays and arrays of tables, delete, move,
