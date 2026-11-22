@@ -1,0 +1,10 @@
+# A Windows-style file: every line ends in CRLF.
+title = "CRLF sample"
+path = 'C:\Users\sample'
+nums = [1, 2,
+  3]
+text = """
+line one
+line two"""
+[section]
+key = "value"  # comment

@@ -1,0 +1,53 @@
+# A Cargo manifest in the usual shape, for the TOML round trip tests.
+[package]
+name = "cfgedit-sample"
+version = "0.3.1"
+edition = "2021"   # the edition in use
+authors = ["A. Author <author@example.com>"]
+description = """
+A sample crate whose manifest
+is used by the round trip tests.
+"""
+license = "MIT"
+rust-version = "1.75"
+exclude = [
+    "/fixtures",   # large files
+    "*.bak",
+]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",   # the runtime
+    "macros",
+] }
+anyhow = "1"
+regex = '^\d+\.\d+$'
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[[bin]]
+name = "sample"
+path = "src/main.rs"
+
+[[bin]]
+name = "sample-admin"
+path = "src/bin/admin.rs"
+required-features = ["admin"]
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+debug = false
+panic = "abort"
+
+[features]
+default = []
+admin = []
+serde-support = ["serde"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
