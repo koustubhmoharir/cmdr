@@ -253,7 +253,7 @@ public sealed class DetailViewTests
         TerminalScreen screen = Draw(view, v => Assert.True(v.HandleKey(Key.Esc)))[0];
 
         Assert.Contains("Source file expired", screen.Text(0), StringComparison.Ordinal);
-        Assert.Equal(1, view.Document!.Lines.Count);
+        Assert.Single(view.Document!.Lines);
         Assert.True(closed);
     }
 

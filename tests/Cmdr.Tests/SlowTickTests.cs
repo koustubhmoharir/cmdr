@@ -10,7 +10,7 @@ namespace Cmdr.Tests;
 public sealed class SlowTickTests
 {
     [Fact]
-    public void Only_a_running_command_in_view_shows_an_elapsed_time()
+    public async Task Only_a_running_command_in_view_shows_an_elapsed_time()
     {
         // A command that keeps running until it is killed.
         CommandSpec spec = OperatingSystem.IsWindows()
@@ -34,7 +34,7 @@ public sealed class SlowTickTests
         finally
         {
             entry.Process.ForceKill();
-            Assert.True(entry.Process.WaitForExitAsync().Wait(TimeSpan.FromSeconds(10)), "the command did not exit");
+            await entry.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
         }
 
         Assert.Equal(ProcessState.Exited, entry.Process.Snapshot.State);

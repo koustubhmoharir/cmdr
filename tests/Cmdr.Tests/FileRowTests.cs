@@ -138,7 +138,7 @@ public sealed class FileRowTests
         {
             // The dialog is modal: read its parent while it is open, then close it, which adds nothing.
             dialog = app.TopRunnableView as GroupDialog;
-            parent = dialog is null ? null : ((DropDownList)Field(dialog, "_parent")).Value;
+            parent = dialog is null ? null : ((DropDownList)Field(dialog, "_parent")!).Value;
             app.RequestStop();
             return false;
         });

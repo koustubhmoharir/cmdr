@@ -16,7 +16,7 @@
   -->
   <PropertyGroup>
     <TerminalGuiForkVersion>2.6.0</TerminalGuiForkVersion>
-    <TerminalGuiBuildProperties>DisableGitVersionTask=true;Version=$(TerminalGuiForkVersion);GeneratePackageOnBuild=false;DebugType=embedded;GenerateDocumentationFile=false</TerminalGuiBuildProperties>
+    <TerminalGuiBuildProperties>DisableGitVersionTask=true;Version=$(TerminalGuiForkVersion);GeneratePackageOnBuild=false;DebugType=embedded;GenerateDocumentationFile=false;EnableSourceLink=false;EnableSourceControlManagerQueries=false</TerminalGuiBuildProperties>
   </PropertyGroup>
 
 </Project>

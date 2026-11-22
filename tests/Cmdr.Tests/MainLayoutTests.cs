@@ -393,7 +393,7 @@ public sealed class MainLayoutTests
     }
 
     [Fact]
-    public void Edit_switch_refused_while_a_command_runs_keeps_the_run_layout()
+    public async Task Edit_switch_refused_while_a_command_runs_keeps_the_run_layout()
     {
         if (!OperatingSystem.IsLinux())
         {
@@ -430,7 +430,7 @@ public sealed class MainLayoutTests
         finally
         {
             entry.Process.ForceKill();
-            Assert.True(entry.Process.WaitForExitAsync().Wait(TimeSpan.FromSeconds(10)), "The command did not exit.");
+            await entry.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
         }
     }
 

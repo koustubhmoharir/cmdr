@@ -214,7 +214,7 @@ public sealed class EnvScriptStartTests
     }
 
     [Fact]
-    public void A_refused_start_runs_no_script()
+    public async Task A_refused_start_runs_no_script()
     {
         if (!OperatingSystem.IsLinux()) return;
 
@@ -232,7 +232,7 @@ public sealed class EnvScriptStartTests
         string log = Path.Combine(f.Dir, "log.txt");
 
         // A running sequence: its start needs the script's values, which a preparation made here provides.
-        EnvPreparation prepared = f.Session.PrepareEnvAsync(group.AllCommands, null, CancellationToken.None).GetAwaiter().GetResult();
+        EnvPreparation prepared = await f.Session.PrepareEnvAsync(group.AllCommands, null, CancellationToken.None);
         Assert.Null(f.Session.Activate(group, null, prepared.Values));
         int runs = LogLines(log).Count;
         CommandEntry b = f.Session.AllEntries.Last();

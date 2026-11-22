@@ -84,9 +84,11 @@ internal static class DialogFitProbe
             case TextField field:
                 name = "field " + field.Text;
                 return true;
+#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
             case TextView area:
                 name = "area " + area.Text;
                 return true;
+#pragma warning restore CS0618
             case CheckBox check:
                 name = "check " + check.Text;
                 return true;

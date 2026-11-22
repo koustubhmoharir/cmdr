@@ -1063,7 +1063,7 @@ public class AnsiLineParserTests
     }
 
     [Fact]
-    public void ConcurrentReadersSeeConsistentPartialSnapshots()
+    public async Task ConcurrentReadersSeeConsistentPartialSnapshots()
     {
         const int count = 4000;
         var parser = new AnsiLineParser(OutputSource.StdOut, maxLineLength: 1_000_000);
@@ -1101,7 +1101,7 @@ public class AnsiLineParserTests
             }
         });
 
-        Assert.True(Task.WhenAll(writer, reader).Wait(TimeSpan.FromSeconds(10)), "readers or writer did not finish");
+        await Task.WhenAll(writer, reader).WaitAsync(TimeSpan.FromSeconds(10));
 
         // A second pass over everything read, now that the writer has finished.
         foreach (var (length, line) in seen)

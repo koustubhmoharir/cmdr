@@ -42,7 +42,7 @@ public sealed class ShownCommandKeysTests
     }
 
     [Fact]
-    public void Ctrl_C_in_the_output_pane_stops_the_shown_command()
+    public async Task Ctrl_C_in_the_output_pane_stops_the_shown_command()
     {
         using TempSession temp = LongGroup("a");
         CommandEntry a = temp.Session.AllEntries.Single();
@@ -57,7 +57,7 @@ public sealed class ShownCommandKeysTests
             output.SetFocus();
 
             Assert.True(output.NewKeyDownEvent(Key.C.WithCtrl));
-            Assert.True(a.Process.WaitForExitAsync().Wait(ExitWait), "The command did not stop.");
+            await a.Process.WaitForExitAsync().WaitAsync(ExitWait);
             Assert.Equal(ProcessState.Exited, State(a));
         }
         finally
@@ -67,7 +67,7 @@ public sealed class ShownCommandKeysTests
     }
 
     [Fact]
-    public void Marks_are_ignored_from_the_panes_so_only_the_shown_command_stops()
+    public async Task Marks_are_ignored_from_the_panes_so_only_the_shown_command_stops()
     {
         using TempSession temp = LongGroup("a", "b");
         CommandEntry a = temp.Session.AllEntries.First();
@@ -87,7 +87,7 @@ public sealed class ShownCommandKeysTests
             output.SetFocus();
 
             Assert.True(output.NewKeyDownEvent(Key.C.WithCtrl));
-            Assert.True(a.Process.WaitForExitAsync().Wait(ExitWait), "The shown command did not stop.");
+            await a.Process.WaitForExitAsync().WaitAsync(ExitWait);
             Assert.Equal(ProcessState.Exited, State(a));
             Assert.Equal(ProcessState.Running, State(b));
         }

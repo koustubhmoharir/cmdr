@@ -3,7 +3,6 @@ using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Logvu.Tui;
 using Shared.Core;
-using Shared.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -69,7 +68,9 @@ public sealed class FilterDialogTests
         Control<TextField>(dialog, "_from").Text = "10:00";
         Control<TextField>(dialog, "_text").Text = "time.*out";
         Control<CheckBox>(dialog, "_regex").Value = CheckState.Checked;
+#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
         Control<TextView>(dialog, "_predicates").Text = "code equals 42";
+#pragma warning restore CS0618
 
         Assert.True(dialog.TryRead(out FilterEdit? edit, out string? error));
 
@@ -125,7 +126,9 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
+#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
         Control<TextView>(dialog, "_predicates").Text = "code equals 42\nnot a predicate";
+#pragma warning restore CS0618
 
         Assert.False(dialog.TryRead(out _, out string? error));
 
@@ -221,7 +224,9 @@ public sealed class FilterDialogTests
             Control<CheckBox>(dialog, "_wholeWord"),
             Control<TextField>(dialog, "_from"),
             Control<TextField>(dialog, "_to"),
+#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
             Control<TextView>(dialog, "_predicates"),
+#pragma warning restore CS0618
         ];
 
         System.Drawing.Rectangle frame = default;
@@ -281,7 +286,9 @@ public sealed class FilterDialogTests
             Control<CheckBox>(dialog, "_wholeWord"),
             Control<TextField>(dialog, "_from"),
             Control<TextField>(dialog, "_to"),
+#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
             Control<TextView>(dialog, "_predicates"),
+#pragma warning restore CS0618
             dialog.Buttons[0],
             dialog.Buttons[1],
             dialog.Buttons[2],
