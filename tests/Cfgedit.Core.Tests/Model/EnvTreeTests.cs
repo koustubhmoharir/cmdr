@@ -330,14 +330,12 @@ public sealed class EnvTreeTests
     }
 
     [Fact]
-    public void Moves_duplicates_type_changes_and_attribute_edits_are_refused_with_their_reasons()
+    public void Type_changes_and_attribute_edits_are_refused_with_their_reasons()
     {
         ConfigDocument document = ModelTestSupport.Parse("A=1\n", Env);
         NodePath entry = Root.Append(new MemberStep("A", 0));
         (EditOp Operation, string Reason)[] refusals =
         [
-            (new MoveNode(entry, 0), "moving is not supported in .env yet"),
-            (new DuplicateNode(entry), "duplicating is not supported in .env yet"),
             (new ChangeJsonType(entry, JsonValueKind.Number, "2"), "`.env` values are all strings"),
             (new InsertAttribute(Root, 0, "x", "y"), "attributes are not part of .env"),
             (new DeleteAttribute(Root, 0), "attributes are not part of .env"),

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Cfgedit.Core.Json;
 
 namespace Cfgedit.Core.Model;
@@ -22,6 +23,28 @@ internal static class EnvLayout
     public static bool IsCommentLine(IReadOnlyList<DocNode> children, int index)
     {
         return children[index].Kind == NodeKind.EnvComment && !IsTrailing(children, index);
+    }
+
+    /// <summary>The key segments of a node's children that are entries or groups, in order. Comments have none.</summary>
+    public static IEnumerable<string> Segments(DocNode parent)
+    {
+        return parent.Children.Select(child => child.Path.Steps[^1]).OfType<MemberStep>().Select(step => step.Key);
+    }
+
+    /// <summary>
+    /// The segment a copy takes: <c>name_copy</c>, then <c>name_copy2</c> and so on, unique among the segments of the siblings. The
+    /// underscore is the one .env names use, so the copy's key stays a valid name.
+    /// </summary>
+    public static string CopySegment(IEnumerable<string> siblings, string name)
+    {
+        var taken = siblings.ToHashSet(StringComparer.Ordinal);
+        string candidate = name + "_copy";
+        for (int n = 2; taken.Contains(candidate); n++)
+        {
+            candidate = name + "_copy" + n.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return candidate;
     }
 
     /// <summary>
@@ -75,6 +98,8 @@ internal static class EnvLogicalEdit
             SetPart set => SetPartAt(before, root, set),
             InsertNode insert => InsertAt(before, root, insert),
             DeleteNode delete => DeleteAt(before, root, delete.Node),
+            MoveNode move => MoveAt(before, root, move),
+            DuplicateNode duplicate => DuplicateAt(before, root, duplicate.Node),
             _ => throw new InvalidOperationException("The .env edit " + op.GetType().Name + " is not applied to the logical tree."),
         };
     }
@@ -140,9 +165,108 @@ internal static class EnvLogicalEdit
             }
             case DeleteNode delete:
                 return FocusAfterDelete(before, after, delete.Node);
+            case MoveNode move:
+            {
+                Placement placement = PlaceMove(before, move.Node, move.NewIndex);
+                return FocusAfterPlacement(before, after, move.Node, placement);
+            }
+            case DuplicateNode duplicate:
+                return FocusAfterPlacement(before, after, duplicate.Node, PlaceCopy(before, duplicate.Node));
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// The focus after a move or a duplicate: the node itself, in the new document. Its flat position is the place where its unit
+    /// starts, plus the number of unit items before it (its attached comments). A group is found from its first item, by going up to
+    /// its child of the parent.
+    /// </summary>
+    private static NodePath? FocusAfterPlacement(ConfigDocument before, ConfigDocument after, NodePath path, Placement placement)
+    {
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node has no parent.");
+        Dictionary<DocNode, int> positions = PositionsOf(FlatNodes(before));
+        int own = node.Kind is NodeKind.EnvEntry or NodeKind.EnvComment ? placement.Positions.IndexOf(PositionOf(positions, node)) : 0;
+        DocNode? survivor = after.Resolve(parent.Path);
+        List<DocNode> flat = FlatNodes(after);
+        int index = placement.Destination + own;
+        if (survivor is null || index < 0 || index >= flat.Count)
+        {
+            return null;
+        }
+
+        DocNode focused = flat[index];
+        if (node.Kind != NodeKind.EnvGroup)
+        {
+            return focused.Path;
+        }
+
+        while (focused.Parent is not null && !ReferenceEquals(focused.Parent, survivor))
+        {
+            focused = focused.Parent;
+        }
+
+        return focused.Path;
+    }
+
+    /// <summary>
+    /// Where a unit goes: its flat positions in the document before the edit, and the position it takes among the other nodes once
+    /// the unit is taken out. The destination is the flat count of the other nodes that start before the offset where the unit's
+    /// first line goes, which is the first line of the sibling the index names (or the end of the last sibling).
+    /// </summary>
+    private sealed record Placement(List<int> Positions, int Destination);
+
+    /// <summary>The placement of a move: the unit is the node's sibling group, and the index counts the siblings without it.</summary>
+    private static Placement PlaceMove(ConfigDocument before, NodePath path, int newIndex)
+    {
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        int index = IndexOfChild(parent, node);
+        (int first, int last) = EditLayout.Group(parent, index, before.Source.Text);
+        List<DocNode> flat = FlatNodes(before);
+        Dictionary<DocNode, int> positions = PositionsOf(flat);
+        List<int> unit = UnitPositions(parent, first, last, positions);
+        var moved = new HashSet<int>(unit);
+        List<DocNode> rest = parent.Children.Where((_, k) => k < first || k > last).ToList();
+        int target = Math.Clamp(newIndex, 0, rest.Count);
+        int offset = target < rest.Count ? rest[target].Start : rest.Count == 0 ? 0 : rest.Max(child => child.End);
+        int destination = 0;
+        for (int p = 0; p < flat.Count; p++)
+        {
+            if (!moved.Contains(p) && flat[p].Start < offset)
+            {
+                destination++;
+            }
+        }
+
+        return new Placement(unit, destination);
+    }
+
+    /// <summary>The placement of a copy: the copy goes right after the unit, so its first flat position follows the unit's last.</summary>
+    private static Placement PlaceCopy(ConfigDocument before, NodePath path)
+    {
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be duplicated.");
+        (int first, int last) = EditLayout.Group(parent, IndexOfChild(parent, node), before.Source.Text);
+        List<int> unit = UnitPositions(parent, first, last, PositionsOf(FlatNodes(before)));
+        return new Placement(unit, unit[^1] + 1);
+    }
+
+    /// <summary>The flat positions of the entries and comments under the children [first, last] of a parent, in file order.</summary>
+    private static List<int> UnitPositions(DocNode parent, int first, int last, Dictionary<DocNode, int> positions)
+    {
+        var result = new List<int>();
+        for (int k = first; k <= last; k++)
+        {
+            foreach (DocNode item in Descendants(parent.Children[k]).Where(item => item.Kind is NodeKind.EnvEntry or NodeKind.EnvComment))
+            {
+                result.Add(PositionOf(positions, item));
+            }
+        }
+
+        result.Sort();
+        return result;
     }
 
     private static NodePath? FocusAfterDelete(ConfigDocument before, ConfigDocument after, NodePath path)
@@ -281,6 +405,50 @@ internal static class EnvLogicalEdit
 
         List<LogicalNode> children = ChildrenOf(root, flat.Count);
         return WithChildren(root, children.Where((_, k) => !removed.Contains(k)).ToList());
+    }
+
+    private static LogicalNode MoveAt(ConfigDocument before, LogicalNode root, MoveNode move)
+    {
+        Placement placement = PlaceMove(before, move.Node, move.NewIndex);
+        List<LogicalNode> children = ChildrenOf(root, FlatNodes(before).Count);
+        var moved = new HashSet<int>(placement.Positions);
+        List<LogicalNode> unit = placement.Positions.Select(p => children[p]).ToList();
+        List<LogicalNode> rest = children.Where((_, p) => !moved.Contains(p)).ToList();
+        rest.InsertRange(placement.Destination, unit);
+        return WithChildren(root, rest);
+    }
+
+    /// <summary>
+    /// A duplicate copies the unit after itself. An entry's copy gets the new last segment (or, for a group, the new segment at the
+    /// group's depth in every key under it), and a comment is copied as it is.
+    /// </summary>
+    private static LogicalNode DuplicateAt(ConfigDocument before, LogicalNode root, NodePath path)
+    {
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be duplicated.");
+        Placement placement = PlaceCopy(before, path);
+        List<DocNode> flat = FlatNodes(before);
+        List<LogicalNode> children = ChildrenOf(root, flat.Count);
+        string? fresh = node.Kind is NodeKind.EnvEntry or NodeKind.EnvGroup
+            ? EnvLayout.CopySegment(EnvLayout.Segments(parent), SegmentOf(node))
+            : null;
+        int offset = PrefixLength(node.Path);
+        string old = fresh is null ? string.Empty : SegmentOf(node);
+        var copies = new List<LogicalNode>();
+        foreach (int p in placement.Positions)
+        {
+            LogicalNode copy = children[p];
+            if (fresh is not null && copy.Kind == LogicalKind.Scalar)
+            {
+                string name = copy.Name ?? throw new InvalidOperationException("An entry has no key.");
+                copy = Renamed(copy, name[..offset] + fresh + name[(offset + old.Length)..]);
+            }
+
+            copies.Add(copy);
+        }
+
+        children.InsertRange(placement.Destination, copies);
+        return WithChildren(root, children);
     }
 
     // ----- Tree helpers -----

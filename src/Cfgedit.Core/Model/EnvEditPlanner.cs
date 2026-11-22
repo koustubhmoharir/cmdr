@@ -1,3 +1,4 @@
+using System.Text;
 using Cfgedit.Core.Env;
 using Cfgedit.Core.Json;
 
@@ -11,6 +12,10 @@ namespace Cfgedit.Core.Model;
 internal sealed class EnvEditPlanner
 {
     private const string Separator = "__";
+    private const string MovedNotContiguous = "this cannot move: its lines are not next to each other in the file";
+    private const string NeighbourNotContiguous = "this cannot move: the lines of the sibling it goes next to are not next to each other in the file";
+    private const string PassesOtherLines = "this cannot move there: a line that is not part of the siblings it passes lies between them";
+    private const string BlankLineWouldGo = "this cannot move up: the blank line before the last line would have to go, and the file must keep ending as it does";
 
     private readonly ConfigDocument _document;
     private readonly EnvDocument _syntax;
@@ -43,10 +48,12 @@ internal sealed class EnvEditPlanner
             case DeleteNode delete:
                 PlanDelete(delete);
                 break;
-            case MoveNode:
-                throw new CfgeditException("moving is not supported in .env yet");
-            case DuplicateNode:
-                throw new CfgeditException("duplicating is not supported in .env yet");
+            case MoveNode move:
+                PlanMove(move);
+                break;
+            case DuplicateNode duplicate:
+                PlanDuplicate(duplicate);
+                break;
             case ChangeJsonType:
                 throw new CfgeditException("`.env` values are all strings");
             case InsertAttribute or DeleteAttribute or MoveAttribute:
@@ -125,7 +132,7 @@ internal sealed class EnvEditPlanner
         }
 
         // A group's segment sits at the same offset in the key of every entry under it.
-        int offset = parentNames.Sum(segment => segment.Length + Separator.Length);
+        int offset = SegmentOffset(parent);
         foreach (EnvEntry entry in ItemsOf(node).OfType<EnvEntry>())
         {
             int start = entry.KeySpan.Start + offset;
@@ -396,6 +403,268 @@ internal sealed class EnvEditPlanner
         }
     }
 
+    // ----- MoveNode -----
+
+    /// <summary>
+    /// Moves a unit: the node's sibling group (its attached comment lines, its entry and its trailing comment; for a group, all its
+    /// lines). Its lines are cut and put back as one block before the first line of the sibling at the destination, or after the last
+    /// line of the last sibling. The moved lines keep their text. The file keeps its way of ending: a block that becomes the last
+    /// one loses its line break, and a block that was the last one and moves up gets one.
+    /// </summary>
+    private void PlanMove(MoveNode op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document)
+        {
+            throw new CfgeditException("the root cannot be moved");
+        }
+
+        int index = IndexOf(parent, node);
+        if (node.Kind == NodeKind.EnvComment && EnvLayout.IsTrailing(parent.Children, index))
+        {
+            throw new CfgeditException("a trailing comment moves with its entry");
+        }
+
+        (int first, int last) = EditLayout.Group(parent, index, _text);
+        LineSpan unit = Contiguous(parent, first, last, MovedNotContiguous);
+        List<DocNode> rest = parent.Children.Where((_, k) => k < first || k > last).ToList();
+        int target = Math.Clamp(op.NewIndex, 0, rest.Count);
+        if (target == first)
+        {
+            return;
+        }
+
+        int destinationIndex = target < rest.Count ? IndexOf(parent, rest[target]) : parent.Children.Count;
+        int destination = target < rest.Count ? BeforeSibling(parent, rest, target) : AfterSiblings(parent, rest[^1]);
+        if (destinationIndex > last)
+        {
+            RequireNextTo(parent, last + 1, destinationIndex - 1, unit, destination);
+        }
+        else
+        {
+            RequireNextTo(parent, destinationIndex, first - 1, unit, destination);
+        }
+
+        if (destination == unit.Start || destination == unit.End)
+        {
+            return;
+        }
+
+        string text = _text;
+        int length = text.Length;
+        bool lacksFinalBreak = unit.End == length && !EndsWithBreak(text);
+        string block = text[unit.Start..unit.End];
+        if (destination < unit.Start)
+        {
+            if (lacksFinalBreak)
+            {
+                // The block was the file's last line. It gets a line break, and the break that ended the line before it goes, so
+                // the file still ends without one. A blank line before it would be the last line after that, which would end the
+                // file with a break; the blank line would have to go, so the move is refused instead.
+                int cut = unit.Start - BreakLengthBefore(unit.Start);
+                if (cut > 0 && IsBreak(text[cut - 1]))
+                {
+                    throw new CfgeditException(BlankLineWouldGo);
+                }
+
+                Insert(destination, block + _newline);
+                Replace(unit.Start - BreakLengthBefore(unit.Start), unit.End, string.Empty);
+                return;
+            }
+
+            Insert(destination, block);
+            Replace(unit.Start, unit.End, string.Empty);
+            return;
+        }
+
+        // Moved down: the block lands after the destination's line. At the end of a file without a final line break, it goes after
+        // a line break and gives up its own.
+        Insert(destination, destination == length && !EndsWithBreak(text) ? _newline + WithoutBreak(block) : block);
+        Replace(unit.Start, unit.End, string.Empty);
+    }
+
+    /// <summary>
+    /// A move passes only the siblings that are next to the unit in the file: every line between the unit and the destination must
+    /// belong to a passed sibling. Blank lines between them do not count.
+    /// </summary>
+    private void RequireNextTo(DocNode parent, int passedFirst, int passedLast, LineSpan unit, int destination)
+    {
+        var passed = new HashSet<EnvItem>();
+        for (int k = passedFirst; k <= passedLast; k++)
+        {
+            foreach (EnvItem item in ItemsOf(parent.Children[k]))
+            {
+                passed.Add(item);
+            }
+        }
+
+        int from = destination < unit.Start ? destination : unit.End;
+        int to = destination < unit.Start ? unit.Start : destination;
+        bool clear = _syntax.Items.All(item => item is EnvBlankLine || item.Start < from || item.Start >= to || passed.Contains(item));
+        if (!clear)
+        {
+            throw new CfgeditException(PassesOtherLines);
+        }
+    }
+
+    /// <summary>
+    /// The offset of the first line of the sibling at <paramref name="target"/> of the list without the moved unit, after the checks
+    /// that the move does not separate a comment from the entry it is attached to.
+    /// </summary>
+    private int BeforeSibling(DocNode parent, List<DocNode> rest, int target)
+    {
+        DocNode sibling = rest[target];
+        int siblingIndex = IndexOf(parent, sibling);
+        if (EnvLayout.IsTrailing(parent.Children, siblingIndex))
+        {
+            throw new CfgeditException("this cannot move there: it would come between an entry and its trailing comment");
+        }
+
+        if (target > 0)
+        {
+            DocNode above = rest[target - 1];
+            bool attached = above.Kind == NodeKind.EnvComment
+                && !EnvLayout.IsTrailing(parent.Children, IndexOf(parent, above))
+                && above.End == sibling.Start;
+            if (attached)
+            {
+                throw new CfgeditException("this cannot move there: it would come between a comment and the entry it is attached to");
+            }
+        }
+
+        (int first, int last) = EditLayout.Group(parent, siblingIndex, _text);
+        Contiguous(parent, first, last, NeighbourNotContiguous);
+        return sibling.Start;
+    }
+
+    /// <summary>The offset just after the lines of the last sibling, when the move goes to the end.</summary>
+    private int AfterSiblings(DocNode parent, DocNode sibling)
+    {
+        (int first, int last) = EditLayout.Group(parent, IndexOf(parent, sibling), _text);
+        return Contiguous(parent, first, last, NeighbourNotContiguous).End;
+    }
+
+    // ----- DuplicateNode -----
+
+    /// <summary>
+    /// Copies a unit (see <see cref="PlanMove"/>) right after itself. The copy's last key segment gets the suffix <c>_copy</c>, then
+    /// <c>_copy2</c> and so on, unique among the siblings; for a group, the segment is renamed in every key under it. A comment line
+    /// is copied as it is. A file without a final line break gets one after the original, and the copy ends without one.
+    /// </summary>
+    private void PlanDuplicate(DuplicateNode op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document)
+        {
+            throw new CfgeditException("the root cannot be duplicated");
+        }
+
+        int index = IndexOf(parent, node);
+        if (node.Kind == NodeKind.EnvComment && EnvLayout.IsTrailing(parent.Children, index))
+        {
+            throw new CfgeditException("a trailing comment is duplicated with its entry");
+        }
+
+        (int first, int last) = EditLayout.Group(parent, index, _text);
+        LineSpan unit = Contiguous(parent, first, last, "this cannot be copied: its lines are not next to each other in the file");
+        var renames = new List<(int Start, int End, string Text)>();
+        if (node.Kind is NodeKind.EnvEntry or NodeKind.EnvGroup)
+        {
+            string segment = SegmentOf(node);
+            string fresh = EnvLayout.CopySegment(EnvLayout.Segments(parent), segment);
+            int offset = SegmentOffset(parent);
+            foreach (EnvEntry entry in ItemsOf(node).OfType<EnvEntry>())
+            {
+                string copyKey = entry.Key[..offset] + fresh + entry.Key[(offset + segment.Length)..];
+                if (!EnvKey.IsValid(copyKey))
+                {
+                    throw new CfgeditException($"invalid key '{copyKey}'");
+                }
+
+                int start = entry.KeySpan.Start + offset;
+                renames.Add((start, start + segment.Length, fresh));
+            }
+        }
+
+        string copy = WithRenames(unit, renames);
+        if (unit.End == _text.Length && !EndsWithBreak(_text))
+        {
+            Insert(_text.Length, _newline + copy);
+            return;
+        }
+
+        Insert(unit.End, copy);
+    }
+
+    // ----- Move and copy helpers -----
+
+    /// <summary>
+    /// The lines of the children [first, last] of a parent, as one span. The span must hold no line of another node, blank lines
+    /// included: a unit whose lines are not next to each other cannot move or copy.
+    /// </summary>
+    private LineSpan Contiguous(DocNode parent, int first, int last, string message)
+    {
+        var lines = new HashSet<EnvItem>();
+        int start = int.MaxValue;
+        int end = int.MinValue;
+        for (int k = first; k <= last; k++)
+        {
+            foreach (EnvItem item in ItemsOf(parent.Children[k]))
+            {
+                lines.Add(item);
+                start = Math.Min(start, item.Start);
+                end = Math.Max(end, item.End);
+            }
+        }
+
+        bool whole = _syntax.Items.All(item => item.Start < start || item.Start >= end || lines.Contains(item));
+        return whole ? new LineSpan(start, end) : throw new CfgeditException(message);
+    }
+
+    /// <summary>The text of a span with the given replacements applied. The replacements lie inside the span, in any order.</summary>
+    private string WithRenames(LineSpan span, List<(int Start, int End, string Text)> renames)
+    {
+        var builder = new StringBuilder();
+        int at = span.Start;
+        foreach ((int start, int end, string replacement) in renames.OrderBy(rename => rename.Start))
+        {
+            builder.Append(_text, at, start - at).Append(replacement);
+            at = end;
+        }
+
+        builder.Append(_text, at, span.End - at);
+        return builder.ToString();
+    }
+
+    /// <summary>The length of the key text before the segments of a node's own parent, separators included.</summary>
+    private static int SegmentOffset(DocNode parent)
+    {
+        return NamesOf(parent.Path).Sum(segment => segment.Length + Separator.Length);
+    }
+
+    /// <summary>The length of the line break that ends the line before an offset: two for CRLF, otherwise one.</summary>
+    private int BreakLengthBefore(int offset)
+    {
+        return offset >= 2 && _text[offset - 1] == '\n' && _text[offset - 2] == '\r' ? 2 : 1;
+    }
+
+    private static bool EndsWithBreak(string text)
+    {
+        return text.Length == 0 || IsBreak(text[^1]);
+    }
+
+    private static bool IsBreak(char c)
+    {
+        return c is '\r' or '\n';
+    }
+
+    private static string WithoutBreak(string block)
+    {
+        return block.EndsWith("\r\n", StringComparison.Ordinal) ? block[..^2] : block[..^1];
+    }
+
     // ----- Helpers -----
 
     private IReadOnlyList<EnvItem> ItemsOf(DocNode node)
@@ -472,4 +741,7 @@ internal sealed class EnvEditPlanner
     {
         public static Template Plain { get; } = new(string.Empty, string.Empty, string.Empty, string.Empty);
     }
+
+    /// <summary>The offsets of a unit's lines: from the start of its first line to the end of its last one.</summary>
+    private readonly record struct LineSpan(int Start, int End);
 }

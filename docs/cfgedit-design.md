@@ -366,7 +366,7 @@ after its entry. The path text on the detail line is the full key
 - Delete: an entry deletes its line and the comments shown with it; a group deletes all its lines.
 - Move (Alt+Up/Down): swaps the lines of two adjacent siblings. A move is refused, with a message, when either
   sibling's lines are not contiguous in the file.
-- Duplicate: copies the entry's line below it with the key suffixed as JSON members are.
+- Duplicate: copies the entry's line below it with the last key segment suffixed `_copy` (then `_copy2`, `_copy3`, …), unique among the siblings.
 - Change type: refused ("`.env` values are all strings").
 - Table editor: not offered for `.env` in M9.
 

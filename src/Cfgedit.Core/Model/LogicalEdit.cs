@@ -63,11 +63,17 @@ internal static class EditLayout
     /// <summary>
     /// The sibling range [First, Last] that moves, copies or deletes with the child at <paramref name="index"/>: the comments
     /// directly above it (each on its own line, with no blank line between them or before the entry) and the comments that
-    /// start on the line where it ends. A comment, or a child of a node that holds no entries, stands alone.
+    /// start on the line where it ends. A comment, or a child of a node that holds no entries, stands alone. In a .env group the
+    /// rules are those of <see cref="EnvLayout.Block"/>, which the planner and the logical application share.
     /// </summary>
     public static (int First, int Last) Group(DocNode parent, int index, string text)
     {
         var children = parent.Children;
+        if (parent.Kind == NodeKind.EnvGroup)
+        {
+            return EnvLayout.Block(parent, index);
+        }
+
         if (IsComment(children[index]) || !HasEntries(parent))
         {
             return (index, index);
