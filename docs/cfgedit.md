@@ -96,8 +96,8 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | Ctrl+O | Open another file |
 | Ctrl+Q | Quit |
 
-**Editing a value.** Enter opens a field over the part with its current value. Enter saves the change into the document,
-Esc cancels, Tab saves and moves to the next part. If the value is not valid (a number that is not a number, a key that
+**Editing a value.** Enter opens a field over the part with its current value, as wide as the value (at least 10
+columns); it grows as you type. Enter saves the change into the document, Esc cancels, Tab saves and moves to the next part. If the value is not valid (a number that is not a number, a key that
 already exists, a name XML does not allow), the field stays open and the message says why. A value with line breaks opens
 in a multi-line editor (F4 switches to it from the field); OK or F2 commits, Esc cancels. Nothing is written to disk
 until Ctrl+S.

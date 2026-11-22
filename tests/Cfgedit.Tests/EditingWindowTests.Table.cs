@@ -220,7 +220,7 @@ public sealed partial class EditingWindowTests
     // ----- Editing -----
 
     [Fact]
-    public void Enter_edits_a_cell_inline_and_the_field_runs_to_the_right_edge_of_the_table()
+    public void Enter_edits_a_cell_inline_in_a_field_as_wide_as_the_minimum_when_its_text_is_short()
     {
         OpenedFile file = Open("list.json", TableArray);
 
@@ -235,7 +235,8 @@ public sealed partial class EditingWindowTests
             (_, w) => Type(w, "api"),
             (_, w) => Keys(w, Key.Enter));
 
-        Assert.Equal("0  web", Inside(session.Screens[1], 2));
+        // The field is 10 columns wide, so it covers the port cell beside the value it edits.
+        Assert.Equal("0  web         ·", Inside(session.Screens[1], 2));
         AssertTableHints(session.Screens[1], 23, TableEditingHints);
         Assert.Equal("[\n  {\"name\": \"api\", \"port\": 8080},\n  {\"name\": \"db\", \"port\": 5432, \"tags\": \"x\"}\n]", DocumentText(session));
         Assert.True(session.Window.Grid.Visible);
@@ -308,6 +309,25 @@ public sealed partial class EditingWindowTests
             (_, w) => Keys(w, Key.Enter));
 
         Assert.Equal("<root>\n  <item a=\"1\" b=\"2\" c=\"3\"/>\n  <item a=\"4\" b=\"5\" c=\"6\"/>\n</root>", DocumentText(session));
+    }
+
+    [Fact]
+    public void Enter_on_a_table_cell_opens_a_field_two_columns_wider_than_its_text()
+    {
+        OpenedFile file = Open("list.json", "[{\"name\": \"x\"}, {\"name\": \"hello world\"}]");
+
+        Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, new Key('T'), Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) =>
+            {
+                Assert.Equal("hello world", w.Grid.EditorText);
+                Assert.Equal(13, w.Grid.GetSubViews().OfType<InlineEditor>().Single().Frame.Width);
+            });
     }
 
     [Fact]

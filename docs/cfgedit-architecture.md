@@ -907,8 +907,9 @@ The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, 
 
 **Inline editor**
 
-- Enter or F2 on an editable part opens a `TextField` over the part's range on its display line. It extends to the
-  right edge of the tree and holds the part's logical value.
+- Enter or F2 on an editable part opens a `TextField` over the part's range on its display line and holds the part's logical value.
+  The field is as wide as its text plus two columns, one for the cursor and one spare (at least `InlineEditor.MinWidth`, 10), capped at the
+  columns left in the tree or table from its X. Its width is a `Dim.Func`, so it follows typing, moves and resizes.
 - **Which editor.** Following cmdr's FieldDraft lesson, a value is edited inline only when a TextField round trip
   reproduces it exactly: set `Text`, read it back, compare. Otherwise:
   - If a multi-line TextView round trip reproduces it, F2 and Enter open the multi-line editor instead.

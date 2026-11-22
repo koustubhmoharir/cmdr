@@ -114,8 +114,8 @@ internal sealed class TreeView : View
     internal string? EditorText => _editor?.Text;
 
     /// <summary>
-    /// Opens the inline editor over the cursor's part. The field starts at the part's first column on its display line, runs to the right
-    /// edge, and takes the focus. The part's line is scrolled into view first.
+    /// Opens the inline editor over the cursor's part. The field starts at the part's first column on its display line, is as wide as its
+    /// text (see <see cref="InlineEditor"/>), and takes the focus. The part's line is scrolled into view first.
     /// </summary>
     /// <param name="text">The text the field starts with.</param>
     /// <param name="onKey">Handles the keys of the field first (see <see cref="InlineEditor"/>).</param>
@@ -669,7 +669,8 @@ internal sealed class TreeView : View
 
     /// <summary>
     /// Places the inline editor over the cursor's part: on the part's display line, from the part's first column. A part that the width cuts
-    /// to nothing starts at the last column. Does nothing when no editor is open.
+    /// to nothing starts at the last column. Setting X lays the field out again, so its width follows the new column. Does nothing when no
+    /// editor is open.
     /// </summary>
     private void PositionEditor()
     {

@@ -90,8 +90,8 @@ internal sealed class TableView : View
     }
 
     /// <summary>
-    /// Opens the inline editor over the cursor's cell. The field starts at the cell's first column, runs to the right edge, and takes the
-    /// focus. The cell is scrolled into view first.
+    /// Opens the inline editor over the cursor's cell. The field starts at the cell's first column, is as wide as its text (see
+    /// <see cref="InlineEditor"/>), and takes the focus. The cell is scrolled into view first.
     /// </summary>
     /// <param name="text">The text the field starts with.</param>
     /// <param name="onKey">Handles the keys of the field first (see <see cref="InlineEditor"/>).</param>
@@ -334,7 +334,10 @@ internal sealed class TableView : View
         }
     }
 
-    /// <summary>Places the inline editor over the cursor's cell. Does nothing when no editor is open.</summary>
+    /// <summary>
+    /// Places the inline editor over the cursor's cell, from the cell's column. Setting X lays the field out again, so its width follows a
+    /// horizontal scroll. Does nothing when no editor is open.
+    /// </summary>
     private void PositionEditor()
     {
         if (_editor is null || _model is null || _col < 0)

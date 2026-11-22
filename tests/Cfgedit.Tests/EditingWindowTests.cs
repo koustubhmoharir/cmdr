@@ -46,6 +46,109 @@ public sealed partial class EditingWindowTests : IDisposable
     }
 
     [Fact]
+    public void Enter_on_an_empty_value_opens_a_field_at_the_minimum_width()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"\"\n}");
+
+        Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) => Assert.Equal(10, EditorOf(w).Frame.Width));
+    }
+
+    [Fact]
+    public void Enter_on_a_value_opens_a_field_two_columns_wider_than_its_text()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"hello world\"\n}");
+
+        Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) => Assert.Equal(13, EditorOf(w).Frame.Width));
+    }
+
+    [Fact]
+    public void A_value_longer_than_the_space_to_the_right_edge_gives_a_field_that_ends_at_the_right_edge()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"" + new string('x', 70) + "\"\n}");
+
+        Run(
+            file,
+            40,
+            12,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) =>
+            {
+                InlineEditor editor = EditorOf(w);
+                Assert.Equal(w.Tree.Viewport.Width, editor.Frame.X + editor.Frame.Width);
+            });
+    }
+
+    [Fact]
+    public void Typing_widens_the_field_and_deleting_narrows_it_to_no_less_than_the_minimum()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"\"\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) => Type(w, new string('a', 15)),
+            (_, w) => Assert.Equal(17, EditorOf(w).Frame.Width),
+            (_, w) => Keys(w, Enumerable.Repeat(Key.Backspace, 3).ToArray()),
+            (_, w) => Assert.Equal(14, EditorOf(w).Frame.Width),
+            (_, w) => Keys(w, Enumerable.Repeat(Key.Backspace, 12).ToArray()),
+            (_, w) => Assert.Equal(InlineEditor.MinWidth, EditorOf(w).Frame.Width));
+
+        // The field widens before it would scroll, so every typed character stays on screen, not only the last ones.
+        TerminalScreen typed = session.Screens[2];
+        Assert.StartsWith("│    name: " + new string('a', 15) + " ", typed.Text(2), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_short_wide_value_gives_the_minimum_width()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"日本\"\n}");
+
+        Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) => Assert.Equal(10, EditorOf(w).Frame.Width));
+    }
+
+    [Fact]
+    public void A_long_wide_value_counts_two_columns_per_character()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"name\": \"日本語日本語\"\n}");
+
+        Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter),
+            (_, w) => Assert.Equal(14, EditorOf(w).Frame.Width));
+    }
+
+    [Fact]
     public void Enter_on_a_json_key_opens_the_field_over_the_key()
     {
         OpenedFile file = Open("settings.json", JsonText);
@@ -86,7 +189,8 @@ public sealed partial class EditingWindowTests : IDisposable
 
         TerminalScreen screen = session.Screens[^1];
         Assert.Equal("h", screen.Cells[2][11].Grapheme);
-        Assert.Equal("    <note>hello", Inside(screen, 2));
+        // The field is 10 columns wide: it covers the rest of the closing tag after the text.
+        Assert.Equal("    <note>hello     e>", Inside(screen, 2));
     }
 
     [Fact]
@@ -1093,6 +1197,9 @@ public sealed partial class EditingWindowTests : IDisposable
         int width = screen.Cells[row].Length;
         return string.Concat(screen.Cells[row].Skip(1).Take(width - 2).Select(cell => cell.Grapheme)).TrimEnd();
     }
+
+    // The inline field the tree holds while a value is edited.
+    private static InlineEditor EditorOf(MainWindow window) => window.Tree.GetSubViews().OfType<InlineEditor>().Single();
 
     private static void AssertHints(TerminalScreen screen, string left)
     {
