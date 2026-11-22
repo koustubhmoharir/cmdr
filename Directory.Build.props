@@ -8,6 +8,15 @@
   </PropertyGroup>
 
   <!--
+    Outside Release (publish.ps1 builds Release), skip the git queries and source link: they cost about a second and a half
+    on every build, even when nothing changed, and only matter for published binaries.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' != 'Release'">
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+
+  <!--
     How cmdr builds the Terminal.Gui fork (the Terminal.Gui submodule), used by every ProjectReference to it so they map
     to one build. GitVersion is off (a submodule checkout is a detached HEAD), so the version is given here instead:
     without it the assembly would be 1.0.0.0, lower than what packages built against Terminal.Gui 2.x reference.
