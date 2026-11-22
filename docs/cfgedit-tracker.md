@@ -128,7 +128,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] Core syntax: line lexer/parser into a lossless CST (entries, comments, blank lines, `export`, quote styles,
       multi-line quoted values, trailing comments), value decoding and the value encoder; parse errors with line and
       column. Tests: fixtures, round trip (parse then print is byte-identical), encoder property tests. (fc2ff57)
-- [ ] Core model: `EnvFormat` (`env`), detection by file name, `__` hierarchy with virtual groups and the root node,
+- [x] Core model: `EnvFormat` (`env`), detection by file name, `__` hierarchy with virtual groups and the root node,
       logical tree, edit planner (value, key and group rename, insert, delete, move, duplicate; change type refused).
-      Tests: tree dumps and exact-output edit tests like the JSON ones.
+      Tests: tree dumps and exact-output edit tests like the JSON ones. (f5aeb6b, 71e98fc, d026e9d)
+- [ ] Moves are refused when a unit's lines are not contiguous (including a blank line inside a group) and when moving
+      a file's last line up over a blank line in a file without a final newline. Revisit if users hit these.
 - [ ] TUI: rows, path text (the full key), add dialog kinds, styling, new `.env` file, `--format env`; user guide.
