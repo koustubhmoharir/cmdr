@@ -439,7 +439,8 @@ it (a header section, a dotted-key line, an inline table). Children are in order
 objects, arrays, scalars with kind and canonical value) plus the comments in file order, is compared with the edit
 applied to the logical tree before, by a TOML logical edit (as for `.env`); (2) Tomlyn parses the new text, and its
 data, converted to the same logical shape, must equal cfgedit's. Opening a file runs check (2) too: if Tomlyn and
-cfgedit disagree, the file opens in text mode with a message. cfgedit's parser is tested against the toml-test suite
+cfgedit disagree, the file opens in text mode with a message. Two constructs that Tomlyn misreads are refused with a message and
+open in text mode: a `[x.sub]` header or a new `[[x]]` item that follows another table after `[[x]]`. cfgedit's parser is tested against the toml-test suite
 (github.com/toml-lang/toml-test, MIT): every valid TOML 1.0 case must parse and match Tomlyn, every invalid case must
 be refused.
 

@@ -57,6 +57,9 @@ internal sealed class MergedTable : MergedValue
     /// <summary>The number of tables from the root to this one.</summary>
     internal int Depth { get; }
 
+    /// <summary>The table this one is a member of, or null for the root. For an array of tables' item, it is the table that holds the array.</summary>
+    internal MergedTable? Parent { get; init; }
+
     /// <summary>The dotted name of the table from the root, for messages: <c>a.b</c>. Empty for the root.</summary>
     internal string FullName { get; }
 
@@ -177,7 +180,7 @@ internal sealed class TomlMerger
                     DefineKeyValue(section, keyValue);
                     break;
                 case TomlHeaderItem header:
-                    section = DefineHeader(header);
+                    section = DefineHeader(header, section);
                     _sections[header] = section;
                     break;
             }
@@ -238,7 +241,12 @@ internal sealed class TomlMerger
     /// tables (through its last item), is walked through; an inline table, a static array or a non-table is refused. A missing
     /// table is made implicitly, by this header.
     /// </summary>
-    private MergedTable HeaderTable(MergedTable table, IReadOnlyList<TomlKeyPart> path, int index, TomlHeaderItem header)
+    /// <remarks>
+    /// A header that walks through an array of tables points to the array's last item. The walk is refused when another table header
+    /// came between that item and this header, since the header would not be part of the item in the text.
+    /// <paramref name="previous"/> is the table of the header before this one.
+    /// </remarks>
+    private MergedTable HeaderTable(MergedTable table, IReadOnlyList<TomlKeyPart> path, int index, TomlHeaderItem header, MergedTable previous)
     {
         TomlKeyPart part = path[index];
         if (table.TryGetMember(part.Name, out MergedMember? member))
@@ -250,7 +258,21 @@ internal sealed class TomlMerger
                 case MergedTable existing:
                     return existing;
                 case MergedArray { IsTableArray: true } array:
-                    return (MergedTable)array.Items[^1];
+                {
+                    var item = (MergedTable)array.Items[^1];
+
+                    // The previous header must be the item or inside it. Tomlyn reads a header after another table as a table of
+                    // its own, so such a header cannot be verified; it is refused rather than left to the cross-check.
+                    if (!IsWithin(previous, item))
+                    {
+                        string headerName = string.Join('.', path.Select(p => p.Name));
+                        throw Fail(
+                            header.Start,
+                            $"cfgedit cannot verify a [{headerName}] header that follows another table after [[{Join(table.FullName, part.Name)}]]; Tomlyn reads it differently");
+                    }
+
+                    return item;
+                }
                 default:
                     throw Fail(part.Start, $"'{Join(table.FullName, part.Name)}' is not a table");
             }
@@ -262,14 +284,17 @@ internal sealed class TomlMerger
         return created;
     }
 
-    /// <summary>Defines the table of a header, or appends an item to the array of tables it names. Returns the table that the header's section is in.</summary>
-    private MergedTable DefineHeader(TomlHeaderItem header)
+    /// <summary>
+    /// Defines the table of a header, or appends an item to the array of tables it names. Returns the table that the header's section is
+    /// in. <paramref name="previous"/> is the section of the header before this one.
+    /// </summary>
+    private MergedTable DefineHeader(TomlHeaderItem header, MergedTable previous)
     {
         IReadOnlyList<TomlKeyPart> path = header.Key.Parts;
         MergedTable table = _root;
         for (int i = 0; i < path.Count - 1; i++)
         {
-            table = HeaderTable(table, path, i, header);
+            table = HeaderTable(table, path, i, header, previous);
         }
 
         TomlKeyPart leaf = path[^1];
@@ -301,6 +326,14 @@ internal sealed class TomlMerger
                 return implicitTable;
             case MergedArray { IsTableArray: true } array when arrayTable:
             {
+                // Tomlyn drops the earlier items of an array whose items another table header separates, so such an item is refused.
+                if (!IsWithin(previous, (MergedTable)array.Items[^1]))
+                {
+                    throw Fail(
+                        header.Start,
+                        $"cfgedit cannot verify [[{Join(table.FullName, leaf.Name)}]] items separated by another table; Tomlyn reads them differently");
+                }
+
                 MergedTable item = NewTable(TomlTableState.Header, table, leaf.Start, leaf.Name);
                 item.Pieces.Add(header);
                 array.Items.Add(item);
@@ -395,7 +428,21 @@ internal sealed class TomlMerger
             throw Fail(offset, $"nesting is deeper than {MaxDepth} levels");
         }
 
-        return new MergedTable(state, depth, Join(parent.FullName, name));
+        return new MergedTable(state, depth, Join(parent.FullName, name)) { Parent = parent };
+    }
+
+    /// <summary>True when <paramref name="table"/> is <paramref name="ancestor"/> or is inside it.</summary>
+    private static bool IsWithin(MergedTable table, MergedTable ancestor)
+    {
+        for (MergedTable? current = table; current is not null; current = current.Parent)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
