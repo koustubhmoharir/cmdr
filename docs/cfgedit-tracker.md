@@ -142,8 +142,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] Core syntax: lexer/parser into a lossless CST (keys, headers, all value kinds, arrays, inline tables, comments),
       string/key encoders, number and date-time validation. Tests: byte-identical round trip, toml-test valid/invalid
       cases (vendored), encoder property tests. (6415f0a)
-- [ ] Core model: `TomlFormat` (`toml`), semantic tree (tables merged from pieces, arrays of tables), logical tree,
-      Tomlyn cross-check on open and after every edit.
+- [x] Core model: `TomlFormat` (`toml`), semantic tree (tables merged from pieces, arrays of tables), logical tree,
+      Tomlyn cross-check on open and after every edit. (d41de24) Fractional seconds are capped at 7 digits because
+      Tomlyn refuses more. Until the TUI item, `CfgeditHost.RefuseUnfinished` refuses TOML files: remove it then.
 - [ ] Core planner: value, key and table rename, add (all placements), arrays and arrays of tables, delete, move,
       duplicate, change type; TOML logical edit.
 - [ ] TUI: rows, path text, add dialog kinds, type menu, table editor for arrays of tables, new `.toml` file,
