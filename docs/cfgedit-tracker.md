@@ -133,4 +133,6 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       Tests: tree dumps and exact-output edit tests like the JSON ones. (f5aeb6b, 71e98fc, d026e9d)
 - [ ] Moves are refused when a unit's lines are not contiguous (including a blank line inside a group) and when moving
       a file's last line up over a blank line in a file without a final newline. Revisit if users hit these.
-- [ ] TUI: rows, path text (the full key), add dialog kinds, styling, new `.env` file, `--format env`; user guide.
+- [x] TUI: rows, path text (the full key), add dialog kinds, styling, new `.env` file, `--format env`; user guide.
+      Checked in a real terminal at 80x24: group rename across non-adjacent lines, add inside a group, save. (08de30b)
+      *(Windows)*: not run on Windows.
