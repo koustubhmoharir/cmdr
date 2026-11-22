@@ -145,7 +145,11 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] Core model: `TomlFormat` (`toml`), semantic tree (tables merged from pieces, arrays of tables), logical tree,
       Tomlyn cross-check on open and after every edit. (d41de24) Fractional seconds are capped at 7 digits because
       Tomlyn refuses more. Until the TUI item, `CfgeditHost.RefuseUnfinished` refuses TOML files: remove it then.
-- [ ] Core planner: value, key and table rename, add (all placements), arrays and arrays of tables, delete, move,
-      duplicate, change type; TOML logical edit.
+- [x] Core planner: value, key and table rename, add (all placements), arrays and arrays of tables, delete, move,
+      duplicate, change type; TOML logical edit. (2a9dd4f, 8c6a9aa, 974d577)
+- [x] Two valid constructs that Tomlyn misreads are refused with a message: `[x.sub]` or a new `[[x]]` item after
+      another table follows `[[x]]`. (25622cf)
+- [ ] Cleanup: the TOML sibling-unit and attachment rules are restated in `TomlLayout` (LogicalEdit/merger keep the
+      other copies); unit building is O(n²) for very large inline arrays.
 - [ ] TUI: rows, path text, add dialog kinds, type menu, table editor for arrays of tables, new `.toml` file,
       `--format toml`; user guide.
