@@ -22,7 +22,7 @@ internal static class CfgeditHints
         KeyHints.Bound(Key.Enter, "Enter Edit"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
         KeyHints.Bound('/', "/ Find"),
-        KeyHints.Bound(Key.A, "a Add"),
+        KeyHints.Concat(KeyHints.Bound('a', "a"), KeyHints.Plain("/"), KeyHints.Bound('i', "i"), KeyHints.Plain(" Add")),
         KeyHints.Bound(Key.D, "d Del"),
         KeyHints.Bound(Key.T, "t Type"),
         KeyHints.Bound(Key.Z.WithCtrl, "^Z Undo"),
@@ -47,7 +47,7 @@ internal static class CfgeditHints
     /// <summary>The key hints of the table editor, with no editor open. The quit key stays on the right, as in the tree.</summary>
     public static Hint Table { get; } = KeyHints.Join(
         KeyHints.Bound(Key.Enter, "Enter Edit"),
-        KeyHints.Bound('a', "a Row"),
+        KeyHints.Concat(KeyHints.Bound('a', "a"), KeyHints.Plain("/"), KeyHints.Bound('i', "i"), KeyHints.Plain(" Row")),
         KeyHints.Bound('d', "d Clear"),
         KeyHints.Bound(Key.Esc, "Esc Tree"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"));

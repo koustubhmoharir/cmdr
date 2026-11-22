@@ -316,6 +316,13 @@ public static class RowLayout
             DocPart part = node.Parts[i];
             switch (part.Kind)
             {
+                case PartKind.Root:
+                    // The root marker is followed by a space, as the root has no key to take a colon.
+                    items.Add(Begin(i));
+                    items.Add(Fixed(part.Value, StyleKind.ReadOnly, i));
+                    items.Add(End(i));
+                    items.Add(Fixed(" ", StyleKind.Punctuation, -1));
+                    break;
                 case PartKind.Key:
                     items.Add(Begin(i));
                     if (part.Value.Length == 0)
@@ -450,7 +457,7 @@ public static class RowLayout
 
     /// <summary>
     /// An element's start row: <c>&lt;name attrs&gt;</c>, with the text and the closing tag of a text-only element, or an
-    /// ellipsis (<c>&#x2026;</c>) and the closing tag of a collapsed one. The attributes wrap: an attribute that does not fit goes to a new line, aligned
+    /// ellipsis (<c>&#x2026;</c>) and the closing tag of a collapsed one. An empty element ends with its summary, <c>{0}</c>. The attributes wrap: an attribute that does not fit goes to a new line, aligned
     /// under the first attribute's name, and the tail follows the same rule.
     /// </summary>
     private static RowLines LayoutElement(Row row, bool collapsed, int indent, int width, Func<int, PartMarks?>? marks)
@@ -514,6 +521,20 @@ public static class RowLayout
         else
         {
             units.Add(new Unit([Fixed(">", StyleKind.Punctuation, -1)], false));
+        }
+
+        int summary = IndexOf(parts, PartKind.Summary);
+        if (summary >= 0)
+        {
+            // An empty element's count, <c>{0}</c>, follows the tag end with a space. It is part of the tag end's unit, so that it wraps
+            // with the tag end: <c>/&gt; {0}</c>, <c>&lt;/a&gt; {0}</c> or <c>&gt; {0}</c>.
+            Unit tail = units[^1];
+            var items = new List<Item>(tail.Items) { Fixed(" ", StyleKind.Punctuation, -1), Begin(summary) };
+            items.Add(Fixed("{", StyleKind.Punctuation, summary));
+            AddText(items, parts[summary].Value, StyleKind.Summary, summary, width);
+            items.Add(Fixed("}", StyleKind.Punctuation, summary));
+            items.Add(End(summary));
+            units[^1] = new Unit(items, tail.Separated);
         }
 
         int headColumn = indent + Sum(head);

@@ -21,8 +21,8 @@ public sealed class MainWindowTests : IDisposable
 
     // The tree's hints on the left, and the quit key at the right edge. At 80 columns the left part is cut with an ellipsis, so the
     // last hint (/ Find) shows only its first column; at 100 columns all of them show.
-    private const string HintsAt80 = "Enter Edit  ^S Save  / Find  a Add  d Del  t Type  ^Z Undo  ^T Text  y C\x2026" + "^Q Quit";
-    private const string HintsAt40 = "Enter Edit  ^S Save  / Find  a A\x2026^Q Quit";
+    private const string HintsAt80 = "Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  ^T Text  y\x2026" + "^Q Quit";
+    private const string HintsAt40 = "Enter Edit  ^S Save  / Find  a/i\x2026^Q Quit";
 
     private readonly List<string> _folders = [];
 
@@ -36,7 +36,7 @@ public sealed class MainWindowTests : IDisposable
         Assert.Contains("settings.json [jsonc]", screen.Text(0), StringComparison.Ordinal);
         Assert.Equal("\x256D", screen.Cells[0][0].Grapheme);
         Assert.Equal("\x2570", screen.Cells[21][0].Grapheme);
-        Assert.StartsWith("\x2502\x25BE {2}", screen.Text(1), StringComparison.Ordinal);
+        Assert.StartsWith("\x2502\x25BE $ {2}", screen.Text(1), StringComparison.Ordinal);
         Assert.Equal("$  object  2", screen.Text(22));
         Assert.Equal(HintsAt80, screen.Text(23));
     }
@@ -81,11 +81,14 @@ public sealed class MainWindowTests : IDisposable
             (_, window) => window.NewKeyDownEvent(Key.CursorDown),
             (_, window) => window.NewKeyDownEvent(Key.CursorDown),
             (_, window) => window.NewKeyDownEvent(Key.CursorDown),
-            (_, window) => window.NewKeyDownEvent(Key.End)).Screens;
+            (_, window) => window.NewKeyDownEvent(Key.End),
+            (_, window) => window.NewKeyDownEvent(Key.CursorLeft)).Screens;
 
         Assert.Equal("/configuration/appSettings/add[2]  element  add", screens[3].Text(22));
-        Assert.Equal("/configuration/appSettings/add[2]/@value  attribute  2", screens[4].Text(22));
-        Assert.Contains("app.config [xml]", screens[4].Text(0), StringComparison.Ordinal);
+        // End goes to the empty element's summary, the last part; Left goes back to the last attribute value.
+        Assert.Equal("/configuration/appSettings/add[2]  element  0", screens[4].Text(22));
+        Assert.Equal("/configuration/appSettings/add[2]/@value  attribute  2", screens[5].Text(22));
+        Assert.Contains("app.config [xml]", screens[5].Text(0), StringComparison.Ordinal);
     }
 
     [Fact]

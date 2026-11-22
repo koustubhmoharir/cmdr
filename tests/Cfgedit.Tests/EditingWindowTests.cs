@@ -20,7 +20,7 @@ namespace Cfgedit.Tests;
 public sealed partial class EditingWindowTests : IDisposable
 {
     private const string JsonText = "{\n  \"name\": \"web\",\n  \"port\": 8080\n}";
-    private const string TreeHints = "Enter Edit  ^S Save  / Find  a Add  d Del  t Type  ^Z Undo  ^T Text";
+    private const string TreeHints = "Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  ^T Text";
     private const string EditingHints = "Enter Commit  Esc Cancel  Tab Next  F4 Multi-line";
     private const string QuitHint = "^Q Quit";
 

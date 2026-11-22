@@ -137,7 +137,8 @@ internal sealed class DetailLine : View
     // The value of the part as the rows show it, with an empty JSON string as "". Nothing for a node without a part.
     private static string ValueOf(DocNode node, DocPart? part, int width)
     {
-        if (part is null)
+        // The root marker has no value to show: its kind already says root.
+        if (part is null || part.Kind == PartKind.Root)
         {
             return string.Empty;
         }

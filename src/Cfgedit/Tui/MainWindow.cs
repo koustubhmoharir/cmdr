@@ -840,7 +840,7 @@ internal sealed class MainWindow : Window, ISearchHost
     // ----- Structure keys -----
 
     /// <summary>
-    /// The structure keys of the tree: add (a, A, i, +), delete (d, Delete), move (Alt+Up/Down, K, J, Alt+Left/Right), change the type (t),
+    /// The structure keys of the tree: add (a, i, A, I, +), delete (d, Delete), move (Alt+Up/Down, K, J, Alt+Left/Right), change the type (t),
     /// and duplicate (Ctrl+D). Returns false for a key they do not bind. They apply only while no field is open.
     /// </summary>
     private bool HandleStructureKey(Key key)
@@ -849,13 +849,17 @@ internal sealed class MainWindow : Window, ISearchHost
         {
             AddSibling(after: true);
         }
-        else if (IsPlain(key, 'A'))
+        else if (IsPlain(key, 'i'))
         {
             AddSibling(after: false);
         }
-        else if (IsPlain(key, 'i'))
+        else if (IsPlain(key, 'A'))
         {
-            AddChild();
+            AddChild(first: false);
+        }
+        else if (IsPlain(key, 'I'))
+        {
+            AddChild(first: true);
         }
         else if (IsPlain(key, '+'))
         {
@@ -921,8 +925,10 @@ internal sealed class MainWindow : Window, ISearchHost
     private string Describe(DocNode node, DocPart part) => PathText.Format(_controller.Document, node, part);
 
     /// <summary>
-    /// a and A: a sibling after or before the cursor's node. On an attribute part, an attribute after or before that attribute. A new
-    /// element, container item or scalar item copies its sibling's shape with no dialog. Anything else asks for its kind.
+    /// a and i: a sibling after (a) or before (i) the cursor's node. On an attribute part, an attribute after or before that attribute. On
+    /// a JSON container's summary, a child at the end (a) or the start (i) of the container. The JSON root marker (<c>$</c>) adds beside the
+    /// root value, in the document. A new element, container item or scalar item copies its sibling's shape with no dialog. Anything
+    /// else asks for its kind.
     /// </summary>
     private void AddSibling(bool after)
     {
@@ -934,6 +940,12 @@ internal sealed class MainWindow : Window, ISearchHost
         if (IsAttributePart(part))
         {
             AskAttribute(node, part.AttributeIndex + (after ? 1 : 0));
+            return;
+        }
+
+        if (part.Kind == PartKind.Summary)
+        {
+            AddInto(node, part, first: !after);
             return;
         }
 
@@ -954,11 +966,12 @@ internal sealed class MainWindow : Window, ISearchHost
         AskAdd(parent, index, (after ? "Add after " : "Add before ") + Describe(node, part));
     }
 
-    /// <summary>i: a child at the end of the cursor's container or element, or an attribute when the cursor is on an element's name.</summary>
-    private void AddChild()
+    /// <summary>
+    /// A and I: a child at the end (A) or the start (I) of the cursor's XML element or JSON object or array, from any part of it. Attributes
+    /// are added with +. Any other node says that it has no children.
+    /// </summary>
+    private void AddChild(bool first)
     {
-        // i always adds a child, whichever part the cursor is on: the name part is where the cursor starts on an element,
-        // so giving i another meaning there would leave <a/> without a way to get a child. Attributes are added with +.
         if (!TryCursor(out DocNode node, out DocPart part))
         {
             return;
@@ -966,11 +979,17 @@ internal sealed class MainWindow : Window, ISearchHost
 
         if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray)
         {
-            AskAdd(node, node.Children.Count, "Add to " + Describe(node, part));
+            AddInto(node, part, first);
             return;
         }
 
         ShowMessage("this node has no children", error: false);
+    }
+
+    /// <summary>Asks for a child of a container, at its start or its end, and inserts it. The dialog's title names the container.</summary>
+    private void AddInto(DocNode container, DocPart part, bool first)
+    {
+        AskAdd(container, first ? 0 : container.Children.Count, "Add to " + Describe(container, part));
     }
 
     /// <summary>+: an attribute at the end of the element the cursor is in.</summary>
@@ -1032,7 +1051,9 @@ internal sealed class MainWindow : Window, ISearchHost
         IReadOnlyList<AddKind> kinds = AddKinds.For(_controller.Document, parent);
         if (kinds.Count == 0)
         {
-            ShowMessage("nothing can be added here", error: false);
+            // Strict JSON is the only document with nothing to add: its only addable things beside the root are comments.
+            bool strictBeside = parent.Kind == NodeKind.Document && !AddKinds.CommentsAllowed(_controller.Document);
+            ShowMessage(strictBeside ? "strict JSON has no comments, so nothing can be added beside the root" : "nothing can be added here", error: false);
             return;
         }
 
@@ -1380,7 +1401,7 @@ internal sealed class MainWindow : Window, ISearchHost
             return true;
         }
 
-        if (IsPlain(key, 'A'))
+        if (IsPlain(key, 'i'))
         {
             AddTableRow(after: false);
             return true;
@@ -1641,7 +1662,7 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// a and A: a row after the cursor's row, or before it (after the row above it, for the first row). The editor opens on the new row's first
+    /// a and i: a row after the cursor's row, or before it (after the row above it, for the first row). The editor opens on the new row's first
     /// cell, when that cell takes a value.
     /// </summary>
     private void AddTableRow(bool after)

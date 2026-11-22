@@ -14,7 +14,7 @@ namespace Cfgedit.Tests;
 /// </summary>
 public sealed partial class EditingWindowTests
 {
-    private const string TableHints = "Enter Edit  a Row  d Clear  Esc Tree  ^S Save";
+    private const string TableHints = "Enter Edit  a/i Row  d Clear  Esc Tree  ^S Save";
     private const string TableEditingHints = "Enter Commit  Esc Cancel  F4 Multi-line";
 
     // An array of objects: the columns are name, port and tags; the second row has tags, the first has no tags cell.
@@ -126,7 +126,7 @@ public sealed partial class EditingWindowTests
 
         // At 12 rows the detail line is row 10 and the hints row 11. The hints are cut in their middle to the width, and the quit key stays.
         Assert.Equal("$[0].name  string  web", screen.Text(10));
-        Assert.Equal("Enter Edit  a Row  d Clear  Esc \x2026^Q Quit", screen.Text(11));
+        Assert.Equal("Enter Edit  a/i Row  d Clear  Es\x2026^Q Quit", screen.Text(11));
     }
 
     [Fact]
@@ -529,7 +529,7 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void A_adds_a_row_before_the_cursor()
+    public void i_adds_a_row_before_the_cursor()
     {
         OpenedFile file = Open("list.json", TableArray);
 
@@ -539,7 +539,7 @@ public sealed partial class EditingWindowTests
             24,
             null,
             null,
-            (_, w) => Keys(w, new Key('T'), new Key('A')),
+            (_, w) => Keys(w, new Key('T'), new Key('i')),
             (_, w) => Type(w, "new"),
             (_, w) => Keys(w, Key.Enter));
 

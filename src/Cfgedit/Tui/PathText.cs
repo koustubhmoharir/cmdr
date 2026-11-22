@@ -61,7 +61,7 @@ public static class PathText
     /// <summary>
     /// The kind of a focused part, for the detail line: <c>string</c>, <c>number</c>, <c>bool</c>, <c>null</c>, <c>object</c>,
     /// <c>array</c>, <c>element</c>, <c>attribute</c>, <c>text</c>, <c>comment</c>, <c>CDATA</c> or <c>PI</c>. A key or an index
-    /// is <c>key</c> or <c>index</c>, and a declaration or doctype is <c>declaration</c> or <c>doctype</c>.
+    /// is <c>key</c> or <c>index</c>, the JSON root marker is <c>root</c>, and a declaration or doctype is <c>declaration</c> or <c>doctype</c>.
     /// </summary>
     /// <param name="node">The node.</param>
     /// <param name="part">The focused part, or null for the node itself.</param>
@@ -76,10 +76,16 @@ public static class PathText
 
         return part.Kind switch
         {
+            PartKind.Root => "root",
             PartKind.Key => "key",
             PartKind.Index => "index",
             PartKind.Value => ScalarName(node.JsonKind),
-            PartKind.Summary => node.Kind == NodeKind.JsonArray ? "array" : "object",
+            PartKind.Summary => node.Kind switch
+            {
+                NodeKind.JsonArray => "array",
+                NodeKind.XmlElement => "element",
+                _ => "object",
+            },
             PartKind.ElementName or PartKind.EndName => "element",
             PartKind.AttributeName or PartKind.AttributeValue => "attribute",
             PartKind.Text => node.Kind == NodeKind.XmlCData ? "CDATA" : "text",

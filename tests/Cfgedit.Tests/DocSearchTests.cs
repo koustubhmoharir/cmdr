@@ -57,6 +57,13 @@ public sealed class DocSearchTests
     }
 
     [Fact]
+    public void The_root_marker_is_not_searched_so_a_dollar_sign_matches_only_the_value_that_holds_it()
+    {
+        // The root marker is "$", as is the value below; only the value is a match.
+        AssertMatches(Search("{\"a\": \"$\"}", "json", "$"), "a/Value@0+1");
+    }
+
+    [Fact]
     public void Matches_ignore_case_unless_asked_and_whole_words_need_word_edges()
     {
         const string text = "{\"a\": \"web\", \"b\": \"WEB\", \"c\": \"webs\"}";

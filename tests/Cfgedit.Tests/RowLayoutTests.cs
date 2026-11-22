@@ -38,9 +38,13 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
 
         Assert.Equal(
-            new[] { new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("{", StyleKind.Punctuation, 0), new Segment("1", StyleKind.Summary, 0), new Segment("}", StyleKind.Punctuation, 0) },
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("1", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 5) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 7) }, lines.Parts);
     }
 
     [Fact]
@@ -52,9 +56,13 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), true, 80);
 
         Assert.Equal(
-            new[] { new Segment("\x25B8 ", StyleKind.Fold, -1), new Segment("{", StyleKind.Punctuation, 0), new Segment("1", StyleKind.Summary, 0), new Segment("}", StyleKind.Punctuation, 0) },
+            new[]
+            {
+                new Segment("\x25B8 ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("1", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 5) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 7) }, lines.Parts);
     }
 
     [Fact]
@@ -230,9 +238,9 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
 
         Assert.Equal(
-            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("web", StyleKind.String, 0) },
+            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1), new Segment("web", StyleKind.String, 1) },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 5) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 7) }, lines.Parts);
     }
 
     [Fact]
@@ -247,12 +255,14 @@ public sealed class RowLayoutTests
             new[]
             {
                 new Segment("  ", StyleKind.Fold, -1),
-                new Segment("{", StyleKind.Punctuation, 0),
-                new Segment("0", StyleKind.Summary, 0),
-                new Segment("}", StyleKind.Punctuation, 0),
+                new Segment("$", StyleKind.ReadOnly, 0),
+                new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1),
+                new Segment("0", StyleKind.Summary, 1),
+                new Segment("}", StyleKind.Punctuation, 1),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 5) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 7) }, lines.Parts);
     }
 
     [Fact]
@@ -310,10 +320,13 @@ public sealed class RowLayoutTests
                 new Segment("  ", StyleKind.Fold, -1),
                 new Segment("<", StyleKind.Punctuation, -1),
                 new Segment("a", StyleKind.ElementName, 0),
-                new Segment("/>", StyleKind.Punctuation, -1),
+                new Segment("/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1),
+                new Segment("0", StyleKind.Summary, 1),
+                new Segment("}", StyleKind.Punctuation, 1),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 3, 4) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 7, 10) }, lines.Parts);
     }
 
     [Fact]
@@ -334,10 +347,13 @@ public sealed class RowLayoutTests
                 new Segment("x", StyleKind.AttributeName, 1),
                 new Segment("=\"", StyleKind.Punctuation, -1),
                 new Segment("1", StyleKind.AttributeValue, 2),
-                new Segment("\"/>", StyleKind.Punctuation, -1),
+                new Segment("\"/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 3),
+                new Segment("0", StyleKind.Summary, 3),
+                new Segment("}", StyleKind.Punctuation, 3),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 6), new PartRange(0, 8, 9) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 6), new PartRange(0, 8, 9), new PartRange(0, 13, 16) }, lines.Parts);
     }
 
     [Fact]
@@ -450,10 +466,13 @@ public sealed class RowLayoutTests
                 new Segment("a", StyleKind.ElementName, 0),
                 new Segment("></", StyleKind.Punctuation, -1),
                 new Segment("a", StyleKind.ElementName, -1),
-                new Segment(">", StyleKind.Punctuation, -1),
+                new Segment("> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 2),
+                new Segment("0", StyleKind.Summary, 2),
+                new Segment("}", StyleKind.Punctuation, 2),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 5) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 5), new PartRange(0, 10, 13) }, lines.Parts);
     }
 
     [Fact]
@@ -471,7 +490,10 @@ public sealed class RowLayoutTests
                 new Segment("  ", StyleKind.Fold, -1),
                 new Segment("<", StyleKind.Punctuation, -1),
                 new Segment("a", StyleKind.ElementName, 0),
-                new Segment(">", StyleKind.Punctuation, -1),
+                new Segment("> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1),
+                new Segment("0", StyleKind.Summary, 1),
+                new Segment("}", StyleKind.Punctuation, 1),
             },
             open.Lines[0].Segments);
         Assert.Equal(
@@ -501,10 +523,13 @@ public sealed class RowLayoutTests
                 new Segment("  ", StyleKind.Fold, -1),
                 new Segment("<", StyleKind.Punctuation, -1),
                 new Segment("c", StyleKind.ElementName, 0),
-                new Segment("/>", StyleKind.Punctuation, -1),
+                new Segment("/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1),
+                new Segment("0", StyleKind.Summary, 1),
+                new Segment("}", StyleKind.Punctuation, 1),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 5, 6) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 5, 6), new PartRange(0, 9, 12) }, lines.Parts);
     }
 
     [Fact]
@@ -674,10 +699,13 @@ public sealed class RowLayoutTests
                 new Segment("&e;", StyleKind.AttributeValue, 2),
                 new Segment("\"", StyleKind.Punctuation, -1),
                 new Segment(" raw", StyleKind.RawMarker, -1),
-                new Segment("/>", StyleKind.Punctuation, -1),
+                new Segment("/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 3),
+                new Segment("0", StyleKind.Summary, 3),
+                new Segment("}", StyleKind.Punctuation, 3),
             },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 6), new PartRange(0, 8, 11) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 5, 6), new PartRange(0, 8, 11), new PartRange(0, 19, 22) }, lines.Parts);
     }
 
     [Fact]
@@ -700,7 +728,10 @@ public sealed class RowLayoutTests
                 new Segment("x", StyleKind.AttributeValue, 2),
                 new Segment("\x2192", StyleKind.Glyph, 2),
                 new Segment("y", StyleKind.AttributeValue, 2),
-                new Segment("\"/>", StyleKind.Punctuation, -1),
+                new Segment("\"/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 3),
+                new Segment("0", StyleKind.Summary, 3),
+                new Segment("}", StyleKind.Punctuation, 3),
             },
             lines.Lines[0].Segments);
         Assert.Equal(new PartRange(0, 8, 11), lines.Parts[2]);
@@ -737,7 +768,10 @@ public sealed class RowLayoutTests
                 new Segment("update", StyleKind.AttributeName, 5),
                 new Segment("=\"", StyleKind.Punctuation, -1),
                 new Segment("Merge", StyleKind.AttributeValue, 6),
-                new Segment("\"/>", StyleKind.Punctuation, -1),
+                new Segment("\"/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 7),
+                new Segment("0", StyleKind.Summary, 7),
+                new Segment("}", StyleKind.Punctuation, 7),
             },
             lines.Lines[0].Segments);
         Assert.Equal(
@@ -750,6 +784,7 @@ public sealed class RowLayoutTests
                 new PartRange(0, 36, 39),
                 new PartRange(0, 41, 47),
                 new PartRange(0, 49, 54),
+                new PartRange(0, 58, 61),
             },
             lines.Parts);
     }
@@ -783,7 +818,16 @@ public sealed class RowLayoutTests
             },
             lines.Lines[0].Segments);
         Assert.Equal(
-            new[] { new Segment("update", StyleKind.AttributeName, 5), new Segment("=\"", StyleKind.Punctuation, -1), new Segment("Merge", StyleKind.AttributeValue, 6), new Segment("\"/>", StyleKind.Punctuation, -1) },
+            new[]
+            {
+                new Segment("update", StyleKind.AttributeName, 5),
+                new Segment("=\"", StyleKind.Punctuation, -1),
+                new Segment("Merge", StyleKind.AttributeValue, 6),
+                new Segment("\"/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 7),
+                new Segment("0", StyleKind.Summary, 7),
+                new Segment("}", StyleKind.Punctuation, 7),
+            },
             lines.Lines[1].Segments);
         Assert.Equal(
             new[]
@@ -795,6 +839,7 @@ public sealed class RowLayoutTests
                 new PartRange(0, 36, 39),
                 new PartRange(1, 11, 17),
                 new PartRange(1, 19, 24),
+                new PartRange(1, 28, 31),
             },
             lines.Parts);
     }
@@ -814,12 +859,22 @@ public sealed class RowLayoutTests
             new[] { new Segment("threshold", StyleKind.AttributeName, 3), new Segment("=\"", StyleKind.Punctuation, -1), new Segment("ALL", StyleKind.AttributeValue, 4), new Segment("\"", StyleKind.Punctuation, -1) },
             lines.Lines[1].Segments);
         Assert.Equal(
-            new[] { new Segment("update", StyleKind.AttributeName, 5), new Segment("=\"", StyleKind.Punctuation, -1), new Segment("Merge", StyleKind.AttributeValue, 6), new Segment("\"/>", StyleKind.Punctuation, -1) },
+            new[]
+            {
+                new Segment("update", StyleKind.AttributeName, 5),
+                new Segment("=\"", StyleKind.Punctuation, -1),
+                new Segment("Merge", StyleKind.AttributeValue, 6),
+                new Segment("\"/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 7),
+                new Segment("0", StyleKind.Summary, 7),
+                new Segment("}", StyleKind.Punctuation, 7),
+            },
             lines.Lines[2].Segments);
         Assert.Equal(new PartRange(1, 4, 13), lines.Parts[3]);
         Assert.Equal(new PartRange(1, 15, 18), lines.Parts[4]);
         Assert.Equal(new PartRange(2, 4, 10), lines.Parts[5]);
         Assert.Equal(new PartRange(2, 12, 17), lines.Parts[6]);
+        Assert.Equal(new PartRange(2, 21, 24), lines.Parts[7]);
     }
 
     [Fact]
@@ -900,7 +955,7 @@ public sealed class RowLayoutTests
         Assert.Equal(
             new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("<", StyleKind.Punctuation, -1), new Segment("l", StyleKind.ElementName, 0), new Segment("\x2026", StyleKind.Glyph, -1) },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 4, 4), new PartRange(0, 4, 4) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 4, 4), new PartRange(0, 4, 4), new PartRange(0, 4, 4) }, lines.Parts);
     }
 
     // ----- Widths, graphemes and degenerate cases -----
@@ -946,15 +1001,22 @@ public sealed class RowLayoutTests
         ConfigDocument doc = TreeFixtures.Parse("\"\x4E2D\x6587\x5B57\"", "json");
         DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
 
-        RowLines narrow = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 4);
-        RowLines wide = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 5);
+        // The root marker and its space take two columns after the fold, so each width is two more than before.
+        RowLines narrow = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 6);
+        RowLines wide = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 7);
 
-        Assert.Equal(new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("\x2026", StyleKind.Glyph, -1) }, narrow.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 2) }, narrow.Parts);
         Assert.Equal(
-            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("\x4E2D", StyleKind.String, 0), new Segment("\x2026", StyleKind.Glyph, -1) },
+            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1), new Segment("\x2026", StyleKind.Glyph, -1) },
+            narrow.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 4) }, narrow.Parts);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("\x4E2D", StyleKind.String, 1), new Segment("\x2026", StyleKind.Glyph, -1),
+            },
             wide.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 4) }, wide.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 6) }, wide.Parts);
     }
 
     [Fact]
@@ -963,12 +1025,16 @@ public sealed class RowLayoutTests
         ConfigDocument doc = TreeFixtures.Parse("\"a\xD83D\xDC68\x200D\xD83D\xDC69z\"", "json");
         DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
 
-        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 5);
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 7);
 
         Assert.Equal(
-            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("a", StyleKind.String, 0), new Segment("\x2026", StyleKind.Glyph, -1) },
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("a", StyleKind.String, 1), new Segment("\x2026", StyleKind.Glyph, -1),
+            },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 3) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 5) }, lines.Parts);
     }
 
     [Fact]
@@ -977,13 +1043,17 @@ public sealed class RowLayoutTests
         ConfigDocument doc = TreeFixtures.Parse("\"e\x0301x\"", "json");
         DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
 
-        RowLines cut = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 3);
-        RowLines whole = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 4);
+        RowLines cut = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 5);
+        RowLines whole = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 6);
 
-        Assert.Equal(new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("\x2026", StyleKind.Glyph, -1) }, cut.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 2) }, cut.Parts);
-        Assert.Equal(new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("e\x0301x", StyleKind.String, 0) }, whole.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 4) }, whole.Parts);
+        Assert.Equal(
+            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1), new Segment("\x2026", StyleKind.Glyph, -1) },
+            cut.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 4) }, cut.Parts);
+        Assert.Equal(
+            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1), new Segment("e\x0301x", StyleKind.String, 1) },
+            whole.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 6) }, whole.Parts);
     }
 
     [Fact]
@@ -992,12 +1062,16 @@ public sealed class RowLayoutTests
         ConfigDocument doc = TreeFixtures.Parse("\"a\xD83D\xDE00b\"", "json");
         DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
 
-        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 4);
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 6);
 
         Assert.Equal(
-            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("a", StyleKind.String, 0), new Segment("\x2026", StyleKind.Glyph, -1) },
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("a", StyleKind.String, 1), new Segment("\x2026", StyleKind.Glyph, -1),
+            },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 3) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 5) }, lines.Parts);
     }
 
     [Fact]
@@ -1009,9 +1083,13 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
 
         Assert.Equal(
-            new[] { new Segment("  ", StyleKind.Fold, -1), new Segment("a", StyleKind.String, 0), new Segment("\x240D\x23CE", StyleKind.Glyph, 0), new Segment("b", StyleKind.String, 0) },
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("a", StyleKind.String, 1), new Segment("\x240D\x23CE", StyleKind.Glyph, 1), new Segment("b", StyleKind.String, 1),
+            },
             lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 6) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 3), new PartRange(0, 4, 8) }, lines.Parts);
     }
 
     [Fact]
@@ -1023,7 +1101,7 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 1);
 
         Assert.Equal(new[] { new Segment("\x25BE", StyleKind.Fold, -1) }, lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 1, 1) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 1, 1), new PartRange(0, 1, 1) }, lines.Parts);
     }
 
     [Fact]
@@ -1035,7 +1113,7 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 2);
 
         Assert.Equal(new[] { new Segment("\x25BE ", StyleKind.Fold, -1) }, lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 2) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 2), new PartRange(0, 2, 2) }, lines.Parts);
     }
 
     [Fact]
@@ -1047,7 +1125,7 @@ public sealed class RowLayoutTests
         RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 3);
 
         Assert.Equal(new[] { new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("\x2026", StyleKind.Glyph, -1) }, lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 2, 2) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 2, 2), new PartRange(0, 2, 2) }, lines.Parts);
     }
 
     [Fact]
@@ -1079,6 +1157,70 @@ public sealed class RowLayoutTests
     }
 
     [Fact]
+    public void Xml_empty_element_shows_its_summary_after_the_slash()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("<a/>", "xml");
+        DocNode element = TreeFixtures.Find(doc, new ElementStep("a", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(element, 0), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1),
+                new Segment("<", StyleKind.Punctuation, -1),
+                new Segment("a", StyleKind.ElementName, 0),
+                new Segment("/> ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1),
+                new Segment("0", StyleKind.Summary, 1),
+                new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+        Assert.Equal(new[] { new PartRange(0, 3, 4), new PartRange(0, 7, 10) }, lines.Parts);
+    }
+
+    [Fact]
+    public void Xml_empty_element_with_an_end_tag_shows_its_summary_after_the_closing_tag()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("<a></a>", "xml");
+        DocNode element = TreeFixtures.Find(doc, new ElementStep("a", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(element, 0), false, 80);
+
+        Assert.Single(lines.Lines);
+        Assert.Equal("  <a></a> {0}", TextOf(lines.Lines[0]));
+        Assert.Equal(new PartRange(0, 3, 4), lines.Parts[0]);
+        Assert.Equal(new PartRange(0, 10, 13), lines.Parts[2]);
+    }
+
+    [Fact]
+    public void Xml_empty_container_written_across_lines_shows_its_summary_after_the_start_tag()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("<a>\n</a>", "xml");
+        DocNode element = TreeFixtures.Find(doc, new ElementStep("a", 0));
+
+        RowLines start = RowLayout.Layout(TreeFixtures.RowOf(element, 0), false, 80);
+
+        Assert.Equal("  <a> {0}", TextOf(start.Lines[0]));
+        Assert.Equal(new PartRange(0, 6, 9), start.Parts[1]);
+    }
+
+    [Fact]
+    public void Xml_empty_element_with_wrapping_attributes_keeps_its_summary_with_the_tag_end()
+    {
+        ConfigDocument doc = TreeFixtures.Parse(Log4net, "xml");
+        DocNode element = TreeFixtures.Find(doc, new ElementStep("log4net", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(element, 0), false, 30);
+
+        Assert.True(lines.Lines.Count > 1);
+        Assert.EndsWith("/> {0}", TextOf(lines.Lines[^1]));
+        Assert.Equal(lines.Lines.Count - 1, lines.Parts[^1].Line);
+    }
+
+    private static string TextOf(DisplayLine line) => string.Concat(line.Segments.Select(segment => segment.Text));
+
+    [Fact]
     public void Width_zero_gives_an_empty_line_with_zero_width_ranges()
     {
         ConfigDocument doc = TreeFixtures.Parse("<a/>", "xml");
@@ -1089,6 +1231,6 @@ public sealed class RowLayoutTests
         Assert.Single(lines.Lines);
         Assert.Equal(0, lines.Lines[0].Indent);
         Assert.Empty(lines.Lines[0].Segments);
-        Assert.Equal(new[] { new PartRange(0, 0, 0) }, lines.Parts);
+        Assert.Equal(new[] { new PartRange(0, 0, 0), new PartRange(0, 0, 0) }, lines.Parts);
     }
 }

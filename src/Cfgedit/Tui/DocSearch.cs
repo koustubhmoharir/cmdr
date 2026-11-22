@@ -145,7 +145,7 @@ internal sealed class DocSearch
     }
 
     /// <summary>The parts that search finds: every part but the summaries, the indexes and the end-tag names.</summary>
-    private static bool IsSearched(PartKind kind) => kind is not (PartKind.Summary or PartKind.Index or PartKind.EndName);
+    private static bool IsSearched(PartKind kind) => kind is not (PartKind.Root or PartKind.Summary or PartKind.Index or PartKind.EndName);
 
     private readonly record struct PartKey(NodePath Node, bool IsEnd, int Part);
 }

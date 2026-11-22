@@ -3,6 +3,12 @@ namespace Cfgedit.Core.Model;
 /// <summary>The parts a node's row is made of.</summary>
 public enum PartKind
 {
+    /// <summary>
+    /// The JSON root value's marker, shown as <c>$</c>. It is the first part of the root row, has no width in the source, and is not
+    /// editable. The keys a and i act on it as on the document, so that a comment can go before or after the root value.
+    /// </summary>
+    Root,
+
     /// <summary>A JSON member's key.</summary>
     Key,
 

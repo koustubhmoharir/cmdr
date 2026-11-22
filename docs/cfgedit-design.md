@@ -240,8 +240,8 @@ The cursor is a (row, part) pair. Printable shortcuts apply only in the tree, ne
 | Space | Expand / collapse the row's node. On a leaf, toggles its parent. |
 | `*` / `-` | Expand the whole subtree / collapse to the parent |
 | Enter, F2 | Edit the focused part (inline). Values with newlines, or Ctrl+Enter, open the multi-line editor. |
-| a / A | Add after / before the focused node. On an attribute part this adds an attribute, otherwise a sibling node. |
-| i | Add a child (last), or an attribute when an XML element name is focused |
+| a / i | Add after / before the focused node. On a container's summary (`{n}`, `[n]`, and `{0}` on an empty XML element) add inside it: `a` last, `i` first. On the JSON root marker `$`, add a comment beside the root. On an attribute part this adds an attribute, otherwise a sibling node. |
+| A / I | Add a child last / first, from any part of an XML element or a JSON object or array |
 | d, Delete | Delete the focused node or attribute (undo restores it; no confirmation) |
 | Alt+Up/Down, K/J | Move the node among its siblings. Alt+Left/Right moves an attribute. |
 | t | Change the JSON value type / convert an XML text-only element to element content |
@@ -284,7 +284,7 @@ detail line.
   missing JSON cell takes the column's most common type.
 - `d` on a cell removes the key or attribute. `d` on the index column deletes the row.
 
-**Rows.** `a`/`A` adds a row after/before, copying the current row's shape with empty values. Alt+Up/Down moves a row.
+**Rows.** `a`/`i` adds a row after/before, copying the current row's shape with empty values. Alt+Up/Down moves a row.
 There is no sorting in phase 1, because sorting reorders the file.
 
 Undo, save, search and copy work as in the tree.

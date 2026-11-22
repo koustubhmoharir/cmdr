@@ -16,7 +16,7 @@ internal static class JsonModelBuilder
         }
 
         JsonValue value = document.Root;
-        root.AddChild(ValueNode(root, NodePath.Empty.Append(new ItemStep(0)), value, null, null, value.Start, value.End));
+        root.AddChild(ValueNode(root, NodePath.Empty.Append(new ItemStep(0)), value, null, null, value.Start, value.End, isRoot: true));
 
         foreach (JsonComment comment in document.Trailing)
         {
@@ -26,10 +26,17 @@ internal static class JsonModelBuilder
         return root;
     }
 
+    /// <summary>Builds the node of a JSON value, with its parts and, for a container, its entries.</summary>
+    /// <param name="isRoot">True for the document's root value, whose row starts with the zero-width <see cref="PartKind.Root"/> marker.</param>
     private static DocNode ValueNode(
-        DocNode parent, NodePath path, JsonValue value, JsonKey? key, int? index, int start, int end)
+        DocNode parent, NodePath path, JsonValue value, JsonKey? key, int? index, int start, int end, bool isRoot = false)
     {
         var parts = new List<DocPart>();
+        if (isRoot)
+        {
+            parts.Add(new DocPart(PartKind.Root, "$", false, false, start, start));
+        }
+
         if (key is not null)
         {
             parts.Add(new DocPart(PartKind.Key, key.Name, true, false, key.Start, key.End));

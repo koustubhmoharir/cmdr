@@ -28,7 +28,7 @@ public sealed class ConfigDocumentTests
         Assert.IsType<JsonDocument>(document.Syntax);
         string expected = """
             Document / [0,8)
-              JsonObject /Item(0) [0,8) json=Object Summary"1"[0,1)-
+              JsonObject /Item(0) [0,8) json=Object Root"$"[0,0)- Summary"1"[0,1)-
                 JsonScalar /Item(0)/Member("a", 0) [1,7) json=Number Key"a"[1,4)+ Value"1"[6,7)+
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
@@ -44,7 +44,7 @@ public sealed class ConfigDocumentTests
         Assert.Equal("utf-16", document.Source.Encoding.WebName);
         string expected = """
             Document / [0,6)
-              JsonArray /Item(0) [0,6) json=Array Summary"1"[0,1)-
+              JsonArray /Item(0) [0,6) json=Array Root"$"[0,0)- Summary"1"[0,1)-
                 JsonScalar /Item(0)/Item(0) [1,5) json=True Index"0"[1,1)- Value"true"[1,5)+
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));

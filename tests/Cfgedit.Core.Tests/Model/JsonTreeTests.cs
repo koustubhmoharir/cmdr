@@ -16,7 +16,7 @@ public sealed class JsonTreeTests
 
         string expected = """
             Document / [0,4)
-              JsonScalar /Item(0) [0,4) json=String Value"hi"[0,4)+
+              JsonScalar /Item(0) [0,4) json=String Root"$"[0,0)- Value"hi"[0,4)+
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
     }
@@ -28,7 +28,7 @@ public sealed class JsonTreeTests
 
         string expected = """
             Document / [0,2)
-              JsonArray /Item(0) [0,2) json=Array Summary"0"[0,1)-
+              JsonArray /Item(0) [0,2) json=Array Root"$"[0,0)- Summary"0"[0,1)-
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
     }
@@ -40,7 +40,7 @@ public sealed class JsonTreeTests
 
         string expected = """
             Document / [0,37)
-              JsonObject /Item(0) [0,37) json=Object Summary"3"[0,1)-
+              JsonObject /Item(0) [0,37) json=Object Root"$"[0,0)- Summary"3"[0,1)-
                 JsonScalar /Item(0)/Member("a", 0) [1,7) json=Number Key"a"[1,4)+ Value"1"[6,7)+
                 JsonArray /Item(0)/Member("b", 0) [9,26) json=Array Key"b"[9,12)+ Summary"2"[14,15)-
                   JsonScalar /Item(0)/Member("b", 0)/Item(0) [15,19) json=True Index"0"[15,15)- Value"true"[15,19)+
@@ -61,7 +61,7 @@ public sealed class JsonTreeTests
         string expected = """
             Document / [0,67)
               JsonComment /Comment(0) [0,7) Comment" head"[2,7)+
-              JsonObject /Item(0) [8,56) json=Object Summary"2"[8,9)-
+              JsonObject /Item(0) [8,56) json=Object Root"$"[8,8)- Summary"2"[8,9)-
                 JsonComment /Item(0)/Comment(0) [10,17) Comment" k "[12,15)+
                 JsonScalar /Item(0)/Member("a", 0) [18,24) json=Number Key"a"[18,21)+ Value"1"[23,24)+
                 JsonComment /Item(0)/Comment(1) [26,33) Comment" line"[28,33)+
@@ -80,7 +80,7 @@ public sealed class JsonTreeTests
 
         string expected = """
             Document / [0,40)
-              JsonObject /Item(0) [0,40) json=Object Summary"4"[0,1)-
+              JsonObject /Item(0) [0,40) json=Object Root"$"[0,0)- Summary"4"[0,1)-
                 JsonScalar /Item(0)/Member("a", 0) [2,8) json=String Key"a"[2,3)+ Value"x"[5,8)+
                 JsonScalar /Item(0)/Member("b", 0) [10,21) json=Number Key"b"[10,11)+ Value"Infinity"[13,21)+
                 JsonScalar /Item(0)/Member("c", 0) [23,30) json=Number Key"c"[23,24)+ Value"0x1F"[26,30)+
@@ -101,6 +101,26 @@ public sealed class JsonTreeTests
         Assert.Equal(NodePath.Empty, document.Root.Path);
         Assert.Equal(0, document.Root.Start);
         Assert.Equal(4, document.Root.End);
+    }
+
+    [Theory]
+    [InlineData("{}", PartKind.Summary)]
+    [InlineData("[1]", PartKind.Summary)]
+    [InlineData("\"s\"", PartKind.Value)]
+    public void Root_value_starts_with_a_zero_width_uneditable_marker_and_its_members_have_none(string text, PartKind second)
+    {
+        ConfigDocument document = ModelTestSupport.Parse(text, StrictJson);
+
+        DocNode root = Assert.Single(document.Root.Children);
+        DocPart marker = root.Parts[0];
+        Assert.Equal(PartKind.Root, marker.Kind);
+        Assert.Equal("$", marker.Value);
+        Assert.False(marker.Editable);
+        Assert.Equal(root.Start, marker.Start);
+        Assert.Equal(marker.Start, marker.End);
+        Assert.Equal(second, root.Parts[1].Kind);
+        Assert.Equal(2, root.Parts.Count);
+        Assert.All(root.Children, child => Assert.DoesNotContain(child.Parts, part => part.Kind == PartKind.Root));
     }
 
     [Fact]
@@ -128,8 +148,8 @@ public sealed class JsonTreeTests
 
         Assert.Equal(PartKind.Comment, Assert.Single(comment.Parts).Kind);
         Assert.True(Assert.Single(comment.Parts).Editable);
-        Assert.Equal(PartKind.Summary, root.Parts[0].Kind);
-        Assert.False(root.Parts[0].Editable);
+        Assert.Equal(PartKind.Summary, root.Parts[1].Kind);
+        Assert.False(root.Parts[1].Editable);
         Assert.Equal(PartKind.Key, member.Parts[0].Kind);
         Assert.True(member.Parts[0].Editable);
         Assert.Equal(PartKind.Summary, member.Parts[1].Kind);
@@ -147,7 +167,7 @@ public sealed class JsonTreeTests
 
         // Children of the root object: a comment, member x, a comment, member y.
         DocNode root = document.Root.Children[0];
-        Assert.Equal("2", root.Parts[0].Value);
+        Assert.Equal("2", root.Parts[1].Value);
         DocNode inner = root.Children[3];
         Assert.Equal("/Item(0)/Member(\"y\", 0)", inner.Path.ToString());
         Assert.Equal("0", inner.Parts[1].Value);

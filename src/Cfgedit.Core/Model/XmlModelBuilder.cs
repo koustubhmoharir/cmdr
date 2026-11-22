@@ -158,6 +158,13 @@ internal static class XmlModelBuilder
             endParts.Add(new DocPart(PartKind.EndName, endTag.Name, true, false, endTag.NameStart, endTag.NameStart + endTag.Name.Length));
         }
 
+        if (IsEmptyElement(element))
+        {
+            // The summary is zero-width and not editable. A self-closing element has no content start, so it sits at the element's end.
+            int at = element.IsEmpty ? element.End : element.StartTagEnd;
+            parts.Add(new DocPart(PartKind.Summary, "0", false, false, at, at));
+        }
+
         var node = new DocNode(NodeKind.XmlElement, path, parent, parts, endParts, element.Start, element.End, null);
         parent.AddChild(node);
 
@@ -198,6 +205,26 @@ internal static class XmlModelBuilder
         return element.Children.Count == 1
             && element.Children[0] is XmlTextSyntax text
             && !(text.IsWhitespace && text.Raw.AsSpan().IndexOfAny('\r', '\n') >= 0);
+    }
+
+    /// <summary>
+    /// An empty element: a self-closing one, <c>&lt;a&gt;&lt;/a&gt;</c>, or an element written across lines whose only content is
+    /// whitespace between markup. It has no child node and no text, so it gets a summary part, <c>{0}</c>. An element with text, or with
+    /// any child element, comment, CDATA or PI, does not.
+    /// </summary>
+    private static bool IsEmptyElement(XmlElementSyntax element)
+    {
+        if (element.IsEmpty)
+        {
+            return true;
+        }
+
+        if (IsTextOnly(element))
+        {
+            return element.Children.Count == 0;
+        }
+
+        return element.Children.All(child => child is XmlTextSyntax { IsWhitespace: true });
     }
 
     private static DocNode ReadOnlyNode(DocNode parent, NodeKind kind, PathStep step, XmlNodeSyntax syntax, string source)

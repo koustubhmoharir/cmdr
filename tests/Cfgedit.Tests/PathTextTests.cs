@@ -21,6 +21,17 @@ public sealed class PathTextTests
     }
 
     [Fact]
+    public void The_root_marker_has_the_root_path_and_the_kind_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("{\"x\": 1}", "json");
+        DocNode root = doc.Root.Children[0];
+
+        Assert.Equal("$", PathText.Format(doc, root, root.Parts[0]));
+        Assert.Equal("root", PathText.KindName(root, root.Parts[0]));
+        Assert.Equal("object", PathText.KindName(root, root.Parts[1]));
+    }
+
+    [Fact]
     public void Json_duplicate_keys_after_the_first_carry_their_one_based_occurrence()
     {
         ConfigDocument doc = TreeFixtures.Parse("{\"port\": 1, \"port\": 2, \"a b\": 3, \"a b\": 4}", "json");
@@ -173,6 +184,17 @@ public sealed class PathTextTests
 
         Assert.Equal("/r", PathText.Format(doc, element, text));
         Assert.Equal("text", PathText.KindName(element, text));
+    }
+
+    [Fact]
+    public void Xml_empty_element_summary_is_the_element_path_with_kind_element()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("<r><c/></r>", "xml");
+        DocNode element = TreeFixtures.Find(doc, new ElementStep("r", 0), new ElementStep("c", 0));
+        DocPart summary = element.Parts.Single(part => part.Kind == PartKind.Summary);
+
+        Assert.Equal("/r/c", PathText.Format(doc, element, summary));
+        Assert.Equal("element", PathText.KindName(element, summary));
     }
 
     [Fact]

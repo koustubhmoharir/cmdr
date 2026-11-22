@@ -8,12 +8,12 @@ using Terminal.Gui.Views;
 
 namespace Cfgedit.Tests;
 
-/// <summary>The structure keys of the tree (a, A, i, +, d, moves, t, Ctrl+D), with the resulting document text asserted exactly.</summary>
+/// <summary>The structure keys of the tree (a, i, A, I, +, d, moves, t, Ctrl+D), with the resulting document text asserted exactly.</summary>
 public sealed partial class EditingWindowTests
 {
     private const string Config = "<configuration>\n  <add key=\"a\" value=\"1\"/>\n</configuration>";
 
-    // ----- a and A -----
+    // ----- a and i (siblings, and the ends of a container) -----
 
     [Fact]
     public void a_on_an_XML_element_copies_its_shape_and_opens_the_value_of_its_first_attribute()
@@ -36,7 +36,7 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void A_on_an_XML_element_inserts_a_copy_before_it_and_its_attached_comment_stays_with_it()
+    public void i_on_an_XML_element_inserts_a_copy_before_it_and_its_attached_comment_stays_with_it()
     {
         OpenedFile file = Open("app.config", "<configuration>\n  <!-- about add -->\n  <add key=\"a\"/>\n</configuration>");
 
@@ -46,7 +46,7 @@ public sealed partial class EditingWindowTests
             24,
             null,
             null,
-            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, new Key('A')),
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, new Key('i')),
             (_, w) => Keys(w, Key.Enter));
 
         Assert.Equal("<configuration>\n  <add key=\"\"/>\n  <!-- about add -->\n  <add key=\"a\"/>\n</configuration>", Text(session));
@@ -140,7 +140,7 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void A_on_a_JSON_member_with_a_key_that_exists_keeps_the_dialog_open_with_the_error()
+    public void i_on_a_JSON_member_with_a_key_that_exists_keeps_the_dialog_open_with_the_error()
     {
         OpenedFile file = Open("settings.json", JsonText);
         string? error = null;
@@ -168,7 +168,7 @@ public sealed partial class EditingWindowTests
                         add.NameField.Text = "speed";
                     },
                     "OK");
-                Keys(w, Key.CursorDown, new Key('A'));
+                Keys(w, Key.CursorDown, new Key('i'));
                 dialog.Finish();
             });
 
@@ -208,7 +208,7 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void A_on_an_attribute_part_inserts_the_attribute_before_it()
+    public void i_on_an_attribute_part_inserts_the_attribute_before_it()
     {
         OpenedFile file = Open("app.config", Config);
 
@@ -221,7 +221,7 @@ public sealed partial class EditingWindowTests
             (app, w) =>
             {
                 using var dialog = new DialogWatch(app, "the attribute name dialog", v => v is TextPromptDialog, v => ((TextPromptDialog)v).Field.Text = "first", "OK");
-                Keys(w, Key.CursorDown, Key.CursorRight, Key.CursorRight, new Key('A'));
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.CursorRight, new Key('i'));
                 dialog.Finish();
             },
             (_, w) => Type(w, "0"),
@@ -233,7 +233,7 @@ public sealed partial class EditingWindowTests
     // ----- i and + -----
 
     [Fact]
-    public void i_on_the_text_of_a_text_only_element_asks_for_a_child_and_appends_it_last()
+    public void A_on_the_text_of_a_text_only_element_asks_for_a_child_and_appends_it_last()
     {
         OpenedFile file = Open("app.config", "<configuration>\n  <note>hello</note>\n</configuration>");
 
@@ -248,7 +248,7 @@ public sealed partial class EditingWindowTests
                 using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "b", "OK");
 
                 // i adds a child from any part of the element; the cursor is on its text part here.
-                Keys(w, Key.CursorDown, Key.CursorRight, new Key('i'));
+                Keys(w, Key.CursorDown, Key.CursorRight, new Key('A'));
                 dialog.Finish();
             });
 
@@ -256,7 +256,7 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void i_on_the_name_of_a_self_closing_element_adds_a_child_element()
+    public void A_on_the_name_of_a_self_closing_element_adds_a_child_element()
     {
         OpenedFile file = Open("app.config", "<configuration>\n  <a/>\n</configuration>");
 
@@ -269,11 +269,101 @@ public sealed partial class EditingWindowTests
             (app, w) =>
             {
                 using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "b", "OK");
-                Keys(w, Key.CursorDown, new Key('i'));
+                Keys(w, Key.CursorDown, new Key('A'));
                 dialog.Finish();
             });
 
         Assert.Equal("<configuration>\n  <a>\n    <b />\n  </a>\n</configuration>", Text(session));
+    }
+
+    [Fact]
+    public void a_on_the_summary_of_a_self_closing_element_asks_for_a_child_and_adds_it_last()
+    {
+        OpenedFile file = Open("app.config", "<configuration>\n  <a/>\n</configuration>");
+        string? title = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the add dialog",
+                    v => v is AddDialog,
+                    v =>
+                    {
+                        title = ((AddDialog)v).Title;
+                        ((AddDialog)v).NameField.Text = "b";
+                    },
+                    "OK");
+
+                // Down reaches the element, and Right its summary, the {0} after the tag.
+                Keys(w, Key.CursorDown, Key.CursorRight, new Key('a'));
+                dialog.Finish();
+            });
+
+        Assert.Equal("Add to /configuration/a", title);
+        Assert.Equal("<configuration>\n  <a>\n    <b />\n  </a>\n</configuration>", Text(session));
+        Assert.Equal(new ElementStep("b", 0), session.Window.Tree.CursorNode!.Path.Steps[^1]);
+    }
+
+    [Fact]
+    public void i_on_the_summary_of_an_empty_element_with_an_end_tag_adds_a_child_first()
+    {
+        OpenedFile file = Open("app.config", "<configuration>\n  <a></a>\n</configuration>");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "b", "OK");
+
+                // End reaches the last part, the summary after the closing tag.
+                Keys(w, Key.CursorDown, Key.End, new Key('i'));
+                dialog.Finish();
+            });
+
+        Assert.Equal("<configuration>\n  <a>\n    <b />\n  </a>\n</configuration>", Text(session));
+    }
+
+    [Fact]
+    public void The_summary_of_an_empty_element_shows_element_as_its_kind_in_the_detail_line()
+    {
+        OpenedFile file = Open("app.config", "<configuration>\n  <a/>\n</configuration>");
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorRight));
+
+        Assert.Equal(PartKind.Summary, session.Window.Tree.CursorDocPart!.Kind);
+        Assert.StartsWith("/configuration/a  element  0", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void a_on_the_name_of_an_empty_element_with_a_sibling_copies_the_sibling_shape_with_no_dialog()
+    {
+        OpenedFile file = Open("app.config", "<configuration>\n  <add key=\"k\" value=\"v\"/>\n  <add key=\"k\" value=\"v\"/>\n</configuration>");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, new Key('a')),
+            (_, w) => AssertEditing(w),
+            (_, w) => Type(w, "x"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal(
+            "<configuration>\n  <add key=\"k\" value=\"v\"/>\n  <add key=\"x\" value=\"\"/>\n  <add key=\"k\" value=\"v\"/>\n</configuration>",
+            Text(session));
     }
 
     [Fact]
@@ -311,7 +401,131 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void i_on_a_JSON_object_adds_a_member_at_the_end_and_opens_its_string_value()
+    public void A_on_a_JSON_object_adds_a_member_at_the_end_and_opens_its_string_value()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "host", "OK");
+                Keys(w, new Key('A'));
+                dialog.Finish();
+            },
+            (_, w) => Type(w, "example"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal("{\n  \"name\": \"web\",\n  \"port\": 8080,\n  \"host\": \"example\"\n}", Text(session));
+    }
+
+    [Fact]
+    public void A_on_a_JSON_array_adds_an_item_at_the_end()
+    {
+        OpenedFile file = Open("list.json", "[1]");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, null, "OK");
+                Keys(w, new Key('A'));
+                dialog.Finish();
+            },
+            (_, w) => Type(w, "x"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal("[1, \"x\"]", Text(session));
+    }
+
+    [Fact]
+    public void I_on_a_JSON_array_adds_an_item_at_the_start()
+    {
+        OpenedFile file = Open("list.json", "[1]");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, null, "OK");
+                Keys(w, new Key('I'));
+                dialog.Finish();
+            },
+            (_, w) => Type(w, "x"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal("[\"x\", 1]", Text(session));
+    }
+
+    [Fact]
+    public void I_on_an_XML_element_adds_a_first_child()
+    {
+        OpenedFile file = Open("app.config", Config);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "first", "OK");
+                Keys(w, new Key('I'));
+                dialog.Finish();
+            });
+
+        Assert.Equal("<configuration>\n  <first/>\n  <add key=\"a\" value=\"1\"/>\n</configuration>", Text(session));
+    }
+
+    [Fact]
+    public void I_on_a_JSON_member_says_that_it_has_no_children()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('I')));
+
+        Assert.Equal(JsonText, Text(session));
+        Assert.Equal("this node has no children", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void i_on_a_JSON_member_key_adds_a_member_before_it()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "speed", "OK");
+                Keys(w, Key.CursorDown, new Key('i'));
+                dialog.Finish();
+            },
+            (_, w) => Type(w, "x"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal("{\n  \"speed\": \"x\",\n  \"name\": \"web\",\n  \"port\": 8080\n}", Text(session));
+    }
+
+    [Fact]
+    public void i_on_a_JSON_object_summary_adds_a_member_at_the_start_and_opens_its_string_value()
     {
         OpenedFile file = Open("settings.json", JsonText);
 
@@ -330,13 +544,13 @@ public sealed partial class EditingWindowTests
             (_, w) => Type(w, "example"),
             (_, w) => Keys(w, Key.Enter));
 
-        Assert.Equal("{\n  \"name\": \"web\",\n  \"port\": 8080,\n  \"host\": \"example\"\n}", Text(session));
+        Assert.Equal("{\n  \"host\": \"example\",\n  \"name\": \"web\",\n  \"port\": 8080\n}", Text(session));
     }
 
     [Fact]
-    public void i_on_a_JSON_array_adds_an_item_at_the_end()
+    public void a_on_a_JSON_object_summary_adds_a_member_at_the_end_and_opens_its_string_value()
     {
-        OpenedFile file = Open("list.json", "[1]");
+        OpenedFile file = Open("settings.json", JsonText);
 
         Session session = Run(
             file,
@@ -346,14 +560,173 @@ public sealed partial class EditingWindowTests
             null,
             (app, w) =>
             {
-                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, null, "OK");
-                Keys(w, new Key('i'));
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).NameField.Text = "host", "OK");
+                Keys(w, new Key('a'));
                 dialog.Finish();
             },
-            (_, w) => Type(w, "x"),
+            (_, w) => Type(w, "example"),
             (_, w) => Keys(w, Key.Enter));
 
-        Assert.Equal("[1, \"x\"]", Text(session));
+        Assert.Equal("{\n  \"name\": \"web\",\n  \"port\": 8080,\n  \"host\": \"example\"\n}", Text(session));
+    }
+
+    [Fact]
+    public void A_new_empty_JSON_document_starts_on_its_summary_so_that_a_asks_for_its_first_key()
+    {
+        OpenedFile file = Open("settings.json", "{}");
+
+        Session session = Run(file, 80, 24, null, null);
+
+        Assert.Equal(0, session.Window.Tree.CursorRow);
+        Assert.Equal(1, session.Window.Tree.CursorPart);
+        Assert.Equal("$  object  0", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void a_on_an_empty_JSON_document_asks_for_its_first_key_and_adds_the_member()
+    {
+        OpenedFile file = Open("settings.json", "{}");
+        string? title = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the add dialog",
+                    v => v is AddDialog,
+                    v =>
+                    {
+                        title = ((AddDialog)v).Title;
+                        ((AddDialog)v).NameField.Text = "k";
+                    },
+                    "OK");
+                Keys(w, new Key('a'));
+                dialog.Finish();
+            },
+            (_, w) => Type(w, "v"),
+            (_, w) => Keys(w, Key.Enter));
+
+        Assert.Equal("Add to $", title);
+        Assert.Equal("{\"k\": \"v\"}", Text(session));
+    }
+
+    [Fact]
+    public void Left_from_the_root_summary_reaches_the_root_marker_and_a_there_adds_a_comment_after_the_root()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).TextField.Text = " after", "OK");
+                Keys(w, Key.CursorLeft, new Key('a'));
+                dialog.Finish();
+            },
+            (_, w) => Keys(w, Key.Esc));
+
+        Assert.Equal(JsonText + "\n// after", Text(session));
+    }
+
+    [Fact]
+    public void i_on_the_root_marker_adds_a_comment_before_the_root()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the add dialog", v => v is AddDialog, v => ((AddDialog)v).TextField.Text = " before", "OK");
+                Keys(w, Key.CursorLeft, new Key('i'));
+                dialog.Finish();
+            },
+            (_, w) => Keys(w, Key.Esc));
+
+        Assert.Equal("// before\n" + JsonText, Text(session));
+    }
+
+    [Fact]
+    public void a_on_the_root_marker_of_strict_JSON_says_that_it_has_no_comments_and_changes_nothing()
+    {
+        OpenedFile file = OpenStrict("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorLeft, new Key('a')));
+
+        Assert.Equal(JsonText, Text(session));
+        Assert.Equal("strict JSON has no comments, so nothing can be added beside the root", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void Down_then_Up_from_a_member_returns_to_the_root_summary_and_a_there_adds_to_the_root_object()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+        string? title = null;
+        int part = -1;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the add dialog",
+                    v => v is AddDialog,
+                    v =>
+                    {
+                        title = ((AddDialog)v).Title;
+                        part = w.Tree.CursorPart;
+                    },
+                    "Cancel");
+                Keys(w, Key.CursorDown, Key.CursorUp, new Key('a'));
+                dialog.Finish();
+            });
+
+        // The marker is not a column for up and down: Up lands on the summary, the part after the marker, not on the marker.
+        Assert.Equal("Add to $", title);
+        Assert.Equal(1, part);
+        Assert.Equal(JsonText, Text(session));
+    }
+
+    [Fact]
+    public void Ctrl_T_and_back_with_the_root_row_focused_leaves_the_cursor_on_the_root_summary()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.T.WithCtrl), (_, w) => Keys(w, Key.F5));
+
+        Assert.Equal(0, session.Window.Tree.CursorRow);
+        Assert.Equal(1, session.Window.Tree.CursorPart);
+        Assert.Equal("$  object  2", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void Left_to_the_root_marker_shows_root_as_its_kind_in_the_detail_line()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorLeft));
+
+        Assert.Equal(0, session.Window.Tree.CursorPart);
+        Assert.Equal("$  root", session.Screens[^1].Text(22));
     }
 
     // ----- d and Delete -----
@@ -718,7 +1091,7 @@ public sealed partial class EditingWindowTests
                         PressButton(v, "Cancel");
                     },
                     null);
-                Keys(w, Key.CursorDown, Key.CursorRight, new Key('i'));
+                Keys(w, Key.CursorDown, Key.CursorRight, new Key('A'));
                 dialog.Finish();
             });
 
@@ -769,6 +1142,13 @@ public sealed partial class EditingWindowTests
         Assert.NotNull(nameShown);
         Assert.True(nameShown!.RowOf("Name:") < nameShown.RowOf("Cancel"), Drawn(nameShown));
         Assert.Equal(nameShown.RowOf("Cancel"), nameShown.RowOf("OK"));
+    }
+
+    /// <summary>Opens a file as strict JSON, whatever its name says: a .json file is JSONC by default.</summary>
+    private OpenedFile OpenStrict(string name, string text)
+    {
+        OpenedFile plain = Open(name, text);
+        return new OpenedFile(plain.Path, DocumentFile.Open(plain.Path, Formats.FromName("json")!));
     }
 
     private static void AssertEditing(MainWindow window)

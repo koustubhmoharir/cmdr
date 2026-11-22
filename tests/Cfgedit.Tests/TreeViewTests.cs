@@ -26,7 +26,7 @@ public sealed class TreeViewTests
 
     private static readonly string[] JsonRows =
     [
-        "\x25BE {4}",
+        "\x25BE $ {4}",
         "    name: web",
         "    port: 8080",
         "  \x25BE tags: [2]",
@@ -79,7 +79,7 @@ public sealed class TreeViewTests
 
         TerminalScreen screen = Draw(View(text, "jsonc"))[0];
 
-        Assert.Equal("\x25BE {1}", screen.Text(0));
+        Assert.Equal("\x25BE $ {1}", screen.Text(0));
         Assert.Equal("    // note", screen.Text(1).TrimEnd());
         Assert.True(screen.At("note").Style.HasFlag(TextStyle.Faint));
         Assert.True(screen.At("//").Style.HasFlag(TextStyle.Faint));
@@ -94,7 +94,7 @@ public sealed class TreeViewTests
 
         TerminalScreen screen = Draw(View(text, "json5"))[0];
 
-        Assert.Equal(new[] { "\x25BE {2}", "    a: x", "    b: 0x1F" }, Rows(screen, 3));
+        Assert.Equal(new[] { "\x25BE $ {2}", "    a: x", "    b: 0x1F" }, Rows(screen, 3));
     }
 
     [Fact]
@@ -109,10 +109,10 @@ public sealed class TreeViewTests
             {
                 "\x25BE <configuration>",
                 "  \x25BE <appSettings>",
-                "      <add key=\"Env\" value=\"Prod\"/>",
+                "      <add key=\"Env\" value=\"Prod\"/> {0}",
                 "    </appSettings>",
                 "    <note>hello</note>",
-                "    <empty/>",
+                "    <empty/> {0}",
                 "  </configuration>",
             },
             Rows(screen, 7));
@@ -150,14 +150,15 @@ public sealed class TreeViewTests
         const string text = "<add key=\"ConnectionString\" value=\"Server=db;Database=app\" timeout=\"30\"/>";
         var view = View(text, "xml");
 
-        TerminalScreen screen = DrawAt(view, 40, 4, v => Press(v, Key.End))[^1];
+        // End goes to the element's last part, its summary, so Left goes back to the last attribute value.
+        TerminalScreen screen = DrawAt(view, 40, 4, v => Press(v, Key.End), v => Press(v, Key.CursorLeft))[^1];
 
         Assert.Equal(
             new[]
             {
                 "  <add key=\"ConnectionString\"",
                 "       value=\"Server=db;Database=app\"",
-                "       timeout=\"30\"/>",
+                "       timeout=\"30\"/> {0}",
             },
             Rows(screen, 3));
         Assert.Equal("30", Reversed(screen));
@@ -270,14 +271,34 @@ public sealed class TreeViewTests
     }
 
     [Fact]
-    public void Left_on_the_first_part_of_the_root_row_does_nothing()
+    public void Left_from_the_root_summary_reaches_the_marker_and_a_second_left_does_nothing()
     {
+        // The cursor opens on the summary, the part after the root marker. Left reaches the marker, which is the first part.
         var view = View(JsonSample, "json");
 
-        List<TerminalScreen> screens = Draw(view, v => Press(v, Key.CursorLeft));
+        List<TerminalScreen> screens = Draw(view, v => Press(v, Key.CursorLeft), v => Press(v, Key.CursorLeft));
 
-        Assert.Equal("{4}", Reversed(screens[1]));
+        Assert.Equal("$", Reversed(screens[1]));
+        Assert.Equal("$", Reversed(screens[2]));
         Assert.Equal(0, view.CursorRow);
+    }
+
+    [Fact]
+    public void Down_from_the_marker_lands_on_the_first_members_key_and_up_from_that_key_lands_on_the_summary()
+    {
+        // The marker is not a column for up and down: from it, Down keeps the first part (the key), and Up onto the root row takes the summary.
+        var view = View(JsonSample, "json");
+
+        List<TerminalScreen> screens = Draw(
+            view,
+            v => Press(v, Key.CursorLeft),
+            v => Press(v, Key.CursorLeft),
+            v => Press(v, Key.CursorDown),
+            v => Press(v, Key.CursorUp));
+
+        Assert.Equal("$", Reversed(screens[2]));
+        Assert.Equal("name", Reversed(screens[3]));
+        Assert.Equal("{4}", Reversed(screens[4]));
     }
 
     [Fact]
@@ -309,8 +330,9 @@ public sealed class TreeViewTests
             v => Press(v, (Key)'G'),
             v => Press(v, (Key)'g'));
 
+        // $ is the end, the summary; 0 is the home, the marker, which is the root row's first part.
         Assert.Equal("{4}", Reversed(screens[1]));
-        Assert.Equal("{4}", Reversed(screens[2]));
+        Assert.Equal("$", Reversed(screens[2]));
         Assert.Equal("empty", Reversed(screens[3]));
         Assert.Equal("{4}", Reversed(screens[4]));
         Assert.Equal(0, view.CursorRow);
@@ -356,7 +378,7 @@ public sealed class TreeViewTests
         // Lines: 0 root, 1-3 the wrapped add, 4 x, 5 y, 6 the end of root. Page down from line 0 moves the top to line 3 and the cursor to
         // the row at its screen position, line 4. The next page is at the end, so the cursor goes to the last row.
         Assert.Equal("add", Reversed(screens[1]));
-        Assert.Equal(new[] { "         timeout=\"30\"/>", "    <x/>", "    <y/>", "  </root>" }, Rows(screens[2], 4));
+        Assert.Equal(new[] { "         timeout=\"30\"/> {0}", "    <x/> {0}", "    <y/> {0}", "  </root>" }, Rows(screens[2], 4));
         Assert.Equal("x", Reversed(screens[2]));
         Assert.Equal("root", Reversed(screens[3]));
         Assert.Equal(4, view.CursorRow);
@@ -372,7 +394,7 @@ public sealed class TreeViewTests
         List<TerminalScreen> screens = Draw(view, v => Press(v, (Key)'*'));
 
         Assert.Equal("      \x25B8 c: {1}", screens[0].Text(3));
-        Assert.Equal("\x25BE {1}", screens[1].Text(0));
+        Assert.Equal("\x25BE $ {1}", screens[1].Text(0));
         Assert.Equal("  \x25BE a: {1}", screens[1].Text(1));
         Assert.Equal("    \x25BE b: {1}", screens[1].Text(2));
         Assert.Equal("      \x25BE c: {1}", screens[1].Text(3));
@@ -390,7 +412,7 @@ public sealed class TreeViewTests
             v => Press(v, Key.Space),
             v => Press(v, Key.Space));
 
-        Assert.Equal("\x25B8 {4}", screens[1].Text(0));
+        Assert.Equal("\x25B8 $ {4}", screens[1].Text(0));
         Assert.Equal(string.Empty, screens[1].Text(1));
         Assert.Equal(JsonRows, Rows(screens[2], JsonRows.Length));
     }
@@ -405,7 +427,7 @@ public sealed class TreeViewTests
             v => Press(v, Key.CursorDown),
             v => Press(v, Key.Space));
 
-        Assert.Equal("\x25B8 {4}", screens[2].Text(0));
+        Assert.Equal("\x25B8 $ {4}", screens[2].Text(0));
         Assert.Equal(string.Empty, screens[2].Text(1));
         Assert.Equal("{4}", Reversed(screens[2]));
         Assert.Equal(0, view.CursorRow);
@@ -541,7 +563,7 @@ public sealed class TreeViewTests
 
         Assert.Equal(new[] { "  \x25BE tags: [2]", "      0: a", "      1: b" }, Rows(screens[1], 3));
         Assert.Equal("tags", Reversed(screens[1]));
-        Assert.Equal(new[] { "\x25BE {4}", "    name: web", "    port: 8080" }, Rows(screens[2], 3));
+        Assert.Equal(new[] { "\x25BE $ {4}", "    name: web", "    port: 8080" }, Rows(screens[2], 3));
         Assert.Equal("port", Reversed(screens[2]));
         Assert.Equal(0, view.TopLine);
     }

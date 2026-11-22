@@ -96,6 +96,28 @@ public sealed class EditRulesTests
         Assert.Equal(EditRules.CannotEdit, EditRules.RefusalOf(index));
     }
 
+    [Fact]
+    public void The_summary_of_an_empty_XML_element_cannot_be_edited_and_says_so()
+    {
+        ConfigDocument document = TreeFixtures.Parse("<r><c/></r>", "xml");
+        DocNode element = TreeFixtures.Find(document, new ElementStep("r", 0), new ElementStep("c", 0));
+        DocPart summary = element.Parts.Single(part => part.Kind == PartKind.Summary);
+
+        Assert.Equal(EditorKind.None, EditRules.KindOf(element, summary));
+        Assert.Equal(EditRules.CannotEdit, EditRules.RefusalOf(summary));
+    }
+
+    [Fact]
+    public void The_root_marker_cannot_be_edited_and_says_so()
+    {
+        ConfigDocument document = TreeFixtures.Parse("{}", "json");
+        DocNode root = TreeFixtures.Find(document, new ItemStep(0));
+        DocPart marker = root.Parts.Single(part => part.Kind == PartKind.Root);
+
+        Assert.Equal(EditorKind.None, EditRules.KindOf(root, marker));
+        Assert.Equal(EditRules.CannotEdit, EditRules.RefusalOf(marker));
+    }
+
     private static DocPart ValueOf(ConfigDocument document, string key)
     {
         DocNode node = TreeFixtures.Find(document, new ItemStep(0), new MemberStep(key, 0));

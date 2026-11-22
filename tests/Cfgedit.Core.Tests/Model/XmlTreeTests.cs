@@ -10,8 +10,8 @@ public sealed class XmlTreeTests
     [Fact]
     public void Declaration_and_text_only_elements_are_shaped_as_described()
     {
-        // Text-only: b (empty, <b></b>), c (text x), d (whitespace-only text). Self-closing: a. The root has element children,
-        // so it has an end row.
+        // Text-only: b (empty, <b></b>), c (text x), d (whitespace-only text). Self-closing: a. The empty ones, a and b, end with a
+        // zero-width summary. The root has element children, so it has an end row.
         const string text = "<?xml version=\"1.0\"?>\n<r><a/><b></b><c>x</c><d> </d></r>";
         ConfigDocument document = ModelTestSupport.Parse(text, Xml);
 
@@ -19,8 +19,8 @@ public sealed class XmlTreeTests
             Document / [0,56)
               XmlDeclaration /Declaration [0,21) ReadOnly"<?xml version="1.0"?>"[0,21)-
               XmlElement /Element("r", 0) [22,56) ElementName"r"[23,24)+ end:EndName"r"[54,55)+
-                XmlElement /Element("r", 0)/Element("a", 0) [25,29) ElementName"a"[26,27)+
-                XmlElement /Element("r", 0)/Element("b", 0) [29,36) ElementName"b"[30,31)+ Text""[32,32)+
+                XmlElement /Element("r", 0)/Element("a", 0) [25,29) ElementName"a"[26,27)+ Summary"0"[29,29)-
+                XmlElement /Element("r", 0)/Element("b", 0) [29,36) ElementName"b"[30,31)+ Text""[32,32)+ Summary"0"[32,32)-
                 XmlElement /Element("r", 0)/Element("c", 0) [36,44) ElementName"c"[37,38)+ Text"x"[39,40)+
                 XmlElement /Element("r", 0)/Element("d", 0) [44,52) ElementName"d"[45,46)+ Text" "[47,48)+
             """;
@@ -40,9 +40,9 @@ public sealed class XmlTreeTests
               XmlElement /Element("r", 0) [0,49) ElementName"r"[1,2)+ end:EndName"r"[47,48)+
                 XmlText /Element("r", 0)/Text(0) [3,4) Text"a"[3,4)+
                 XmlComment /Element("r", 0)/Comment(0) [4,12) Comment"c"[8,9)+
-                XmlElement /Element("r", 0)/Element("x", 0) [12,16) ElementName"x"[13,14)+
+                XmlElement /Element("r", 0)/Element("x", 0) [12,16) ElementName"x"[13,14)+ Summary"0"[16,16)-
                 XmlText /Element("r", 0)/Text(1) [16,17) Text"b"[16,17)+
-                XmlElement /Element("r", 0)/Element("x", 1) [17,21) ElementName"x"[18,19)+
+                XmlElement /Element("r", 0)/Element("x", 1) [17,21) ElementName"x"[18,19)+ Summary"0"[21,21)-
                 XmlCData /Element("r", 0)/Text(2) [21,34) Text"d"[30,31)+
                 XmlProcessingInstruction /Element("r", 0)/PI(0) [34,44) PITarget"p"[36,37)+ PIData"q  "[39,42)+
             """;
@@ -56,9 +56,38 @@ public sealed class XmlTreeTests
 
         string expected = """
             Document / [0,22)
-              XmlElement /Element("e", 0) [0,22) ElementName"e"[1,2)+ AttributeName#0"a"[3,4)+ AttributeValue#0"1"[6,7)+ AttributeName#1"b"[9,10)+ AttributeValue#1"x&y"[12,19)+
+              XmlElement /Element("e", 0) [0,22) ElementName"e"[1,2)+ AttributeName#0"a"[3,4)+ AttributeValue#0"1"[6,7)+ AttributeName#1"b"[9,10)+ AttributeValue#1"x&y"[12,19)+ Summary"0"[22,22)-
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
+    }
+
+    [Theory]
+    [InlineData("<a/>")]
+    [InlineData("<a></a>")]
+    [InlineData("<a>\n</a>")]
+    public void Empty_element_ends_with_a_zero_width_summary(string text)
+    {
+        ConfigDocument document = ModelTestSupport.Parse(text, Xml);
+
+        DocNode element = document.Root.Children[0];
+        DocPart summary = element.Parts[^1];
+        Assert.Equal(PartKind.Summary, summary.Kind);
+        Assert.Equal("0", summary.Value);
+        Assert.False(summary.Editable);
+        Assert.Equal(summary.Start, summary.End);
+    }
+
+    [Theory]
+    [InlineData("<a>x</a>")]
+    [InlineData("<a><b/></a>")]
+    [InlineData("<a><!--c--></a>")]
+    [InlineData("<a> </a>")]
+    public void Element_with_content_has_no_summary(string text)
+    {
+        ConfigDocument document = ModelTestSupport.Parse(text, Xml);
+
+        DocNode element = document.Root.Children[0];
+        Assert.DoesNotContain(element.Parts, part => part.Kind == PartKind.Summary);
     }
 
     [Fact]
@@ -68,7 +97,7 @@ public sealed class XmlTreeTests
 
         string expected = """
             Document / [0,11)
-              XmlElement /Element("s", 0) [0,11) ElementName"s"[1,2)+ end:EndName"s"[9,10)+
+              XmlElement /Element("s", 0) [0,11) ElementName"s"[1,2)+ Summary"0"[3,3)- end:EndName"s"[9,10)+
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
     }
@@ -106,7 +135,7 @@ public sealed class XmlTreeTests
         string expected = """
             Document / [0,15)
               XmlElement /Element("r", 0) [0,15) ElementName"r"[1,2)+ end:EndName"r"[13,14)+
-                XmlElement /Element("r", 0)/Element("a", 0) [6,10) ElementName"a"[7,8)+
+                XmlElement /Element("r", 0)/Element("a", 0) [6,10) ElementName"a"[7,8)+ Summary"0"[10,10)-
             """;
         Assert.Equal(expected, ModelTestSupport.Dump(document.Root));
     }

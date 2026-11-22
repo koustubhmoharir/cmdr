@@ -936,14 +936,18 @@ model). It suppresses the obsolete warning as cmdr does.
 
 **Structure keys** (design table):
 
-- **`a` / `A`** add after / before the focused node, using `InsertionIndexAfter/Before`.
+- **`a` / `i`** add after / before the focused node, using `InsertionIndexAfter/Before`. On a container's summary part
+  (`{n}`, `[n]`, and the `{0}` of an empty XML element, which `XmlModelBuilder` gives a zero-width `PartKind.Summary` part) they add
+  inside it: `a` at the end, `i` at the start. On the JSON root's `PartKind.Root` marker (`$`) they
+  add beside the root value, in the document.
   - On an attribute part they add an attribute: a dialog asks for the name, then the value is edited inline.
   - XML element, JSON object item, or JSON scalar item with a sibling: no dialog. The new node copies the sibling's shape
     with empty values, as TableModel.AddRow does (reuse its logic), and the first empty value is opened in the inline
     editor.
   - JSON member: a dialog asks for the key and type, and the value editor opens next for string and number.
   - Anything else: a dialog with the kinds allowed there.
-- **`i`** adds a child at the end (an element's or container's last child) from any part of the node, so `<a/>` can get one too.
+- **`A` / `I`** add a child as the last / first child of an element or container, from any part of the node, so `<a/>` can
+  get one too.
   **`+`** adds an attribute to the focused element.
 - **`d` / Delete** delete the focused attribute when an attribute part is focused, otherwise the node, with no
   confirmation.

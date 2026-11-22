@@ -56,7 +56,7 @@ or Ctrl+Q quits.
 │                   batch="true"/>                                │
 ╰─────────────────────────────────────────────────────────────────╯
 /configuration/appSettings/add[1]/@value  attribute  Production
-Enter Edit  ^S Save  / Find  a Add  d Del  t Type  ^Z Undo  …^Q Quit
+Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  …^Q Quit
 ```
 
 Each row has one or more parts: a JSON key and its value, an XML element name and each attribute's name and value, a
@@ -79,8 +79,8 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | `*` / `-` | Unfold the whole subtree / fold the parent |
 | Enter, F2 | Edit the part. On `true`, `false` or `null`, choose the type instead |
 | Tab, Shift+Tab | Next / previous editable part |
-| `a` / `A` | Add after / before. Next to a similar sibling the new entry copies its shape (`<add key="" value=""/>`); otherwise a dialog asks what to add |
-| `i` | Add a child at the end |
+| `a` / `i` | Add after / before. On a container's `{n}` or `[n]`, add inside it (`a` last, `i` first). An empty XML element shows `{0}` after its tag, and `a` / `i` on it add a child. On the `$` marker of a JSON document, add a comment after / before the root. Next to a similar sibling the new entry copies its shape (`<add key="" value=""/>`); otherwise a dialog asks what to add |
+| `A` / `I` | Add a child last / first, from any part of an XML element or a JSON object or array |
 | `+` | Add an attribute to the element |
 | `d`, Delete | Delete the node, or the attribute under the cursor (undo restores it) |
 | Alt+Up/Down, K/J | Move the node among its siblings, with its comments |
@@ -117,7 +117,7 @@ element, and for the text). Esc returns to the tree.
 | Arrows, hjkl | Move between cells |
 | Enter, F2 | Edit the cell; editing an empty cell (`·`) adds that key or attribute to the row |
 | `d` | Clear the cell (remove the key or attribute); on the `#` column, delete the row |
-| `a` / `A` | Add a row after / before, shaped like the current one |
+| `a` / `i` | Add a row after / before, shaped like the current one |
 | Alt+Up/Down | Move the row |
 | Enter on `{n}`, `[n]`, `<…>` | Open that nested value in the tree |
 

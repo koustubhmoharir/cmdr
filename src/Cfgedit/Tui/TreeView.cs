@@ -92,7 +92,10 @@ internal sealed class TreeView : View
     /// <summary>The index of the focused part among the row's parts (its end parts on an end row).</summary>
     internal int CursorPart => _part;
 
-    /// <summary>The part index the cursor returns to when a row has that many parts.</summary>
+    /// <summary>
+    /// The part index the cursor returns to when a row has that many parts. It does not count a JSON root marker, so that Up and Down keep
+    /// the same column whether a row has the marker or not.
+    /// </summary>
     internal int PreferredPart => _preferred;
 
     /// <summary>The first display line in the viewport.</summary>
@@ -169,7 +172,7 @@ internal sealed class TreeView : View
         }
 
         _row = row;
-        _part = _preferred = ClampPart(_row, part);
+        SetPart(part);
         EnsureCursorVisible();
         SetNeedsDraw();
         Notify();
@@ -244,7 +247,7 @@ internal sealed class TreeView : View
         }
 
         _row = row;
-        _part = ClampPart(_row, _preferred);
+        _part = PartFor(_row);
         EnsureCursorVisible();
         SetNeedsDraw();
         Notify();
@@ -415,7 +418,7 @@ internal sealed class TreeView : View
         }
         else
         {
-            _part = _preferred = ClampPart(_row, PartAt(layout, subLine, x) ?? 0);
+            SetPart(PartAt(layout, subLine, x) ?? 0);
             EnsureCursorVisible();
         }
 
@@ -701,7 +704,7 @@ internal sealed class TreeView : View
         }
 
         _row = row;
-        _part = ClampPart(_row, _preferred);
+        _part = PartFor(_row);
         EnsureCursorVisible();
     }
 
@@ -720,7 +723,7 @@ internal sealed class TreeView : View
             return;
         }
 
-        _part = _preferred = next;
+        SetPart(next);
     }
 
     private void GoParent()
@@ -733,14 +736,32 @@ internal sealed class TreeView : View
         }
 
         _row = row;
-        _part = ClampPart(_row, _preferred);
+        _part = PartFor(_row);
         EnsureCursorVisible();
     }
 
+    /// <summary>Puts the cursor on a part of its row, and records it as the preferred part.</summary>
     private void SetPart(int part)
     {
-        _part = _preferred = ClampPart(_row, part);
+        _part = ClampPart(_row, part);
+        _preferred = PreferredFor(_row, _part);
     }
+
+    /// <summary>
+    /// True when a row starts with the JSON root marker (<see cref="PartKind.Root"/>). The marker is not a column for up and down movement, so
+    /// the preferred part skips it: see <see cref="PreferredFor"/> and <see cref="PartFor"/>.
+    /// </summary>
+    private bool HasRootMarker(int row)
+    {
+        IReadOnlyList<DocPart> parts = PartsOf(row);
+        return parts.Count > 0 && parts[0].Kind == PartKind.Root;
+    }
+
+    /// <summary>The preferred part to record for a part of a row: on a row with the root marker, the part counted from after the marker.</summary>
+    private int PreferredFor(int row, int part) => HasRootMarker(row) ? Math.Max(0, part - 1) : part;
+
+    /// <summary>The part the cursor takes on a row for the preferred part: on a row with the root marker, the one after the marker.</summary>
+    private int PartFor(int row) => ClampPart(row, HasRootMarker(row) ? _preferred + 1 : _preferred);
 
     /// <summary>
     /// Moves by a viewport of display lines, keeping the cursor's screen position where it can. At the end of the document the cursor
@@ -765,7 +786,7 @@ internal sealed class TreeView : View
         int row = RowAt(target, out _);
         _top = newTop;
         _row = row;
-        _part = ClampPart(_row, _preferred);
+        _part = PartFor(_row);
         EnsureCursorVisible();
     }
 
@@ -811,7 +832,7 @@ internal sealed class TreeView : View
         Rebuild();
         int row = IndexOf(cursor, false);
         _row = Math.Max(0, row);
-        _part = moveTo is null ? ClampPart(_row, _part) : ClampPart(_row, _preferred);
+        _part = moveTo is null ? ClampPart(_row, _part) : PartFor(_row);
         EnsureCursorVisible();
     }
 
@@ -856,12 +877,12 @@ internal sealed class TreeView : View
         if (start + count <= _top)
         {
             _row = RowAt(_top, out _);
-            _part = ClampPart(_row, _preferred);
+            _part = PartFor(_row);
         }
         else if (start >= _top + height)
         {
             _row = RowAt(Math.Min(TotalLines - 1, _top + height - 1), out _);
-            _part = ClampPart(_row, _preferred);
+            _part = PartFor(_row);
         }
 
         SetNeedsDraw();
