@@ -304,6 +304,11 @@ internal static class LogicalEdit
         ArgumentNullException.ThrowIfNull(before);
         ArgumentNullException.ThrowIfNull(root);
         ArgumentNullException.ThrowIfNull(op);
+        if (before.Format is EnvFormat)
+        {
+            return EnvLogicalEdit.Apply(before, root, op);
+        }
+
         return op switch
         {
             SetPart set => SetPartAt(before, root, set),

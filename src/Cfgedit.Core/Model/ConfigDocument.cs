@@ -468,6 +468,12 @@ public sealed class ConfigDocument
     /// </summary>
     private NodePath? FocusAfter(ConfigDocument after, EditOp op)
     {
+        if (Format is EnvFormat)
+        {
+            // .env groups are virtual, so a node's place can move with its key: EnvLogicalEdit finds the node in the new text.
+            return EnvLogicalEdit.FocusAfter(this, after, op);
+        }
+
         switch (op)
         {
             case SetPart { Part: PartKind.AttributeName or PartKind.AttributeValue } attribute:

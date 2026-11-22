@@ -150,10 +150,10 @@ internal static class EnvModelBuilder
     /// </summary>
     private static (string[] Names, EnvSpan[] Spans) Segments(EnvEntry entry)
     {
-        string[] names = entry.Key.Split(Separator);
-        if (names.Length == 1 || names.Length > JsonDocument.MaxDepth || !CanSplit(names))
+        string[] names = SplitKey(entry.Key);
+        if (names.Length == 1)
         {
-            return (new[] { entry.Key }, new[] { entry.KeySpan });
+            return (names, new[] { entry.KeySpan });
         }
 
         var spans = new EnvSpan[names.Length];
@@ -165,6 +165,17 @@ internal static class EnvModelBuilder
         }
 
         return (names, spans);
+    }
+
+    /// <summary>
+    /// The segments of a key, as the tree splits it (see <see cref="Segments"/>): on <c>__</c>, unless a split would not
+    /// round-trip or the key has more segments than the nesting cap. Such a key is one segment. The planner validates new keys
+    /// with it, so that the tree and the edits agree.
+    /// </summary>
+    internal static string[] SplitKey(string key)
+    {
+        string[] names = key.Split(Separator);
+        return names.Length == 1 || names.Length > JsonDocument.MaxDepth || !CanSplit(names) ? [key] : names;
     }
 
     private static bool CanSplit(string[] names)

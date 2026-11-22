@@ -80,6 +80,18 @@ public sealed record NewJsonValue(string? Key, JsonValueKind Kind, string? Value
 /// </summary>
 public sealed record NewJsonComment(string Text, bool Block) : NewNode;
 
+/// <summary>
+/// A .env entry. <see cref="Key"/> is relative to the parent group and may contain <c>__</c>, which creates nested groups. The
+/// value is written in the plainest form that reads back as the same value.
+/// </summary>
+public sealed record NewEnvEntry(string Key, string Value) : NewNode;
+
+/// <summary>
+/// A .env comment line. The line is <c>#</c> followed by <see cref="Text"/> exactly, so the text includes any leading space the
+/// user wants. It must not contain a line break.
+/// </summary>
+public sealed record NewEnvComment(string Text) : NewNode;
+
 /// <summary>An XML element. <see cref="Text"/> is its text content when it is not null and not empty.</summary>
 public sealed record NewXmlElement(string Name, IReadOnlyList<(string Name, string Value)> Attributes, string? Text) : NewNode;
 

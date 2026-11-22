@@ -4,8 +4,8 @@ using Cfgedit.Core.Text;
 namespace Cfgedit.Core.Model;
 
 /// <summary>
-/// The .env format: dotenv files, where <c>__</c> in a key separates the levels of a hierarchy. Editing is not supported yet, so
-/// every operation is refused; the document can be shown and verified.
+/// The .env format: dotenv files, where <c>__</c> in a key separates the levels of a hierarchy. Values, keys, comments, inserts and
+/// deletes are planned; moves, duplicates and type changes are refused for now.
 /// </summary>
 public sealed class EnvFormat : IConfigFormat
 {
@@ -21,12 +21,12 @@ public sealed class EnvFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <exception cref="CfgeditException">Always: editing .env files is not supported yet.</exception>
+    /// <exception cref="CfgeditException">The operation is invalid, or it is not supported for .env yet.</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(op);
-        throw new CfgeditException("editing .env files is not supported yet");
+        return new EnvEditPlanner(document).Plan(op);
     }
 
     /// <inheritdoc/>
@@ -42,7 +42,7 @@ public sealed class EnvFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <remarks>No edit is planned for .env yet, so a reparse error is never the user's.</remarks>
+    /// <remarks>The planner checks every edit, so a reparse error is an internal error, never the user's.</remarks>
     public bool IsUserError(CfgeditException reparseError)
     {
         ArgumentNullException.ThrowIfNull(reparseError);

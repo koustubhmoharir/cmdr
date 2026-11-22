@@ -330,23 +330,24 @@ public sealed class EnvTreeTests
     }
 
     [Fact]
-    public void Every_edit_operation_is_refused_as_not_supported_yet()
+    public void Moves_duplicates_type_changes_and_attribute_edits_are_refused_with_their_reasons()
     {
         ConfigDocument document = ModelTestSupport.Parse("A=1\n", Env);
         NodePath entry = Root.Append(new MemberStep("A", 0));
-        EditOp[] operations =
+        (EditOp Operation, string Reason)[] refusals =
         [
-            new SetPart(entry, PartKind.Value, -1, "2"),
-            new DeleteNode(entry),
-            new DuplicateNode(entry),
-            new MoveNode(entry, 0),
-            new ChangeJsonType(entry, JsonValueKind.Number, "2"),
+            (new MoveNode(entry, 0), "moving is not supported in .env yet"),
+            (new DuplicateNode(entry), "duplicating is not supported in .env yet"),
+            (new ChangeJsonType(entry, JsonValueKind.Number, "2"), "`.env` values are all strings"),
+            (new InsertAttribute(Root, 0, "x", "y"), "attributes are not part of .env"),
+            (new DeleteAttribute(Root, 0), "attributes are not part of .env"),
+            (new MoveAttribute(Root, 0, 0), "attributes are not part of .env"),
         ];
 
-        foreach (EditOp operation in operations)
+        foreach ((EditOp operation, string reason) in refusals)
         {
             CfgeditException error = Assert.Throws<CfgeditException>(() => document.Format.Plan(document, operation));
-            Assert.Equal("editing .env files is not supported yet", error.Message);
+            Assert.Equal(reason, error.Message);
         }
     }
 
