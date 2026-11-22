@@ -100,6 +100,17 @@ public static class Placeholders
     }
 
     /// <summary>
+    /// The names of the built-in placeholders of <paramref name="text"/> (<c>cwd</c>, <c>configDir</c> and <c>pathsep</c>), in text order,
+    /// one per occurrence. Escapes, inputs, variables and malformed placeholders are not included. Empty when none.
+    /// </summary>
+    public static IReadOnlyList<string> BuiltInNames(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+
+        return Scan(text).Where(token => token.Kind == TokenKind.BuiltIn).Select(token => token.Name).ToList();
+    }
+
+    /// <summary>
     /// Expands every placeholder of <paramref name="text"/> in one pass. <c>${env:NAME}</c> becomes <paramref name="env"/>(NAME), or
     /// empty when that is null. The built-ins become <paramref name="cwd"/>, <paramref name="configDir"/> and
     /// <paramref name="pathSeparator"/>. <c>$${</c> becomes <c>${</c>. Malformed placeholders are copied literally. Input placeholders

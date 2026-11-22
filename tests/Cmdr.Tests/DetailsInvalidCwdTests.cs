@@ -45,4 +45,25 @@ public sealed class DetailsInvalidCwdTests : IDisposable
         Assert.StartsWith("cwd: invalid (", lines[1]);
         Assert.DoesNotContain(lines, line => line.StartsWith("X=", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Unset_variable_in_cwd_is_shown_as_written_and_does_not_throw()
+    {
+        using var temp = TempSession.Open(new GroupSpec
+        {
+            Name = "later",
+            Cwd = "${env:CMDR_TEST_UNSET_DETAILS}/x",
+            Items = { new CommandSpec { Name = "cmd", Program = "echo", Args = { "hi" } } },
+        });
+        GroupEntry group = temp.Session.Groups.Single();
+        CommandEntry entry = temp.Session.AllEntries.Single();
+
+        IReadOnlyList<DetailsLine> groupLines = DetailsText.GroupLines(group, temp.Session.ConfigDir);
+        IReadOnlyList<string> commandLines = DetailsText.Plain(DetailsText.CommandLines(entry, temp.Session.ConfigDir, windows: false, NoEnvironment, ':'));
+        string copy = CommandLineFormatter.ForCopy(entry, powerShell: false, NoEnvironment, ':');
+
+        Assert.Contains(groupLines, line => line.Text == "cwd: ${env:CMDR_TEST_UNSET_DETAILS}/x (resolved at start)");
+        Assert.Equal("cwd: (inherited, resolved at start)", commandLines[1]);
+        Assert.Equal("echo hi", copy);
+    }
 }

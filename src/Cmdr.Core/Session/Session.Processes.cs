@@ -833,7 +833,7 @@ public sealed partial class Session
                 }
 
                 (IReadOnlyList<EnvLevel> fileLevels, IReadOnlyList<IReadOnlyDictionary<string, string?>?> groupValues) =
-                    EnvironmentFor(entry, values.Scripts);
+                    EnvironmentFor(entry.Source, entry.Group, values.Scripts);
                 Placeholders.CheckInputs(LaunchTexts(fileLevels, groups, spec, OwnerArgs(entry)), inputs);
                 launch = CommandLaunch.From(groups, spec, entry.Source.Dir, fileLevels, groupValues) with { Inputs = inputs };
 

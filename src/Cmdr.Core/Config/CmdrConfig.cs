@@ -193,8 +193,8 @@ public class CmdrConfig
 
     /// <summary>
     /// Checks the strings a command hands to the launch for NUL characters: a NUL would silently truncate the Windows command
-    /// line and cannot be passed on Linux either. Covers the program, each argument, cwd, each env name and value, the stop input
-    /// and the log path. Arguments are numbered from 1.
+    /// line and cannot be passed on Linux either. Covers the program, each argument, cwd (see <see cref="ValidateCwd"/>), each env
+    /// name and value, the stop input and the log path. Arguments are numbered from 1.
     /// </summary>
     private static void ValidateCommandStrings(CommandSpec cmd, string label, List<string> errors)
     {
@@ -204,7 +204,7 @@ public class CmdrConfig
             ValidateNoNul(cmd.Args[a], $"{label}: argument {a + 1}", errors);
         }
 
-        ValidateNoNul(cmd.Cwd, $"{label}: cwd", errors);
+        ValidateCwd(cmd.Cwd, label, errors);
         ValidateEnvNoNul(cmd.Env, label, errors);
         ValidateEnvPlaceholders(cmd.Env, label, errors);
         ValidateNoNul(cmd.Stop.Input, $"{label}: stop.input", errors);
@@ -214,7 +214,7 @@ public class CmdrConfig
     /// <summary>Checks a group's launch strings (cwd and env), which its commands inherit. See <see cref="ValidateCommandStrings"/>.</summary>
     private static void ValidateGroupStrings(GroupSpec group, string label, List<string> errors)
     {
-        ValidateNoNul(group.Cwd, $"{label}: cwd", errors);
+        ValidateCwd(group.Cwd, label, errors);
         ValidateEnvNoNul(group.Env, label, errors);
         ValidateEnvPlaceholders(group.Env, label, errors);
 
@@ -227,9 +227,9 @@ public class CmdrConfig
     }
 
     /// <summary>
-    /// Checks an environment script: the program must not be blank, the program, each argument and the cwd must not contain NUL,
-    /// each argument must be a valid placeholder text (see <see cref="Placeholders.Errors"/>), and the timeout must be greater than 0
-    /// when set. Arguments are numbered from 1.
+    /// Checks an environment script: the program must not be blank, the program and each argument must not contain NUL, each argument
+    /// must be a valid placeholder text (see <see cref="Placeholders.Errors"/>), the cwd must be valid (see <see cref="ValidateCwd"/>), and
+    /// the timeout must be greater than 0 when set. Arguments are numbered from 1.
     /// </summary>
     private static void ValidateEnvScript(EnvScriptSpec script, string label, List<string> errors)
     {
@@ -256,7 +256,7 @@ public class CmdrConfig
             }
         }
 
-        ValidateNoNul(script.Cwd, $"{label}: cwd", errors);
+        ValidateCwd(script.Cwd, label, errors);
 
         if (script.TimeoutSeconds is { } timeout && timeout <= 0)
         {
@@ -351,6 +351,35 @@ public class CmdrConfig
         {
             ValidateNoNul(entry.Key, $"{label}: env name '{entry.Key.Replace('\0', '?')}'", errors);
             ValidateNoNul(entry.Value, $"{label}: env '{entry.Key.Replace('\0', '?')}' value", errors);
+        }
+    }
+
+    /// <summary>
+    /// Checks a working directory (of a command, group or environment script): no NUL character, well-formed placeholders (see
+    /// <see cref="Placeholders.Errors"/>), and no <c>${cwd}</c> or input placeholder: <c>${cwd}</c> would refer to the directory being
+    /// resolved, and inputs are not known when it is. A cwd may use <c>${env:NAME}</c>, <c>${configDir}</c>, <c>${pathsep}</c> and <c>$${</c>.
+    /// </summary>
+    private static void ValidateCwd(string? cwd, string label, List<string> errors)
+    {
+        ValidateNoNul(cwd, $"{label}: cwd", errors);
+        if (cwd is null)
+        {
+            return;
+        }
+
+        foreach (string error in Placeholders.Errors(cwd))
+        {
+            errors.Add($"{label}: cwd: {error}");
+        }
+
+        if (Placeholders.BuiltInNames(cwd).Contains("cwd"))
+        {
+            errors.Add($"{label}: cwd: ${{cwd}} is not allowed in cwd");
+        }
+
+        foreach (InputRequest request in Placeholders.Requests(new[] { cwd }))
+        {
+            errors.Add($"{label}: cwd: ${{input:{request.Name}}} is not allowed in cwd");
         }
     }
 
