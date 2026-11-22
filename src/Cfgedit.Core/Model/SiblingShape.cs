@@ -28,6 +28,11 @@ internal static class SiblingShape
     {
         DocNode source = document.Resolve(sibling) ?? throw new ArgumentException($"There is no node at {sibling}.", nameof(sibling));
         DocNode container = document.Resolve(parent) ?? throw new ArgumentException($"There is no node at {parent}.", nameof(parent));
+        if (source.Kind is NodeKind.TomlScalar or NodeKind.TomlTable or NodeKind.TomlArray)
+        {
+            return TomlShape(document, source, sibling, container, parent, index);
+        }
+
         var steps = new List<EditOp>();
         NodePath created;
         if (source.Kind is NodeKind.JsonScalar or NodeKind.JsonObject or NodeKind.JsonArray)
@@ -71,6 +76,95 @@ internal static class SiblingShape
         }
 
         return new ShapedInsert(new CompositeEdit(steps), created);
+    }
+
+    /// <summary>
+    /// The TOML shape of an item of an array. An array-of-tables item becomes a new item (a section) whose scalars and arrays and inline
+    /// tables keep their keys, with empty values; its subtables are not copied. An inline table in an inline array is the same, inline. A
+    /// scalar or an array in an inline array becomes one empty value of its kind. A date-time keeps its value, as it has no empty form.
+    /// </summary>
+    private static ShapedInsert TomlShape(ConfigDocument document, DocNode source, NodePath sibling, DocNode container, NodePath parent, int index)
+    {
+        if (container.Kind != NodeKind.TomlArray)
+        {
+            throw new ArgumentException("A TOML key/value has a key, so its shape cannot be copied into this place.", nameof(sibling));
+        }
+
+        var model = (TomlModel)document.Syntax;
+        TomlContainer shape = model.ShapeOf(container);
+        var steps = new List<EditOp>();
+        if (source.Kind == NodeKind.TomlTable)
+        {
+            TomlContainer itemShape = model.ShapeOf(source);
+            bool tableItem = shape == TomlContainer.ArrayOfTables && itemShape == TomlContainer.Header;
+            bool inlineItem = shape == TomlContainer.Array && itemShape == TomlContainer.Inline;
+            if (!tableItem && !inlineItem)
+            {
+                throw new ArgumentException("The node at " + sibling + " cannot be copied into this place.", nameof(sibling));
+            }
+
+            steps.Add(new InsertNode(parent, index, new NewTomlValue(null, TomlNewKind.Table, null)));
+            NodePath created = parent.Append(new ItemStep(CountBefore(container, index, child => child.Kind != NodeKind.TomlComment)));
+            int position = 0;
+            foreach (DocNode member in source.Children)
+            {
+                if (member.Path.Steps[^1] is not MemberStep step)
+                {
+                    continue;
+                }
+
+                switch (member.Kind)
+                {
+                    case NodeKind.TomlScalar:
+                        (TomlNewKind kind, string? text) = EmptyTomlScalar(member);
+                        steps.Add(new InsertNode(created, position++, new NewTomlValue(step.Key, kind, text)));
+                        break;
+                    case NodeKind.TomlArray when model.ShapeOf(member) == TomlContainer.Array:
+                        steps.Add(new InsertNode(created, position++, new NewTomlValue(step.Key, TomlNewKind.Array, null)));
+                        break;
+                    case NodeKind.TomlTable when model.ShapeOf(member) == TomlContainer.Inline:
+                        steps.Add(new InsertNode(created, position++, new NewTomlValue(step.Key, TomlNewKind.Table, null)));
+                        break;
+                }
+            }
+
+            return new ShapedInsert(new CompositeEdit(steps), created);
+        }
+
+        if (shape != TomlContainer.Array)
+        {
+            throw new ArgumentException("The node at " + sibling + " cannot be copied into this place.", nameof(sibling));
+        }
+
+        NodePath item = parent.Append(new ItemStep(CountBefore(container, index, child => child.Kind != NodeKind.TomlComment)));
+        if (source.Kind == NodeKind.TomlScalar)
+        {
+            (TomlNewKind kind, string? text) = EmptyTomlScalar(source);
+            steps.Add(new InsertNode(parent, index, new NewTomlValue(null, kind, text)));
+        }
+        else if (source.Kind == NodeKind.TomlArray && model.ShapeOf(source) == TomlContainer.Array)
+        {
+            steps.Add(new InsertNode(parent, index, new NewTomlValue(null, TomlNewKind.Array, null)));
+        }
+        else
+        {
+            throw new ArgumentException("The node at " + sibling + " cannot be copied into this place.", nameof(sibling));
+        }
+
+        return new ShapedInsert(new CompositeEdit(steps), item);
+    }
+
+    /// <summary>The empty value of a TOML scalar: "" for a string, "0", "0.0" and "false", and a date-time's own text.</summary>
+    private static (TomlNewKind Kind, string? Text) EmptyTomlScalar(DocNode scalar)
+    {
+        return scalar.TomlKind switch
+        {
+            TomlValueKind.String => (TomlNewKind.String, string.Empty),
+            TomlValueKind.Integer => (TomlNewKind.Integer, "0"),
+            TomlValueKind.Float => (TomlNewKind.Float, "0.0"),
+            TomlValueKind.Boolean => (TomlNewKind.Boolean, "false"),
+            _ => (TomlNewKind.DateTime, scalar.Parts.First(part => part.Kind == PartKind.Value).Value),
+        };
     }
 
     /// <summary>The empty value of a JSON kind: "" for a string, "0" for a number, and no text for the others.</summary>

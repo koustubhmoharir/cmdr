@@ -135,6 +135,14 @@ public sealed class TomlEditDeleteTests
         Assert.Equal("a = [\n  2\n]\n", text);
     }
 
+    [Fact]
+    public void A_comment_line_above_an_array_item_is_a_row_of_the_array_and_stays_when_the_item_goes()
+    {
+        string text = Edit("a = [\n  # c\n  1,\n  2,\n]\n", Toml, new DeleteNode(Path(Member("a"), Item(0))));
+
+        Assert.Equal("a = [\n  # c\n  2,\n]\n", text);
+    }
+
     // ----- Inline tables -----
 
     [Fact]
@@ -299,19 +307,19 @@ public sealed class TomlEditDeleteTests
     }
 
     [Fact]
-    public void Adding_is_not_supported_yet()
+    public void A_JSON_node_cannot_be_inserted_into_TOML()
     {
         CfgeditException error = Fails("a = 1\n", Toml, new InsertNode(Path(), 0, new NewJsonComment("x", false)));
 
-        Assert.Equal("adding is not supported in TOML yet", error.Message);
+        Assert.Equal("this kind of node cannot be inserted into TOML", error.Message);
     }
 
     [Fact]
-    public void Duplicating_is_not_supported_yet()
+    public void The_root_cannot_be_duplicated_in_TOML()
     {
-        CfgeditException error = Fails("a = 1\n", Toml, new DuplicateNode(Path(Member("a"))));
+        CfgeditException error = Fails("a = 1\n", Toml, new DuplicateNode(Path()));
 
-        Assert.Equal("duplicating is not supported in TOML yet", error.Message);
+        Assert.Equal("the root table cannot be duplicated", error.Message);
     }
 
     [Fact]

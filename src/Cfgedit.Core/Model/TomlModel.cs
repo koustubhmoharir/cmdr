@@ -2,6 +2,31 @@ using Cfgedit.Core.Toml;
 
 namespace Cfgedit.Core.Model;
 
+/// <summary>The shape of a TOML table or array node: which text can add to it, as its pieces define it.</summary>
+internal enum TomlContainer
+{
+    /// <summary>The document's root table. Its key/values come before its first header.</summary>
+    Root,
+
+    /// <summary>A table defined by its own header of its own depth, or an item of an array of tables.</summary>
+    Header,
+
+    /// <summary>A table that only deeper headers make (<c>[a.b]</c> makes <c>a</c>). It has no section of its own.</summary>
+    Implicit,
+
+    /// <summary>A table that only dotted keys make (<c>a.b = 1</c> makes <c>a</c>).</summary>
+    Dotted,
+
+    /// <summary>An inline table.</summary>
+    Inline,
+
+    /// <summary>An array of tables (<c>[[x]]</c>).</summary>
+    ArrayOfTables,
+
+    /// <summary>A static array (<c>[...]</c>).</summary>
+    Array,
+}
+
 /// <summary>
 /// A parsed TOML document, held as the format's syntax: the syntax tree, the merged table model, the document tree that the editor
 /// shows, and the pieces of text that define each node of the tree. A model is immutable.
@@ -37,6 +62,83 @@ internal sealed class TomlModel
     internal IReadOnlyList<TomlNode> PiecesOf(DocNode node)
     {
         return _pieces.TryGetValue(node, out IReadOnlyList<TomlNode>? pieces) ? pieces : [];
+    }
+
+    /// <summary>
+    /// The shape of a table or array node, from the pieces that define it. A table with a header of its own depth is a header table;
+    /// one with only deeper headers is implicit; one with key/value pieces only is dotted. An array is an array of tables when its
+    /// pieces are headers.
+    /// </summary>
+    internal TomlContainer ShapeOf(DocNode node)
+    {
+        IReadOnlyList<TomlNode> pieces = PiecesOf(node);
+        if (node.Kind == NodeKind.TomlArray)
+        {
+            return pieces.Count > 0 && pieces[0] is TomlHeaderItem ? TomlContainer.ArrayOfTables : TomlContainer.Array;
+        }
+
+        if (node.Kind != NodeKind.TomlTable)
+        {
+            throw new InvalidOperationException("The node is not a TOML table or array.");
+        }
+
+        if (node.Parent?.Kind == NodeKind.Document)
+        {
+            return TomlContainer.Root;
+        }
+
+        if (pieces.Count == 0)
+        {
+            throw new InvalidOperationException("A TOML table has no pieces.");
+        }
+
+        if (pieces[0] is TomlInlineTable)
+        {
+            return TomlContainer.Inline;
+        }
+
+        if (OwnHeaderOf(node) is not null)
+        {
+            return TomlContainer.Header;
+        }
+
+        return pieces[0] is TomlHeaderItem ? TomlContainer.Implicit : TomlContainer.Dotted;
+    }
+
+    /// <summary>The header that defines a header table (one with a header of its own depth), or an item of an array of tables; null otherwise.</summary>
+    internal TomlHeaderItem? OwnHeaderOf(DocNode node)
+    {
+        int depth = node.Path.Steps.Count(step => step is MemberStep);
+        return PiecesOf(node).OfType<TomlHeaderItem>().FirstOrDefault(header => header.Key.Parts.Count == depth);
+    }
+
+    /// <summary>
+    /// The syntax of a node's value: a key/value's value, an inline member's value, an array item's value, or the inline table itself.
+    /// Null for a node with no pieces, such as a comment or the root.
+    /// </summary>
+    internal TomlValue? ValueSyntaxOf(DocNode node)
+    {
+        IReadOnlyList<TomlNode> pieces = PiecesOf(node);
+        if (pieces.Count == 0)
+        {
+            return null;
+        }
+
+        return pieces[0] switch
+        {
+            TomlKeyValueItem keyValue => keyValue.Value,
+            TomlInlineMember member => member.Value,
+            TomlArrayItem item => item.Value,
+            TomlInlineTable inline => inline,
+            _ => null,
+        };
+    }
+
+    /// <summary>The item of a static array's syntax at an item index (the index among the array's items, comments not counted).</summary>
+    internal TomlArrayItem ArrayItemSyntaxOf(DocNode array, int itemIndex)
+    {
+        TomlArray syntax = ValueSyntaxOf(array) as TomlArray ?? throw new InvalidOperationException("The node is not a TOML array.");
+        return syntax.Entries.OfType<TomlArrayItem>().ElementAt(itemIndex);
     }
 
     /// <summary>

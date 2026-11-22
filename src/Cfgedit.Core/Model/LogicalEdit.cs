@@ -76,6 +76,11 @@ internal static class EditLayout
             return EnvLayout.Block(parent, index);
         }
 
+        if (parent.Kind is NodeKind.TomlTable or NodeKind.TomlArray)
+        {
+            return TomlLayout.Block(parent, index, text);
+        }
+
         if (IsComment(children[index]) || !HasEntries(parent))
         {
             return (index, index);
@@ -198,6 +203,23 @@ internal static class EditLayout
     public static bool HasLineBreak(string text, int from, int to)
     {
         return text.AsSpan(from, to - from).IndexOfAny('\r', '\n') >= 0;
+    }
+
+    /// <summary>
+    /// A copy's name: <c>name-copy</c>, then <c>name-copy2</c> and so on, the first that no sibling has. The same rule as a JSON
+    /// member's copy.
+    /// </summary>
+    /// <param name="name">The name of the node that is copied.</param>
+    /// <param name="isTaken">True for a name that a sibling has.</param>
+    public static string CopyName(string name, Func<string, bool> isTaken)
+    {
+        string candidate = name + "-copy";
+        for (int n = 2; isTaken(candidate); n++)
+        {
+            candidate = name + "-copy" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return candidate;
     }
 
     /// <summary>Counts the line breaks in [from, to). CRLF is one break.</summary>

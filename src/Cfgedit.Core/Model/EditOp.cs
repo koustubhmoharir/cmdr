@@ -100,6 +100,20 @@ public sealed record NewEnvEntry(string Key, string Value) : NewNode;
 /// </summary>
 public sealed record NewEnvComment(string Text) : NewNode;
 
+/// <summary>
+/// A TOML key/value, table, array or array item. <see cref="Key"/> is required in a table and in an inline table, and must be null
+/// in an array. An array of tables takes only <see cref="TomlNewKind.Table"/>. <see cref="Value"/> is the text of a scalar: the string
+/// for String (null means empty), the number or date-time text for the others (null means the kind's default, and a date-time
+/// needs it), and "true" or "false" for Boolean. It is ignored for Table and Array.
+/// </summary>
+public sealed record NewTomlValue(string? Key, TomlNewKind Kind, string? Value) : NewNode;
+
+/// <summary>
+/// A TOML comment line. <see cref="Text"/> is the text after the <c>#</c>, so it includes any leading space the user wants. It must
+/// not contain a line break.
+/// </summary>
+public sealed record NewTomlComment(string Text) : NewNode;
+
 /// <summary>An XML element. <see cref="Text"/> is its text content when it is not null and not empty.</summary>
 public sealed record NewXmlElement(string Name, IReadOnlyList<(string Name, string Value)> Attributes, string? Text) : NewNode;
 

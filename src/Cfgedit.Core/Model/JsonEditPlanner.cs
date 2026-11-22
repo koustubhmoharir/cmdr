@@ -911,13 +911,7 @@ internal sealed class JsonEditPlanner
     /// <summary>A copy's key: <c>name-copy</c>, then <c>name-copy2</c> and so on, unique among the siblings.</summary>
     private string FreshKey(DocNode parent, string name)
     {
-        string candidate = name + "-copy";
-        for (int n = 2; HasMemberNamed(parent, candidate, null); n++)
-        {
-            candidate = name + "-copy" + n.ToString(CultureInfo.InvariantCulture);
-        }
-
-        return candidate;
+        return EditLayout.CopyName(name, candidate => HasMemberNamed(parent, candidate, null));
     }
 
     /// <summary>The index of the entry (not a comment) among children [first, last], or -1.</summary>

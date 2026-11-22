@@ -59,7 +59,7 @@ internal static class TomlLogicalEdit
                 }
 
                 CollectComments(node, Ranks(), removed);
-                data = Modify(data, IndicesOf(node), 0, n => NewValue(n.Name, change)) ?? data;
+                data = Modify(data, IndicesOf(node), 0, n => NewValue(n.Name, change.Kind, change.Value)) ?? data;
                 break;
             }
 
@@ -98,6 +98,59 @@ internal static class TomlLogicalEdit
                     container = container.Parent;
                 }
 
+                break;
+            }
+
+            case InsertNode insert:
+            {
+                DocNode parent = Locate(before, insert.Parent);
+                switch (insert.Node)
+                {
+                    case NewTomlComment newComment:
+                    {
+                        int offset = CommentOffset(before, parent, insert.Index);
+                        comments.Insert(CommentsBefore(before, offset), CommentNode(newComment.Text));
+                        break;
+                    }
+
+                    case NewTomlValue value:
+                    {
+                        var model = (TomlModel)before.Syntax;
+                        bool tableLine = model.ShapeOf(parent) is not (TomlContainer.Array or TomlContainer.ArrayOfTables or TomlContainer.Inline);
+                        int offset = tableLine ? MemberOffset(before, parent, insert.Index, value.Kind) : -1;
+                        int position = tableLine
+                            ? MembersBefore(model, parent, offset)
+                            : ChildrenBefore(parent, insert.Index);
+                        LogicalNode added = NewValue(value.Key, value.Kind, value.Value);
+                        data = Modify(data, IndicesOf(parent), 0, n => WithChild(n, position, added)) ?? data;
+                        break;
+                    }
+
+                    default:
+                        throw new InvalidOperationException("Unknown TOML node to insert: " + insert.Node.GetType().Name);
+                }
+
+                break;
+            }
+
+            case DuplicateNode duplicate:
+            {
+                DocNode node = Locate(before, duplicate.Node);
+                DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be duplicated.");
+                int offset = CopyOffset(before, node);
+                List<DocNode> copied = CopiedComments(before, node);
+                comments.InsertRange(CommentsBefore(before, offset), copied.Select(c => CommentNode(CommentText(c))));
+                if (node.Kind == NodeKind.TomlComment)
+                {
+                    break;
+                }
+
+                var model = (TomlModel)before.Syntax;
+                LogicalNode original = NodeAt(data, IndicesOf(node));
+                bool keyed = IsKeyed(model, parent);
+                LogicalNode copy = keyed ? Renamed(original, CopyNameOf(parent, node)) : original;
+                int position = keyed && !InlineMemberOf(model, node) ? MembersBefore(model, parent, offset) : LogicalIndex(parent, node) + 1;
+                data = Modify(data, IndicesOf(parent), 0, n => WithChild(n, position, copy)) ?? data;
                 break;
             }
 
@@ -166,9 +219,414 @@ internal static class TomlLogicalEdit
                 return first > 0 ? survivor.Children[first - 1].Path : survivor.Path;
             }
 
+            case InsertNode insert:
+            {
+                DocNode parent = Locate(before, insert.Parent);
+                if (insert.Node is NewTomlComment)
+                {
+                    return CommentPathAt(after, CommentsBefore(before, CommentOffset(before, parent, insert.Index)));
+                }
+
+                var value = (NewTomlValue)insert.Node;
+                NodePath path = value.Key is null
+                    ? parent.Path.Append(new ItemStep(ChildrenBefore(parent, insert.Index)))
+                    : parent.Path.Append(new MemberStep(value.Key, 0));
+                return after.Resolve(path) is null ? null : path;
+            }
+
+            case DuplicateNode duplicate:
+            {
+                DocNode node = Locate(before, duplicate.Node);
+                DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node has no parent.");
+                if (node.Kind == NodeKind.TomlComment)
+                {
+                    return CommentPathAt(after, CommentsBefore(before, CopyOffset(before, node)));
+                }
+
+                NodePath path = IsKeyed((TomlModel)before.Syntax, parent)
+                    ? parent.Path.Append(new MemberStep(CopyNameOf(parent, node), 0))
+                    : parent.Path.Append(new ItemStep(LogicalIndex(parent, node) + 1));
+                return after.Resolve(path) is null ? null : path;
+            }
+
             default:
                 return null;
         }
+    }
+
+    // ----- Insert and duplicate: where a new node or a copy goes -----
+
+    /// <summary>
+    /// The offset of the line (or section) where a new node goes, and of the copies of a node. These rules follow the planner's, but
+    /// they are read off the document tree and the layout rules, not off the planner's text edits, so the check compares two readings.
+    /// </summary>
+    private static int CommentOffset(ConfigDocument before, DocNode parent, int index)
+    {
+        string text = before.Source.Text;
+        switch (((TomlModel)before.Syntax).ShapeOf(parent))
+        {
+            case TomlContainer.Array:
+                IReadOnlyList<DocNode> children = parent.Children;
+                if (index < children.Count && EditLayout.StartsLine(text, children[index].Start))
+                {
+                    return EditLayout.LineStart(text, children[index].Start);
+                }
+
+                if (index == children.Count && EditLayout.StartsLine(text, parent.End - 1))
+                {
+                    return EditLayout.LineStart(text, parent.End - 1);
+                }
+
+                throw new InvalidOperationException("A comment in an array needs a line of its own.");
+            case TomlContainer.Inline:
+            case TomlContainer.ArrayOfTables:
+                throw new InvalidOperationException("No comment goes into this container.");
+            default:
+                return LineOffset(before, parent, index);
+        }
+    }
+
+    /// <summary>The offset of a new member of a table: a section for a new table in a header or root table, else a line.</summary>
+    private static int MemberOffset(ConfigDocument before, DocNode parent, int index, TomlNewKind kind)
+    {
+        TomlContainer shape = ((TomlModel)before.Syntax).ShapeOf(parent);
+        bool section = kind == TomlNewKind.Table && shape is TomlContainer.Root or TomlContainer.Header or TomlContainer.Implicit;
+        return section ? SubtreeOffset(before, parent) : LineOffset(before, parent, index);
+    }
+
+    /// <summary>The offset where a copy of a node goes: right after the node's group, or after the node itself when it is a table, a comment or an item.</summary>
+    private static int CopyOffset(ConfigDocument before, DocNode node)
+    {
+        string text = before.Source.Text;
+        var model = (TomlModel)before.Syntax;
+        if (node.Kind == NodeKind.TomlComment)
+        {
+            return EditLayout.AfterLineBreak(text, node.End);
+        }
+
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be copied.");
+        TomlContainer shape = model.ShapeOf(parent);
+        if (InlineMemberOf(model, node))
+        {
+            return node.End;
+        }
+
+        if (shape == TomlContainer.ArrayOfTables)
+        {
+            return EditLayout.AfterLineBreak(text, node.End);
+        }
+
+        if (shape == TomlContainer.Array)
+        {
+            int index = IndexOf(parent, node);
+            (int first, int last) = TomlLayout.Block(parent, index, text);
+            return TomlLayout.IsLineCopy(model, parent, first, last, text)
+                ? EditLayout.AfterLineBreak(text, TomlLayout.ItemEnd(model, parent, last))
+                : TomlLayout.ItemEnd(model, parent, index);
+        }
+
+        if (shape == TomlContainer.Inline)
+        {
+            return node.End;
+        }
+
+        if (node.Kind == NodeKind.TomlTable && model.ShapeOf(node) is TomlContainer.Header or TomlContainer.Implicit)
+        {
+            return EditLayout.AfterLineBreak(text, node.End);
+        }
+
+        (int groupFirst, int groupLast) = TomlLayout.Block(parent, IndexOf(parent, node), text);
+        return EditLayout.AfterLineBreak(text, parent.Children[groupLast].End);
+    }
+
+    /// <summary>The comment nodes that a copy of a node repeats, in file order.</summary>
+    private static List<DocNode> CopiedComments(ConfigDocument before, DocNode node)
+    {
+        var model = (TomlModel)before.Syntax;
+        string text = before.Source.Text;
+        var roots = new List<DocNode>();
+        if (node.Kind == NodeKind.TomlComment || InlineMemberOf(model, node))
+        {
+            roots.Add(node);
+        }
+        else
+        {
+            DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be copied.");
+            TomlContainer shape = model.ShapeOf(parent);
+            if (shape == TomlContainer.Array)
+            {
+                (int first, int last) = TomlLayout.Block(parent, IndexOf(parent, node), text);
+                if (TomlLayout.IsLineCopy(model, parent, first, last, text))
+                {
+                    roots.AddRange(parent.Children.Skip(first).Take(last - first + 1));
+                }
+                else
+                {
+                    roots.Add(node);
+                }
+            }
+            else if (shape is TomlContainer.ArrayOfTables or TomlContainer.Inline
+                || (node.Kind == NodeKind.TomlTable && model.ShapeOf(node) is TomlContainer.Header or TomlContainer.Implicit))
+            {
+                roots.Add(node);
+            }
+            else
+            {
+                (int first, int last) = TomlLayout.Block(parent, IndexOf(parent, node), text);
+                roots.AddRange(parent.Children.Skip(first).Take(last - first + 1));
+            }
+        }
+
+        var comments = new List<DocNode>();
+        foreach (DocNode root in roots)
+        {
+            CollectComments(root, comments);
+        }
+
+        comments.Sort((a, b) => a.Start.CompareTo(b.Start));
+        return comments;
+    }
+
+    /// <summary>The offset of the line where a key/value or a comment goes in a table, as the tree shows it.</summary>
+    private static int LineOffset(ConfigDocument before, DocNode table, int index)
+    {
+        string text = before.Source.Text;
+        var model = (TomlModel)before.Syntax;
+        IReadOnlyList<DocNode> children = table.Children;
+        TomlContainer shape = model.ShapeOf(table);
+        switch (shape)
+        {
+            case TomlContainer.Dotted:
+                return model.PiecesOf(table)[^1].End;
+            case TomlContainer.Implicit:
+                return LeafOf(model, table, model.PiecesOf(table)[0]) is { } leaf ? EditLayout.LineStart(text, leaf.Start) : throw new InvalidOperationException("No leaf.");
+        }
+
+        // A root or header table: the new line goes before a key/value child, after the key/value before it, else after the last key/value of
+        // the section, else at the top of the root or after the header.
+        // The key/value after the index, when the index starts its group: the new line goes before the group.
+        int next = index;
+        while (next < children.Count && EditLayout.IsComment(children[next]))
+        {
+            next++;
+        }
+
+        if (next < children.Count && IsDirectKeyValue(model, children[next]))
+        {
+            int first = TomlLayout.Block(table, next, text).First;
+            if (next == index || first == index)
+            {
+                return EditLayout.LineStart(text, children[first].Start);
+            }
+        }
+
+        if (index > 0)
+        {
+            int m = index - 1;
+            int k = m;
+            while (k >= 0 && EditLayout.IsComment(children[k]))
+            {
+                k--;
+            }
+
+            if (k >= 0 && IsDirectKeyValue(model, children[k]) && TomlLayout.Block(table, k, text).Last == m)
+            {
+                return EditLayout.AfterLineBreak(text, children[m].End);
+            }
+        }
+
+        int end = -1;
+        for (int c = 0; c < children.Count; c++)
+        {
+            DocNode child = children[c];
+            if (EditLayout.IsComment(child))
+            {
+                continue;
+            }
+
+            if (IsDirectKeyValue(model, child))
+            {
+                end = Math.Max(end, EditLayout.AfterLineBreak(text, children[TomlLayout.Block(table, c, text).Last].End));
+            }
+            else if (child.Kind == NodeKind.TomlTable && model.ShapeOf(child) == TomlContainer.Dotted)
+            {
+                end = Math.Max(end, model.PiecesOf(child)[^1].End);
+            }
+        }
+
+        if (end >= 0)
+        {
+            return end;
+        }
+
+        if (model.ShapeOf(table) == TomlContainer.Root)
+        {
+            int top = 0;
+            while (top < children.Count && EditLayout.IsComment(children[top]))
+            {
+                top++;
+            }
+
+            return top == 0 ? 0 : EditLayout.AfterLineBreak(text, children[top - 1].End);
+        }
+
+        return model.OwnHeaderOf(table)!.End;
+    }
+
+    /// <summary>The offset after a table's section and its subtree: after the last line of the table, or the end of the text for the root.</summary>
+    private static int SubtreeOffset(ConfigDocument before, DocNode table)
+    {
+        string text = before.Source.Text;
+        if (((TomlModel)before.Syntax).ShapeOf(table) != TomlContainer.Root)
+        {
+            return EditLayout.AfterLineBreak(text, table.End);
+        }
+
+        if (table.Children.Count == 0)
+        {
+            return text.Length;
+        }
+
+        return EditLayout.AfterLineBreak(text, table.Children.Max(child => child.End));
+    }
+
+    /// <summary>The deepest node of a table's subtree that a piece defines (its leaf), or null when none does.</summary>
+    private static DocNode? LeafOf(TomlModel model, DocNode table, TomlNode piece)
+    {
+        DocNode? best = null;
+        var stack = new Stack<DocNode>();
+        stack.Push(table);
+        while (stack.Count > 0)
+        {
+            DocNode node = stack.Pop();
+            if (model.PiecesOf(node).Contains(piece) && (best is null || node.Path.Count > best.Path.Count))
+            {
+                best = node;
+            }
+
+            foreach (DocNode child in node.Children)
+            {
+                stack.Push(child);
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>True for a child that is a key/value of its table: a scalar, a static array or an inline table.</summary>
+    private static bool IsDirectKeyValue(TomlModel model, DocNode child)
+    {
+        return child.Kind == NodeKind.TomlScalar
+            || (child.Kind == NodeKind.TomlArray && model.ShapeOf(child) == TomlContainer.Array)
+            || (child.Kind == NodeKind.TomlTable && model.ShapeOf(child) == TomlContainer.Inline);
+    }
+
+    /// <summary>
+    /// True for a node whose text is a member of an inline table: a child of an inline table, or a child of a dotted table inside one. Its copy
+    /// is an inline member, right after it, with no lines.
+    /// </summary>
+    private static bool InlineMemberOf(TomlModel model, DocNode node)
+    {
+        DocNode? parent = node.Parent;
+        if (parent is null || parent.Kind == NodeKind.Document)
+        {
+            return false;
+        }
+
+        TomlContainer shape = model.ShapeOf(parent);
+        return shape == TomlContainer.Inline || (shape == TomlContainer.Dotted && model.PiecesOf(parent)[0] is TomlInlineMember);
+    }
+
+    /// <summary>True for a container whose children are named members: a table, or an inline table. An array's items have no names.</summary>
+    private static bool IsKeyed(TomlModel model, DocNode parent)
+    {
+        return model.ShapeOf(parent) is not (TomlContainer.Array or TomlContainer.ArrayOfTables);
+    }
+
+    /// <summary>The number of members of a table whose text starts before an offset: the position of a node added there.</summary>
+    private static int MembersBefore(TomlModel model, DocNode parent, int offset)
+    {
+        int count = 0;
+        foreach (DocNode child in parent.Children)
+        {
+            if (!EditLayout.IsComment(child) && model.PiecesOf(child).Min(piece => piece.Start) < offset)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>The number of non-comment children before an index: the logical position of the node at that index.</summary>
+    private static int ChildrenBefore(DocNode parent, int index)
+    {
+        int count = 0;
+        for (int k = 0; k < index; k++)
+        {
+            if (!EditLayout.IsComment(parent.Children[k]))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>The number of comments whose text starts before an offset: the rank of a comment added there.</summary>
+    private static int CommentsBefore(ConfigDocument before, int offset)
+    {
+        var comments = new List<DocNode>();
+        CollectComments(before.Root, comments);
+        return comments.Count(comment => comment.Start < offset);
+    }
+
+    /// <summary>The path of the comment at a rank in file order, in a document, or null when there is none.</summary>
+    private static NodePath? CommentPathAt(ConfigDocument document, int rank)
+    {
+        var comments = new List<DocNode>();
+        CollectComments(document.Root, comments);
+        comments.Sort((a, b) => a.Start.CompareTo(b.Start));
+        return rank < comments.Count ? comments[rank].Path : null;
+    }
+
+    /// <summary>The name of a copy of a keyed node: the first <c>-copy</c> name that no sibling has.</summary>
+    private static string CopyNameOf(DocNode parent, DocNode node)
+    {
+        string name = ((MemberStep)node.Path.Steps[^1]).Key;
+        var taken = parent.Children
+            .Where(child => child.Path.Steps[^1] is MemberStep)
+            .Select(child => ((MemberStep)child.Path.Steps[^1]).Key)
+            .ToHashSet(StringComparer.Ordinal);
+        return EditLayout.CopyName(name, taken.Contains);
+    }
+
+    private static string CommentText(DocNode comment)
+    {
+        return comment.Parts.First(part => part.Kind == PartKind.Comment).Value;
+    }
+
+    private static LogicalNode CommentNode(string text)
+    {
+        return new LogicalNode(LogicalKind.Comment, null, null, text, [], []);
+    }
+
+    private static LogicalNode NodeAt(LogicalNode root, IReadOnlyList<int> indices)
+    {
+        LogicalNode node = root;
+        foreach (int index in indices)
+        {
+            node = node.Children[index];
+        }
+
+        return node;
+    }
+
+    private static LogicalNode WithChild(LogicalNode node, int position, LogicalNode child)
+    {
+        var children = node.Children.ToList();
+        children.Insert(position, child);
+        return new LogicalNode(node.Kind, node.Name, node.ScalarKind, node.Value, node.Attributes, children, false, node.TomlKind);
     }
 
     // ----- Paths and ranks -----
@@ -339,38 +797,39 @@ internal static class TomlLogicalEdit
         };
     }
 
-    private static LogicalNode NewValue(string? name, ChangeTomlType change)
+    /// <summary>The logical node of a new value: an empty table or array, or a scalar of a kind, with the default value when none is given.</summary>
+    private static LogicalNode NewValue(string? name, TomlNewKind kind, string? value)
     {
-        switch (change.Kind)
+        switch (kind)
         {
             case TomlNewKind.Table:
                 return new LogicalNode(LogicalKind.Object, name, null, null, [], []);
             case TomlNewKind.Array:
                 return new LogicalNode(LogicalKind.Array, name, null, null, [], []);
             case TomlNewKind.String:
-                return Scalar(name, TomlValueKind.String, change.Value ?? string.Empty);
+                return Scalar(name, TomlValueKind.String, value ?? string.Empty);
             case TomlNewKind.Integer:
             {
-                (TomlValueKind kind, string text) = Canonical(TomlValueKind.Integer, change.Value ?? "0");
-                return Scalar(name, kind, text);
+                (TomlValueKind valueKind, string text) = Canonical(TomlValueKind.Integer, value ?? "0");
+                return Scalar(name, valueKind, text);
             }
 
             case TomlNewKind.Float:
             {
-                (TomlValueKind kind, string text) = Canonical(TomlValueKind.Float, change.Value ?? "0.0");
-                return Scalar(name, kind, text);
+                (TomlValueKind valueKind, string text) = Canonical(TomlValueKind.Float, value ?? "0.0");
+                return Scalar(name, valueKind, text);
             }
 
             case TomlNewKind.Boolean:
             {
-                (TomlValueKind kind, string text) = Canonical(TomlValueKind.Boolean, change.Value ?? "false");
-                return Scalar(name, kind, text);
+                (TomlValueKind valueKind, string text) = Canonical(TomlValueKind.Boolean, value ?? "false");
+                return Scalar(name, valueKind, text);
             }
 
             default:
             {
-                (TomlValueKind kind, string text) = Canonical(TomlValueKind.OffsetDateTime, change.Value ?? string.Empty);
-                return Scalar(name, kind, text);
+                (TomlValueKind valueKind, string text) = Canonical(TomlValueKind.OffsetDateTime, value ?? string.Empty);
+                return Scalar(name, valueKind, text);
             }
         }
     }
@@ -451,5 +910,110 @@ internal static class TomlLogicalEdit
         // A table defined by its own header has a header with as many keys as the table has names from the root.
         int depth = container.Path.Steps.Count(step => step is MemberStep);
         return !pieces.Any(piece => piece is TomlHeaderItem header && header.Key.Parts.Count == depth);
+    }
+}
+
+/// <summary>
+/// The layout of TOML text around a node. A group is the node with the comments that belong to it: the comment lines directly above a
+/// key/value line (no blank line between), and the comment on the node's last line. The merger makes that attachment (see
+/// <see cref="TomlMerger"/>), and the tree shows it: a comment child of a table that is directly followed by a key/value child belongs
+/// to it, and a comment child that starts on the line where the child before it ends is that child's trailing comment. A comment above
+/// a header is a child of the table that header defines, never of the table above, so it is not in a group here. Array items take their
+/// trailing comments only: a comment line in an array stands alone.
+/// </summary>
+internal static class TomlLayout
+{
+    /// <summary>The group of a child of a table or array: the child and its attached comments, as the child range [First, Last].</summary>
+    public static (int First, int Last) Block(DocNode parent, int index, string text)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        if (EditLayout.IsComment(children[index]))
+        {
+            return (index, index);
+        }
+
+        int first = index;
+        if (parent.Kind == NodeKind.TomlTable)
+        {
+            int next = index;
+            for (int k = index - 1; k >= 0 && children[k].Kind == NodeKind.TomlComment && StandaloneAbove(text, children[k], children[next].Start); k--)
+            {
+                first = k;
+                next = k;
+            }
+        }
+
+        int last = index;
+        int after = index + 1;
+        if (after < children.Count && children[after].Kind == NodeKind.TomlComment && !EditLayout.HasLineBreak(text, children[index].End, children[after].Start))
+        {
+            last = after;
+        }
+
+        return (first, last);
+    }
+
+    /// <summary>
+    /// The end of an array's child, with its comma: a comment's end, or an item's comma end when it has one, else the child's end. The
+    /// item is found through the array's syntax.
+    /// </summary>
+    public static int ItemEnd(TomlModel model, DocNode array, int index)
+    {
+        DocNode child = array.Children[index];
+        if (child.Kind == NodeKind.TomlComment)
+        {
+            return child.End;
+        }
+
+        int itemIndex = 0;
+        for (int k = 0; k < index; k++)
+        {
+            if (array.Children[k].Kind != NodeKind.TomlComment)
+            {
+                itemIndex++;
+            }
+        }
+
+        return model.ArrayItemSyntaxOf(array, itemIndex).Comma is { } comma ? comma.End : child.End;
+    }
+
+    /// <summary>
+    /// True when a group of an array's children is copied as whole lines: it starts a line, it lies on one line, and nothing follows it on
+    /// that line. Otherwise a copy goes in the line, after the item.
+    /// </summary>
+    public static bool IsLineCopy(TomlModel model, DocNode array, int first, int last, string text)
+    {
+        int end = ItemEnd(model, array, last);
+        return EditLayout.StartsLine(text, array.Children[first].Start)
+            && !EditLayout.HasLineBreak(text, array.Children[first].Start, end)
+            && EditLayout.RestOfLineBlank(text, end);
+    }
+
+    /// <summary>True when the comment at the start of the line is followed by a single line break and then the next child, with no blank line.</summary>
+    private static bool StandaloneAbove(string text, DocNode comment, int nextStart)
+    {
+        if (!EditLayout.StartsLine(text, comment.Start))
+        {
+            return false;
+        }
+
+        int i = comment.End;
+        if (i < text.Length && text[i] == '\r')
+        {
+            i++;
+        }
+
+        if (i >= text.Length || text[i] != '\n')
+        {
+            return false;
+        }
+
+        i++;
+        while (i < nextStart && text[i] is ' ' or '\t')
+        {
+            i++;
+        }
+
+        return i == nextStart;
     }
 }
