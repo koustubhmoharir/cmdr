@@ -70,6 +70,12 @@ internal static class YamlLogicalEdit
             case DeleteNode delete:
                 return DeleteAt(before, root, data, comments, delete.Node);
 
+            case InsertNode insert:
+                return InsertAt(before, root, data, comments, insert);
+
+            case DuplicateNode duplicate:
+                return DuplicateAt(before, root, data, comments, duplicate.Node);
+
             default:
                 throw new InvalidOperationException("The operation " + op.GetType().Name + " is not supported for YAML.");
         }
@@ -121,8 +127,221 @@ internal static class YamlLogicalEdit
                 return first > 0 ? survivor.Children[first - 1].Path : survivor.Path;
             }
 
+            case InsertNode insert:
+            {
+                var model = (YamlModel)before.Syntax;
+                DocNode parent = Locate(before, insert.Parent);
+                if (insert.Node is NewYamlComment)
+                {
+                    return CommentPathAt(after, CommentRankOf(model, before.Source.Text, parent, insert.Index));
+                }
+
+                var value = (NewYamlValue)insert.Node;
+                NodePath path = value.Key is null
+                    ? parent.Path.Append(new ItemStep(EntriesBefore(parent, insert.Index)))
+                    : parent.Path.Append(new MemberStep(value.Key, 0));
+                return after.Resolve(path) is null ? null : path;
+            }
+
+            case DuplicateNode duplicate:
+            {
+                var model = (YamlModel)before.Syntax;
+                DocNode node = Locate(before, duplicate.Node);
+                DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node has no parent.");
+                YamlEditPlanner.CopyRange range = YamlEditPlanner.CopySpan(before.Source.Text, model, parent, node);
+                if (node.Kind == NodeKind.YamlComment)
+                {
+                    return CommentPathAt(after, AllComments(model).Count(c => c.Start < range.At));
+                }
+
+                NodePath path = parent.Kind == NodeKind.YamlMapping
+                    ? parent.Path.Append(new MemberStep(CopyNameOf(parent, node), 0))
+                    : parent.Path.Append(new ItemStep(CountEntries(parent.Children, node) + 1));
+                return after.Resolve(path) is null ? null : path;
+            }
+
             default:
                 return null;
+        }
+    }
+
+    // ----- Insert and duplicate -----
+
+    /// <summary>
+    /// A new entry or item: its data goes to the position among the entries that the index gives (comments are not entries). Its layout is the
+    /// planner's, which does not change the data. A new comment takes the rank that its line has in the file.
+    /// </summary>
+    private static LogicalNode InsertAt(ConfigDocument before, LogicalNode root, LogicalNode data, IReadOnlyList<LogicalNode> comments, InsertNode insert)
+    {
+        var model = (YamlModel)before.Syntax;
+        DocNode parent = Locate(before, insert.Parent);
+        if (insert.Node is NewYamlComment comment)
+        {
+            var added = comments.ToList();
+            added.Insert(CommentRankOf(model, before.Source.Text, parent, insert.Index), new LogicalNode(LogicalKind.Comment, null, null, comment.Text, [], []));
+            return Rebuild(root, data, added);
+        }
+
+        var value = (NewYamlValue)insert.Node;
+        LogicalNode child = NewLogical(value.Key, value.Kind, value.Value);
+        int position = EntriesBefore(parent, insert.Index);
+        LogicalNode next = Modify(data, IndicesOf(parent), 0, n => WithChildAt(n, position, child)) ?? data;
+        return Rebuild(root, next, comments);
+    }
+
+    /// <summary>
+    /// A copy of a node, right after the node: its data is the node's data with the anchors removed (a copy would define them twice), renamed
+    /// when it is a mapping entry. The comments in the copied span are copied after the originals, at the rank of the copy's offset.
+    /// </summary>
+    private static LogicalNode DuplicateAt(ConfigDocument before, LogicalNode root, LogicalNode data, IReadOnlyList<LogicalNode> comments, NodePath path)
+    {
+        var model = (YamlModel)before.Syntax;
+        DocNode node = Locate(before, path);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be duplicated.");
+        YamlEditPlanner.CopyRange range = YamlEditPlanner.CopySpan(before.Source.Text, model, parent, node);
+        var next = comments.ToList();
+        next.InsertRange(
+            AllComments(model).Count(c => c.Start < range.At),
+            AllComments(model)
+                .Where(c => c.Start >= range.From && c.Start < range.To)
+                .Select(c => new LogicalNode(LogicalKind.Comment, null, null, c.Content, [], [])));
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            return Rebuild(root, data, next);
+        }
+
+        LogicalNode copy = Anchorless(Get(data, IndicesOf(node)));
+        if (parent.Kind == NodeKind.YamlMapping)
+        {
+            copy = Renamed(copy, CopyNameOf(parent, node));
+        }
+
+        int position = CountEntries(parent.Children, node) + 1;
+        LogicalNode updated = Modify(data, IndicesOf(parent), 0, n => WithChildAt(n, position, copy)) ?? data;
+        return Rebuild(root, updated, next);
+    }
+
+    /// <summary>The logical child a new value is: a scalar with the text the planner writes, or an empty collection.</summary>
+    private static LogicalNode NewLogical(string? name, YamlNewKind kind, string? value)
+    {
+        switch (kind)
+        {
+            case YamlNewKind.String:
+            {
+                string text = value ?? string.Empty;
+                return Scalar(name, text, PlainText(YamlEditPlanner.StringToken(text, null, 0, false, "\n")), null, null);
+            }
+
+            case YamlNewKind.Number:
+                return Scalar(name, value ?? "0", true, null, null);
+
+            case YamlNewKind.Boolean:
+                return Scalar(name, value ?? "false", true, null, null);
+
+            case YamlNewKind.Null:
+                return Scalar(name, "null", true, null, null);
+
+            case YamlNewKind.Mapping:
+                return new LogicalNode(LogicalKind.Object, name, null, null, [], []);
+
+            default:
+                return new LogicalNode(LogicalKind.Array, name, null, null, [], []);
+        }
+    }
+
+    /// <summary>The number of entries (not comments) before an index of the children: the logical position of a new child there.</summary>
+    private static int EntriesBefore(DocNode parent, int index)
+    {
+        int count = 0;
+        for (int k = 0; k < index; k++)
+        {
+            if (!EditLayout.IsComment(parent.Children[k]))
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>The rank a new comment takes: the number of comments that start before the line the planner writes it on.</summary>
+    private static int CommentRankOf(YamlModel model, string text, DocNode parent, int index)
+    {
+        int offset = IsFlowParent(model, parent)
+            ? YamlEditPlanner.FlowCommentLine(text, YamlEditPlanner.ValueOf(model.SyntaxOf(parent)) ?? throw new InvalidOperationException("The collection has no syntax."), parent.Children, index).Offset
+            : YamlEditPlanner.BlockPlace(model, text, parent, index).Offset;
+        return AllComments(model).Count(c => c.Start < offset);
+    }
+
+    private static bool IsFlowParent(YamlModel model, DocNode parent) => YamlEditPlanner.ValueOf(model.SyntaxOf(parent)) is YamlFlowMapping or YamlFlowSequence;
+
+    /// <summary>The name of a copy of a mapping entry: the first copy name that no sibling has.</summary>
+    private static string CopyNameOf(DocNode parent, DocNode node)
+    {
+        string name = ((MemberStep)node.Path.Steps[^1]).Key;
+        var taken = parent.Children
+            .Where(child => child.Path.Steps[^1] is MemberStep)
+            .Select(child => ((MemberStep)child.Path.Steps[^1]).Key)
+            .ToHashSet(StringComparer.Ordinal);
+        return EditLayout.CopyName(name, taken.Contains);
+    }
+
+    /// <summary>The logical node with its anchors removed, at every depth: the copy of a node in a duplicate has none.</summary>
+    private static LogicalNode Anchorless(LogicalNode node)
+    {
+        return new LogicalNode(
+            node.Kind,
+            node.Name,
+            node.ScalarKind,
+            node.Value,
+            node.Attributes,
+            node.Children.Select(Anchorless).ToList(),
+            node.AnyValue,
+            node.TomlKind,
+            node.YamlKind,
+            node.YamlPlain,
+            null,
+            node.YamlTag);
+    }
+
+    /// <summary>The logical node at a path of child indices.</summary>
+    private static LogicalNode Get(LogicalNode root, IReadOnlyList<int> indices)
+    {
+        LogicalNode node = root;
+        foreach (int k in indices)
+        {
+            node = node.Children[k];
+        }
+
+        return node;
+    }
+
+    private static LogicalNode WithChildAt(LogicalNode node, int position, LogicalNode child)
+    {
+        var children = node.Children.ToList();
+        children.Insert(position, child);
+        return WithChildren(node, children);
+    }
+
+    /// <summary>The path of the comment at a rank in file order, or null when there is none.</summary>
+    private static NodePath? CommentPathAt(ConfigDocument document, int rank)
+    {
+        var comments = new List<DocNode>();
+        CollectComments(document.Root, comments);
+        comments.Sort((a, b) => a.Start.CompareTo(b.Start));
+        return rank < comments.Count ? comments[rank].Path : null;
+    }
+
+    private static void CollectComments(DocNode node, List<DocNode> comments)
+    {
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            comments.Add(node);
+        }
+
+        foreach (DocNode child in node.Children)
+        {
+            CollectComments(child, comments);
         }
     }
 

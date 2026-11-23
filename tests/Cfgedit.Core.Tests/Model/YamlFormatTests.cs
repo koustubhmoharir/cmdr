@@ -20,17 +20,11 @@ public sealed class YamlFormatTests
     }
 
     [Fact]
-    public void Adding_duplicating_and_moving_are_refused_for_now()
+    public void Moving_is_refused_for_now()
     {
         ConfigDocument document = Format.Parse(SourceText.Create("a: 1\n", Encoding.UTF8, false));
         NodePath root = NodePath.Empty.Append(new ItemStep(0));
 
-        Assert.Equal(
-            "adding is not supported in YAML yet",
-            Assert.Throws<CfgeditException>(() => Format.Plan(document, new InsertNode(root, 0, new NewJsonValue("b", JsonValueKind.String, "x")))).Message);
-        Assert.Equal(
-            "duplicating a node is not supported in YAML yet",
-            Assert.Throws<CfgeditException>(() => Format.Plan(document, new DuplicateNode(root.Append(new MemberStep("a", 0))))).Message);
         Assert.Equal(
             "moving a node is not supported in YAML yet",
             Assert.Throws<CfgeditException>(() => Format.Plan(document, new MoveNode(root.Append(new MemberStep("a", 0)), 0))).Message);

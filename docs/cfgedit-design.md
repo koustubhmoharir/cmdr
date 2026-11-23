@@ -493,7 +493,7 @@ schema (`null`, `boolean`, `integer`, `float`, `string`), quoted and block scala
 - Add: into a block mapping, `key: value` at the siblings' indentation, after the group of the entry it follows; into
   a block sequence, `- value`; into flow collections, as JSON (commas, one-line or one-per-line style). New
   containers are written `{}` / `[]`; adding the first item to an empty `{}` or `[]` that is the value of a block
-  mapping entry or block sequence item turns it into block style. Add dialog kinds: string, number, boolean, null,
+  mapping entry or block sequence item turns it into block style. An empty `{}` that is a sequence item becomes a compact block mapping on the dash line (`- key: value`). Add dialog kinds: string, number, boolean, null,
   mapping, sequence, comment.
 - Delete, move (Alt+Up/Down), duplicate (`-copy` keys): as JSON and `.env`, with comment groups; moves refused when
   units are not contiguous. A deleted or moved node keeps its anchor and tag; deleting an anchored node that an alias

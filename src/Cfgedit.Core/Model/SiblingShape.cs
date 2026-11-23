@@ -33,6 +33,11 @@ internal static class SiblingShape
             return TomlShape(document, source, sibling, container, parent, index);
         }
 
+        if (source.Kind is NodeKind.YamlScalar or NodeKind.YamlMapping or NodeKind.YamlSequence)
+        {
+            return YamlShape(document, source, sibling, container, parent, index);
+        }
+
         var steps = new List<EditOp>();
         NodePath created;
         if (source.Kind is NodeKind.JsonScalar or NodeKind.JsonObject or NodeKind.JsonArray)
@@ -152,6 +157,79 @@ internal static class SiblingShape
         }
 
         return new ShapedInsert(new CompositeEdit(steps), item);
+    }
+
+    /// <summary>
+    /// The YAML shape of an item of a sequence. A mapping item becomes a new mapping item whose scalar members keep their keys, with empty
+    /// values of their kinds, and whose collection members become <c>{}</c> or <c>[]</c>. Aliases are not copied, and neither are anchors and
+    /// tags. A scalar item becomes one empty value of its kind, and a sequence item becomes <c>[]</c>. The insert is a composite: the item, then
+    /// its members, so the item is written by the planner's own rules (an empty mapping item becomes block style).
+    /// </summary>
+    private static ShapedInsert YamlShape(ConfigDocument document, DocNode source, NodePath sibling, DocNode container, NodePath parent, int index)
+    {
+        if (sibling.Steps[^1] is MemberStep)
+        {
+            throw new ArgumentException("A YAML mapping entry has a key, so its shape cannot be copied into this place.", nameof(sibling));
+        }
+
+        if (container.Kind != NodeKind.YamlSequence)
+        {
+            throw new ArgumentException("A YAML item has no key, so its shape cannot be copied into this place.", nameof(sibling));
+        }
+
+        var steps = new List<EditOp>();
+        NodePath created = parent.Append(new ItemStep(CountBefore(container, index, child => !EditLayout.IsComment(child))));
+        switch (source.Kind)
+        {
+            case NodeKind.YamlScalar:
+                (YamlNewKind kind, string? text) = EmptyYaml(source);
+                steps.Add(new InsertNode(parent, index, new NewYamlValue(null, kind, text)));
+                break;
+            case NodeKind.YamlSequence:
+                steps.Add(new InsertNode(parent, index, new NewYamlValue(null, YamlNewKind.Sequence, null)));
+                break;
+            default:
+                steps.Add(new InsertNode(parent, index, new NewYamlValue(null, YamlNewKind.Mapping, null)));
+                int position = 0;
+                foreach (DocNode member in source.Children)
+                {
+                    if (member.Path.Steps[^1] is not MemberStep step)
+                    {
+                        continue;
+                    }
+
+                    switch (member.Kind)
+                    {
+                        case NodeKind.YamlScalar:
+                            (YamlNewKind memberKind, string? memberText) = EmptyYaml(member);
+                            steps.Add(new InsertNode(created, position++, new NewYamlValue(step.Key, memberKind, memberText)));
+                            break;
+                        case NodeKind.YamlSequence:
+                            steps.Add(new InsertNode(created, position++, new NewYamlValue(step.Key, YamlNewKind.Sequence, null)));
+                            break;
+                        case NodeKind.YamlMapping:
+                            steps.Add(new InsertNode(created, position++, new NewYamlValue(step.Key, YamlNewKind.Mapping, null)));
+                            break;
+                    }
+                }
+
+                break;
+        }
+
+        return new ShapedInsert(new CompositeEdit(steps), created);
+    }
+
+    /// <summary>The empty value of a YAML scalar of its kind: <c>""</c> for a string, <c>0</c> or <c>0.0</c>, <c>false</c>, and <c>null</c>.</summary>
+    private static (YamlNewKind Kind, string? Text) EmptyYaml(DocNode scalar)
+    {
+        return scalar.YamlKind switch
+        {
+            YamlValueKind.String => (YamlNewKind.String, string.Empty),
+            YamlValueKind.Integer => (YamlNewKind.Number, "0"),
+            YamlValueKind.Float => (YamlNewKind.Number, "0.0"),
+            YamlValueKind.Boolean => (YamlNewKind.Boolean, "false"),
+            _ => (YamlNewKind.Null, null),
+        };
     }
 
     /// <summary>The empty value of a TOML scalar: "" for a string, "0", "0.0" and "false", and a date-time's own text.</summary>

@@ -1,3 +1,4 @@
+using System.Text;
 using Cfgedit.Core.Yaml;
 
 namespace Cfgedit.Core.Model;
@@ -42,6 +43,24 @@ internal sealed class YamlEditPlanner
     internal readonly record struct Owner(int End, int Column, bool NoColon);
 
     /// <summary>
+    /// How a copy of a node is written. <see cref="Lines"/>: the source lines, after the group's last line (a block group, or a flow entry
+    /// on its own line). <see cref="Dash"/>: a block entry that shares its first line with a dash, copied as a line of its own at its column.
+    /// <see cref="Inline"/>: a flow entry, copied after its comma.
+    /// </summary>
+    internal enum CopyForm
+    {
+        Lines,
+        Dash,
+        Inline,
+    }
+
+    /// <summary>
+    /// The source span of a copy: [<paramref name="From"/>, <paramref name="To"/>) is copied, and the copy goes at <paramref name="At"/>. The
+    /// comments that start in the span are the copied comments, and the copy's rank starts at the comments that start before <c>At</c>.
+    /// </summary>
+    internal readonly record struct CopyRange(int From, int To, int At, CopyForm Form);
+
+    /// <summary>
     /// The scalar a row shows: its syntax (null when the value is missing), the span of its text, and the kind the file gives it. Empty is an
     /// untagged plain scalar with no text, which reads as null. Typed is the core kind its text must keep, and null for a string.
     /// </summary>
@@ -66,10 +85,12 @@ internal sealed class YamlEditPlanner
             case DeleteNode delete:
                 PlanDelete(delete);
                 break;
-            case InsertNode:
-                throw new CfgeditException("adding is not supported in YAML yet");
-            case DuplicateNode:
-                throw new CfgeditException("duplicating a node is not supported in YAML yet");
+            case InsertNode insert:
+                PlanInsert(insert);
+                break;
+            case DuplicateNode duplicate:
+                PlanDuplicate(duplicate);
+                break;
             case MoveNode:
                 throw new CfgeditException("moving a node is not supported in YAML yet");
             case ChangeJsonType or ChangeTomlType:
@@ -923,6 +944,605 @@ internal sealed class YamlEditPlanner
         }
 
         return null;
+    }
+
+    // ----- InsertNode -----
+
+    private void PlanInsert(InsertNode op)
+    {
+        DocNode parent = Node(op.Parent);
+        if (parent.Kind is NodeKind.Document or NodeKind.YamlDocument)
+        {
+            throw new CfgeditException(op.Node switch
+            {
+                NewYamlValue when parent.Kind == NodeKind.Document => "adding a document is not supported",
+                NewYamlValue => "a document has one root value",
+                _ => "a comment cannot be added here",
+            });
+        }
+
+        if (parent.Kind is not (NodeKind.YamlMapping or NodeKind.YamlSequence))
+        {
+            throw new CfgeditException("a YAML value has no children");
+        }
+
+        int count = parent.Children.Count;
+        if (op.Index < 0 || op.Index > count)
+        {
+            throw new CfgeditException($"index {op.Index} is outside the children, 0 to {count}");
+        }
+
+        switch (op.Node)
+        {
+            case NewYamlValue value:
+                InsertValue(parent, op.Index, value);
+                return;
+            case NewYamlComment comment:
+                CheckCommentText(comment.Text);
+                InsertComment(parent, op.Index, comment.Text);
+                return;
+            default:
+                throw new CfgeditException("this kind of node cannot be inserted into YAML");
+        }
+    }
+
+    private void InsertValue(DocNode parent, int index, NewYamlValue value)
+    {
+        bool mapping = parent.Kind == NodeKind.YamlMapping;
+        if (mapping && value.Key is null)
+        {
+            throw new CfgeditException("a key is needed for an entry of a mapping");
+        }
+
+        if (!mapping && value.Key is not null)
+        {
+            throw new CfgeditException("an item of a sequence has no key");
+        }
+
+        if (value.Key is { } key)
+        {
+            RequireFreeKey(parent, key);
+        }
+
+        if (ValueOf(Piece(parent)) is YamlFlowMapping or YamlFlowSequence)
+        {
+            InsertFlowValue(parent, index, value);
+            return;
+        }
+
+        int column = BlockColumn(parent);
+        InsertBlockLine(parent, index, EntryText(mapping, false, value, column), column);
+    }
+
+    private void InsertComment(DocNode parent, int index, string text)
+    {
+        if (ValueOf(Piece(parent)) is { } container and (YamlFlowMapping or YamlFlowSequence))
+        {
+            (int offset, string indent) = FlowCommentLine(_text, container, parent.Children, index);
+            Insert(offset, indent + "#" + text + _newline);
+            return;
+        }
+
+        int column = BlockColumn(parent);
+        InsertBlockLine(parent, index, "#" + text, column);
+    }
+
+    /// <summary>
+    /// Writes a line of a block collection before the child at <paramref name="index"/>, or after the last child. The line is indented to
+    /// <paramref name="column"/>. When the child shares its first line with a dash (the collection is the first thing in a sequence item), the
+    /// line takes the dash's line, and the child follows it on a line of its own at the same column.
+    /// </summary>
+    private void InsertBlockLine(DocNode parent, int index, string line, int column)
+    {
+        (int at, bool onDashLine) = BlockPlace(_model, _text, parent, index);
+        if (onDashLine)
+        {
+            Insert(at, line + _newline + new string(' ', column));
+            return;
+        }
+
+        InsertText(at, new string(' ', column) + line + _newline);
+    }
+
+    /// <summary>The text of a new entry: <c>key: value</c> in a mapping, <c>- value</c> in a block sequence, and <c>value</c> in a flow sequence.</summary>
+    private string EntryText(bool mapping, bool flow, NewYamlValue value, int column)
+    {
+        string token = ValueToken(value.Kind, value.Value, column, flow);
+        string head = mapping ? YamlEncoder.EncodeKey(value.Key!) + ": " : flow ? string.Empty : "- ";
+        return head + token;
+    }
+
+    /// <summary>
+    /// The text of a new value: a string as YAML writes it and stays a string, a number or boolean as given (checked against the core schema),
+    /// null, or an empty flow collection. A literal block is indented from <paramref name="column"/>.
+    /// </summary>
+    private string ValueToken(YamlNewKind kind, string? value, int column, bool flow)
+    {
+        switch (kind)
+        {
+            case YamlNewKind.String:
+                return StringToken(value ?? string.Empty, null, column, flow, _newline);
+            case YamlNewKind.Number:
+            {
+                string number = value ?? "0";
+                if (YamlEncoder.CoreSchemaKind(number) is not (YamlCoreKind.Integer or YamlCoreKind.Float))
+                {
+                    throw new CfgeditException($"'{number}' is not a valid number");
+                }
+
+                return number;
+            }
+            case YamlNewKind.Boolean:
+            {
+                string flag = value ?? "false";
+                if (YamlEncoder.CoreSchemaKind(flag) != YamlCoreKind.Boolean)
+                {
+                    throw new CfgeditException($"'{flag}' is not a valid boolean");
+                }
+
+                return flag;
+            }
+            case YamlNewKind.Null:
+                return "null";
+            case YamlNewKind.Mapping:
+                return "{}";
+            case YamlNewKind.Sequence:
+                return "[]";
+            default:
+                throw new CfgeditException("this type is not supported for YAML");
+        }
+    }
+
+    /// <summary>The column that the entries of a block collection are indented to: the column of its first entry, or 0 for an empty stream.</summary>
+    private int BlockColumn(DocNode parent)
+    {
+        DocNode? entry = parent.Children.FirstOrDefault(child => !EditLayout.IsComment(child));
+        return entry is null ? 0 : Column(_text, Piece(entry)?.Start ?? entry.Start);
+    }
+
+    /// <summary>A key must not name a sibling: a mapping's keys are unique.</summary>
+    private static void RequireFreeKey(DocNode parent, string key)
+    {
+        foreach (DocNode child in parent.Children)
+        {
+            if (Part(child, PartKind.Key) is { } part && part.Value == key)
+            {
+                throw new CfgeditException($"a key named '{key}' already exists here");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes an entry into a flow collection with entries. Before a child, the entry takes its own line when the child has one, else its
+    /// place before the child with a comma. After the last entry, a one-per-line collection gets a line, a trailing comma stays a trailing
+    /// comma, and a one-line collection gets the entry after the last comma (or after the last entry).
+    /// </summary>
+    private void InsertFlowValue(DocNode parent, int index, NewYamlValue value)
+    {
+        bool mapping = parent.Kind == NodeKind.YamlMapping;
+        YamlValueNode container = ValueOf(Piece(parent)) ?? throw Internal("a flow collection has no syntax");
+        IReadOnlyList<DocNode> children = parent.Children;
+        if (children.Count == 0)
+        {
+            InsertIntoEmptyFlow(parent, container, value);
+            return;
+        }
+
+        if (children.All(EditLayout.IsComment))
+        {
+            throw new CfgeditException("a flow collection with only comments cannot take an entry yet");
+        }
+
+        string entry = EntryText(mapping, true, value, 0);
+        string spacing = FlowSpacing(container);
+        if (index < children.Count)
+        {
+            DocNode site = children[index];
+            if (EditLayout.StartsLine(_text, site.Start))
+            {
+                Insert(EditLayout.LineStart(_text, site.Start), EditLayout.LineIndent(_text, site.Start) + entry + "," + _newline);
+            }
+            else
+            {
+                Insert(site.Start, entry + "," + spacing);
+            }
+
+            return;
+        }
+
+        YamlNode last = Piece(children.Last(child => !EditLayout.IsComment(child))) ?? throw Internal("an entry has no syntax");
+        YamlToken? comma = CommaAfter(container, last);
+        int end = comma?.End ?? last.End;
+        (int open, int close) = BracketsOf(container);
+        if (EditLayout.StartsLine(_text, last.Start) && EditLayout.HasLineBreak(_text, open, close) && EditLayout.RestOfLineBlank(_text, end))
+        {
+            if (comma is null)
+            {
+                Insert(last.End, ",");
+            }
+
+            Insert(
+                EditLayout.AfterLineBreak(_text, end),
+                EditLayout.LineIndent(_text, last.Start) + entry + (comma is null ? string.Empty : ",") + _newline);
+            return;
+        }
+
+        if (comma is { } present)
+        {
+            Insert(present.End, spacing + entry + ",");
+        }
+        else
+        {
+            Insert(last.End, "," + spacing + entry);
+        }
+    }
+
+    /// <summary>
+    /// The first entry of an empty flow collection. On the line of its owner (a block mapping entry or sequence item), the collection becomes
+    /// block style: a mapping that is a sequence item takes the dash's line (compact), and any other entry goes on the next line, one level
+    /// deeper than the owner. A root collection becomes block at column 0. Any other
+    /// (a flow inside a flow, or a collection on a later line) gets the entry in its brackets.
+    /// </summary>
+    private void InsertIntoEmptyFlow(DocNode parent, YamlValueNode container, NewYamlValue value)
+    {
+        (int open, int close) = BracketsOf(container);
+        bool mapping = parent.Kind == NodeKind.YamlMapping;
+        YamlNode? piece = Piece(parent);
+        Owner? owner = piece is YamlMappingEntry or YamlSequenceItem ? OwnerOf(piece, _text) : null;
+        if (owner is { } at && !EditLayout.HasLineBreak(_text, at.End, open))
+        {
+            if (mapping && piece is YamlSequenceItem)
+            {
+                // A mapping that is a sequence item is written compact: its first key follows the dash on the dash's line, two columns
+                // right of the dash, and the other members align with it.
+                Replace(HorizontalStart(open), close + 1, " " + EntryText(true, false, value, at.Column + 2));
+                return;
+            }
+
+            int column = at.Column + IndentUnit().Length;
+            if (!mapping && piece is YamlMappingEntry && !SequencesIndented())
+            {
+                column = at.Column;
+            }
+
+            Replace(HorizontalStart(open), close + 1, _newline + new string(' ', column) + EntryText(mapping, false, value, column));
+            return;
+        }
+
+        if (parent.Parent is { Kind: NodeKind.Document or NodeKind.YamlDocument })
+        {
+            int start = HorizontalStart(open);
+            string prefix = start > EditLayout.LineStart(_text, start) ? _newline : string.Empty;
+            Replace(start, close + 1, prefix + EntryText(mapping, false, value, 0));
+            return;
+        }
+
+        string interior = _text[(open + 1)..close];
+        string flowEntry = EntryText(mapping, true, value, 0);
+        Replace(open + 1, close, interior.Length == 0 ? flowEntry : " " + flowEntry + " ");
+    }
+
+    /// <summary>The spacing after a comma in a flow collection: that of the first comma with spaces after it, else one space.</summary>
+    private static string FlowSpacing(YamlValueNode container)
+    {
+        IReadOnlyList<YamlNode> parts = container.Parts;
+        for (int k = 0; k + 1 < parts.Count; k++)
+        {
+            if (parts[k] is YamlToken { Kind: YamlTokenKind.Indicator, Text: "," } && parts[k + 1] is YamlToken { Kind: YamlTokenKind.Whitespace } space && space.Text.Length > 0)
+            {
+                return space.Text;
+            }
+        }
+
+        return " ";
+    }
+
+    /// <summary>
+    /// The indentation step of the document: the file's dominant step, which is spaces. The default is two spaces, which is also used when the
+    /// file's step would be a tab.
+    /// </summary>
+    private string IndentUnit()
+    {
+        string unit = EditLayout.InferIndentUnit(_text);
+        return unit.Length > 0 && unit.All(c => c == ' ') ? unit : "  ";
+    }
+
+    /// <summary>
+    /// True when a sequence under a mapping key is indented under its key, as the file's first such sequence is. The default is indented.
+    /// </summary>
+    private bool SequencesIndented()
+    {
+        foreach (YamlNode item in _model.Syntax.Items)
+        {
+            foreach (YamlNode part in Walk(item))
+            {
+                if (part is YamlMappingEntry { Value: YamlBlockSequence { Items.Count: > 0 } sequence } entry)
+                {
+                    return Column(_text, sequence.Items[0].Dash.Start) > Column(_text, entry.Start);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The line of a comment in a flow collection: the line of the child at <paramref name="index"/>, or the closing bracket's line, when that
+    /// line starts with the child (or the bracket). Otherwise a comment would share a line with an entry, and it is refused.
+    /// </summary>
+    internal static (int Offset, string Indent) FlowCommentLine(string text, YamlValueNode container, IReadOnlyList<DocNode> children, int index)
+    {
+        (int open, int close) = BracketsOf(container);
+        if (index < children.Count && EditLayout.StartsLine(text, children[index].Start))
+        {
+            int at = children[index].Start;
+            return (EditLayout.LineStart(text, at), EditLayout.LineIndent(text, at));
+        }
+
+        if (index == children.Count && EditLayout.StartsLine(text, close))
+        {
+            string indent = children.Count > 0 ? EditLayout.LineIndent(text, children[^1].Start) : EditLayout.LineIndent(text, open);
+            return (EditLayout.LineStart(text, close), indent);
+        }
+
+        throw new CfgeditException("a comment in a flow collection needs a line of its own here");
+    }
+
+    /// <summary>
+    /// Where a new child of a block collection goes: the start of the line of the child at <paramref name="index"/> (its group's first line),
+    /// or the line after the last child's group. A child that shares its line with a dash gives the dash-line form (the offset is the child's
+    /// start). A comment that sits after an entry on its line goes after that line. The root collection of a document stays between the
+    /// document's <c>---</c> line and its <c>...</c> line, since comments outside the document are children of its root too.
+    /// </summary>
+    internal static (int Offset, bool OnDashLine) BlockPlace(YamlModel model, string text, DocNode parent, int index)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        if (children.Count == 0)
+        {
+            return (text.Length, false);
+        }
+
+        int at;
+        if (index < children.Count)
+        {
+            DocNode site = children[EditLayout.Group(parent, index, text).First];
+            if (EditLayout.StartsLine(text, site.Start))
+            {
+                at = EditLayout.LineStart(text, site.Start);
+            }
+            else if (EditLayout.IsComment(site))
+            {
+                at = EditLayout.AfterLineBreak(text, site.End);
+            }
+            else
+            {
+                return (site.Start, true);
+            }
+        }
+        else
+        {
+            int last = EditLayout.Group(parent, children.Count - 1, text).Last;
+            at = LinesEnd(text, children[last].End);
+        }
+
+        if (ValueOf(model.SyntaxOf(parent)) is { } root && model.Syntax.Documents.FirstOrDefault(d => ReferenceEquals(d.Root, root)) is { } document)
+        {
+            if (document.StartMarker is { } start && at < EditLayout.AfterLineBreak(text, start.End))
+            {
+                at = EditLayout.AfterLineBreak(text, start.End);
+            }
+
+            if (document.EndMarker is { } end && at > EditLayout.LineStart(text, end.Start))
+            {
+                at = EditLayout.LineStart(text, end.Start);
+            }
+        }
+
+        return (at, false);
+    }
+
+    /// <summary>
+    /// The end of the lines that a span covers. A span that ends after a line break already ends a line: a block scalar with kept blank lines
+    /// ends after them, and they are part of its value. Any other span ends at the end of its last line.
+    /// </summary>
+    internal static int LinesEnd(string text, int end)
+    {
+        return end > 0 && IsLineBreak(text[end - 1]) ? end : EditLayout.AfterLineBreak(text, end);
+    }
+
+    /// <summary>
+    /// Writes text at an offset that starts a line, or at the end of the text. At the end of a text with no final line break, the document's
+    /// line break comes first and the text keeps its missing final break.
+    /// </summary>
+    private void InsertText(int offset, string block)
+    {
+        if (offset == _text.Length && _text.Length > 0 && !IsLineBreak(_text[^1]))
+        {
+            string body = block.EndsWith(_newline, StringComparison.Ordinal) ? block[..^_newline.Length] : block;
+            Insert(offset, _newline + body);
+            return;
+        }
+
+        Insert(offset, block);
+    }
+
+    // ----- DuplicateNode -----
+
+    private void PlanDuplicate(DuplicateNode op)
+    {
+        DocNode node = Node(op.Node);
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            DuplicateComment(node);
+            return;
+        }
+
+        if (node.Kind == NodeKind.YamlDocument)
+        {
+            throw new CfgeditException("a document cannot be duplicated");
+        }
+
+        DocNode parent = Parent(node);
+        if (parent.Kind is NodeKind.Document or NodeKind.YamlDocument)
+        {
+            throw new CfgeditException("the root value cannot be duplicated");
+        }
+
+        CopyRange range = CopySpan(_text, _model, parent, node);
+        var edits = new List<(int Start, int End, string Text)>();
+        if (parent.Kind == NodeKind.YamlMapping && Part(node, PartKind.Key) is { } key)
+        {
+            edits.Add((key.Start, key.End, YamlEncoder.EncodeKey(FreshName(parent, key.Value))));
+        }
+
+        AnchorRemovals(range.From, range.To, edits);
+        string copy = CopyText(range.From, range.To, edits);
+        switch (range.Form)
+        {
+            case CopyForm.Inline:
+            {
+                YamlValueNode container = ValueOf(Piece(parent)) ?? throw Internal("a flow collection has no syntax");
+                YamlToken? comma = CommaAfter(container, Piece(node) ?? throw Internal("an entry has no syntax"));
+                string spacing = FlowSpacing(container);
+                if (comma is { } present)
+                {
+                    Insert(present.End, spacing + copy + ",");
+                }
+                else
+                {
+                    Insert(range.To, "," + spacing + copy);
+                }
+
+                return;
+            }
+
+            case CopyForm.Dash:
+                // The copy's first line takes the column of the entry, and the copied text ends with its line break.
+                InsertText(range.At, new string(' ', Column(_text, range.From)) + copy);
+                return;
+
+            default:
+            {
+                if (ValueOf(Piece(parent)) is YamlFlowMapping or YamlFlowSequence)
+                {
+                    YamlValueNode container = ValueOf(Piece(parent))!;
+                    YamlNode piece = Piece(node) ?? throw Internal("an entry has no syntax");
+                    if (CommaAfter(container, piece) is null)
+                    {
+                        // The original becomes a middle entry, so it takes the comma that the copy does not have.
+                        Insert(piece.End, ",");
+                    }
+                }
+
+                InsertText(range.At, copy);
+                return;
+            }
+        }
+    }
+
+    /// <summary>A comment line is copied after its line, with the indentation of that line. A trailing comment is copied as a line of its own.</summary>
+    private void DuplicateComment(DocNode comment)
+    {
+        string indent = EditLayout.LineIndent(_text, comment.Start);
+        InsertText(EditLayout.AfterLineBreak(_text, comment.End), indent + _text[comment.Start..comment.End] + _newline);
+    }
+
+    /// <summary>
+    /// Removes the anchors of the nodes in [<paramref name="from"/>, <paramref name="to"/>) from a copy: a copy with an anchor would define it
+    /// twice. The spaces before an anchor go with it, or the spaces after it when it starts the copy. Aliases in the copy stay.
+    /// </summary>
+    private void AnchorRemovals(int from, int to, List<(int Start, int End, string Text)> edits)
+    {
+        foreach (YamlNode item in _model.Syntax.Items)
+        {
+            foreach (YamlNode part in Walk(item))
+            {
+                if (part is not YamlValueNode { Anchor: { } anchor } || anchor.Start < from || anchor.End > to)
+                {
+                    continue;
+                }
+
+                int start = anchor.Start;
+                int end = anchor.End;
+                if (start > from && _text[start - 1] is ' ' or '\t')
+                {
+                    while (start > from && _text[start - 1] is ' ' or '\t')
+                    {
+                        start--;
+                    }
+                }
+                else
+                {
+                    while (end < to && _text[end] is ' ' or '\t')
+                    {
+                        end++;
+                    }
+                }
+
+                edits.Add((start, end, string.Empty));
+            }
+        }
+    }
+
+    /// <summary>The key of a copy of a mapping entry: <c>name-copy</c>, then <c>name-copy2</c> and so on, unique among the entries' keys.</summary>
+    private static string FreshName(DocNode parent, string name)
+    {
+        var taken = parent.Children
+            .Where(child => child.Path.Steps[^1] is MemberStep)
+            .Select(child => ((MemberStep)child.Path.Steps[^1]).Key)
+            .ToHashSet(StringComparer.Ordinal);
+        return EditLayout.CopyName(name, taken.Contains);
+    }
+
+    /// <summary>The text of a copy: [from, to) with its edits applied. The edits are offsets into the source, and they do not overlap.</summary>
+    private string CopyText(int from, int to, List<(int Start, int End, string Text)> edits)
+    {
+        var builder = new StringBuilder(_text[from..to]);
+        foreach ((int start, int end, string text) in edits.OrderByDescending(edit => edit.Start))
+        {
+            builder.Remove(start - from, end - start).Insert(start - from, text);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// The span of a copy of a node, and the offset it goes at, shared with the logical edit. A comment is copied after its line. A flow entry
+    /// on a line of its own is copied with its line, and any other flow entry after its comma. A block entry is copied with its group (its
+    /// attached comments and what is nested in it), after the group's last line.
+    /// </summary>
+    internal static CopyRange CopySpan(string text, YamlModel model, DocNode parent, DocNode node)
+    {
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            return new CopyRange(node.Start, node.End, EditLayout.AfterLineBreak(text, node.End), CopyForm.Lines);
+        }
+
+        YamlNode piece = model.SyntaxOf(node) ?? throw Internal("an entry has no syntax");
+        if (ValueOf(model.SyntaxOf(parent)) is { } container and (YamlFlowMapping or YamlFlowSequence))
+        {
+            YamlToken? comma = CommaAfter(container, piece);
+            int end = comma?.End ?? piece.End;
+            (int open, int close) = BracketsOf(container);
+            if (EditLayout.HasLineBreak(text, open, close) && EditLayout.StartsLine(text, piece.Start) && EditLayout.RestOfLineBlank(text, end))
+            {
+                int after = EditLayout.AfterLineBreak(text, end);
+                return new CopyRange(EditLayout.LineStart(text, piece.Start), after, after, CopyForm.Lines);
+            }
+
+            return new CopyRange(piece.Start, piece.End, comma?.End ?? piece.End, CopyForm.Inline);
+        }
+
+        IReadOnlyList<DocNode> children = parent.Children;
+        (int first, int last) = EditLayout.Group(parent, IndexOf(parent, node), text);
+        int start = children[first].Start;
+        int stop = LinesEnd(text, children[last].End);
+        if (EditLayout.StartsLine(text, start))
+        {
+            return new CopyRange(EditLayout.LineStart(text, start), stop, stop, CopyForm.Lines);
+        }
+
+        return new CopyRange(start, stop, stop, CopyForm.Dash);
     }
 
     // ----- Document lookups -----

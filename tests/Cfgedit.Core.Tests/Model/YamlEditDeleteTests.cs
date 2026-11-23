@@ -291,6 +291,24 @@ public sealed class YamlEditDeleteTests
                 ops.Add(new ChangeYamlType(node.Path, kind, "5"));
             }
 
+            ops.Add(new DuplicateNode(node.Path));
+            if (node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence)
+            {
+                for (int index = 0; index <= node.Children.Count; index++)
+                {
+                    foreach (string? key in new string?[] { null, "zz" })
+                    {
+                        foreach (YamlNewKind kind in Enum.GetValues<YamlNewKind>())
+                        {
+                            ops.Add(new InsertNode(node.Path, index, new NewYamlValue(key, kind, "1")));
+                            ops.Add(new InsertNode(node.Path, index, new NewYamlValue(key, kind, "a\nb")));
+                        }
+                    }
+
+                    ops.Add(new InsertNode(node.Path, index, new NewYamlComment("c")));
+                }
+            }
+
             foreach (EditOp op in ops)
             {
                 try
@@ -307,7 +325,7 @@ public sealed class YamlEditDeleteTests
             }
         }
 
-        Assert.Empty(failures);
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
     }
 
     // ----- CRLF -----

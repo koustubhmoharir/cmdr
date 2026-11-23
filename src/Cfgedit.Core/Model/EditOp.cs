@@ -144,6 +144,19 @@ public sealed record NewTomlValue(string? Key, TomlNewKind Kind, string? Value) 
 /// </summary>
 public sealed record NewTomlComment(string Text) : NewNode;
 
+/// <summary>
+/// A YAML mapping entry or sequence item. <see cref="Key"/> is required in a mapping and must be null in a sequence. <see cref="Value"/> is
+/// the text of a String (null means empty), of a Number (null means 0) or of a Boolean (null means false). It is ignored for Null, Mapping
+/// and Sequence.
+/// </summary>
+public sealed record NewYamlValue(string? Key, YamlNewKind Kind, string? Value) : NewNode;
+
+/// <summary>
+/// A YAML comment line. <see cref="Text"/> is the text after the <c>#</c>, so it includes any leading space the user wants. It must not
+/// contain a line break.
+/// </summary>
+public sealed record NewYamlComment(string Text) : NewNode;
+
 /// <summary>An XML element. <see cref="Text"/> is its text content when it is not null and not empty.</summary>
 public sealed record NewXmlElement(string Name, IReadOnlyList<(string Name, string Value)> Attributes, string? Text) : NewNode;
 
