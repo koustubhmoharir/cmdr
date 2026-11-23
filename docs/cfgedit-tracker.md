@@ -164,7 +164,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       byte-identical round trip, yaml-test-suite (vendored): every case refused or read as expected, every error case
       refused. (e674ae1) 402 cases: 94 errors refused; of 308 others, 233 accepted (values match for the 213
       single-document ones), 75 refused with named reasons. Folded scalars are rewritten as literal when edited.
-- [ ] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
+- [x] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
+      (9de7ebd) Until the TUI item, `CfgeditHost.RefuseUnfinished` refuses YAML files, and `DocumentFile.InitialText`
+      still returns `{}` for YAML: fix both then.
 - [ ] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
       move, duplicate, change type; anchors/aliases rules; YAML logical edit.
 - [ ] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, table editor, new file,
