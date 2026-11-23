@@ -196,6 +196,52 @@ public sealed class EditRulesTests
         Assert.Equal(EditorKind.None, EditRules.KindOf(table, table.Parts[1]));
     }
 
+    [Fact]
+    public void Yaml_scalars_open_the_inline_field_or_the_multi_line_editor_and_never_the_type_menu()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a: true\nb: 1\nc: ''\nd: |\n  x\n  y\ne:\n", "yaml");
+        DocNode boolean = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("a", 0));
+        DocNode integer = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("b", 0));
+        DocNode empty = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("c", 0));
+        DocNode block = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("d", 0));
+        DocNode none = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("e", 0));
+
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(boolean, boolean.Parts[1]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(integer, integer.Parts[1]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(empty, empty.Parts[1]));
+        Assert.Equal(EditorKind.Multiline, EditRules.KindOf(block, block.Parts[1]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(none, none.Parts[1]));
+    }
+
+    [Fact]
+    public void Yaml_keys_open_the_inline_field_but_a_key_with_a_line_break_does_not_open_at_all()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("plain: 1\n\"a\\nb\": 2\n", "yaml");
+        DocNode plain = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("plain", 0));
+        DocNode broken = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("a\nb", 0));
+
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(plain, plain.Parts[0]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(broken, broken.Parts[0]));
+    }
+
+    [Fact]
+    public void Yaml_anchors_tags_aliases_roots_summaries_and_indexes_cannot_be_edited()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a: &x !!str 1\nb: *x\nl:\n  - 1\n", "yaml");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+        DocNode anchored = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("a", 0));
+        DocNode alias = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("b", 0));
+        DocNode item = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("l", 0), new ItemStep(0));
+
+        Assert.Equal(EditorKind.None, EditRules.KindOf(root, root.Parts[0]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(root, root.Parts[1]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(anchored, anchored.Parts[1]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(anchored, anchored.Parts[2]));
+        Assert.Equal(EditorKind.Inline, EditRules.KindOf(anchored, anchored.Parts[3]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(alias, alias.Parts[1]));
+        Assert.Equal(EditorKind.None, EditRules.KindOf(item, item.Parts[0]));
+    }
+
     private static DocPart ValueOf(ConfigDocument document, string key)
     {
         DocNode node = TreeFixtures.Find(document, new ItemStep(0), new MemberStep(key, 0));

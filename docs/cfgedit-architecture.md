@@ -787,6 +787,56 @@ or by `Formats.ForPath` for `.toml`.
   `TomlPropertyTests` (randomised values through the encoder). The TUI is tested in `EditingWindowTests.Toml.cs`,
   `RowLayoutTests`, `PathTextTests`, `EditRulesTests` and `ProgramTests`.
 
+### YAML format (M11)
+
+Syntax in `Cfgedit.Core.Yaml`, the model, tree and edits in `Cfgedit.Core.Model`. `YamlFormat` is chosen by name (`yaml`) or by
+`Formats.ForPath` for `.yaml` and `.yml`. The subset is in the design doc (YAML, M11); the user's view is in the user guide.
+
+- **Syntax.** `YamlDocument.Parse` builds a lossless CST: `YamlDocumentNode`s (with their markers and directives, from
+  `YamlDocuments`), block and flow collections (`YamlBlockMapping`, `YamlBlockSequence`, `YamlFlowMapping`, `YamlFlowSequence`, with
+  their entries and items), `YamlScalar`s (with `YamlScalarStyle`), `YamlAlias`es and `YamlComment`s, and every token keeps its
+  span, its indentation and its trivia. `YamlParser` (with `YamlParser.Block`, `.Flow` and `.Scalars`) reports the line and column
+  of a syntax error. `YamlEncoder` writes keys, and scalars in the plainest style that holds the value (plain, single quoted, double
+  quoted, or a literal block for line breaks), and says which core-schema kind a plain text reads as. `YamlKinds` and `YamlValues`
+  give a scalar's `YamlValueKind` (the core schema, with a core tag honoured and checked) and its decoded value; `YamlTags` resolves
+  tag handles.
+- **Refusals.** `YamlLimits.Check` refuses, after the parse, the shapes that YamlDotNet reads differently (a tab on a blank line
+  between entries, a block scalar whose end is ambiguous at the end of the text): they are refused with a message and the file opens
+  in text mode, as the TOML cross-check does. Everything else the parser refuses is a `CfgeditException` with a position.
+- **Model.** `YamlModelBuilder.Build` makes the document tree from the CST: a single document's root is the root row (`$`), several
+  documents are `YamlDocument` rows under the document node, and an empty stream is an empty mapping. `YamlComments.Assign` decides where
+  each comment is shown (with the entry below it, as a trailing row, or in place). Steps are `MemberStep`, `ItemStep` (documents too)
+  and `CommentStep`. A mapping member's row has its `Key`, then its anchor and tag (`PartKind.Anchor`, `PartKind.Tag`, read-only), then
+  its `Value`, `Alias` or `Summary`. `YamlModel` keeps the syntax, the tree, and the syntax each row was built from (`SyntaxOf`).
+- **Logical tree.** `YamlModel.DataLogical` (`YamlLogical.Data`) is the data: mappings with scalar keys, sequences, and scalars as
+  text with their plain-or-not form, with anchors, aliases and tags by name. `ToLogical` adds the `#comments` array in file order.
+  Check 1 of `Verification` compares the logical edit with the tree after the edit. `YamlCrossCheck` (YamlDotNet's
+  `RepresentationModel`, used only as a verifier) is run on opening and on every edit, after cfgedit's own reparse, and its result is
+  converted to the same shape. A disagreement on opening opens the file in text mode with a message; after an edit it is an internal
+  parse mismatch, which is cfgedit's bug.
+- **Logical shape.** `YamlLogicalEdit.Apply` applies each operation to the logical tree (called from `LogicalEdit`), and
+  `YamlLogicalEdit.FocusAfter` is the hook `ConfigDocument` calls for YAML to find the focus after an edit.
+- **Edits.** `YamlEditPlanner` plans every operation as text edits. Set part: a scalar value keeps its style when the style can hold
+  the new text (a plain value keeps plain only when the new text reads as the same core-schema kind); a key is written plain or
+  quoted; a folded scalar stays folded only when it folds back to the same value. Insert: into a block mapping or sequence at the
+  siblings' indentation and dash style, into flow collections as JSON, into an empty `{}` or `[]` (which turns to block style), and
+  a compact `- key: value` item for an empty `{}` that is a sequence item. Delete, duplicate (anchors are removed from the copies) and
+  change type (`ChangeYamlType`) follow the same rules. An anchor that an alias still refers to cannot be deleted; an alias cannot
+  change type; documents can be deleted and moved, but adding a document is refused. `YamlMoves` (the units of text that move
+  together, with their comments, and the refusal of a move that would split one) is the move helper that `YamlEditPlanner.PlanMove`
+  uses.
+- **Shape copies.** `SiblingShape` builds the shaped inserts of YAML sequences of scalars and mappings (`ConfigDocument.ShapeLike`).
+- **TUI.** `RowLayout.YamlItems` and `YamlScalarItems` (rows with YAML's `: ` separator; anchors, tags and aliases read-only before the
+  value; a null with no text as a dim `null`), `PathText.YamlPath` and `YamlKindName` (`---[n]` for documents, keys quoted through
+  `YamlEncoder.EncodeKey`), `AddKinds` (the YAML kinds for a mapping or a sequence; none for a document), `EditRules` (a YAML key is one
+  line; anchors, tags, aliases and indexes are not editable), `FirstValue` (a YAML scalar's value editor opens after an add),
+  `MainWindow.ChangeYamlTypeOf` (the type menu, with the alias refusal shown first), and `CfgeditHost` (the format choice, `.yaml`). `T`
+  on YAML says the table editor is not available yet.
+- **Tests.** Core, in `tests/Cfgedit.Core.Tests/Yaml`: `YamlConformanceTests` and `YamlFixtureTests` (the yaml-test-suite, see the
+  design doc), `YamlParserTests`, `YamlScalarTests`, `YamlEncoderTests`, `YamlCrossCheckTests`, `YamlRefusalTests`,
+  `YamlModelConformanceTests`, and the edit sweeps. The TUI is tested in `EditingWindowTests.Yaml.cs`, `RowLayoutTests`, `PathTextTests`,
+  `EditRulesTests` and `ProgramTests`.
+
 ## Read-only TUI (M4)
 
 Projects `src/Cfgedit` (namespace `Cfgedit.Tui`) and `tests/Cfgedit.Tests`. Follow logvu's structure (`LogvuHost`,

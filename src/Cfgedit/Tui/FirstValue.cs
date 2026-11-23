@@ -6,7 +6,7 @@ namespace Cfgedit.Tui;
 /// <summary>
 /// The part an inserted node opens its inline editor on: the first part, in document order, that is a string or number value, an
 /// attribute value, or text, and that the tree edits inline or in the multi-line editor. A boolean, a null, a key, and a container
-/// have no such part.
+/// have no such part, except that a YAML scalar of any kind has one: its value editor opens after it is added.
 /// </summary>
 internal static class FirstValue
 {
@@ -59,7 +59,8 @@ internal static class FirstValue
     {
         bool isValue = part.Kind is PartKind.AttributeValue or PartKind.Text
             || (part.Kind == PartKind.Value
-                && (node.Kind is NodeKind.EnvEntry or NodeKind.TomlScalar || node.JsonKind is JsonValueKind.String or JsonValueKind.Number));
+                && (node.Kind is NodeKind.EnvEntry or NodeKind.TomlScalar or NodeKind.YamlScalar
+                    || node.JsonKind is JsonValueKind.String or JsonValueKind.Number));
         return isValue && EditRules.KindOf(node, part) is EditorKind.Inline or EditorKind.Multiline;
     }
 }

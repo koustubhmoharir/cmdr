@@ -1490,6 +1490,93 @@ public sealed class RowLayoutTests
             lines.Lines[0].Segments);
     }
 
+    // ----- YAML -----
+
+    [Fact]
+    public void Yaml_root_mapping_shows_the_marker_and_its_count_like_the_json_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a: 1\nb:\n  c: 2\n", "yaml");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("2", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Yaml_members_show_key_colon_and_a_value_in_its_kind_style()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("s: a\nn: 1\nf: 1.5\nb: true\nz:\nq: ''\ne: \"\"\nt: ~\n", "yaml");
+        DocNode text = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("s", 0));
+        DocNode number = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("n", 0));
+
+        Assert.Equal("s: a", TextOf(RowLayout.Layout(TreeFixtures.RowOf(text, 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("n: 1", TextOf(RowLayout.Layout(TreeFixtures.RowOf(number, 1), false, 80).Lines[0]).Trim());
+        Assert.Contains(new Segment("1", StyleKind.Number, 1), RowLayout.Layout(TreeFixtures.RowOf(number, 1), false, 80).Lines[0].Segments);
+        Assert.Equal("f: 1.5", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "f"), 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("b: true", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "b"), 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("z: null", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "z"), 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("q: \"\"", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "q"), 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("e: \"\"", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "e"), 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("t: ~", TextOf(RowLayout.Layout(TreeFixtures.RowOf(Member(doc, "t"), 1), false, 80).Lines[0]).Trim());
+    }
+
+    [Fact]
+    public void Yaml_anchors_tags_and_aliases_are_shown_read_only_between_the_key_and_the_value()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a: &x !!str 1\nb: *x\n", "yaml");
+        DocNode anchored = Member(doc, "a");
+        DocNode alias = Member(doc, "b");
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(anchored, 1), false, 80);
+
+        Assert.Equal("a: &x !!str 1", TextOf(lines.Lines[0]).Trim());
+        Assert.Contains(new Segment("&x", StyleKind.ReadOnly, 1), lines.Lines[0].Segments);
+        Assert.Contains(new Segment("!!str", StyleKind.ReadOnly, 2), lines.Lines[0].Segments);
+        Assert.Equal("b: *x", TextOf(RowLayout.Layout(TreeFixtures.RowOf(alias, 1), false, 80).Lines[0]).Trim());
+        Assert.Contains(new Segment("*x", StyleKind.ReadOnly, 1), RowLayout.Layout(TreeFixtures.RowOf(alias, 1), false, 80).Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Yaml_sequence_items_show_their_index_then_the_value_and_a_sequence_shows_its_count()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("list:\n  - 1\n  - a\n", "yaml");
+        DocNode list = Member(doc, "list");
+        DocNode first = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("list", 0), new ItemStep(0));
+
+        Assert.Equal("▾ list: [2]", TextOf(RowLayout.Layout(TreeFixtures.RowOf(list, 1), false, 80).Lines[0]).Trim());
+        Assert.Equal("0: 1", TextOf(RowLayout.Layout(TreeFixtures.RowOf(first, 2), false, 80).Lines[0]).Trim());
+    }
+
+    [Fact]
+    public void Yaml_documents_show_their_index_as_a_row_and_comments_as_hash_and_text()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("---\na: 1\n---\nb: 2\n", "yaml");
+        DocNode second = TreeFixtures.Find(doc, new ItemStep(1));
+        ConfigDocument commented = TreeFixtures.Parse("# note\na: 1\n", "yaml");
+        DocNode comment = TreeFixtures.Find(commented, new ItemStep(0), new CommentStep(0));
+
+        Assert.Equal("\x25BE ---[1]", TextOf(RowLayout.Layout(TreeFixtures.RowOf(second, 0), false, 80).Lines[0]));
+        Assert.Equal("# note", TextOf(RowLayout.Layout(TreeFixtures.RowOf(comment, 1), false, 80).Lines[0]).Trim());
+    }
+
+    [Fact]
+    public void Yaml_an_empty_stream_shows_the_empty_root_mapping()
+    {
+        ConfigDocument doc = TreeFixtures.Parse(string.Empty, "yaml");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+
+        Assert.Equal("  $ {0}", TextOf(RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80).Lines[0]));
+    }
+
+    private static DocNode Member(ConfigDocument doc, string key) => TreeFixtures.Find(doc, new ItemStep(0), new MemberStep(key, 0));
+
     private static string TextOf(DisplayLine line) => string.Concat(line.Segments.Select(segment => segment.Text));
 
     [Fact]

@@ -612,7 +612,9 @@ internal static class YamlLogicalEdit
         else
         {
             text = value;
-            plain = old.YamlPlain && PlainText(YamlEditPlanner.StringToken(value, YamlScalarStyle.Plain, 0, flow, "\n"));
+            // An empty quoted string does not keep its quotes for a new text (see the planner), so it may become plain.
+            bool keepsPlainness = old.YamlPlain || old.Value?.Length == 0;
+            plain = keepsPlainness && PlainText(YamlEditPlanner.StringToken(value, YamlScalarStyle.Plain, 0, flow, "\n"));
         }
 
         return Scalar(old.Name, text, plain, old.YamlAnchor, old.YamlTag);

@@ -100,6 +100,9 @@ public static class RowLayout
                 SingleLine(indent, EnvItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.TomlTable or NodeKind.TomlArray or NodeKind.TomlScalar or NodeKind.TomlComment =>
                 SingleLine(indent, TomlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
+            NodeKind.YamlDocument or NodeKind.YamlMapping or NodeKind.YamlSequence or NodeKind.YamlScalar or NodeKind.YamlAlias
+                or NodeKind.YamlComment =>
+                SingleLine(indent, YamlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.XmlText or NodeKind.XmlCData or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction
                 or NodeKind.XmlDeclaration or NodeKind.XmlDoctype =>
                 SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
@@ -571,6 +574,139 @@ public static class RowLayout
                 AddText(items, value, StyleKind.Bool, part, width);
                 break;
             case JsonValueKind.Null:
+                AddText(items, value, StyleKind.Null, part, width);
+                break;
+            default:
+                AddText(items, value, StyleKind.ReadOnly, part, width);
+                break;
+        }
+    }
+
+    // ----- YAML -----
+
+    /// <summary>
+    /// A YAML row, as the TOML rows show theirs, with YAML's separator: a mapping member as <c>key: {n}</c>, <c>key: [n]</c> or <c>key: value</c>,
+    /// a sequence item as its index then its value or count (<c>0: "a"</c>), a document as <c>---[0]</c>, the root as <c>$ {n}</c>, and a comment
+    /// as <c>#</c> and its text. An anchor, a tag and an alias are shown read-only, before the value. A null with no text is a dim <c>null</c>.
+    /// </summary>
+    private static List<Item> YamlItems(Row row, bool collapsed, int width)
+    {
+        DocNode node = row.Node;
+        List<Item> items = FoldItems(row, collapsed);
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            items.Add(Fixed("#", StyleKind.Punctuation, -1));
+            items.Add(Begin(0));
+            AddText(items, node.Parts[0].Value, StyleKind.Comment, 0, width);
+            items.Add(End(0));
+            return items;
+        }
+
+        if (node.Kind == NodeKind.YamlDocument)
+        {
+            items.Add(Fixed("---[", StyleKind.Punctuation, -1));
+            items.Add(Begin(0));
+            AddText(items, node.Parts[0].Value, StyleKind.Index, 0, width);
+            items.Add(End(0));
+            items.Add(Fixed("]", StyleKind.Punctuation, -1));
+            return items;
+        }
+
+        bool labelled = node.Parts.Any(part => part.Kind is PartKind.Key or PartKind.Index);
+        bool separated = false;
+        void Separate()
+        {
+            // The separator comes once, before the first of the anchor, tag, alias, value or count.
+            if (labelled && !separated)
+            {
+                items.Add(Fixed(": ", StyleKind.Punctuation, -1));
+            }
+
+            separated = true;
+        }
+
+        for (int i = 0; i < node.Parts.Count; i++)
+        {
+            DocPart part = node.Parts[i];
+            switch (part.Kind)
+            {
+                case PartKind.Root:
+                    items.Add(Begin(i));
+                    items.Add(Fixed(part.Value, StyleKind.ReadOnly, i));
+                    items.Add(End(i));
+                    items.Add(Fixed(" ", StyleKind.Punctuation, -1));
+                    break;
+                case PartKind.Key:
+                    items.Add(Begin(i));
+                    if (part.Value.Length == 0)
+                    {
+                        items.Add(Fixed("\"\"", StyleKind.Punctuation, i));
+                    }
+                    else
+                    {
+                        AddText(items, part.Value, StyleKind.Key, i, width);
+                    }
+
+                    items.Add(End(i));
+                    break;
+                case PartKind.Index:
+                    items.Add(Begin(i));
+                    AddText(items, part.Value, StyleKind.Index, i, width);
+                    items.Add(End(i));
+                    break;
+                case PartKind.Anchor or PartKind.Tag or PartKind.Alias:
+                    Separate();
+                    items.Add(Begin(i));
+                    AddText(items, part.Value, StyleKind.ReadOnly, i, width);
+                    items.Add(End(i));
+                    items.Add(Fixed(" ", StyleKind.Punctuation, -1));
+                    break;
+                case PartKind.Value:
+                    Separate();
+                    items.Add(Begin(i));
+                    YamlScalarItems(items, node.YamlKind, part.Value, i, width);
+                    items.Add(End(i));
+                    break;
+                case PartKind.Summary:
+                    Separate();
+                    items.Add(Begin(i));
+                    items.Add(Fixed(node.Kind == NodeKind.YamlSequence ? "[" : "{", StyleKind.Punctuation, i));
+                    AddText(items, part.Value, StyleKind.Summary, i, width);
+                    items.Add(Fixed(node.Kind == NodeKind.YamlSequence ? "]" : "}", StyleKind.Punctuation, i));
+                    items.Add(End(i));
+                    break;
+                default:
+                    throw new ArgumentException("A YAML node has an unexpected part: " + part.Kind + ".", nameof(row));
+            }
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// A YAML scalar's value: a string as a JSON string is shown (no quotes, <c>""</c> when empty), an integer and a float as numbers, a boolean
+    /// as a boolean, and a null as null, or as a dim <c>null</c> when it has no text.
+    /// </summary>
+    private static void YamlScalarItems(List<Item> items, YamlValueKind? kind, string value, int part, int width)
+    {
+        switch (kind)
+        {
+            case YamlValueKind.String when value.Length == 0:
+                items.Add(Fixed("\"\"", StyleKind.Punctuation, part));
+                break;
+            case YamlValueKind.String:
+                AddText(items, value, StyleKind.String, part, width);
+                break;
+            case YamlValueKind.Integer or YamlValueKind.Float:
+                AddText(items, value, StyleKind.Number, part, width);
+                break;
+            case YamlValueKind.Boolean:
+                AddText(items, value, StyleKind.Bool, part, width);
+                break;
+            case YamlValueKind.Null when value.Length == 0:
+                items.Add(Fixed("null", StyleKind.Punctuation, part));
+                break;
+            case YamlValueKind.Null:
                 AddText(items, value, StyleKind.Null, part, width);
                 break;
             default:

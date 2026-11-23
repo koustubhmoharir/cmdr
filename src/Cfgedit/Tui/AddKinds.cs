@@ -71,6 +71,27 @@ internal enum AddKind
 
     /// <summary>A TOML comment line with the text the dialog gives.</summary>
     TomlComment,
+
+    /// <summary>A YAML string, with an empty value.</summary>
+    YamlString,
+
+    /// <summary>A YAML number, with the value 0.</summary>
+    YamlNumber,
+
+    /// <summary>A YAML boolean, with the value false.</summary>
+    YamlBoolean,
+
+    /// <summary>A YAML null, written <c>null</c>.</summary>
+    YamlNull,
+
+    /// <summary>An empty YAML mapping, written <c>{}</c>, with the key the dialog gives.</summary>
+    YamlMapping,
+
+    /// <summary>An empty YAML sequence, written <c>[]</c>, with the key the dialog gives.</summary>
+    YamlSequence,
+
+    /// <summary>A YAML comment line with the text the dialog gives.</summary>
+    YamlComment,
 }
 
 /// <summary>What the Add dialog asked for: the kind, and the key or name and the text when the kind takes them (the others are ignored).</summary>
@@ -114,6 +135,9 @@ internal static class AddKinds
                 return [AddKind.TomlTable];
             case NodeKind.TomlTable or NodeKind.TomlArray:
                 return [AddKind.TomlString, AddKind.TomlInteger, AddKind.TomlFloat, AddKind.TomlBoolean, AddKind.TomlDateTime, AddKind.TomlTable, AddKind.TomlArray, AddKind.TomlComment];
+            case NodeKind.YamlMapping or NodeKind.YamlSequence:
+                // A YAML document row takes nothing (the Core refuses adding documents), so it falls to the default.
+                return [AddKind.YamlString, AddKind.YamlNumber, AddKind.YamlBoolean, AddKind.YamlNull, AddKind.YamlMapping, AddKind.YamlSequence, AddKind.YamlComment];
             case NodeKind.Document when document.Format is XmlFormat:
                 return [AddKind.XmlComment];
             case NodeKind.Document when CommentsAllowed(document):
@@ -148,6 +172,13 @@ internal static class AddKinds
         AddKind.TomlTable => "table",
         AddKind.TomlArray => "array",
         AddKind.TomlComment => "comment",
+        AddKind.YamlString => "string",
+        AddKind.YamlNumber => "number",
+        AddKind.YamlBoolean => "boolean",
+        AddKind.YamlNull => "null",
+        AddKind.YamlMapping => "mapping",
+        AddKind.YamlSequence => "sequence",
+        AddKind.YamlComment => "comment",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown kind."),
     };
 
@@ -175,12 +206,18 @@ internal static class AddKinds
             return "Key";
         }
 
+        if (parent.Kind == NodeKind.YamlMapping && IsYamlValue(kind))
+        {
+            return "Key";
+        }
+
         return parent.Kind == NodeKind.JsonObject && IsJsonValue(kind) ? "Key" : null;
     }
 
     /// <summary>True when the kind takes text: a comment, or a TOML date-time, whose text is its value.</summary>
     public static bool TakesText(AddKind kind) =>
-        kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment or AddKind.EnvComment or AddKind.TomlComment or AddKind.TomlDateTime;
+        kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment or AddKind.EnvComment or AddKind.TomlComment or AddKind.TomlDateTime
+            or AddKind.YamlComment;
 
     /// <summary>
     /// The insert that adds the node at <paramref name="index"/> among the parent's children. A JSON member's key is the request's name
@@ -236,6 +273,20 @@ internal static class AddKinds
                 return TomlMember(parent, index, request, TomlNewKind.Array, null);
             case AddKind.TomlComment:
                 return new InsertNode(parent.Path, index, new NewTomlComment(request.Text));
+            case AddKind.YamlString:
+                return YamlMember(parent, index, request, YamlNewKind.String, string.Empty);
+            case AddKind.YamlNumber:
+                return YamlMember(parent, index, request, YamlNewKind.Number, "0");
+            case AddKind.YamlBoolean:
+                return YamlMember(parent, index, request, YamlNewKind.Boolean, "false");
+            case AddKind.YamlNull:
+                return YamlMember(parent, index, request, YamlNewKind.Null, null);
+            case AddKind.YamlMapping:
+                return YamlMember(parent, index, request, YamlNewKind.Mapping, null);
+            case AddKind.YamlSequence:
+                return YamlMember(parent, index, request, YamlNewKind.Sequence, null);
+            case AddKind.YamlComment:
+                return new InsertNode(parent.Path, index, new NewYamlComment(request.Text));
             default:
                 throw new ArgumentOutOfRangeException(nameof(request), request.Kind, "Unknown kind.");
         }
@@ -263,4 +314,14 @@ internal static class AddKinds
 
     private static bool IsTomlValue(AddKind kind) => kind is AddKind.TomlString or AddKind.TomlInteger or AddKind.TomlFloat or AddKind.TomlBoolean
         or AddKind.TomlDateTime or AddKind.TomlTable or AddKind.TomlArray;
+
+    /// <summary>A YAML value. The key is the request's name in a mapping, and null in a sequence.</summary>
+    private static EditOp YamlMember(DocNode parent, int index, AddRequest request, YamlNewKind kind, string? value)
+    {
+        string? key = parent.Kind == NodeKind.YamlMapping ? request.Name : null;
+        return new InsertNode(parent.Path, index, new NewYamlValue(key, kind, value));
+    }
+
+    private static bool IsYamlValue(AddKind kind) => kind is AddKind.YamlString or AddKind.YamlNumber or AddKind.YamlBoolean or AddKind.YamlNull
+        or AddKind.YamlMapping or AddKind.YamlSequence;
 }

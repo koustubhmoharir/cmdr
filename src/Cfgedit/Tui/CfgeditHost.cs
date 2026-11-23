@@ -77,13 +77,14 @@ internal static class CfgeditHost
     }
 
     /// <summary>The formats the choice dialog offers when a new file's extension names none, in the order shown.</summary>
-    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml", "env", "toml"];
+    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml", "env", "toml", "yaml"];
 
-    /// <summary>The labels the format choice shows, in the order of <see cref="FormatNames"/>: .env and .toml are labelled by their extensions.</summary>
+    /// <summary>The labels the format choice shows, in the order of <see cref="FormatNames"/>: .env, .toml and .yaml are labelled by their extensions.</summary>
     internal static IReadOnlyList<string> FormatLabels { get; } = FormatNames.Select(name => name switch
     {
         "env" => ".env",
         "toml" => ".toml",
+        "yaml" => ".yaml",
         _ => name,
     }).ToList();
 
@@ -140,7 +141,7 @@ internal static class CfgeditHost
 
     /// <summary>
     /// The questions of a new file: "Create &lt;name&gt;?" with Cancel and Create (Create is the default), then the format when neither
-    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5, xml, .env and .toml), then the root element's name for
+    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5, xml, .env, .toml and .yaml), then the root element's name for
     /// XML (validated with <see cref="XmlSyntax.IsValidQName"/>). Returns null when any question is cancelled.
     /// </summary>
     /// <param name="app">The running application.</param>
@@ -162,13 +163,6 @@ internal static class CfgeditHost
             }
 
             resolved = Formats.FromName(FormatNames[picked])!;
-        }
-
-        if (resolved is YamlFormat)
-        {
-            // See RefuseUnfinished: the tree cannot show YAML yet.
-            Confirm.Choose(app, "New file", "YAML editing is not finished yet", "OK");
-            return null;
         }
 
         if (resolved is not XmlFormat)
@@ -257,7 +251,6 @@ internal static class CfgeditHost
         // opened with DocumentFile, which keeps the snapshot the save check needs.
         byte[] bytes = ReadBytes(path);
         IConfigFormat resolved = format ?? Formats.ForPath(path) ?? Sniff(bytes, path);
-        RefuseUnfinished(resolved, path);
         try
         {
             return new OpenedFile(path, DocumentFile.Open(path, resolved));
@@ -265,19 +258,6 @@ internal static class CfgeditHost
         catch (CfgeditException ex) when (ex.Path is null)
         {
             throw new CfgeditException(ex.Message) { Path = path, Line = ex.Line, Column = ex.Column };
-        }
-    }
-
-    /// <summary>
-    /// Refuses a format whose TUI support is not finished (YAML, until its rows land): Core parses and checks it, but the tree cannot
-    /// show its rows yet. Remove this when the TUI handles YAML.
-    /// </summary>
-    /// <exception cref="CfgeditException">The format is not supported by the TUI yet.</exception>
-    private static void RefuseUnfinished(IConfigFormat format, string path)
-    {
-        if (format is YamlFormat)
-        {
-            throw new CfgeditException("YAML editing is not finished yet") { Path = path };
         }
     }
 

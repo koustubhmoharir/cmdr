@@ -144,10 +144,17 @@ internal sealed class DetailLine : View
         }
 
         bool stringValue = node.JsonKind == JsonValueKind.String || node.Kind == NodeKind.EnvEntry
-            || (node.Kind == NodeKind.TomlScalar && node.TomlKind == TomlValueKind.String);
+            || (node.Kind == NodeKind.TomlScalar && node.TomlKind == TomlValueKind.String)
+            || (node.Kind == NodeKind.YamlScalar && node.YamlKind == YamlValueKind.String);
         if (part.Kind == PartKind.Value && stringValue && part.Value.Length == 0)
         {
             return "\"\"";
+        }
+
+        // A YAML null with no text is shown as null, as the row shows it.
+        if (part.Kind == PartKind.Value && node.Kind == NodeKind.YamlScalar && node.YamlKind == YamlValueKind.Null && part.Value.Length == 0)
+        {
+            return "null";
         }
 
         return RowLayout.DisplayValue(part.Value, width);

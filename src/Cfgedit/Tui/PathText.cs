@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text;
+using Cfgedit.Core;
 using Cfgedit.Core.Model;
+using Cfgedit.Core.Yaml;
 
 namespace Cfgedit.Tui;
 
@@ -8,7 +10,8 @@ namespace Cfgedit.Tui;
 /// The detail line's path and kind of a focused part. JSON paths are <c>$.a[2]</c>, with <c>["key"]</c> for keys that are not
 /// identifiers. XML paths are XPath-like: <c>/configuration/add[2]/@value</c>. .env paths are the full key, with <c>__</c> between
 /// its segments (<c>Logging__LogLevel__Default</c>), and <c>$</c> for the root. TOML paths are <c>servers[1].port</c> and
-/// <c>tool."my.key"</c>, with <c>$</c> for the root table and no prefix before a top-level key.
+/// <c>tool."my.key"</c>, with <c>$</c> for the root table and no prefix before a top-level key. YAML paths are as TOML's, with a
+/// document as <c>---[1]</c> before its keys (<c>---[1].spec.replicas</c>) and keys quoted when they are not plain.
 /// </summary>
 public static class PathText
 {
@@ -31,6 +34,11 @@ public static class PathText
         if (document.Format is TomlFormat)
         {
             return TomlPath(node);
+        }
+
+        if (document.Format is YamlFormat)
+        {
+            return YamlPath(node);
         }
 
         if (document.Format is not XmlFormat)
@@ -90,16 +98,19 @@ public static class PathText
         {
             PartKind.Root => "root",
             PartKind.Key => "key",
-            PartKind.Index => "index",
+            PartKind.Index => node.Kind == NodeKind.YamlDocument ? "document" : "index",
             PartKind.Value => node.Kind switch
             {
                 NodeKind.EnvEntry => "string",
                 NodeKind.TomlScalar => TomlKindName(node.TomlKind),
+                NodeKind.YamlScalar => YamlKindName(node.YamlKind),
                 _ => ScalarName(node.JsonKind),
             },
             PartKind.Summary => node.Kind switch
             {
                 NodeKind.JsonArray or NodeKind.TomlArray => "array",
+                NodeKind.YamlSequence => "sequence",
+                NodeKind.YamlMapping => "mapping",
                 NodeKind.TomlTable => "table",
                 NodeKind.XmlElement => "element",
                 NodeKind.EnvGroup => EnvKindName(node),
@@ -110,6 +121,9 @@ public static class PathText
             PartKind.Text => node.Kind == NodeKind.XmlCData ? "CDATA" : "text",
             PartKind.Comment => "comment",
             PartKind.PITarget or PartKind.PIData => "PI",
+            PartKind.Anchor => "anchor",
+            PartKind.Tag => "tag",
+            PartKind.Alias => "alias",
             PartKind.ReadOnly => NodeKindName(node),
             _ => NodeKindName(node),
         };
@@ -135,7 +149,30 @@ public static class PathText
             NodeKind.TomlArray => "array",
             NodeKind.TomlScalar => TomlKindName(node.TomlKind),
             NodeKind.TomlComment => "comment",
+            NodeKind.YamlDocument => "document",
+            NodeKind.YamlMapping => "mapping",
+            NodeKind.YamlSequence => "sequence",
+            NodeKind.YamlScalar => YamlKindName(node.YamlKind),
+            NodeKind.YamlAlias => "alias",
+            NodeKind.YamlComment => "comment",
             _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Unknown node kind."),
+        };
+    }
+
+    /// <summary>
+    /// The YAML kind of a scalar, by the core schema's names: <c>null</c>, <c>boolean</c>, <c>integer</c>, <c>float</c>, and <c>string</c> for
+    /// a string, a quoted scalar or a block scalar.
+    /// </summary>
+    private static string YamlKindName(YamlValueKind? kind)
+    {
+        return kind switch
+        {
+            YamlValueKind.Null => "null",
+            YamlValueKind.Boolean => "boolean",
+            YamlValueKind.Integer => "integer",
+            YamlValueKind.Float => "float",
+            YamlValueKind.String => "string",
+            _ => "value",
         };
     }
 
@@ -374,6 +411,64 @@ public static class PathText
         }
 
         return true;
+    }
+
+    // ----- YAML -----
+
+    /// <summary>
+    /// The path of a YAML node, built as a TOML path is, from the root value down: a mapping member as <c>.key</c> (a first key has no dot,
+    /// and a key that is not plain is quoted as the YAML file writes it), a sequence item as <c>[n]</c>. A document is <c>---[n]</c>, and its
+    /// root adds nothing to it. The root of a single document is <c>$</c>. A comment is its parent's path and <c>/#comment[n]</c>.
+    /// </summary>
+    private static string YamlPath(DocNode node)
+    {
+        if (node.Path.Steps[^1] is CommentStep comment)
+        {
+            DocNode parent = node.Parent ?? throw new InvalidOperationException("A comment has no parent.");
+            return YamlPath(parent) + "/#comment[" + (comment.Index + 1).ToString(CultureInfo.InvariantCulture) + "]";
+        }
+
+        var builder = new StringBuilder();
+        foreach (DocNode current in Chain(node))
+        {
+            switch (current.Path.Steps[^1])
+            {
+                case ItemStep document when current.Kind == NodeKind.YamlDocument:
+                    builder.Append("---[").Append(document.Index.ToString(CultureInfo.InvariantCulture)).Append(']');
+                    break;
+                case ItemStep when current.Parent?.Kind is NodeKind.Document or NodeKind.YamlDocument:
+                    // The root value of the stream or of a document: the path starts at "$" (or at the document's marker).
+                    break;
+                case MemberStep member:
+                    if (builder.Length > 0)
+                    {
+                        builder.Append('.');
+                    }
+
+                    builder.Append(YamlKey(member.Key));
+                    break;
+                case ItemStep item:
+                    builder.Append('[').Append(item.Index.ToString(CultureInfo.InvariantCulture)).Append(']');
+                    break;
+                default:
+                    throw new InvalidOperationException("Unexpected YAML path step " + current.Path.Steps[^1] + ".");
+            }
+        }
+
+        return builder.Length == 0 ? Root : builder.ToString();
+    }
+
+    /// <summary>A key as the YAML file writes it: plain when it is plain-safe, else double-quoted. A key too long to write plain is quoted too.</summary>
+    private static string YamlKey(string key)
+    {
+        try
+        {
+            return YamlEncoder.EncodeKey(key);
+        }
+        catch (CfgeditException)
+        {
+            return JsonQuote(key);
+        }
     }
 
     // ----- XML -----

@@ -102,7 +102,7 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run(path, "--format", "ini");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env, toml or yaml" + Environment.NewLine, outcome.Stderr);
         Assert.Empty(outcome.Ran);
     }
 
@@ -129,12 +129,23 @@ public sealed class ProgramTests : IDisposable
     }
 
     [Fact]
-    public void The_usage_line_lists_env_and_toml_as_formats()
+    public void The_yaml_format_option_opens_a_file_as_yaml_whatever_its_name()
+    {
+        string path = TempFile("settings.txt", "a: 1\n");
+
+        Outcome outcome = Run(path, "--format", "yaml");
+
+        Assert.Equal(0, outcome.Code);
+        Assert.Equal("yaml", Assert.Single(outcome.Ran).File.Format.Name);
+    }
+
+    [Fact]
+    public void The_usage_line_lists_env_toml_and_yaml_as_formats()
     {
         Outcome outcome = Run("--bogus");
 
         Assert.Equal(2, outcome.Code);
-        Assert.StartsWith("usage: cfgedit <file> [--format xml|json|jsonc|json5|env|toml]" + Environment.NewLine, outcome.Stderr);
+        Assert.StartsWith("usage: cfgedit <file> [--format xml|json|jsonc|json5|env|toml|yaml]" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]
@@ -299,7 +310,7 @@ public sealed class ProgramTests : IDisposable
         Outcome outcome = Run("--check", path, "--format", "ini");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env, toml or yaml" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]

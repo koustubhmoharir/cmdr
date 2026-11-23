@@ -1004,7 +1004,8 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.TomlTable or NodeKind.TomlArray)
+        if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.TomlTable or NodeKind.TomlArray
+            or NodeKind.YamlMapping or NodeKind.YamlSequence)
         {
             AddInto(node, part, first);
             return;
@@ -1038,15 +1039,17 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// True when a new node copies the shape of <paramref name="node"/>: an XML element inside an element, a JSON scalar, object or
-    /// array inside an array, or a TOML table, scalar or array inside a TOML array (an array of tables' item, or an item of an inline
-    /// array). A JSON or TOML member has a key, so it asks for one.
+    /// array inside an array, a TOML table, scalar or array inside a TOML array (an array of tables' item, or an item of an inline
+    /// array), or a YAML scalar, mapping or sequence item of a sequence (an alias item asks for its kind: a copy of it would not be a
+    /// value). A JSON or TOML member has a key, so it asks for one.
     /// </summary>
     private static bool IsShapeSource(DocNode node, DocNode parent)
     {
         bool xmlElement = node.Kind == NodeKind.XmlElement && parent.Kind == NodeKind.XmlElement;
         bool jsonItem = (node.Kind is NodeKind.JsonScalar or NodeKind.JsonObject or NodeKind.JsonArray) && parent.Kind == NodeKind.JsonArray;
         bool tomlItem = (node.Kind is NodeKind.TomlTable or NodeKind.TomlScalar or NodeKind.TomlArray) && parent.Kind == NodeKind.TomlArray;
-        return xmlElement || jsonItem || tomlItem;
+        bool yamlItem = (node.Kind is NodeKind.YamlScalar or NodeKind.YamlMapping or NodeKind.YamlSequence) && parent.Kind == NodeKind.YamlSequence;
+        return xmlElement || jsonItem || tomlItem || yamlItem;
     }
 
     /// <summary>Adds a node shaped like the sibling, and opens the editor on its first value.</summary>
@@ -1081,7 +1084,7 @@ internal sealed class MainWindow : Window, ISearchHost
         if (kinds.Count == 0)
         {
             // Strict JSON is the only document with nothing to add: its only addable things beside the root are comments.
-            bool strictBeside = parent.Kind == NodeKind.Document && !AddKinds.CommentsAllowed(_controller.Document);
+            bool strictBeside = parent.Kind == NodeKind.Document && _controller.Document.Format is JsonFormat;
             ShowMessage(strictBeside ? "strict JSON has no comments, so nothing can be added beside the root" : "nothing can be added here", error: false);
             return;
         }
@@ -1246,6 +1249,12 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        if (doc.Format is YamlFormat)
+        {
+            ChangeYamlTypeOf(node);
+            return;
+        }
+
         if (node.JsonKind is not { } current)
         {
             ShowMessage("types apply to JSON only", error: false);
@@ -1386,6 +1395,116 @@ internal sealed class MainWindow : Window, ISearchHost
         };
     }
 
+    private static readonly YamlNewKind[] YamlTypeKinds =
+    [
+        YamlNewKind.String,
+        YamlNewKind.Number,
+        YamlNewKind.Boolean,
+        YamlNewKind.Null,
+        YamlNewKind.Mapping,
+        YamlNewKind.Sequence,
+    ];
+
+    private static readonly string[] YamlTypeNames = ["string", "number", "boolean", "null", "mapping", "sequence"];
+
+    /// <summary>
+    /// The YAML type menu of a scalar, a mapping or a sequence, with the current type chosen. A string keeps the text of a scalar, else is
+    /// empty; a number, boolean or null takes the kind's default. A mapping or sequence with children asks before they are dropped. An alias
+    /// cannot change type: the planner's refusal is shown before any menu. A refusal of the planner is shown as information.
+    /// </summary>
+    private void ChangeYamlTypeOf(DocNode node)
+    {
+        if (node.Kind is not (NodeKind.YamlScalar or NodeKind.YamlMapping or NodeKind.YamlSequence or NodeKind.YamlAlias))
+        {
+            ShowMessage("types apply to values only", error: false);
+            return;
+        }
+
+        ConfigDocument doc = _controller.Document;
+        if (node.Kind == NodeKind.YamlAlias)
+        {
+            _ = PreflightYaml(doc, new ChangeYamlType(node.Path, YamlNewKind.String, string.Empty));
+            return;
+        }
+
+        YamlNewKind current = CurrentYamlKind(node);
+        string target = PathText.Format(doc, node, null);
+        int? choice = ChoiceDialog.Ask(Ui, "Type of " + target, YamlTypeNames, Array.IndexOf(YamlTypeKinds, current));
+        if (choice is not { } picked)
+        {
+            return;
+        }
+
+        YamlNewKind kind = YamlTypeKinds[picked];
+        if (kind == current)
+        {
+            return;
+        }
+
+        string? value = kind == YamlNewKind.String ? ScalarText(node) ?? string.Empty : null;
+        var op = new ChangeYamlType(node.Path, kind, value);
+        if (!PreflightYaml(doc, op))
+        {
+            return;
+        }
+
+        bool container = node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence;
+        if (container && node.Children.Count > 0
+            && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
+        {
+            return;
+        }
+
+        EditResult? result = _controller.Apply(op, out string? error);
+        if (result is null)
+        {
+            ShowMessage(error ?? "the type cannot be changed", error: false);
+            return;
+        }
+
+        Refresh(result.Focus ?? node.Path);
+    }
+
+    /// <summary>
+    /// Checks a YAML change before anything is asked: the planner's refusal is shown as information and false is returned, and the document is
+    /// left as it is (Apply does not change it). True when the change would apply.
+    /// </summary>
+    private bool PreflightYaml(ConfigDocument doc, EditOp op)
+    {
+        try
+        {
+            _ = doc.Apply(op);
+            return true;
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(EditController.Describe(ex), error: false);
+            return false;
+        }
+    }
+
+    /// <summary>The YAML type a node has now: a mapping or a sequence, or the kind of its scalar (integer and float are both numbers).</summary>
+    private static YamlNewKind CurrentYamlKind(DocNode node)
+    {
+        if (node.Kind == NodeKind.YamlMapping)
+        {
+            return YamlNewKind.Mapping;
+        }
+
+        if (node.Kind == NodeKind.YamlSequence)
+        {
+            return YamlNewKind.Sequence;
+        }
+
+        return node.YamlKind switch
+        {
+            YamlValueKind.Boolean => YamlNewKind.Boolean,
+            YamlValueKind.Integer or YamlValueKind.Float => YamlNewKind.Number,
+            YamlValueKind.Null => YamlNewKind.Null,
+            _ => YamlNewKind.String,
+        };
+    }
+
     /// <summary>
     /// The type menu, with <paramref name="current"/> chosen: the kind picked, or null when the menu was cancelled with Esc. Used for a node's
     /// type in the tree and for a missing table cell's kind, so that both show the same menu.
@@ -1448,6 +1567,12 @@ internal sealed class MainWindow : Window, ISearchHost
         if (_controller.Document.Format is EnvFormat)
         {
             ShowMessage("the table editor is not available for .env files", error: false);
+            return;
+        }
+
+        if (_controller.Document.Format is YamlFormat)
+        {
+            ShowMessage("the table editor is not available for YAML yet", error: false);
             return;
         }
 

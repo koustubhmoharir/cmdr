@@ -5,7 +5,7 @@ attribute at a time. You type the value as it should be; cfgedit writes it with 
 you did not edit stays byte-for-byte as it was: comments, blank lines, indentation, quote styles, number spelling,
 encoding, byte order mark and line endings.
 
-Reads and writes XML, JSON, JSON with comments (JSONC), JSON5, `.env` files (dotenv) and TOML files. Runs on Linux and Windows. Built from this
+Reads and writes XML, JSON, JSON with comments (JSONC), JSON5, `.env` files (dotenv), TOML and YAML files. Runs on Linux and Windows. Built from this
 repository alongside cmdr; see the main [README](../README.md#install) for the .NET 10 SDK and the Terminal.Gui submodule.
 
 ```sh
@@ -18,7 +18,7 @@ dotnet publish src/Cfgedit -c Release -r win-x64      # or linux-x64 → cfgedit
 ## Usage
 
 ```sh
-cfgedit <file> [--format xml|json|jsonc|json5|env|toml]
+cfgedit <file> [--format xml|json|jsonc|json5|env|toml|yaml]
 cfgedit --check <file> [--format …]
 cfgedit
 cfgedit --version
@@ -27,12 +27,12 @@ cfgedit --version
 The format comes from the extension: `.json` and `.jsonc` are JSONC (comments and trailing commas are accepted when the
 file has them, and never added), `.json5` is JSON5, and `.xml .config .csproj .props .targets .xaml .resx .nuspec .xsd
 .xslt .svg` are XML. A file named `.env`, `.env.<anything>` (`.env.local`) or `<anything>.env` is a `.env` file. A known
-extension wins, so `.env.json` is JSONC. A `.toml` file is TOML 1.0 (`.env.toml` is TOML too, as the extension wins). Any other
-file is recognised by its first character (`<` is XML, `{` or `[` is JSON5). `--format` overrides this; `--format json` is
-strict JSON and refuses comments.
+extension wins, so `.env.json` is JSONC. A `.toml` file is TOML 1.0 (`.env.toml` is TOML too, as the extension wins). A `.yaml`
+or `.yml` file is YAML (see [YAML files](#yaml-files)). Any other file is recognised by its first character (`<` is XML, `{`
+or `[` is JSON5). `--format` overrides this; `--format json` is strict JSON and refuses comments.
 
 A path that does not exist asks whether to create it; a new XML file asks for the name of its root element, and a file
-whose format is not known from its name asks for the format (`.env` and `.toml` are among the choices). The file is written
+whose format is not known from its name asks for the format (`.env`, `.toml` and `.yaml` are among the choices). The file is written
 on the first save.
 
 `cfgedit --check <file>` only parses the file: it prints nothing and exits 0 when the file is valid, and prints
@@ -115,7 +115,7 @@ unsaved changes asks whether to save, discard or cancel; the default is Save.
 array of tables (`[[items]]`) or inline array whose items are all inline tables or all plain values, or an XML element
 with repeated child elements of the same name (one column per attribute, per single text-only child element, and for the
 text). In TOML, the rows are the items, and the columns are their keys in the order they first appear; a subtable or an
-array in a cell shows its count, `{n}` or `[n]`. Esc returns to the tree.
+array in a cell shows its count, `{n}` or `[n]`. Esc returns to the tree. There is no table editor for YAML yet: `T` says so.
 
 | Key | |
 |---|---|
@@ -180,6 +180,43 @@ their value as JSON scalars do (strings without quotes), and the detail line nam
 - **Text mode:** a file that is not valid TOML 1.0 opens in text mode at the error. Two valid constructs that the second
   parser (Tomlyn) misreads are refused with a message and open in text mode: a `[x.sub]` header, or a new `[[x]]` item,
   when another table follows an array of tables `[[x]]`.
+
+## YAML files
+
+cfgedit reads the config subset of YAML 1.2: block and flow mappings and sequences (including sequences that are not indented
+under their key), the five scalar styles (plain, single and double quoted, literal `|` and folded `>`), comments, `---` and `...` markers
+with several documents, `%YAML` and `%TAG` directives, anchors, aliases, tags and merge keys (`<<: *base`). A file that uses
+anything outside this subset, or that YAML itself rejects, opens in text mode at the error, with the reason. The reasons
+include complex keys (`? `), keys that are collections, aliases or block scalars, and keys that span lines. A few valid
+shapes that YamlDotNet, the second parser cfgedit checks against, reads differently are refused too: a tab on a blank line
+between entries, a block scalar whose content ends in spaces or blank lines with no final line break, and a block scalar without
+`-` chomping that ends the file
+with no line break. The message for the last one says to add a line break at the end of the file, and adding it lets the
+file open as a tree.
+
+- **Rows:** a file with one document shows that document's root as `$`. A file with several documents shows each one as a
+  row `---[0]`, `---[1]` and so on. A mapping member is `key: {n}` and a sequence member `key: [n]`, and an item is `0: …`.
+  A scalar shows its value without quotes, an empty string as `""` and a null with no text as `null`. The detail line
+  names the YAML kind: `null`, `boolean`, `integer`, `float` or `string` (quoted and block scalars are strings).
+- **Anchors, tags and aliases** are shown on their row, between the key and the value (`base: &b {3}`, `port: !!str 80`,
+  `use: *b`). They cannot be edited. An alias is shown as written and is not expanded. A merge key is an ordinary member
+  whose value is an alias.
+- **Values** keep their style when the style can hold the new text. A plain value that is changed to `true` is written
+  `'true'` (single quotes), so that it stays a string. A value with line breaks is written as a literal block. A new empty
+  string is written `''`, and the text typed into it keeps that style.
+- **Keys** are written plain when that is safe and quoted when it is not. A rename onto an existing sibling is refused.
+- **Adding:** `a` on a mapping adds a `key: value` member after the entry it follows, with the key the dialog asks for, and
+  `a` on a sequence adds a `- value` item. The kinds are string, number, boolean, null, mapping, sequence and comment. A
+  new item next to a sequence item copies its shape, so a sequence of mappings gets a compact `- name: ''` item. Adding to
+  an empty `{}` or `[]` turns it into block style. An empty `{}` that is a sequence item becomes a compact mapping on the
+  dash line. Flow collections take JSON-style commas.
+- **Types:** `t` opens the type menu (string, number, boolean, null, mapping, sequence). A mapping or sequence with children
+  asks before they are dropped. An alias cannot change type.
+- **Deleting** a node deletes it with its comments. An anchor that an alias still refers to cannot be deleted; the message
+  names the alias, as in `*b refers to it`.
+- **Moving:** Alt+Up/Down moves an entry or an item among its siblings. A document can be moved the same way, and a
+  document can be deleted, but adding a document is refused (`adding a document is not supported`).
+- **Tables:** there is no table editor for YAML yet.
 
 ## What is kept
 

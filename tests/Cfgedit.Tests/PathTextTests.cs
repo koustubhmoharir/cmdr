@@ -256,6 +256,85 @@ public sealed class PathTextTests
         Assert.Equal("doctype", PathText.KindName(TreeFixtures.Find(doc, new DoctypeStep()), null));
     }
 
+    // ----- YAML -----
+
+    [Fact]
+    public void Yaml_paths_are_dotted_keys_with_brackets_for_items_and_dollar_for_the_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("servers:\n  - port: 80\n  - port: 81\nname: web\n", "yaml");
+
+        Assert.Equal("$", Path(doc, new ItemStep(0)));
+        Assert.Equal("servers", Path(doc, new ItemStep(0), new MemberStep("servers", 0)));
+        Assert.Equal("servers[1]", Path(doc, new ItemStep(0), new MemberStep("servers", 0), new ItemStep(1)));
+        Assert.Equal(
+            "servers[1].port",
+            Path(doc, new ItemStep(0), new MemberStep("servers", 0), new ItemStep(1), new MemberStep("port", 0)));
+        Assert.Equal("name", Path(doc, new ItemStep(0), new MemberStep("name", 0)));
+    }
+
+    [Fact]
+    public void Yaml_keys_that_are_not_plain_are_quoted_and_a_key_that_reads_as_a_number_or_boolean_is_quoted_too()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("\"true\": 1\n\"1\": 2\n\"#x\": 3\nplain: 4\n", "yaml");
+
+        Assert.Equal("\"true\"", Path(doc, new ItemStep(0), new MemberStep("true", 0)));
+        Assert.Equal("\"1\"", Path(doc, new ItemStep(0), new MemberStep("1", 0)));
+        Assert.Equal("\"#x\"", Path(doc, new ItemStep(0), new MemberStep("#x", 0)));
+        Assert.Equal("plain", Path(doc, new ItemStep(0), new MemberStep("plain", 0)));
+    }
+
+    [Fact]
+    public void Yaml_paths_of_a_multi_document_stream_start_at_the_document_marker()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("---\na: 1\n---\nspec:\n  replicas: 2\n", "yaml");
+
+        Assert.Equal("---[0]", Path(doc, new ItemStep(0)));
+        Assert.Equal("---[1]", Path(doc, new ItemStep(1)));
+        Assert.Equal("---[1].spec", Path(doc, new ItemStep(1), new ItemStep(0), new MemberStep("spec", 0)));
+        Assert.Equal(
+            "---[1].spec.replicas",
+            Path(doc, new ItemStep(1), new ItemStep(0), new MemberStep("spec", 0), new MemberStep("replicas", 0)));
+    }
+
+    [Fact]
+    public void Yaml_comment_paths_are_the_parents_path_and_a_comment_marker_as_in_json()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("# c\na: 1\nt:\n  # d\n  x: 2\n", "yaml");
+
+        Assert.Equal("$/#comment[1]", Path(doc, new ItemStep(0), new CommentStep(0)));
+        Assert.Equal("t/#comment[1]", Path(doc, new ItemStep(0), new MemberStep("t", 0), new CommentStep(0)));
+    }
+
+    [Fact]
+    public void Yaml_kinds_name_the_scalar_kinds_of_the_core_schema_and_the_structural_parts()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("b: true\ni: 1\nf: 1.5\nn: ~\ns: x\nm:\n  k: 1\nq: [1]\nal: &a 1\nr: *a\n", "yaml");
+
+        Assert.Equal("boolean", PathText.KindName(Member(doc, "b"), Member(doc, "b").Parts[1]));
+        Assert.Equal("integer", PathText.KindName(Member(doc, "i"), Member(doc, "i").Parts[1]));
+        Assert.Equal("float", PathText.KindName(Member(doc, "f"), Member(doc, "f").Parts[1]));
+        Assert.Equal("null", PathText.KindName(Member(doc, "n"), Member(doc, "n").Parts[1]));
+        Assert.Equal("string", PathText.KindName(Member(doc, "s"), Member(doc, "s").Parts[1]));
+        Assert.Equal("mapping", PathText.KindName(Member(doc, "m"), null));
+        Assert.Equal("sequence", PathText.KindName(Member(doc, "q"), null));
+        Assert.Equal("mapping", PathText.KindName(Member(doc, "m"), Member(doc, "m").Parts[1]));
+        Assert.Equal("sequence", PathText.KindName(Member(doc, "q"), Member(doc, "q").Parts[1]));
+        Assert.Equal("key", PathText.KindName(Member(doc, "s"), Member(doc, "s").Parts[0]));
+        Assert.Equal("anchor", PathText.KindName(Member(doc, "al"), Member(doc, "al").Parts[1]));
+        Assert.Equal("alias", PathText.KindName(Member(doc, "r"), Member(doc, "r").Parts[1]));
+        Assert.Equal("root", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0)), TreeFixtures.Find(doc, new ItemStep(0)).Parts[0]));
+    }
+
+    [Fact]
+    public void Yaml_a_document_row_is_a_document_and_its_index_part_too()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("---\na: 1\n---\nb: 2\n", "yaml");
+        DocNode second = TreeFixtures.Find(doc, new ItemStep(1));
+
+        Assert.Equal("document", PathText.KindName(second, null));
+        Assert.Equal("document", PathText.KindName(second, second.Parts[0]));
+    }
+
     private static DocNode Member(ConfigDocument doc, string key)
     {
         return TreeFixtures.Find(doc, new ItemStep(0), new MemberStep(key, 0));

@@ -15,6 +15,15 @@ public sealed class YamlEditSetPartTests
     // ----- Plain scalars -----
 
     [Fact]
+    public void An_empty_quoted_string_given_a_text_takes_the_plainest_style_but_a_non_empty_one_keeps_its_quotes()
+    {
+        Assert.Equal("a: web\n", Edit("a: ''\n", Yaml, Value("web", Member("a"))));
+        Assert.Equal("a: web\n", Edit("a: \"\"\n", Yaml, Value("web", Member("a"))));
+        Assert.Equal("a: 'true'\n", Edit("a: ''\n", Yaml, Value("true", Member("a"))));
+        Assert.Equal("a: 'web'\n", Edit("a: 'x'\n", Yaml, Value("web", Member("a"))));
+    }
+
+    [Fact]
     public void A_plain_string_stays_plain()
     {
         string text = Edit("a: foo\n", Yaml, Value("bar baz", Member("a")));

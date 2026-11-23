@@ -267,7 +267,9 @@ internal sealed class YamlEditPlanner
         }
         else
         {
-            token = ScalarText(value, cur.Style, owner, IsFlow(Parent(node)));
+            // An empty string is quoted only because it is empty ('' as written by an add), so its style is not kept for a new text.
+            YamlScalarStyle? preferred = cur.Syntax is { Value.Length: 0 } ? null : cur.Style;
+            token = ScalarText(value, preferred, owner, IsFlow(Parent(node)));
         }
 
         if (token is not null)

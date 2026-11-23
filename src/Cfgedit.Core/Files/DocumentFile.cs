@@ -351,9 +351,9 @@ public sealed class DocumentFile
     private static string InitialText(IConfigFormat format, string? xmlRootName, string full)
     {
         string newline = Environment.NewLine;
-        if (format is EnvFormat or TomlFormat)
+        if (format is EnvFormat or TomlFormat or YamlFormat)
         {
-            // An empty .env or TOML file is a valid document: its root row is still there to add to.
+            // An empty .env, TOML or YAML file is a valid document: its root row is still there to add to.
             return string.Empty;
         }
 

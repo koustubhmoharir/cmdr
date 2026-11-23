@@ -485,7 +485,8 @@ schema (`null`, `boolean`, `integer`, `float`, `string`), quoted and block scala
 **Edits.**
 
 - Scalar value: the style is kept when it can hold the value and, for plain scalars, when the new text resolves to
-  the same core-schema kind (so editing a string to `true` writes `"true"`); otherwise the plainest safe style:
+  the same core-schema kind (so editing a string to `true` writes `'true'`), and an empty quoted string (`''`, as an
+add writes it) does not keep its quotes; otherwise the plainest safe style:
   plain, else single quoted, else double quoted; a value with line breaks becomes a literal block scalar (`|`, with
   `|-` or `|+` chosen to keep the trailing line breaks exact). A folded scalar is kept folded only if the new value
   folds back to itself; otherwise it becomes literal.
