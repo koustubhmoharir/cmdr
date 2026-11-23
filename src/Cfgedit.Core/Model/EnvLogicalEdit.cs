@@ -1,4 +1,3 @@
-using System.Globalization;
 using Cfgedit.Core.Json;
 
 namespace Cfgedit.Core.Model;
@@ -32,19 +31,43 @@ internal static class EnvLayout
     }
 
     /// <summary>
-    /// The segment a copy takes: <c>name_copy</c>, then <c>name_copy2</c> and so on, unique among the segments of the siblings. The
-    /// underscore is the one .env names use, so the copy's key stays a valid name.
+    /// The segment a copy takes: the first <see cref="EditLayout.CopyName"/> step that no sibling segment has, so <c>A</c> gives
+    /// <c>A2</c>, then <c>A3</c>. Only digits are added to the name, so the copy's key stays a valid .env name.
     /// </summary>
     public static string CopySegment(IEnumerable<string> siblings, string name)
     {
         var taken = siblings.ToHashSet(StringComparer.Ordinal);
-        string candidate = name + "_copy";
-        for (int n = 2; taken.Contains(candidate); n++)
+        return EditLayout.CopyName(name, taken.Contains);
+    }
+
+    /// <summary>
+    /// The offset where a new line goes for an insert at an index of a group's children. Before a child, that is before the first line of
+    /// the child's block; a trailing comment is on its entry's line, so the line goes after that entry. After the last child, it goes after
+    /// the last line of its block. A group with no children takes it at the end of the text.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The index is outside the children.</exception>
+    public static int InsertOffset(DocNode parent, int index, int length)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        if (index < 0 || index > children.Count)
         {
-            candidate = name + "_copy" + n.ToString(CultureInfo.InvariantCulture);
+            throw new InvalidOperationException($"Index {index} is outside the children of a group.");
         }
 
-        return candidate;
+        if (index < children.Count)
+        {
+            return IsTrailing(children, index)
+                ? children[index - 1].End
+                : children[Block(parent, index).First].Start;
+        }
+
+        if (children.Count == 0)
+        {
+            return length;
+        }
+
+        int last = Block(parent, children.Count - 1).Last;
+        return IsTrailing(children, last) ? children[last - 1].End : children[last].End;
     }
 
     /// <summary>
@@ -99,6 +122,7 @@ internal static class EnvLogicalEdit
             InsertNode insert => InsertAt(before, root, insert),
             DeleteNode delete => DeleteAt(before, root, delete.Node),
             MoveNode move => MoveAt(before, root, move),
+            MoveNodeTo moveTo => MoveToAt(before, root, moveTo),
             DuplicateNode duplicate => DuplicateAt(before, root, duplicate.Node),
             _ => throw new InvalidOperationException("The .env edit " + op.GetType().Name + " is not applied to the logical tree."),
         };
@@ -119,23 +143,7 @@ internal static class EnvLogicalEdit
             throw new InvalidOperationException($"Index {index} is outside the children of {insert.Parent}.");
         }
 
-        int offset;
-        if (index < children.Count)
-        {
-            offset = EnvLayout.IsTrailing(children, index)
-                ? children[index - 1].End
-                : children[EnvLayout.Block(parent, index).First].Start;
-        }
-        else if (children.Count == 0)
-        {
-            offset = before.Source.Text.Length;
-        }
-        else
-        {
-            int last = EnvLayout.Block(parent, children.Count - 1).Last;
-            offset = EnvLayout.IsTrailing(children, last) ? children[last - 1].End : children[last].End;
-        }
-
+        int offset = EnvLayout.InsertOffset(parent, index, before.Source.Text.Length);
         return FlatNodes(before).Count(node => node.Start < offset);
     }
 
@@ -172,6 +180,8 @@ internal static class EnvLogicalEdit
             }
             case DuplicateNode duplicate:
                 return FocusAfterPlacement(before, after, duplicate.Node, PlaceCopy(before, duplicate.Node));
+            case MoveNodeTo moveTo:
+                return FocusAfterMoveTo(before, after, moveTo);
             default:
                 return null;
         }
@@ -241,6 +251,89 @@ internal static class EnvLogicalEdit
         }
 
         return new Placement(unit, destination);
+    }
+
+    /// <summary>
+    /// The placement of a <see cref="MoveNodeTo"/>: the unit is the node's sibling group, and it lands at the flat count of the other
+    /// nodes that start before the offset where its first line goes in the destination group (see <see cref="EnvLayout.InsertOffset"/>).
+    /// </summary>
+    private static Placement PlaceMoveTo(ConfigDocument before, MoveNodeTo move)
+    {
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        DocNode destination = Locate(before, move.NewParent);
+        (int first, int last) = EditLayout.Group(parent, IndexOfChild(parent, node), before.Source.Text);
+        List<DocNode> flat = FlatNodes(before);
+        Dictionary<DocNode, int> positions = PositionsOf(flat);
+        List<int> unit = UnitPositions(parent, first, last, positions);
+        var moved = new HashSet<int>(unit);
+        int offset = EnvLayout.InsertOffset(destination, move.NewIndex, before.Source.Text.Length);
+        int destinationIndex = 0;
+        for (int p = 0; p < flat.Count; p++)
+        {
+            if (!moved.Contains(p) && flat[p].Start < offset)
+            {
+                destinationIndex++;
+            }
+        }
+
+        return new Placement(unit, destinationIndex);
+    }
+
+    /// <summary>
+    /// The focus after a <see cref="MoveNodeTo"/>: the moved node in the new document. An entry or a comment is the flat item at its
+    /// place. A group is found from its first item, by going up to its child of the destination, which is found by its names.
+    /// </summary>
+    private static NodePath? FocusAfterMoveTo(ConfigDocument before, ConfigDocument after, MoveNodeTo move)
+    {
+        DocNode node = Locate(before, move.Node);
+        Placement placement = PlaceMoveTo(before, move);
+        int own = node.Kind is NodeKind.EnvEntry or NodeKind.EnvComment
+            ? placement.Positions.IndexOf(PositionOf(PositionsOf(FlatNodes(before)), node))
+            : 0;
+        DocNode? survivor = GroupNamed(after, NamesOf(Locate(before, move.NewParent).Path));
+        List<DocNode> flat = FlatNodes(after);
+        int index = placement.Destination + own;
+        if (survivor is null || index < 0 || index >= flat.Count)
+        {
+            return null;
+        }
+
+        DocNode focused = flat[index];
+        if (node.Kind != NodeKind.EnvGroup)
+        {
+            return focused.Path;
+        }
+
+        while (focused.Parent is not null && !ReferenceEquals(focused.Parent, survivor))
+        {
+            focused = focused.Parent;
+        }
+
+        return focused.Path;
+    }
+
+    /// <summary>The group of a document at a path of key segments, from the root group down. Null when there is no such group.</summary>
+    private static DocNode? GroupNamed(ConfigDocument document, IReadOnlyList<string> names)
+    {
+        DocNode group = document.Root.Children[0];
+        foreach (string name in names)
+        {
+            DocNode? next = group.Children.FirstOrDefault(child => child.Kind == NodeKind.EnvGroup && SegmentOrNull(child) == name);
+            if (next is null)
+            {
+                return null;
+            }
+
+            group = next;
+        }
+
+        return group;
+    }
+
+    private static string? SegmentOrNull(DocNode node)
+    {
+        return node.Path.Steps[^1] is MemberStep step ? step.Key : null;
     }
 
     /// <summary>The placement of a copy: the copy goes right after the unit, so its first flat position follows the unit's last.</summary>
@@ -413,6 +506,42 @@ internal static class EnvLogicalEdit
         List<LogicalNode> children = ChildrenOf(root, FlatNodes(before).Count);
         var moved = new HashSet<int>(placement.Positions);
         List<LogicalNode> unit = placement.Positions.Select(p => children[p]).ToList();
+        List<LogicalNode> rest = children.Where((_, p) => !moved.Contains(p)).ToList();
+        rest.InsertRange(placement.Destination, unit);
+        return WithChildren(root, rest);
+    }
+
+    /// <summary>
+    /// The logical tree after a <see cref="MoveNodeTo"/>. The unit leaves its parent. Each entry under the moved node takes the new key:
+    /// the destination's segments, the node's segment (<see cref="MoveNodeTo.NewKey"/> when given), then the rest of its key. The unit is
+    /// inserted at its flat position in the destination.
+    /// </summary>
+    private static LogicalNode MoveToAt(ConfigDocument before, LogicalNode root, MoveNodeTo move)
+    {
+        DocNode node = Locate(before, move.Node);
+        DocNode destination = Locate(before, move.NewParent);
+        Placement placement = PlaceMoveTo(before, move);
+        List<LogicalNode> children = ChildrenOf(root, FlatNodes(before).Count);
+        string? oldSegment = node.Kind is NodeKind.EnvEntry or NodeKind.EnvGroup ? SegmentOf(node) : null;
+        // The new key's text before the entry's rest: the destination's names and the node's segment.
+        string? newBase = oldSegment is null
+            ? null
+            : string.Join(Separator, NamesOf(destination.Path).Append(move.NewKey ?? oldSegment));
+        int offset = PrefixLength(node.Path);
+        var unit = new List<LogicalNode>();
+        foreach (int p in placement.Positions)
+        {
+            LogicalNode copy = children[p];
+            if (newBase is not null && copy.Kind == LogicalKind.Scalar)
+            {
+                string name = copy.Name ?? throw new InvalidOperationException("An entry has no key.");
+                copy = Renamed(copy, newBase + name[(offset + oldSegment!.Length)..]);
+            }
+
+            unit.Add(copy);
+        }
+
+        var moved = new HashSet<int>(placement.Positions);
         List<LogicalNode> rest = children.Where((_, p) => !moved.Contains(p)).ToList();
         rest.InsertRange(placement.Destination, unit);
         return WithChildren(root, rest);

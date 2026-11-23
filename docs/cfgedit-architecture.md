@@ -606,6 +606,7 @@ public sealed record MoveNode(NodePath Node, int NewIndex) : EditOp;            
 public sealed record MoveAttribute(NodePath Element, int Index, int NewIndex) : EditOp;
 public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? Value) : EditOp;  // Value for scalars
 public sealed record DuplicateNode(NodePath Node) : EditOp;                                  // inserted right after
+public sealed record MoveNodeTo(NodePath Node, NodePath NewParent, int NewIndex, string? NewKey) : EditOp;  // into another container
 
 public abstract record NewNode;
 public sealed record NewJsonValue(string? Key, JsonValueKind Kind, string? Value) : NewNode;   // Key for object parents
@@ -821,8 +822,8 @@ Syntax in `Cfgedit.Core.Yaml`, the model, tree and edits in `Cfgedit.Core.Model`
   quoted; a folded scalar stays folded only when it folds back to the same value. Insert: into a block mapping or sequence at the
   siblings' indentation and dash style, into flow collections as JSON, into an empty `{}` or `[]` (which turns to block style), and
   a compact `- key: value` item for an empty `{}` that is a sequence item. Delete, duplicate (anchors are removed from the copies) and
-  change type (`ChangeYamlType`) follow the same rules. An anchor that an alias still refers to cannot be deleted; an alias cannot
-  change type; documents can be deleted and moved, but adding a document is refused. `YamlMoves` (the units of text that move
+  change type (`ChangeYamlType`) follow the same rules. An anchor that an alias still refers to cannot be deleted; an alias can only
+  be wrapped in a sequence (change type to sequence wraps a value, a null becomes `[]`); documents can be deleted and moved, but adding a document is refused. `YamlMoves` (the units of text that move
   together, with their comments, and the refusal of a move that would split one) is the move helper that `YamlEditPlanner.PlanMove`
   uses.
 - **Shape copies.** `SiblingShape` builds the shaped inserts of YAML sequences of scalars and mappings (`ConfigDocument.ShapeLike`).
@@ -830,7 +831,7 @@ Syntax in `Cfgedit.Core.Yaml`, the model, tree and edits in `Cfgedit.Core.Model`
   value; a null with no text as a dim `null`), `PathText.YamlPath` and `YamlKindName` (`---[n]` for documents, keys quoted through
   `YamlEncoder.EncodeKey`), `AddKinds` (the YAML kinds for a mapping or a sequence; none for a document), `EditRules` (a YAML key is one
   line; anchors, tags, aliases and indexes are not editable), `FirstValue` (a YAML scalar's value editor opens after an add),
-  `MainWindow.ChangeYamlTypeOf` (the type menu, with the alias refusal shown first), and `CfgeditHost` (the format choice, `.yaml`). `T`
+  `MainWindow.ChangeYamlTypeOf` (the type menu; an alias opens it with sequence preselected), and `CfgeditHost` (the format choice, `.yaml`). `T`
   on YAML says the table editor is not available yet.
 - **Tests.** Core, in `tests/Cfgedit.Core.Tests/Yaml`: `YamlConformanceTests` and `YamlFixtureTests` (the yaml-test-suite, see the
   design doc), `YamlParserTests`, `YamlScalarTests`, `YamlEncoderTests`, `YamlCrossCheckTests`, `YamlRefusalTests`,
@@ -1067,14 +1068,21 @@ control as cmdr's `FieldDraft.Area`). Enter and paste add only LF, so the text i
 - **`A` / `I`** add a child as the last / first child of an element or container, from any part of the node, so `<a/>` can
   get one too.
   **`+`** adds an attribute to the focused element.
-- **`d` / Delete** delete the focused attribute when an attribute part is focused, otherwise the node, with no
+- **Delete** deletes the focused attribute when an attribute part is focused, otherwise the node, with no
   confirmation.
 - **Alt+Up/Down and `K`/`J`** use `MoveBy`. **Alt+Left/Right** use `MoveAttributeBy`.
+- **Alt+Shift+Up/Down** use `NestBy`, which returns a `NestStep` (a `MoveNode` next to a non-container, else a
+  `MoveNodeTo`; null at the root's edge). When `NeedsKey` is set (an item entering a keyed container) `TextPromptDialog`
+  asks for the key and the op is applied with it. `MoveNodeTo.NewIndex` is an index among the destination's children
+  before the edit; each planner removes the group as delete does and writes it where an insert at that index goes,
+  re-indented with `EditLayout.IndentedLines` (lines that begin inside comments or multi-line strings keep their text).
+  `ConfigDocument.MovedNodePath` gives the focus for JSON, XML and YAML; TOML and `.env` find the moved node themselves.
 - **`t`** opens the JSON type menu.
   - To Number: the current text if it is a valid number, else "0". To String: the current raw text of a scalar, else "".
-  - Container → scalar with children asks first, with Change as the default.
+  - Container → scalar or object with children asks first, with Change as the default. To array wraps the value and asks nothing.
   - On XML: "types apply to JSON only".
-- **Ctrl+D** duplicates.
+- **`d`** duplicates the focused node (`DuplicateNode`), with the cursor on the copy. In the table editor `d` duplicates the row
+  (`TableModel.DuplicateRow`), and Delete clears the cell or deletes the row on the index column.
 - **Ctrl+Z / `u`** undo. **Ctrl+Y / Ctrl+R** redo.
 - **Ctrl+S** saves.
 

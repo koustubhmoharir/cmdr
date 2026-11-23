@@ -430,7 +430,7 @@ public sealed partial class EditingWindowTests
             (_, w) => Type(w, "web"),
             (_, w) => Keys(w, Key.Enter),
             (_, w) => Keys(w, new Key('n')),
-            (_, w) => Keys(w, new Key('d')),
+            (_, w) => Keys(w, Key.Delete),
             (_, w) => Keys(w, new Key('n')),
             (_, w) => Keys(w, Key.Z.WithCtrl),
             (_, w) => Keys(w, new Key('n')));
@@ -542,8 +542,8 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 100, 24, null, null);
 
         TerminalScreen screen = session.Screens[0];
-        Assert.StartsWith("Enter Edit  ^S Save  / Find  ", screen.Text(23), StringComparison.Ordinal);
-        Assert.Contains("^T Text  y Copy  Tab Next", screen.Text(23), StringComparison.Ordinal);
+        Assert.StartsWith("a/i Add  d Dup  t Type  / Find  y Copy  ", screen.Text(23), StringComparison.Ordinal);
+        Assert.Contains("^T Text  Tab Next", screen.Text(23), StringComparison.Ordinal);
         Assert.EndsWith(QuitHint, screen.Text(23), StringComparison.Ordinal);
     }
 }

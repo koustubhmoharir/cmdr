@@ -185,22 +185,78 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void t_on_an_alias_shows_the_refusal_before_any_menu_and_changes_nothing()
+    public void t_on_an_alias_offers_the_menu_and_sequence_wraps_it()
     {
         OpenedFile file = Open("settings.yaml", "a: &x 1\nb: *x\n");
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, new Key('t')));
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(5), null);
+                Keys(w, Key.CursorDown, Key.CursorDown, new Key('t'));
+                dialog.Finish();
+            });
 
-        Assert.Equal("a: &x 1\nb: *x\n", Text(session));
-        Assert.Equal("an alias cannot change type", session.Screens[^1].Text(MessageRow));
+        Assert.Equal("a: &x 1\nb:\n  - *x\n", Text(session));
     }
 
     [Fact]
-    public void d_on_an_anchor_that_an_alias_still_refers_to_is_refused_and_changes_nothing()
+    public void t_on_an_alias_with_another_type_shows_the_refusal_and_changes_nothing()
+    {
+        const string text = "a: &x 1\nb: *x\n";
+        OpenedFile file = Open("settings.yaml", text);
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(0), null);
+                Keys(w, Key.CursorDown, Key.CursorDown, new Key('t'));
+                dialog.Finish();
+            });
+
+        Assert.Equal(text, Text(session));
+        Assert.Equal("an alias can only be wrapped in a sequence", session.Screens[^1].Text(MessageRow));
+    }
+
+    [Fact]
+    public void t_on_a_mapping_with_children_changed_to_a_sequence_asks_nothing_and_wraps_it()
+    {
+        OpenedFile file = Open("settings.yaml", "a:\n  x: 1\n  y: 2\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(5), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), null, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish(expectOpened: false);
+            });
+
+        Assert.Equal("a:\n  - x: 1\n    y: 2\n", Text(session));
+    }
+
+    [Fact]
+    public void Delete_on_an_anchor_that_an_alias_still_refers_to_is_refused_and_changes_nothing()
     {
         OpenedFile file = Open("settings.yaml", "base: &b 1\nuse: *b\n");
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('d')));
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.Delete));
 
         Assert.Equal("base: &b 1\nuse: *b\n", Text(session));
         Assert.Contains("*b refers to it", session.Screens[^1].Text(MessageRow), StringComparison.Ordinal);
@@ -225,6 +281,22 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown.WithAlt));
 
         Assert.Equal("---\nb: 2\n---\na: 1\n", Text(session));
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_a_YAML_member_below_a_mapping_moves_it_into_that_mapping_as_its_last_member()
+    {
+        OpenedFile file = Open("settings.yaml", "box:\n  x: 1\nport: 2\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal("box:\n  x: 1\n  port: 2\n", Text(session));
     }
 
     [Fact]

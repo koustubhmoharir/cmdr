@@ -308,6 +308,131 @@ public sealed class ConfigDocument
     }
 
     /// <summary>
+    /// The step for Alt+Shift+Up (<paramref name="delta"/> -1) or Alt+Shift+Down (+1): a node enters the container next to it, or
+    /// leaves its parent when it is already at that end of the parent. The adjacent sibling unit (see <see cref="MoveBy"/>) decides.
+    /// <list type="bullet">
+    /// <item>When its main entry is a container that can hold the node, the step is a <see cref="MoveNodeTo"/> into it: at its end
+    /// going up, at its start going down.</item>
+    /// <item>When it is anything else, the step is the <see cref="MoveNode"/> that <see cref="MoveBy"/> gives.</item>
+    /// <item>When there is no unit in that direction, the node moves out of its parent into the grandparent: just before the
+    /// parent's unit going up, just after it going down. A parent that is the root value has no grandparent to move into.</item>
+    /// </list>
+    /// A move into a keyed container (a JSON object) keeps a member's key when the key is free there, else renames it with
+    /// <see cref="EditLayout.CopyName"/>. An array item needs a key: the step says so with <see cref="NestStep.NeedsKey"/>, and
+    /// <see cref="NewKey"/> is null until the caller sets it.
+    /// </summary>
+    /// <param name="node">The node to move.</param>
+    /// <param name="delta">-1 to move up, +1 to move down.</param>
+    /// <returns>The step, or null when the node cannot move that way (see <see cref="MoveBy"/>).</returns>
+    /// <exception cref="ArgumentException">There is no such node, or it is the document node.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="delta"/> is neither -1 nor 1.</exception>
+    public NestStep? NestBy(NodePath node, int delta)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        CheckDelta(delta);
+        DocNode target = Resolve(node) ?? throw new ArgumentException($"There is no node at {node}.", nameof(node));
+        DocNode parent = target.Parent ?? throw new ArgumentException("The document node cannot be moved.", nameof(node));
+        if (IsFixed(target) || IsTomlTrailingComment(target))
+        {
+            return null;
+        }
+
+        int position = IndexOfChild(parent, target);
+        (int first, int last) = EditLayout.IsComment(target) ? (position, position) : EditLayout.Group(parent, position, Source.Text);
+        bool hasNeighbour = delta < 0 ? first > 0 : last < parent.Children.Count - 1;
+        if (hasNeighbour)
+        {
+            (int unitFirst, int unitLast) = UnitAt(SiblingUnits(parent), delta < 0 ? first - 1 : last + 1);
+            DocNode? main = FirstEntryIn(parent, unitFirst, unitLast);
+            if (main is not null && EditLayout.HasEntries(main) && CanNest(target, main))
+            {
+                (string? key, bool needsKey) = KeyFor(target, main);
+                int index = delta < 0 ? main.Children.Count : 0;
+                return new NestStep(new MoveNodeTo(target.Path, main.Path, index, key), needsKey);
+            }
+
+            MoveNode? move = MoveBy(node, delta);
+            return move is null ? null : new NestStep(move, NeedsKey: false);
+        }
+
+        // The root value's entries have no grandparent to move into: in a YAML stream with several documents it is a document row.
+        DocNode? grandparent = parent.Parent;
+        if (grandparent is null || grandparent.Kind is NodeKind.Document or NodeKind.YamlDocument || !CanNest(target, grandparent))
+        {
+            return null;
+        }
+
+        int outside = delta < 0 ? InsertionIndexBefore(parent.Path) : InsertionIndexAfter(parent.Path);
+        (string? outsideKey, bool outsideNeedsKey) = KeyFor(target, grandparent);
+        return new NestStep(new MoveNodeTo(target.Path, grandparent.Path, outside, outsideKey), outsideNeedsKey);
+    }
+
+    /// <summary>
+    /// Whether a node may nest into a container (see <see cref="NestBy"/>). JSON, XML and YAML nest into any container. In TOML a
+    /// comment line does not nest. A table with its own header goes only into a table with a header or the root, never into an item of
+    /// an array of tables, an inline table or an array. An entry goes into a table with a header, the root, an inline table, a static
+    /// array or an item of an array of tables. An array of tables and an implicit or dotted table take no nested node.
+    /// </summary>
+    private bool CanNest(DocNode node, DocNode container)
+    {
+        if (Format is not TomlFormat)
+        {
+            return true;
+        }
+
+        var model = (TomlModel)Syntax;
+        if (node.Kind == NodeKind.TomlComment)
+        {
+            return false;
+        }
+
+        bool section = node.Kind == NodeKind.TomlTable
+            ? model.ShapeOf(node) == TomlContainer.Header
+            : node.Kind == NodeKind.TomlArray && model.ShapeOf(node) == TomlContainer.ArrayOfTables;
+        if (container.Kind == NodeKind.TomlArray)
+        {
+            return model.ShapeOf(container) == TomlContainer.Array && !section;
+        }
+
+        TomlContainer shape = model.ShapeOf(container);
+        bool inArrayOfTables = container.Parent?.Kind == NodeKind.TomlArray && model.ShapeOf(container.Parent) == TomlContainer.ArrayOfTables;
+        return section
+            ? shape is TomlContainer.Root or TomlContainer.Header && !inArrayOfTables
+            : shape is TomlContainer.Root or TomlContainer.Header or TomlContainer.Inline;
+    }
+
+    /// <summary>The key a node takes in a destination container, and whether the caller must supply one (see <see cref="NestBy"/>).</summary>
+    private static (string? Key, bool NeedsKey) KeyFor(DocNode node, DocNode destination)
+    {
+        if (EditLayout.IsComment(node) || !EditLayout.IsKeyedContainer(destination))
+        {
+            return (null, false);
+        }
+
+        if (node.Path.Steps[^1] is not MemberStep member)
+        {
+            return (null, true);
+        }
+
+        bool Taken(string name) => destination.Children.Any(child => child.Path.Steps[^1] is MemberStep other && other.Key == name);
+        return Taken(member.Key) ? (EditLayout.CopyName(member.Key, Taken), false) : (null, false);
+    }
+
+    /// <summary>The first child in [first, last] that is not a comment, or null.</summary>
+    private static DocNode? FirstEntryIn(DocNode parent, int first, int last)
+    {
+        for (int k = first; k <= last; k++)
+        {
+            if (!EditLayout.IsComment(parent.Children[k]))
+            {
+                return parent.Children[k];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Moves an attribute one position up (<paramref name="delta"/> -1) or down (+1) among its element's attributes.
     /// </summary>
     /// <param name="element">The element that holds the attribute.</param>
@@ -534,6 +659,8 @@ public sealed class ConfigDocument
                 int remaining = ChildCount(parent) - (last - first + 1);
                 return ChildAt(after, parent, Math.Clamp(move.NewIndex, 0, remaining));
             }
+            case MoveNodeTo moveTo:
+                return MovedNodePath(after, moveTo);
             case ChangeJsonType change:
                 return ChildAt(after, ParentPath(change.Node), IndexOfNode(change.Node));
             case DuplicateNode duplicate:
@@ -544,6 +671,46 @@ public sealed class ConfigDocument
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// The path of the node a <see cref="MoveNodeTo"/> moved, in the edited document. Removing the group from its parent shifts the
+    /// indexes of the parent's later children, and so the path of the destination when the destination comes after the group in
+    /// that parent or inside it. The walk to the destination goes down the old tree and the edited tree together, with the index
+    /// corrected at the parent; the moved node is then at <see cref="MoveNodeTo.NewIndex"/> plus its offset in the group.
+    /// </summary>
+    internal NodePath MovedNodePath(ConfigDocument after, MoveNodeTo move)
+    {
+        DocNode node = Resolve(move.Node) ?? throw new InvalidOperationException("There is no node at " + move.Node + ".");
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node has no group.");
+        int position = IndexOfChild(parent, node);
+        (int first, int last) = EditLayout.Group(parent, position, Source.Text);
+        int size = last - first + 1;
+        DocNode destination = Resolve(move.NewParent) ?? throw new InvalidOperationException("There is no node at " + move.NewParent + ".");
+
+        var chain = new List<DocNode>();
+        for (DocNode? ancestor = destination; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            chain.Add(ancestor);
+        }
+
+        chain.Reverse();
+        DocNode current = after.Root;
+        for (int level = 0; level + 1 < chain.Count; level++)
+        {
+            DocNode oldParent = chain[level];
+            int index = IndexOfChild(oldParent, chain[level + 1]);
+            if (ReferenceEquals(oldParent, parent) && index > last)
+            {
+                index -= size;
+            }
+
+            current = current.Children[index];
+        }
+
+        // Text moved into an element that holds nothing else becomes the element's text, not a child node: the element is focused.
+        int moved = move.NewIndex + (position - first);
+        return moved < current.Children.Count ? current.Children[moved].Path : current.Path;
     }
 
     private static NodePath? ChildAt(ConfigDocument document, NodePath parentPath, int index)

@@ -8,7 +8,7 @@ using Terminal.Gui.Views;
 
 namespace Cfgedit.Tests;
 
-/// <summary>The structure keys of the tree (a, i, A, I, +, d, moves, t, Ctrl+D), with the resulting document text asserted exactly.</summary>
+/// <summary>The structure keys of the tree (a, i, A, I, +, Delete, moves, t, d), with the resulting document text asserted exactly.</summary>
 public sealed partial class EditingWindowTests
 {
     private const string Config = "<configuration>\n  <add key=\"a\" value=\"1\"/>\n</configuration>";
@@ -729,14 +729,14 @@ public sealed partial class EditingWindowTests
         Assert.Equal("$  root", session.Screens[^1].Text(22));
     }
 
-    // ----- d and Delete -----
+    // ----- Delete -----
 
     [Fact]
-    public void d_deletes_the_node_with_no_confirmation_and_focuses_the_next_sibling()
+    public void Delete_deletes_the_node_with_no_confirmation_and_focuses_the_next_sibling()
     {
         OpenedFile file = Open("settings.json", JsonText);
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('d')));
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.Delete));
 
         Assert.Equal("{\n  \"port\": 8080\n}", Text(session));
         // The cursor keeps its part (the key), so the detail line describes the key of port.
@@ -841,6 +841,207 @@ public sealed partial class EditingWindowTests
         Assert.Equal("only an attribute moves with Alt+Left and Alt+Right", session.Screens[^1].Text(22));
     }
 
+    // ----- Nest (Alt+Shift+Up and Alt+Shift+Down) -----
+
+    [Fact]
+    public void Alt_Shift_Up_on_a_member_below_an_object_moves_it_into_that_object_as_its_last_member()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"box\": {\n    \"a\": 1\n  },\n  \"port\": 8080\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal("{\n  \"box\": {\n    \"a\": 1,\n    \"port\": 8080\n  }\n}", Text(session));
+        Assert.StartsWith("$.box.port  ", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Alt_Shift_Down_on_a_member_above_an_object_moves_it_into_that_object_as_its_first_member()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"port\": 8080,\n  \"box\": {\n    \"a\": 1\n  }\n}");
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown.WithAlt.WithShift));
+
+        Assert.Equal("{\n  \"box\": {\n    \"port\": 8080,\n    \"a\": 1\n  }\n}", Text(session));
+        Assert.StartsWith("$.box.port  ", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_a_first_member_moves_it_out_before_its_parent()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"box\": {\n    \"a\": 1,\n    \"b\": 2\n  }\n}");
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal("{\n  \"a\": 1,\n  \"box\": {\n    \"b\": 2\n  }\n}", Text(session));
+        Assert.StartsWith("$.a  ", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Alt_Shift_Down_next_to_a_scalar_is_an_ordinary_one_step_move()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown.WithAlt.WithShift));
+
+        Assert.Equal("{\n  \"port\": 8080,\n  \"name\": \"web\"\n}", Text(session));
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_an_array_item_entering_an_object_asks_for_a_key_and_applies_it()
+    {
+        OpenedFile file = Open("list.json", "[\n  {\"k\": 0},\n  1\n]");
+        string? title = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the key dialog",
+                    v => v is TextPromptDialog,
+                    v =>
+                    {
+                        title = ((TextPromptDialog)v).Title;
+                        ((TextPromptDialog)v).Field.Text = "y";
+                        v.NewKeyDownEvent(Key.Enter);
+                    },
+                    null);
+                Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift);
+                dialog.Finish();
+            });
+
+        Assert.Equal("Key for $[1]", title);
+        Assert.Equal("[\n  {\"k\": 0, \"y\": 1}\n]", Text(session));
+        Assert.StartsWith("$[0].y  ", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_duplicate_key_for_an_array_item_shows_the_error_under_the_field_and_keeps_the_dialog_open()
+    {
+        OpenedFile file = Open("list.json", "[\n  {\"k\": 0},\n  1\n]");
+        string? error = null;
+        TerminalScreen? shown = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the key dialog",
+                    v => v is TextPromptDialog,
+                    v =>
+                    {
+                        ((TextPromptDialog)v).Field.Text = "k";
+                        v.NewKeyDownEvent(Key.Enter);
+                        error = ((TextPromptDialog)v).ErrorText;
+                        shown = Snap(app, v, 80, 24);
+                        v.NewKeyDownEvent(Key.Esc);
+                    },
+                    null);
+                Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift);
+                dialog.Finish();
+            });
+
+        Assert.False(string.IsNullOrEmpty(error));
+
+        // The error must be drawn, not only set: the buttons cover the bottom rows of a dialog's content area.
+        Assert.NotNull(shown);
+        Assert.Contains(error!, Drawn(shown!), StringComparison.Ordinal);
+        Assert.Equal("[\n  {\"k\": 0},\n  1\n]", Text(session));
+    }
+
+    [Fact]
+    public void Esc_in_the_key_dialog_for_an_array_item_cancels_and_changes_nothing()
+    {
+        OpenedFile file = Open("list.json", "[\n  {\"k\": 0},\n  1\n]");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(app, "the key dialog", v => v is TextPromptDialog, v => v.NewKeyDownEvent(Key.Esc), null);
+                Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift);
+                dialog.Finish();
+            });
+
+        Assert.Equal("[\n  {\"k\": 0},\n  1\n]", Text(session));
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_a_member_entering_an_array_drops_the_key_and_adds_the_value_last()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"list\": [\n    1\n  ],\n  \"port\": 8080\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal("{\n  \"list\": [\n    1,\n    8080\n  ]\n}", Text(session));
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_a_root_level_member_says_already_first_and_changes_nothing()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal(JsonText, Text(session));
+        Assert.Equal("already first", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void Alt_Shift_Down_on_a_root_level_member_says_already_last_and_changes_nothing()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown.WithAlt.WithShift));
+
+        Assert.Equal(JsonText, Text(session));
+        Assert.Equal("already last", session.Screens[^1].Text(22));
+    }
+
+    [Fact]
+    public void Ctrl_Z_takes_back_a_nest_move()
+    {
+        OpenedFile file = Open("settings.json", "{\n  \"box\": {\n    \"a\": 1\n  },\n  \"port\": 8080\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift),
+            (_, w) => Keys(w, Key.Z.WithCtrl));
+
+        Assert.Equal("{\n  \"box\": {\n    \"a\": 1\n  },\n  \"port\": 8080\n}", Text(session));
+    }
+
     // ----- t -----
 
     [Fact]
@@ -890,7 +1091,7 @@ public sealed partial class EditingWindowTests
     [InlineData(3, "{\n  \"name\": false,\n  \"port\": 8080\n}")]
     [InlineData(4, "{\n  \"name\": null,\n  \"port\": 8080\n}")]
     [InlineData(5, "{\n  \"name\": {},\n  \"port\": 8080\n}")]
-    [InlineData(6, "{\n  \"name\": [],\n  \"port\": 8080\n}")]
+    [InlineData(6, "{\n  \"name\": [\"web\"],\n  \"port\": 8080\n}")]
     public void t_reaches_each_other_type_from_the_menu(int choice, string expected)
     {
         OpenedFile file = Open("settings.json", JsonText);
@@ -909,6 +1110,29 @@ public sealed partial class EditingWindowTests
             });
 
         Assert.Equal(expected, Text(session));
+    }
+
+    [Fact]
+    public void t_on_an_object_with_children_changed_to_an_array_asks_nothing_and_wraps_it()
+    {
+        OpenedFile file = Open("nested.json", "{\n  \"o\": {\"a\": 1}\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(6), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), null, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish(expectOpened: false);
+            });
+
+        Assert.Equal("{\n  \"o\": [{\"a\": 1}]\n}", Text(session));
     }
 
     [Fact]
@@ -971,16 +1195,28 @@ public sealed partial class EditingWindowTests
         Assert.Equal("types apply to JSON only", session.Screens[^1].Text(22));
     }
 
-    // ----- Ctrl+D -----
+    // ----- d (duplicate) -----
 
     [Fact]
-    public void Ctrl_D_duplicates_the_node_after_itself_with_a_new_key()
+    public void d_duplicates_the_node_after_itself_with_a_new_key_and_the_cursor_is_on_the_copy()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('d')));
+
+        Assert.Equal("{\n  \"name\": \"web\",\n  \"name2\": \"web\",\n  \"port\": 8080\n}", Text(session));
+        Assert.Equal(2, session.Window.Tree.CursorRow);
+        Assert.StartsWith("$.name2  ", session.Screens[^1].Text(22), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ctrl_D_no_longer_duplicates_and_changes_nothing()
     {
         OpenedFile file = Open("settings.json", JsonText);
 
         Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.D.WithCtrl));
 
-        Assert.Equal("{\n  \"name\": \"web\",\n  \"name-copy\": \"web\",\n  \"port\": 8080\n}", Text(session));
+        Assert.Equal(JsonText, Text(session));
     }
 
     // ----- Hints and layout -----

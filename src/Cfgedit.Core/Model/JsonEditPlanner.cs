@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using Cfgedit.Core.Json;
 
 namespace Cfgedit.Core.Model;
@@ -43,6 +44,9 @@ internal sealed class JsonEditPlanner
                 break;
             case MoveNode move:
                 PlanMove(move);
+                break;
+            case MoveNodeTo moveTo:
+                PlanMoveTo(moveTo);
                 break;
             case ChangeJsonType change:
                 PlanChangeType(change);
@@ -198,6 +202,12 @@ internal sealed class JsonEditPlanner
 
         int index = IndexOf(parent, node);
         (int first, int last) = EditLayout.Group(parent, index, _text);
+        RemoveEntries(parent, first, last);
+    }
+
+    /// <summary>Removes the children [first, last] of a parent with their commas. When they are all the container's children, it becomes {} or [].</summary>
+    private void RemoveEntries(DocNode parent, int first, int last)
+    {
         if (IsJsonContainer(parent) && first == 0 && last == parent.Children.Count - 1)
         {
             // The container's only entries go, so it becomes {} or [] on its opening line.
@@ -293,6 +303,175 @@ internal sealed class JsonEditPlanner
         }
     }
 
+    /// <summary>
+    /// Moves a group into another container at an index among its children, as an insert of the group's text there. The group's
+    /// entry takes the destination's key rules (kept, renamed, dropped or added), its comma is what the new place needs, and its
+    /// lines are re-indented by the difference between the two entry indentations. The removal and the insert are separate spans
+    /// of the text: the insert goes into the destination, which is never inside the group.
+    /// </summary>
+    private void PlanMoveTo(MoveNodeTo op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document && !IsComment(node))
+        {
+            throw new CfgeditException("The root value cannot be moved");
+        }
+
+        DocNode destination = Node(op.NewParent);
+        if (!IsJsonContainer(destination))
+        {
+            throw new CfgeditException("The new parent must be a JSON object or array");
+        }
+
+        if (ReferenceEquals(destination, parent))
+        {
+            throw new CfgeditException("The node is already in that container");
+        }
+
+        for (DocNode? up = destination; up is not null; up = up.Parent)
+        {
+            if (ReferenceEquals(up, node))
+            {
+                throw new CfgeditException("A node cannot be moved into itself");
+            }
+        }
+
+        int index = op.NewIndex;
+        if (index < 0 || index > destination.Children.Count)
+        {
+            throw new CfgeditException($"Index {index} is outside the children of {op.NewParent}");
+        }
+
+        bool isComment = IsComment(node);
+        bool keyed = destination.Kind == NodeKind.JsonObject;
+        if (isComment && op.NewKey is not null)
+        {
+            throw new CfgeditException("A comment has no key");
+        }
+
+        if (!keyed && op.NewKey is not null)
+        {
+            throw new CfgeditException("Items of an array have no key");
+        }
+
+        if (keyed && !isComment && op.NewKey is null && !IsMember(node))
+        {
+            throw new CfgeditException("A member needs a key");
+        }
+
+        if (keyed && !isComment)
+        {
+            string name = op.NewKey ?? Part(node, PartKind.Key)!.Value;
+            if (HasMemberNamed(destination, name, null))
+            {
+                throw new CfgeditException($"a member named '{name}' already exists");
+            }
+        }
+
+        IReadOnlyList<DocNode> children = parent.Children;
+        (int first, int last) = EditLayout.Group(parent, IndexOf(parent, node), _text);
+        int main = MainEntry(parent, first, last);
+        bool isEntry = main >= 0;
+        int start = children[first].Start;
+        int end = EditLayout.Extent(parent, last, _text);
+
+        // The comma the moved entry needs here: a comma when entries follow it in the destination, or the style is trailing.
+        bool comma = isEntry && (ExistsEntryFrom(destination, index) || HasTrailingComma(destination));
+        var substitutions = new List<TextEdit>();
+        var verbatim = new List<(int Start, int End)>();
+        for (int k = first; k <= last; k++)
+        {
+            CollectVerbatim(children[k], verbatim);
+        }
+
+        if (isEntry)
+        {
+            DocNode entry = children[main];
+            DocPart? key = IsMember(entry) ? Part(entry, PartKind.Key) : null;
+            if (keyed && key is not null)
+            {
+                if (op.NewKey is { } renamed)
+                {
+                    substitutions.Add(new TextEdit(key.Start, key.End, NewKeyText(renamed, destination, index - 1, index)));
+                }
+            }
+            else if (keyed)
+            {
+                string keyText = NewKeyText(op.NewKey!, destination, index - 1, index) + KeySeparator(destination, index - 1, index);
+                substitutions.Add(new TextEdit(entry.Start, entry.Start, keyText));
+            }
+            else if (key is not null)
+            {
+                // A member becomes an item: its key and the separator go, and the value stays.
+                int valueStart = ValueSpan(entry).Start;
+                if (_text[key.End..valueStart].Contains('/', StringComparison.Ordinal))
+                {
+                    throw new CfgeditException("a comment between a key and its value cannot move into an array");
+                }
+
+                substitutions.Add(new TextEdit(key.Start, valueStart, string.Empty));
+            }
+
+            int? sourceComma = EditLayout.CommaAfter(parent, main, _text);
+            if (sourceComma is { } at)
+            {
+                substitutions.Add(new TextEdit(at, at + 1, string.Empty));
+            }
+
+            substitutions.Add(new TextEdit(entry.End, entry.End, comma ? "," : string.Empty));
+        }
+
+        substitutions = substitutions.OrderBy(edit => edit.Start).ThenBy(edit => edit.End).ToList();
+        int sourceIndent = EditLayout.LineIndent(_text, start).Length;
+        string destinationIndent = DestinationIndent(destination, index);
+        string core = EditLayout.IndentedLines(
+            _text,
+            start,
+            end,
+            verbatim,
+            add: destinationIndent.Length > sourceIndent ? new string(destinationIndent[0], destinationIndent.Length - sourceIndent) : string.Empty,
+            remove: Math.Max(0, sourceIndent - destinationIndent.Length),
+            substitutions: substitutions);
+
+        // The entry before the insert point needs a comma when the moved entry follows it.
+        int previous = isEntry ? LastEntryBefore(destination, index) : -1;
+        if (previous >= 0 && EditLayout.CommaAfter(destination, previous, _text) is null)
+        {
+            DocNode previousNode = destination.Children[previous];
+            Replace(previousNode.End, previousNode.End, ",");
+        }
+
+        bool lineComment = IsLineComment(children[last]);
+        RemoveEntries(parent, first, last);
+        if (destination.Children.Count == 0)
+        {
+            EmptyContainerInsert(destination, core, lineComment);
+            return;
+        }
+
+        PlaceAt(destination, index, core, lineComment, isEntry, commaFollows: comma);
+    }
+
+    /// <summary>
+    /// The indentation of an entry inserted at an index of a container: the indentation the insert would get on its own line
+    /// (see <see cref="PlaceAt"/>), or one unit deeper than the container when it has no entries.
+    /// </summary>
+    private string DestinationIndent(DocNode container, int index)
+    {
+        if (container.Children.Count == 0)
+        {
+            return EditLayout.LineIndent(_text, OpenOf(container)) + _unit;
+        }
+
+        if (index < container.Children.Count)
+        {
+            return IndentFor(index > 0 ? container.Children[index - 1] : null, container.Children[index], container);
+        }
+
+        return IndentFor(container.Children[^1], null, container);
+    }
+
     private void PlanChangeType(ChangeJsonType op)
     {
         DocNode node = Node(op.Node);
@@ -304,6 +483,21 @@ internal sealed class JsonEditPlanner
         DocNode parent = Parent(node);
         int index = IndexOf(parent, node);
         (int start, int end) = ValueSpan(node);
+        if (op.Kind == JsonValueKind.Array)
+        {
+            if (node.JsonKind == JsonValueKind.Null)
+            {
+                // A null has nothing to keep, so it becomes an empty array.
+                Replace(start, end, "[]");
+            }
+            else if (node.JsonKind != JsonValueKind.Array)
+            {
+                WrapInArray(node, start, end);
+            }
+
+            return;
+        }
+
         string text;
         if (op.Kind == JsonValueKind.String && node.JsonKind == JsonValueKind.String)
         {
@@ -320,6 +514,51 @@ internal sealed class JsonEditPlanner
         }
 
         Replace(start, end, text);
+    }
+
+    /// <summary>
+    /// Wraps a value that is not an array in a new array, as its only item. A single-line value is kept as it is. A multi-line
+    /// value goes on its own line, one indent unit deeper than the line it starts on, and each of its later lines gets one more
+    /// unit, except a line that begins inside a block comment: its text must not change.
+    /// </summary>
+    private void WrapInArray(DocNode node, int start, int end)
+    {
+        if (!EditLayout.HasLineBreak(_text, start, end))
+        {
+            Replace(start, end, "[" + _text[start..end] + "]");
+            return;
+        }
+
+        var verbatim = new List<(int Start, int End)>();
+        CollectVerbatim(node, verbatim);
+        string indent = EditLayout.LineIndent(_text, start);
+        string inner = EditLayout.IndentedLines(_text, start, end, verbatim, _unit, 0, []);
+        Replace(start, end, "[" + _newline + indent + _unit + inner + _newline + indent + "]");
+    }
+
+    /// <summary>
+    /// Collects the spans whose line breaks belong to a value rather than to the layout: the block comments and the keys and values
+    /// that span lines, in the node and its descendants.
+    /// </summary>
+    private void CollectVerbatim(DocNode node, List<(int Start, int End)> verbatim)
+    {
+        if (node.Kind == NodeKind.JsonComment && IsBlockComment(node))
+        {
+            verbatim.Add((node.Start, node.End));
+        }
+
+        foreach (DocPart part in node.Parts)
+        {
+            if (part.Kind is PartKind.Key or PartKind.Value && EditLayout.HasLineBreak(_text, part.Start, part.End))
+            {
+                verbatim.Add((part.Start, part.End));
+            }
+        }
+
+        foreach (DocNode child in node.Children)
+        {
+            CollectVerbatim(child, verbatim);
+        }
     }
 
     private void PlanDuplicate(DuplicateNode op)
@@ -908,7 +1147,7 @@ internal sealed class JsonEditPlanner
         return false;
     }
 
-    /// <summary>A copy's key: <c>name-copy</c>, then <c>name-copy2</c> and so on, unique among the siblings.</summary>
+    /// <summary>A copy's key: <c>name2</c>, then the next number up while taken (<see cref="EditLayout.CopyName"/>), unique among the siblings.</summary>
     private string FreshKey(DocNode parent, string name)
     {
         return EditLayout.CopyName(name, candidate => HasMemberNamed(parent, candidate, null));

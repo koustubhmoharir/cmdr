@@ -20,27 +20,27 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void A_mapping_entry_is_copied_after_itself_under_a_copy_name()
     {
-        Assert.Equal("a: 1\na-copy: 1\nb: 2\n", Edit("a: 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a: 1\na2: 1\nb: 2\n", Edit("a: 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
     public void A_copy_takes_the_first_copy_name_that_is_free()
     {
-        Assert.Equal("a: 1\na-copy2: 1\na-copy: 5\n", Edit("a: 1\na-copy: 5\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a: 1\na3: 1\na2: 5\n", Edit("a: 1\na2: 5\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
     public void A_copy_takes_its_attached_comment_and_trailing_comment_with_it()
     {
         Assert.Equal(
-            "# about a\na: 1 # t\n# about a\na-copy: 1 # t\nb: 2\n",
+            "# about a\na: 1 # t\n# about a\na2: 1 # t\nb: 2\n",
             Edit("# about a\na: 1 # t\nb: 2\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
     public void A_nested_entry_is_copied_with_all_its_lines()
     {
-        Assert.Equal("a:\n  x: 1\na-copy:\n  x: 1\nb: 2\n", Edit("a:\n  x: 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a:\n  x: 1\na2:\n  x: 1\nb: 2\n", Edit("a:\n  x: 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void An_entry_that_shares_its_line_with_a_dash_is_copied_as_a_line_of_its_own_at_its_column()
     {
-        Assert.Equal("- a: 1\n  a-copy: 1\n  b: 2\n", Edit("- a: 1\n  b: 2\n", Yaml, Duplicate(Item(0), Member("a"))));
+        Assert.Equal("- a: 1\n  a2: 1\n  b: 2\n", Edit("- a: 1\n  b: 2\n", Yaml, Duplicate(Item(0), Member("a"))));
     }
 
     [Fact]
@@ -70,13 +70,13 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void A_copy_at_the_end_of_a_file_with_no_final_break_gets_the_break_first()
     {
-        Assert.Equal("a: 1\na-copy: 1", Edit("a: 1", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a: 1\na2: 1",Edit("a: 1", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
     public void A_copy_in_a_CRLF_document_keeps_its_line_breaks()
     {
-        Assert.Equal("a: 1\r\na-copy: 1\r\nb: 2\r\n", Edit("a: 1\r\nb: 2\r\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a: 1\r\na2: 1\r\nb: 2\r\n", Edit("a: 1\r\nb: 2\r\n", Yaml, Duplicate(Member("a"))));
     }
 
     // ----- Anchors and aliases -----
@@ -84,7 +84,7 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void An_anchor_is_removed_from_the_copy_so_that_it_is_not_defined_twice()
     {
-        Assert.Equal("a: &x 1\na-copy: 1\nb: 2\n", Edit("a: &x 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("a: &x 1\na2: 1\nb: 2\n", Edit("a: &x 1\nb: 2\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
@@ -98,13 +98,13 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void An_alias_in_a_copy_stays_and_still_refers_to_the_original()
     {
-        Assert.Equal("a: &x 1\nb: *x\nb-copy: *x\n", Edit("a: &x 1\nb: *x\n", Yaml, Duplicate(Member("b"))));
+        Assert.Equal("a: &x 1\nb: *x\nb2: *x\n", Edit("a: &x 1\nb: *x\n", Yaml, Duplicate(Member("b"))));
     }
 
     [Fact]
     public void An_anchored_key_loses_its_anchor_in_the_copy()
     {
-        Assert.Equal("&k key: 1\nkey-copy: 1\n", Edit("&k key: 1\n", Yaml, Duplicate(Member("key"))));
+        Assert.Equal("&k key: 1\nkey2: 1\n", Edit("&k key: 1\n", Yaml, Duplicate(Member("key"))));
     }
 
     // ----- Flow entries and items -----
@@ -112,7 +112,7 @@ public sealed class YamlEditDuplicateTests
     [Fact]
     public void A_flow_entry_is_copied_after_its_comma()
     {
-        Assert.Equal("{a: 1, a-copy: 1, b: 2}\n", Edit("{a: 1, b: 2}\n", Yaml, Duplicate(Member("a"))));
+        Assert.Equal("{a: 1, a2: 1, b: 2}\n", Edit("{a: 1, b: 2}\n", Yaml, Duplicate(Member("a"))));
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public sealed class YamlEditDuplicateTests
     {
         var (_, focus) = EditWithFocus("a: 1\nb: 2\n", Yaml, Duplicate(Member("a")));
 
-        Assert.Equal(Path(Member("a-copy")), focus);
+        Assert.Equal(Path(Member("a2")), focus);
     }
 
     [Fact]

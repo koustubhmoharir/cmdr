@@ -77,11 +77,51 @@ public sealed class TomlEditTypeTests
     }
 
     [Fact]
-    public void A_scalar_becomes_an_empty_inline_array()
+    public void A_scalar_is_wrapped_in_an_inline_array()
     {
         string text = Edit("a = 1\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
 
-        Assert.Equal("a = []\n", text);
+        Assert.Equal("a = [1]\n", text);
+    }
+
+    [Fact]
+    public void An_inline_table_is_wrapped_in_an_inline_array()
+    {
+        string text = Edit("a = {x = 1}\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [{x = 1}]\n", text);
+    }
+
+    [Fact]
+    public void A_multi_line_string_is_wrapped_with_its_text_kept()
+    {
+        string text = Edit("a = \"\"\"\nline 1\nline 2\"\"\"\nb = 1\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [\"\"\"\nline 1\nline 2\"\"\"]\nb = 1\n", text);
+    }
+
+    [Fact]
+    public void A_scalar_item_of_an_inline_array_is_wrapped_in_place()
+    {
+        string text = Edit("a = [1, 2]\n", Toml, new ChangeTomlType(Path(Member("a"), Item(0)), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [[1], 2]\n", text);
+    }
+
+    [Fact]
+    public void A_trailing_comment_stays_after_the_wrapped_value()
+    {
+        string text = Edit("a = 1 # note\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [1] # note\n", text);
+    }
+
+    [Fact]
+    public void An_inline_array_changed_to_an_array_is_left_as_it_is()
+    {
+        string text = Edit("a = [1, 2]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [1, 2]\n", text);
     }
 
     [Fact]

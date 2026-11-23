@@ -393,6 +393,14 @@ public sealed class TableModel
         return new DeleteNode(_rowPaths[row]);
     }
 
+    /// <summary>The edit that copies a row with its attached comments, the copy going after the row.</summary>
+    /// <exception cref="CfgeditException">The row index is outside the table.</exception>
+    public EditOp DuplicateRow(int row)
+    {
+        CheckRow(row);
+        return new DuplicateNode(_rowPaths[row]);
+    }
+
     /// <summary>
     /// The edit that moves a row so that it ends at index <paramref name="newRow"/> among the rows. Other siblings and comments keep
     /// their places relative to the rows: the row goes just before the row that is at <paramref name="newRow"/> after the removal, or

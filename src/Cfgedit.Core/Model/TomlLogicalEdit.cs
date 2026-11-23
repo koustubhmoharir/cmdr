@@ -58,6 +58,13 @@ internal static class TomlLogicalEdit
                     break;
                 }
 
+                if (change.Kind == TomlNewKind.Array)
+                {
+                    // The value keeps its text and comments (an inline value holds none), as the array's only item.
+                    data = Modify(data, IndicesOf(node), 0, Wrapped) ?? data;
+                    break;
+                }
+
                 CollectComments(node, Ranks(), removed);
                 data = Modify(data, IndicesOf(node), 0, n => NewValue(n.Name, change.Kind, change.Value)) ?? data;
                 break;
@@ -151,6 +158,12 @@ internal static class TomlLogicalEdit
                 LogicalNode copy = keyed ? Renamed(original, CopyNameOf(parent, node)) : original;
                 int position = keyed && !InlineMemberOf(model, node) ? MembersBefore(model, parent, offset) : LogicalIndex(parent, node) + 1;
                 data = Modify(data, IndicesOf(parent), 0, n => WithChild(n, position, copy)) ?? data;
+                break;
+            }
+
+            case MoveNodeTo moveTo:
+            {
+                (data, comments) = MoveTo(before, data, comments, moveTo);
                 break;
             }
 
@@ -264,6 +277,9 @@ internal static class TomlLogicalEdit
                 return after.Resolve(path) is null ? null : path;
             }
 
+            case MoveNodeTo moveTo:
+                return MovedFocus(before, after, moveTo);
+
             case MoveNode move:
             {
                 MoveLayout layout = LayoutOf(before, move);
@@ -282,6 +298,340 @@ internal static class TomlLogicalEdit
             default:
                 return null;
         }
+    }
+
+    // ----- Move into another container: where the moved node goes, and its comments -----
+
+    /// <summary>
+    /// The data and the comments after a MoveNodeTo. The node leaves its parent, with the containers that only it kept alive. It enters the
+    /// destination at the position its text takes: a section at <see cref="SectionOffset"/>, a line at <see cref="LineOffset"/>, or a member
+    /// or item at its index. The indexes are read after the removal (the removed nodes do not count). The moved comments take their rank in
+    /// file order at the offset where the text goes.
+    /// </summary>
+    private static (LogicalNode Data, List<LogicalNode> Comments) MoveTo(ConfigDocument before, LogicalNode data, List<LogicalNode> comments, MoveNodeTo move)
+    {
+        var model = (TomlModel)before.Syntax;
+        string text = before.Source.Text;
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        DocNode destination = Locate(before, move.NewParent);
+        bool section = IsSectionNode(model, node);
+
+        LogicalNode moved = NodeAt(data, IndicesOf(node));
+        var movedComments = new List<DocNode>();
+        var removed = new HashSet<DocNode>(ReferenceEqualityComparer.Instance);
+        if (!section)
+        {
+            // A key/value takes the comment lines attached above it and its trailing comment: the children of its group.
+            (int first, int last) = TomlLayout.Block(parent, IndexOf(parent, node), text);
+            for (int k = first; k <= last; k++)
+            {
+                if (EditLayout.IsComment(parent.Children[k]))
+                {
+                    movedComments.Add(parent.Children[k]);
+                }
+            }
+        }
+
+        CollectComments(node, movedComments);
+        removed.Add(node);
+        data = Modify(data, IndicesOf(node), 0, _ => null) ?? throw new InvalidOperationException("The node cannot be removed.");
+        if (section)
+        {
+            // A table that only the moved node kept alive goes too, as its text does (see ShouldPrune).
+            DocNode container = parent;
+            DocNode child = node;
+            while (ShouldPrune(model, container, child))
+            {
+                removed.Add(container);
+                data = Modify(data, IndicesOf(container), 0, _ => null) ?? throw new InvalidOperationException("The root table cannot be pruned.");
+                child = container;
+                container = container.Parent ?? throw new InvalidOperationException("The pruned table has no parent.");
+            }
+        }
+
+        List<int> destinationIndices = IndicesExcept(destination, removed);
+        LogicalNode added;
+        int position;
+        int at;
+        if (section)
+        {
+            at = SectionOffset(before, destination, move.NewIndex);
+            position = MembersBeforeExcept(model, destination, at, removed);
+            string name = move.NewKey ?? NodeNameOf(node);
+            added = node.Kind == NodeKind.TomlTable && parent.Kind == NodeKind.TomlArray
+                ? new LogicalNode(LogicalKind.Array, name, null, null, [], [moved])
+                : Renamed(moved, name);
+        }
+        else if (model.ShapeOf(destination) is TomlContainer.Root or TomlContainer.Header)
+        {
+            at = LineOffset(before, destination, move.NewIndex);
+            position = MembersBeforeExcept(model, destination, at, removed);
+            added = Renamed(moved, move.NewKey ?? moved.Name);
+        }
+        else
+        {
+            at = TokenOffset(destination, move.NewIndex);
+            position = ChildrenBeforeExcept(destination, move.NewIndex, removed);
+            added = model.ShapeOf(destination) == TomlContainer.Array ? Renamed(moved, null) : Renamed(moved, move.NewKey ?? moved.Name);
+        }
+
+        data = Modify(data, destinationIndices, 0, n => WithChild(n, position, added)) ?? data;
+        return (data, PlaceComments(before, comments, movedComments, at));
+    }
+
+    /// <summary>
+    /// The #comments array after the moved comments take their new place: they leave their ranks, and go in at the rank that their offset
+    /// has among the comments that stay (the staying comments before the offset come first).
+    /// </summary>
+    private static List<LogicalNode> PlaceComments(ConfigDocument before, List<LogicalNode> comments, List<DocNode> moved, int offset)
+    {
+        Dictionary<DocNode, int> ranks = CommentRanks(before);
+        List<int> movedRanks = moved.Where(comment => comment.Kind == NodeKind.TomlComment).Select(comment => ranks[comment]).Distinct().Order().ToList();
+        if (movedRanks.Count == 0)
+        {
+            return comments;
+        }
+
+        var all = new List<DocNode>();
+        CollectComments(before.Root, all);
+        all.Sort((a, b) => a.Start.CompareTo(b.Start));
+        List<int> staying = Enumerable.Range(0, comments.Count).Where(rank => !movedRanks.Contains(rank)).ToList();
+        int insertAt = staying.Count(rank => all[rank].Start < offset);
+        var result = new List<LogicalNode>();
+        result.AddRange(staying.Take(insertAt).Select(rank => comments[rank]));
+        result.AddRange(movedRanks.Select(rank => comments[rank]));
+        result.AddRange(staying.Skip(insertAt).Select(rank => comments[rank]));
+        return result;
+    }
+
+    /// <summary>The focus after a MoveNodeTo: the moved node under its new parent, by its name (or its index in an array).</summary>
+    private static NodePath? MovedFocus(ConfigDocument before, ConfigDocument after, MoveNodeTo move)
+    {
+        var model = (TomlModel)before.Syntax;
+        DocNode node = Locate(before, move.Node);
+        DocNode destination = Locate(before, move.NewParent);
+        NodePath container = ShiftedPath(destination, node);
+        NodePath path = model.ShapeOf(destination) == TomlContainer.Array
+            ? container.Append(new ItemStep(ChildrenBefore(destination, move.NewIndex)))
+            : container.Append(new MemberStep(move.NewKey ?? NodeNameOf(node), 0));
+        return after.Resolve(path) is null ? null : path;
+    }
+
+    /// <summary>
+    /// The path of a destination after a node is removed from its parent: an item index after the removed item moves down by one. A
+    /// key path does not change.
+    /// </summary>
+    private static NodePath ShiftedPath(DocNode destination, DocNode removed)
+    {
+        var chain = new List<DocNode>();
+        for (DocNode? n = destination; n is not null && n.Parent is not null; n = n.Parent)
+        {
+            chain.Add(n);
+        }
+
+        chain.Reverse();
+        var steps = new List<PathStep>();
+        foreach (DocNode n in chain)
+        {
+            PathStep step = n.Path.Steps[^1];
+            if (step is ItemStep at
+                && ReferenceEquals(n.Parent, removed.Parent)
+                && removed.Path.Steps[^1] is ItemStep gone
+                && gone.Index < at.Index)
+            {
+                step = new ItemStep(at.Index - 1);
+            }
+
+            steps.Add(step);
+        }
+
+        return new NodePath(steps);
+    }
+
+    /// <summary>The name of a node in its container: its own key, or the key of the array that holds it, for an item of an array of tables.</summary>
+    private static string NodeNameOf(DocNode node)
+    {
+        if (node.Path.Steps[^1] is MemberStep member)
+        {
+            return member.Key;
+        }
+
+        return ((MemberStep)node.Parent!.Path.Steps[^1]).Key;
+    }
+
+    /// <summary>True for a table with its own header, a whole array of tables, or an item of one (what moves as header sections).</summary>
+    private static bool IsSectionNode(TomlModel model, DocNode node)
+    {
+        return node.Kind == NodeKind.TomlTable
+            ? model.ShapeOf(node) == TomlContainer.Header
+            : node.Kind == NodeKind.TomlArray && model.ShapeOf(node) == TomlContainer.ArrayOfTables;
+    }
+
+    /// <summary>The offset where a section moved into a table goes: as the planner places it (see the TOML edit planner).</summary>
+    private static int SectionOffset(ConfigDocument before, DocNode table, int index)
+    {
+        var model = (TomlModel)before.Syntax;
+        IReadOnlyList<DocNode> children = table.Children;
+        for (int k = index; k < children.Count; k++)
+        {
+            DocNode child = children[k];
+            if (EditLayout.IsComment(child))
+            {
+                continue;
+            }
+
+            bool sectionChild = child.Kind == NodeKind.TomlTable && model.ShapeOf(child) == TomlContainer.Header
+                || child.Kind == NodeKind.TomlArray && model.ShapeOf(child) == TomlContainer.ArrayOfTables;
+            return sectionChild ? HeaderStart(before, child) : AfterKeyValues(before, table);
+        }
+
+        return SubtreeOffset(before, table);
+    }
+
+    /// <summary>The start of a section's header line, moved up over the comment lines above it (which belong to the section).</summary>
+    private static int HeaderStart(ConfigDocument before, DocNode table)
+    {
+        IReadOnlyList<TomlItem> items = ((TomlModel)before.Syntax).Syntax.Items;
+        int line = EditLayout.LineStart(before.Source.Text, table.Start);
+        int k = 0;
+        while (k < items.Count && items[k].Start < line)
+        {
+            k++;
+        }
+
+        while (k > 0 && items[k - 1] is TomlCommentItem)
+        {
+            k--;
+        }
+
+        return items[k].Start;
+    }
+
+    /// <summary>The offset after the last key/value of a table's own section, or after its header, or at the top of the root.</summary>
+    private static int AfterKeyValues(ConfigDocument before, DocNode table)
+    {
+        var model = (TomlModel)before.Syntax;
+        IReadOnlyList<TomlItem> items = model.Syntax.Items;
+        bool root = model.ShapeOf(table) == TomlContainer.Root;
+        int start = 0;
+        if (!root)
+        {
+            TomlHeaderItem header = model.OwnHeaderOf(table) ?? throw new InvalidOperationException("A header table has no header.");
+            start = Array.FindIndex(items.ToArray(), item => ReferenceEquals(item, header));
+        }
+
+        int end = items.Count;
+        for (int k = root ? 0 : start + 1; k < items.Count; k++)
+        {
+            if (items[k] is TomlHeaderItem)
+            {
+                end = k;
+                break;
+            }
+        }
+
+        for (int k = end - 1; k >= start; k--)
+        {
+            if (items[k] is TomlKeyValueItem)
+            {
+                return items[k].End;
+            }
+        }
+
+        if (!root)
+        {
+            return items[start].End;
+        }
+
+        int top = end;
+        if (end < items.Count)
+        {
+            while (top > 0 && items[top - 1] is TomlCommentItem)
+            {
+                top--;
+            }
+        }
+
+        for (int j = top - 1; j >= 0; j--)
+        {
+            if (items[j] is TomlCommentItem)
+            {
+                return items[j].End;
+            }
+        }
+
+        return 0;
+    }
+
+    /// <summary>The offset where a token (an inline member or an array item) goes: before the child at the index, else before the closing bracket.</summary>
+    private static int TokenOffset(DocNode destination, int index)
+    {
+        return index < destination.Children.Count ? destination.Children[index].Start : destination.End - 1;
+    }
+
+    /// <summary>The logical child indices that lead to a node, with the removed nodes left out of the counts.</summary>
+    private static List<int> IndicesExcept(DocNode node, HashSet<DocNode> removed)
+    {
+        var indices = new List<int>();
+        DocNode child = node;
+        while (child.Parent is not null && child.Parent.Parent is not null)
+        {
+            indices.Add(ChildIndexExcept(child.Parent, child, removed));
+            child = child.Parent;
+        }
+
+        indices.Reverse();
+        return indices;
+    }
+
+    private static int ChildIndexExcept(DocNode parent, DocNode child, HashSet<DocNode> removed)
+    {
+        int index = 0;
+        foreach (DocNode sibling in parent.Children)
+        {
+            if (ReferenceEquals(sibling, child))
+            {
+                return index;
+            }
+
+            if (!EditLayout.IsComment(sibling) && !removed.Contains(sibling))
+            {
+                index++;
+            }
+        }
+
+        throw new InvalidOperationException("The node is not a child of its parent.");
+    }
+
+    /// <summary>The number of members of a table whose text starts before an offset, not counting the removed nodes.</summary>
+    private static int MembersBeforeExcept(TomlModel model, DocNode parent, int offset, HashSet<DocNode> removed)
+    {
+        int count = 0;
+        foreach (DocNode child in parent.Children)
+        {
+            if (!EditLayout.IsComment(child) && !removed.Contains(child) && model.PiecesOf(child).Min(piece => piece.Start) < offset)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>The number of non-comment children before an index, not counting the removed nodes.</summary>
+    private static int ChildrenBeforeExcept(DocNode parent, int index, HashSet<DocNode> removed)
+    {
+        int count = 0;
+        for (int k = 0; k < index; k++)
+        {
+            if (!EditLayout.IsComment(parent.Children[k]) && !removed.Contains(parent.Children[k]))
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     // ----- Moves: where a unit goes, and the comments in their new order -----
@@ -732,7 +1082,7 @@ internal static class TomlLogicalEdit
         return rank < comments.Count ? comments[rank].Path : null;
     }
 
-    /// <summary>The name of a copy of a keyed node: the first <c>-copy</c> name that no sibling has.</summary>
+    /// <summary>The name of a copy of a keyed node: the first <see cref="EditLayout.CopyName"/> name that no sibling has.</summary>
     private static string CopyNameOf(DocNode parent, DocNode node)
     {
         string name = ((MemberStep)node.Path.Steps[^1]).Key;
@@ -907,9 +1257,21 @@ internal static class TomlLogicalEdit
         return new LogicalNode(node.Kind, node.Name, node.ScalarKind, node.Value, node.Attributes, children, false, node.TomlKind);
     }
 
-    private static LogicalNode Renamed(LogicalNode node, string name)
+    private static LogicalNode Renamed(LogicalNode node, string? name)
     {
         return new LogicalNode(node.Kind, name, node.ScalarKind, node.Value, node.Attributes, node.Children, false, node.TomlKind);
+    }
+
+    /// <summary>An array whose only item is the node, which loses its name.</summary>
+    private static LogicalNode Wrapped(LogicalNode node)
+    {
+        if (node.Kind == LogicalKind.Array)
+        {
+            return node;
+        }
+
+        var item = new LogicalNode(node.Kind, null, node.ScalarKind, node.Value, node.Attributes, node.Children, false, node.TomlKind);
+        return new LogicalNode(LogicalKind.Array, node.Name, null, null, [], [item]);
     }
 
     /// <summary>True when a change keeps the node's kind, so that it changes nothing: the same type with no value given.</summary>

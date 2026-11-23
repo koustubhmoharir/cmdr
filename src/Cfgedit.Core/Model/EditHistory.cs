@@ -138,6 +138,7 @@ public sealed class EditHistory
             DeleteNode delete => delete.Node,
             DeleteAttribute deleteAttribute => deleteAttribute.Element,
             MoveNode move => move.Node,
+            MoveNodeTo moveTo => moveTo.Node,
             MoveAttribute moveAttribute => moveAttribute.Element,
             ChangeJsonType change => change.Node,
             DuplicateNode duplicate => duplicate.Node,

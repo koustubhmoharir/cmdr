@@ -14,8 +14,8 @@ namespace Cfgedit.Tests;
 /// </summary>
 public sealed partial class EditingWindowTests
 {
-    private const string TableHints = "Enter Edit  a/i Row  d Clear  Esc Tree  ^S Save";
-    private const string TableEditingHints = "Enter Commit  Esc Cancel  F4 Multi-line";
+    private const string TableHints = "a/i Row  d Dup  Del Clear  Esc Tree  ^S Save  Enter Edit";
+    private const string TableEditingHints = "F4 Multi-line  Esc Cancel  Enter Commit";
 
     // An array of objects: the columns are name, port and tags; the second row has tags, the first has no tags cell.
     private const string TableArray = "[\n  {\"name\": \"web\", \"port\": 8080},\n  {\"name\": \"db\", \"port\": 5432, \"tags\": \"x\"}\n]";
@@ -126,7 +126,7 @@ public sealed partial class EditingWindowTests
 
         // At 12 rows the detail line is row 10 and the hints row 11. The hints are cut in their middle to the width, and the quit key stays.
         Assert.Equal("$[0].name  string  web", screen.Text(10));
-        Assert.Equal("Enter Edit  a/i Row  d Clear  Es\x2026^Q Quit", screen.Text(11));
+        Assert.Equal("a/i Row  d Dup  Del Clear  Esc T\x2026^Q Quit", screen.Text(11));
     }
 
     [Fact]
@@ -570,16 +570,40 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void d_on_the_index_column_deletes_the_row_and_the_columns_it_alone_had()
+    public void Delete_on_the_index_column_deletes_the_row_and_the_columns_it_alone_had()
     {
         OpenedFile file = Open("list.json", TableArray);
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, new Key('T'), Key.CursorDown, Key.CursorLeft, new Key('d')));
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, new Key('T'), Key.CursorDown, Key.CursorLeft, Key.Delete));
 
         TerminalScreen screen = session.Screens[^1];
         Assert.Equal("#  name  port", Inside(screen, 1));
         Assert.Equal("0  web   8080", Inside(screen, 2));
         Assert.Equal("[\n  {\"name\": \"web\", \"port\": 8080}\n]", DocumentText(session));
+    }
+
+    [Fact]
+    public void d_duplicates_the_row_after_it_and_the_cursor_is_on_the_copy_in_the_same_column()
+    {
+        OpenedFile file = Open("list.json", TableArray);
+        var written = new List<string>();
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, new Key('T'), Key.CursorDown, Key.CursorRight, new Key('d')),
+            (_, w) =>
+            {
+                w.WriteRaw = written.Add;
+                Keys(w, new Key('Y'));
+            });
+
+        Assert.Equal("[\n  {\"name\": \"web\", \"port\": 8080},\n  {\"name\": \"db\", \"port\": 5432, \"tags\": \"x\"},\n  {\"name\": \"db\", \"port\": 5432, \"tags\": \"x\"}\n]", DocumentText(session));
+        // Y copies the path of the cursor's cell: the copy's port, in row 2.
+        Assert.Equal(new[] { Osc52.Build("$[2].port") }, written);
     }
 
     [Fact]
@@ -617,7 +641,7 @@ public sealed partial class EditingWindowTests
     // ----- Clearing and leaving -----
 
     [Fact]
-    public void d_on_a_cell_removes_its_member_and_d_on_a_missing_cell_says_it_is_empty()
+    public void Delete_on_a_cell_removes_its_member_and_Delete_on_a_missing_cell_says_it_is_empty()
     {
         OpenedFile file = Open("list.json", TableArray);
 
@@ -627,8 +651,8 @@ public sealed partial class EditingWindowTests
             24,
             null,
             null,
-            (_, w) => Keys(w, new Key('T'), Key.CursorRight, new Key('d')),
-            (_, w) => Keys(w, Key.CursorRight, new Key('d')));
+            (_, w) => Keys(w, new Key('T'), Key.CursorRight, Key.Delete),
+            (_, w) => Keys(w, Key.CursorRight, Key.Delete));
 
         Assert.Equal("[\n  {\"name\": \"web\"},\n  {\"name\": \"db\", \"port\": 5432, \"tags\": \"x\"}\n]", DocumentText(session));
         Assert.Equal("the cell is already empty", session.Screens[^1].Text(MessageRow));
@@ -700,8 +724,8 @@ public sealed partial class EditingWindowTests
             24,
             null,
             null,
-            (_, w) => Keys(w, new Key('T'), Key.CursorLeft, new Key('d')),
-            (_, w) => Keys(w, new Key('d')));
+            (_, w) => Keys(w, new Key('T'), Key.CursorLeft, Key.Delete),
+            (_, w) => Keys(w, Key.Delete));
 
         Assert.True(session.Window.Tree.Visible);
         Assert.False(session.Window.Grid.Visible);

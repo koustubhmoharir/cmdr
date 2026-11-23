@@ -15,8 +15,8 @@ internal sealed class TextPromptDialog : Dialog<bool>
     /// <summary>The width limit: the dialog is no wider than this, and no wider than the screen.</summary>
     internal const int MaxWidth = 60;
 
-    /// <summary>The height the dialog asks for: the field, a blank row and the error, above the buttons.</summary>
-    internal const int WantedHeight = 7;
+    /// <summary>The height the dialog asks for: the field and the error row under it, above the buttons.</summary>
+    internal const int WantedHeight = 8;
 
     private readonly IApplication _app;
     private readonly Func<string, string?> _apply;
@@ -35,7 +35,9 @@ internal sealed class TextPromptDialog : Dialog<bool>
 
         var prompt = new Label { X = 0, Y = 0, Width = Math.Max(1, label.Length + 2), Height = 1, Text = label + ":" };
         _field = new TextField { X = Math.Max(1, label.Length + 2), Y = 0, Width = Dim.Fill(), Height = 1, Text = text };
-        _error = new Label { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1, Text = string.Empty };
+        // Right under the field: the buttons and their shadow cover the bottom rows of the content area, so a label anchored
+        // to its end is hidden.
+        _error = new Label { X = 0, Y = 1, Width = Dim.Fill(), Height = 1, Text = string.Empty };
         Add(prompt, _field, _error);
 
         var cancel = new Button { Text = "_Cancel" };

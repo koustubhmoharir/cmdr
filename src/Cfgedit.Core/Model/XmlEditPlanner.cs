@@ -64,6 +64,9 @@ internal sealed class XmlEditPlanner
             case MoveNode move:
                 PlanMove(move);
                 break;
+            case MoveNodeTo moveTo:
+                PlanMoveTo(moveTo);
+                break;
             case MoveAttribute moveAttribute:
                 PlanMoveAttribute(moveAttribute);
                 break;
@@ -611,6 +614,205 @@ internal sealed class XmlEditPlanner
         else
         {
             PlaceAfter(parent, rest[^1], core);
+        }
+    }
+
+    /// <summary>
+    /// Moves a node, with its attached comments, out of its parent and into another element at an index among that element's
+    /// children, as an insert of its text there would place it. The removal is the one a delete makes. The text is re-indented by
+    /// the difference between the two child indentations. A namespace prefix the moved subtree uses and that is declared outside it
+    /// must resolve to the same URI in both places.
+    /// </summary>
+    private void PlanMoveTo(MoveNodeTo op)
+    {
+        DocNode node = Node(op.Node);
+        CheckRemovable(node, "moved");
+        DocNode parent = Parent(node);
+        DocNode destination = Node(op.NewParent);
+        if (destination.Kind != NodeKind.XmlElement)
+        {
+            throw new CfgeditException("The new parent must be an XML element");
+        }
+
+        if (ReferenceEquals(destination, parent))
+        {
+            throw new CfgeditException("The node is already in that element");
+        }
+
+        for (DocNode? up = destination; up is not null; up = up.Parent)
+        {
+            if (ReferenceEquals(up, node))
+            {
+                throw new CfgeditException("A node cannot be moved into itself");
+            }
+        }
+
+        if (op.NewKey is not null)
+        {
+            throw new CfgeditException("XML nodes have no key");
+        }
+
+        int index = op.NewIndex;
+        if (index < 0 || index > destination.Children.Count)
+        {
+            throw new CfgeditException($"Index {index} is outside the children of {op.NewParent}");
+        }
+
+        CheckNamespaces(node, parent, destination);
+
+        IReadOnlyList<DocNode> children = parent.Children;
+        (int first, int last) = EditLayout.Group(parent, IndexOf(parent, node), _text);
+        int start = children[first].Start;
+        int end = children[last].End;
+        var verbatim = new List<(int Start, int End)>();
+        for (int k = first; k <= last; k++)
+        {
+            CollectVerbatim(children[k], verbatim);
+        }
+
+        int sourceIndent = EditLayout.LineIndent(_text, start).Length;
+        string destinationIndent = DestinationIndent(destination, index);
+        string core = EditLayout.IndentedLines(
+            _text,
+            start,
+            end,
+            verbatim,
+            add: destinationIndent.Length > sourceIndent ? new string(destinationIndent[0], destinationIndent.Length - sourceIndent) : string.Empty,
+            remove: Math.Max(0, sourceIndent - destinationIndent.Length),
+            substitutions: []);
+
+        RemoveGroup(parent, first, last);
+        InsertPiece(destination, index, core, isText: node.Kind == NodeKind.XmlText);
+    }
+
+    /// <summary>
+    /// The indentation of a child inserted at an index of an element: the indentation of the child it goes beside, or, in an element
+    /// with no children, one unit deeper than the element's own line.
+    /// </summary>
+    private string DestinationIndent(DocNode element, int index)
+    {
+        IReadOnlyList<DocNode> children = element.Children;
+        if (children.Count == 0)
+        {
+            return EditLayout.LineIndent(_text, element.Start) + _unit;
+        }
+
+        return index < children.Count
+            ? IndentFor(index > 0 ? children[index - 1] : null, children[index], element)
+            : IndentFor(children[^1], null, element);
+    }
+
+    /// <summary>
+    /// Refuses a move that would change what a name in the moved element's subtree means. Each prefix (or the default namespace, for
+    /// the empty prefix) that the subtree uses and that is declared outside it must resolve to the same URI at the new parent as at
+    /// the old one.
+    /// </summary>
+    private void CheckNamespaces(DocNode node, DocNode parent, DocNode destination)
+    {
+        if (node.Kind != NodeKind.XmlElement)
+        {
+            return;
+        }
+
+        var outside = new SortedSet<string>(StringComparer.Ordinal);
+        CollectOutsidePrefixes(node, new HashSet<string>(StringComparer.Ordinal), outside);
+        foreach (string prefix in outside)
+        {
+            if (BindingAt(parent, prefix) != BindingAt(destination, prefix))
+            {
+                throw new CfgeditException(prefix.Length == 0
+                    ? "the element uses the default namespace declared outside it; moving it would change its namespace"
+                    : $"the element uses namespace prefix '{prefix}' declared outside it; moving it would change its namespace");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds to <paramref name="outside"/> the prefixes that an element and its descendants use without declaring them on the way
+    /// down. <paramref name="declared"/> holds the prefixes declared above the element within the subtree. The <c>xml</c> prefix is
+    /// always bound, so it is never added.
+    /// </summary>
+    private void CollectOutsidePrefixes(DocNode element, HashSet<string> declared, SortedSet<string> outside)
+    {
+        XmlElementSyntax syntax = _elements[element.Start];
+        var scope = new HashSet<string>(declared, StringComparer.Ordinal);
+        foreach (XmlAttributeSyntax attribute in syntax.Attributes)
+        {
+            if (IsNamespaceDeclaration(attribute.Name))
+            {
+                scope.Add(attribute.Name == XmlnsPrefix ? string.Empty : attribute.Name[XmlnsDeclarationStart.Length..]);
+            }
+        }
+
+        AddOutsidePrefix(PrefixOf(syntax.Name) ?? string.Empty, scope, outside);
+        foreach (XmlAttributeSyntax attribute in syntax.Attributes)
+        {
+            if (!IsNamespaceDeclaration(attribute.Name) && PrefixOf(attribute.Name) is { } prefix)
+            {
+                AddOutsidePrefix(prefix, scope, outside);
+            }
+        }
+
+        foreach (DocNode child in element.Children)
+        {
+            if (child.Kind == NodeKind.XmlElement)
+            {
+                CollectOutsidePrefixes(child, scope, outside);
+            }
+        }
+    }
+
+    private static bool IsNamespaceDeclaration(string name)
+    {
+        return name == XmlnsPrefix || name.StartsWith(XmlnsDeclarationStart, StringComparison.Ordinal);
+    }
+
+    private static void AddOutsidePrefix(string prefix, ISet<string> scope, ISet<string> outside)
+    {
+        if (prefix != XmlPrefix && !scope.Contains(prefix))
+        {
+            outside.Add(prefix);
+        }
+    }
+
+    /// <summary>
+    /// The URI that a prefix (the default namespace, for the empty prefix) is bound to at an element, from the nearest declaration of
+    /// it on the element or above. Null when there is none, or when the default namespace is undeclared with <c>xmlns=""</c>.
+    /// </summary>
+    private string? BindingAt(DocNode from, string prefix)
+    {
+        string name = prefix.Length == 0 ? XmlnsPrefix : XmlnsDeclarationStart + prefix;
+        for (DocNode? current = from; current is not null && current.Kind == NodeKind.XmlElement; current = current.Parent)
+        {
+            foreach (XmlAttributeSyntax attribute in _elements[current.Start].Attributes)
+            {
+                if (attribute.Name == name)
+                {
+                    return string.IsNullOrEmpty(attribute.Value) ? null : attribute.Value;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Collects the spans whose line breaks belong to a value rather than to the layout: the text, the comment and PI contents, and
+    /// the attribute values, in the node and its descendants. Lines that begin inside them keep their text.
+    /// </summary>
+    private static void CollectVerbatim(DocNode node, List<(int Start, int End)> verbatim)
+    {
+        foreach (DocPart part in node.Parts)
+        {
+            if (part.Kind is (PartKind.Text or PartKind.Comment or PartKind.PIData or PartKind.AttributeValue) && part.Start < part.End)
+            {
+                verbatim.Add((part.Start, part.End));
+            }
+        }
+
+        foreach (DocNode child in node.Children)
+        {
+            CollectVerbatim(child, verbatim);
         }
     }
 

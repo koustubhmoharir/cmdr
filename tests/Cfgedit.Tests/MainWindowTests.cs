@@ -21,8 +21,8 @@ public sealed class MainWindowTests : IDisposable
 
     // The tree's hints on the left, and the quit key at the right edge. At 80 columns the left part is cut with an ellipsis, so the
     // last hint (/ Find) shows only its first column; at 100 columns all of them show.
-    private const string HintsAt80 = "Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  ^T Text  y\x2026" + "^Q Quit";
-    private const string HintsAt40 = "Enter Edit  ^S Save  / Find  a/i\x2026^Q Quit";
+    private const string HintsAt80 = "a/i Add  d Dup  t Type  / Find  y Copy  ^T Text  Tab Next  ^O Open  ^Z U\x2026" + "^Q Quit";
+    private const string HintsAt40 = "a/i Add  d Dup  t Type  / Find  \x2026^Q Quit";
 
     private readonly List<string> _folders = [];
 

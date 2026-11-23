@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Cfgedit.Core.Model;
 
 /// <summary>
@@ -17,6 +19,10 @@ internal static class EditLayout
 
     /// <summary>True for a JSON object or array.</summary>
     public static bool IsJsonContainer(DocNode node) => node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;
+
+    /// <summary>True for a container whose entries have keys: a JSON object, a YAML mapping, a TOML table or a .env group.</summary>
+    public static bool IsKeyedContainer(DocNode node) =>
+        node.Kind is NodeKind.JsonObject or NodeKind.YamlMapping or NodeKind.TomlTable or NodeKind.EnvGroup;
 
     /// <summary>
     /// The offset of the comma that follows a JSON entry, or null when it has none. Only whitespace and comments can stand
@@ -220,20 +226,133 @@ internal static class EditLayout
     }
 
     /// <summary>
-    /// A copy's name: <c>name-copy</c>, then <c>name-copy2</c> and so on, the first that no sibling has. The same rule as a JSON
-    /// member's copy.
+    /// The text of a span with each line after its first re-indented: <paramref name="remove"/> leading spaces or tabs are taken off
+    /// it, then <paramref name="add"/> is put in front. Blank lines are not changed, and neither are lines that begin inside a
+    /// verbatim range (a block comment, or a string that spans lines), since their text is part of the value. Substitutions replace
+    /// spans of the source (sorted by start, none overlapping) with new text; the new text has no line break.
+    /// </summary>
+    public static string IndentedLines(
+        string text, int start, int end, IReadOnlyList<(int Start, int End)> verbatim, string add, int remove, IReadOnlyList<TextEdit> substitutions)
+    {
+        var builder = new StringBuilder();
+        int i = start;
+        int next = 0;
+        while (i < end)
+        {
+            if (next < substitutions.Count && substitutions[next].Start == i)
+            {
+                builder.Append(substitutions[next].NewText);
+                i = substitutions[next].End;
+                next++;
+                continue;
+            }
+
+            char c = text[i];
+            builder.Append(c);
+            i++;
+            if (c == '\r' && i < end && text[i] == '\n')
+            {
+                builder.Append('\n');
+                i++;
+            }
+
+            if ((c is '\r' or '\n') && i < end && HasContentOnLine(text, i, end) && !InsideVerbatim(i, verbatim))
+            {
+                for (int removed = 0; removed < remove && i < end && text[i] is ' ' or '\t'; removed++)
+                {
+                    i++;
+                }
+
+                builder.Append(add);
+            }
+        }
+
+        // A substitution that is empty and lies at the very end of the span (an inserted comma after the last text) is not reached above.
+        for (; next < substitutions.Count; next++)
+        {
+            builder.Append(substitutions[next].NewText);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>True when the line that begins at the offset has text other than spaces and tabs before its line break.</summary>
+    public static bool HasContentOnLine(string text, int offset, int end)
+    {
+        int k = offset;
+        while (k < end && text[k] is ' ' or '\t')
+        {
+            k++;
+        }
+
+        return k < end && text[k] is not ('\r' or '\n');
+    }
+
+    /// <summary>True when the offset lies strictly inside one of the verbatim spans.</summary>
+    public static bool InsideVerbatim(int offset, IReadOnlyList<(int Start, int End)> verbatim)
+    {
+        foreach ((int spanStart, int spanEnd) in verbatim)
+        {
+            if (spanStart < offset && offset < spanEnd)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A copy's name: the first name that no sibling has, reached by stepping <see cref="NextName"/> from the copied name. The same
+    /// rule in every format: <c>port</c> gives <c>port2</c>, then <c>port3</c> when <c>port2</c> is taken.
     /// </summary>
     /// <param name="name">The name of the node that is copied.</param>
     /// <param name="isTaken">True for a name that a sibling has.</param>
     public static string CopyName(string name, Func<string, bool> isTaken)
     {
-        string candidate = name + "-copy";
-        for (int n = 2; isTaken(candidate); n++)
+        string candidate = NextName(name);
+        while (isTaken(candidate))
         {
-            candidate = name + "-copy" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            candidate = NextName(candidate);
         }
 
         return candidate;
+    }
+
+    /// <summary>
+    /// One step of a copy's name. A name that ends in ASCII digits has that trailing number incremented on its digit string, keeping
+    /// its width (<c>server1</c> gives <c>server2</c>, <c>a09</c> gives <c>a10</c>, <c>a007</c> gives <c>a008</c>, <c>a99</c> gives
+    /// <c>a100</c>). Any other name gets <c>2</c> appended (<c>port</c> gives <c>port2</c>, an empty name gives <c>2</c>). Only
+    /// <c>'0'</c> to <c>'9'</c> count as digits, and the arithmetic is on the digit string, so a long run cannot overflow.
+    /// </summary>
+    internal static string NextName(string name)
+    {
+        int start = name.Length;
+        while (start > 0 && name[start - 1] is >= '0' and <= '9')
+        {
+            start--;
+        }
+
+        if (start == name.Length)
+        {
+            return name + "2";
+        }
+
+        char[] digits = name[start..].ToCharArray();
+        int i = digits.Length - 1;
+        while (i >= 0 && digits[i] == '9')
+        {
+            digits[i] = '0';
+            i--;
+        }
+
+        if (i >= 0)
+        {
+            digits[i]++;
+            return name[..start] + new string(digits);
+        }
+
+        return name[..start] + "1" + new string(digits);
     }
 
     /// <summary>Counts the line breaks in [from, to). CRLF is one break.</summary>
@@ -372,6 +491,7 @@ internal static class LogicalEdit
             DeleteNode delete => DeleteAt(before, root, delete.Node),
             DeleteAttribute deleteAttribute => ChangeAt(before, root, deleteAttribute.Element, node => WithAttributes(node, list => list.RemoveAt(deleteAttribute.Index))),
             MoveNode move => MoveAt(before, root, move.Node, move.NewIndex),
+            MoveNodeTo moveTo => MoveToAt(before, root, moveTo),
             MoveAttribute moveAttribute => ChangeAt(before, root, moveAttribute.Element, node => WithAttributes(node, list => MoveItem(list, moveAttribute.Index, moveAttribute.NewIndex))),
             ChangeJsonType change => ChangeAt(before, root, change.Node, node => ChangeType(node, change)),
             DuplicateNode duplicate => DuplicateAt(before, root, duplicate.Node),
@@ -449,30 +569,36 @@ internal static class LogicalEdit
         List<LogicalNode> created = insert.Node is NewXmlText { CData: true } cdata && cdata.Text.Contains("]]>", StringComparison.Ordinal)
             ? CDataPieces(cdata.Text)
             : [Create(insert.Node)];
-        return ChangeAt(before, root, insert.Parent, node =>
+        return ChangeAt(before, root, insert.Parent, node => InsertChildren(parent, node, insert.Index, created));
+    }
+
+    /// <summary>
+    /// Inserts logical children into a container at an index among its children, as an insert does. In an XML element, whitespace
+    /// that is its only content is formatting and goes, and a text-only element's text stays first: new children go after it.
+    /// </summary>
+    private static LogicalNode InsertChildren(DocNode parent, LogicalNode node, int index, List<LogicalNode> created)
+    {
+        var children = node.Children.ToList();
+        if (parent.Kind == NodeKind.XmlElement && children.Count == 1 && children[0].Kind == LogicalKind.Text && IsBlankText(children[0].Value))
         {
-            var children = node.Children.ToList();
-            if (parent.Kind == NodeKind.XmlElement && children.Count == 1 && children[0].Kind == LogicalKind.Text && IsBlankText(children[0].Value))
-            {
-                // Whitespace in an element with no content is formatting: the new content replaces it.
-                children.Clear();
-            }
+            // Whitespace in an element with no content is formatting: the new content replaces it.
+            children.Clear();
+        }
 
-            int position = insert.Index;
-            if (parent.Kind == NodeKind.XmlElement && parent.Children.Count == 0 && children.Count > 0)
-            {
-                // A text-only element's text is its only child, and new children go after it.
-                position = children.Count;
-            }
+        int position = index;
+        if (parent.Kind == NodeKind.XmlElement && parent.Children.Count == 0 && children.Count > 0)
+        {
+            // A text-only element's text is its only child, and new children go after it.
+            position = children.Count;
+        }
 
-            if (position < 0 || position > children.Count)
-            {
-                throw new InvalidOperationException($"Index {position} is outside the children of {insert.Parent}.");
-            }
+        if (position < 0 || position > children.Count)
+        {
+            throw new InvalidOperationException($"Index {position} is outside the children of {parent.Path}.");
+        }
 
-            children.InsertRange(position, created);
-            return WithChildren(node, children);
-        });
+        children.InsertRange(position, created);
+        return WithChildren(node, children);
     }
 
     private static LogicalNode DeleteAt(ConfigDocument before, LogicalNode root, NodePath path)
@@ -502,6 +628,66 @@ internal static class LogicalEdit
             children.InsertRange(position, moved);
             return WithChildren(container, children);
         });
+    }
+
+    /// <summary>
+    /// Moves the group of a node out of its parent and into another container. The group is removed first; the destination's
+    /// path is then corrected when the removal shifted its index in the parent. The main entry takes the new name: kept, renamed,
+    /// or none when it becomes an array item.
+    /// </summary>
+    private static LogicalNode MoveToAt(ConfigDocument before, LogicalNode root, MoveNodeTo move)
+    {
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        DocNode destination = Locate(before, move.NewParent);
+        (int first, int last) = EditLayout.Group(parent, IndexOf(parent, node), before.Source.Text);
+        int size = last - first + 1;
+        int[] sourceIndices = Indices(before, parent.Path);
+        int[] destinationIndices = Indices(before, destination.Path);
+
+        var moved = new List<LogicalNode>();
+        LogicalNode withoutGroup = ChangeAt(before, root, parent.Path, container =>
+        {
+            var children = container.Children.ToList();
+            moved.AddRange(children.GetRange(first, size));
+            children.RemoveRange(first, size);
+            return WithChildren(container, children);
+        });
+
+        int[] adjusted = destinationIndices;
+        if (destinationIndices.Length > sourceIndices.Length
+            && destinationIndices.Take(sourceIndices.Length).SequenceEqual(sourceIndices)
+            && destinationIndices[sourceIndices.Length] > last)
+        {
+            adjusted = (int[])destinationIndices.Clone();
+            adjusted[sourceIndices.Length] -= size;
+        }
+
+        // Only JSON entries have keys that the move may set or drop. An XML element keeps its name, and so does a PI.
+        int main = Enumerable.Range(first, size).FirstOrDefault(k => !EditLayout.IsComment(parent.Children[k]), -1);
+        if (main >= 0 && EditLayout.IsJsonContainer(destination))
+        {
+            int offset = main - first;
+            string? name = destination.Kind == NodeKind.JsonObject ? move.NewKey ?? moved[offset].Name : null;
+            moved[offset] = WithName(moved[offset], name);
+        }
+
+        return Replace(withoutGroup, adjusted, 0, container =>
+        {
+            if (destination.Kind == NodeKind.XmlElement)
+            {
+                return InsertChildren(destination, container, move.NewIndex, moved);
+            }
+
+            var children = container.Children.ToList();
+            children.InsertRange(move.NewIndex, moved);
+            return WithChildren(container, children);
+        });
+    }
+
+    private static LogicalNode WithName(LogicalNode node, string? name)
+    {
+        return new LogicalNode(node.Kind, name, node.ScalarKind, node.Value, node.Attributes, node.Children);
     }
 
     private static LogicalNode DuplicateAt(ConfigDocument before, LogicalNode root, NodePath path)
@@ -636,7 +822,24 @@ internal static class LogicalEdit
 
     private static LogicalNode ChangeType(LogicalNode node, ChangeJsonType change)
     {
-        if (change.Kind is JsonValueKind.Object or JsonValueKind.Array)
+        if (change.Kind == JsonValueKind.Array)
+        {
+            if (node.Kind == LogicalKind.Array)
+            {
+                return node;
+            }
+
+            if (node.Kind == LogicalKind.Scalar && node.ScalarKind == JsonValueKind.Null)
+            {
+                return new LogicalNode(LogicalKind.Array, node.Name, null, null, [], []);
+            }
+
+            // The old value becomes the array's only item, so it loses its name.
+            var item = new LogicalNode(node.Kind, null, node.ScalarKind, node.Value, node.Attributes, node.Children);
+            return new LogicalNode(LogicalKind.Array, node.Name, null, null, [], [item]);
+        }
+
+        if (change.Kind is JsonValueKind.Object)
         {
             return ValueNode(node.Name, change.Kind, null);
         }
@@ -708,15 +911,9 @@ internal static class LogicalEdit
         list.Insert(Math.Clamp(newIndex, 0, list.Count), item);
     }
 
-    /// <summary>The key for a copy: <c>name-copy</c>, then <c>name-copy2</c> and so on, unique among the siblings.</summary>
+    /// <summary>The key for a copy: the first <see cref="CopyName"/> step that no sibling has.</summary>
     private static string FreshKey(IReadOnlyList<LogicalNode> siblings, string name)
     {
-        string candidate = name + "-copy";
-        for (int n = 2; siblings.Any(s => s.Name == candidate); n++)
-        {
-            candidate = name + "-copy" + n.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
-        return candidate;
+        return EditLayout.CopyName(name, candidate => siblings.Any(s => s.Name == candidate));
     }
 }

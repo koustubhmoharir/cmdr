@@ -20,8 +20,9 @@ namespace Cfgedit.Tests;
 public sealed partial class EditingWindowTests : IDisposable
 {
     private const string JsonText = "{\n  \"name\": \"web\",\n  \"port\": 8080\n}";
-    private const string TreeHints = "Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  ^T Text";
-    private const string EditingHints = "Enter Commit  Esc Cancel  Tab Next  F4 Multi-line";
+    // At 80 columns the hints up to ^O Open fit, and ^Z Undo is cut (see HintsAt80 in MainWindowTests).
+    private const string TreeHints = "a/i Add  d Dup  t Type  / Find  y Copy  ^T Text  Tab Next  ^O Open";
+    private const string EditingHints = "F4 Multi-line  Tab Next  Esc Cancel  Enter Commit";
     private const string QuitHint = "^Q Quit";
 
     // The muted red of logvu's error labels, as TreeColors.Error.
@@ -1280,8 +1281,7 @@ public sealed partial class EditingWindowTests : IDisposable
         Session session = Run(file, 40, 12, null, null);
 
         string row = session.Screens[0].Text(11);
-        Assert.StartsWith("Enter Edit", row, StringComparison.Ordinal);
-        Assert.EndsWith(QuitHint, row, StringComparison.Ordinal);
+        Assert.Equal("a/i Add  d Dup  t Type  / Find  \x2026^Q Quit", row);
     }
 
     // ----- Helpers -----

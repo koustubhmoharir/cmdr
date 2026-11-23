@@ -94,6 +94,9 @@ internal sealed class YamlEditPlanner
             case MoveNode move:
                 PlanMove(move);
                 break;
+            case MoveNodeTo moveTo:
+                PlanMoveTo(moveTo);
+                break;
             case ChangeJsonType or ChangeTomlType:
                 throw new CfgeditException("use the YAML type change");
             case InsertAttribute or DeleteAttribute or MoveAttribute:
@@ -304,7 +307,13 @@ internal sealed class YamlEditPlanner
                 ChangeCollection(node, change);
                 return;
             case NodeKind.YamlAlias:
-                throw new CfgeditException("an alias cannot change type");
+                if (change.Kind != YamlNewKind.Sequence)
+                {
+                    throw new CfgeditException("an alias can only be wrapped in a sequence");
+                }
+
+                WrapInSequence(node);
+                return;
             default:
                 throw new CfgeditException("only a value has a type");
         }
@@ -315,11 +324,24 @@ internal sealed class YamlEditPlanner
         ScalarState cur = StateOf(node);
         RequireNoBlockComment(cur);
         Owner? owner = OwnerOf(Piece(node), _text);
-        if (change.Kind is YamlNewKind.Mapping or YamlNewKind.Sequence)
+        if (change.Kind == YamlNewKind.Sequence)
         {
-            string brackets = change.Kind == YamlNewKind.Mapping ? "{}" : "[]";
+            if (cur.Syntax is null || cur.Empty || cur.Typed == YamlCoreKind.Null)
+            {
+                // A null has nothing to keep: it becomes an empty sequence, its anchor and a tag that still fits staying.
+                DropTagIfUnfit(cur, null);
+                WriteValue(cur.From, cur.To, "[]", owner, cur.HasProps);
+                return;
+            }
+
+            WrapInSequence(node);
+            return;
+        }
+
+        if (change.Kind == YamlNewKind.Mapping)
+        {
             DropTagIfUnfit(cur, null);
-            WriteValue(cur.From, cur.To, brackets, owner, cur.HasProps);
+            WriteValue(cur.From, cur.To, "{}", owner, cur.HasProps);
             return;
         }
 
@@ -338,14 +360,24 @@ internal sealed class YamlEditPlanner
         YamlNode? piece = Piece(node);
         YamlValueNode value = ValueOf(piece) ?? throw new CfgeditException("a new file has no value to change yet");
         bool isMapping = value is YamlBlockMapping or YamlFlowMapping;
-        if ((change.Kind == YamlNewKind.Mapping && isMapping) || (change.Kind == YamlNewKind.Sequence && !isMapping))
+        if (change.Kind == YamlNewKind.Sequence)
         {
+            // A sequence stays as it is. A mapping is wrapped as the only item of a new sequence, its entries kept.
+            if (isMapping)
+            {
+                WrapInSequence(node);
+            }
+
             return;
         }
 
-        if (change.Kind is YamlNewKind.Mapping or YamlNewKind.Sequence)
+        if (change.Kind == YamlNewKind.Mapping)
         {
-            ReplaceCollection(node, change.Kind == YamlNewKind.Mapping ? "{}" : "[]", TagFits(TagOf(value), null));
+            if (!isMapping)
+            {
+                ReplaceCollection(node, "{}", TagFits(TagOf(value), null));
+            }
+
             return;
         }
 
@@ -355,6 +387,177 @@ internal sealed class YamlEditPlanner
         {
             ReplaceCollection(node, token, TagFits(TagOf(value), result));
         }
+    }
+
+    /// <summary>
+    /// Wraps a value that is not a sequence as the only item of a new sequence. The value keeps its text, its anchor and its tag, which stay on
+    /// the item. In a flow collection, or when the value is a flow collection, the value is put in brackets. In a block context the item is
+    /// written on a line of its own under its owner: a mapping key gets a dash one unit deeper (or at the key's column when the file's
+    /// sequences are not indented), a sequence item gets a dash two columns right of its own, and a root value gets a dash where it is.
+    /// The lines of the value after its first are moved to keep their place under the new dash.
+    /// </summary>
+    private void WrapInSequence(DocNode node)
+    {
+        YamlNode? piece = Piece(node);
+        YamlValueNode value = ValueOf(piece) ?? throw Internal("a value to wrap has no syntax");
+        Owner? owner = OwnerOf(piece, _text);
+        if (IsFlow(Parent(node)) || value is YamlFlowMapping or YamlFlowSequence)
+        {
+            Insert(value.Start, "[");
+            Insert(value.End, "]");
+            return;
+        }
+
+        int valueStart = value.Start;
+        if (value is YamlScalar { Style: YamlScalarStyle.Literal or YamlScalarStyle.Folded })
+        {
+            RequireNoIndentIndicator(valueStart);
+        }
+
+        if (owner is null)
+        {
+            if (!EditLayout.StartsLine(_text, valueStart))
+            {
+                throw new CfgeditException("a root value on the document's marker line cannot be wrapped in a sequence yet");
+            }
+
+            int rootDash = Column(_text, valueStart);
+            int rootEnd = CollectionSpan(_text, value, null).End;
+            bool rootCollection = value is YamlBlockMapping or YamlBlockSequence;
+            // A root scalar's lines move two columns, so that they stay right of the new dash; a collection's entries align two right of it.
+            int rootDelta = rootCollection ? rootDash + 2 - Column(_text, FirstEntryStart(value)) : 2;
+            Replace(valueStart, rootEnd, "- " + Reindent(valueStart, rootEnd, rootDelta, rootDash, !rootCollection));
+            return;
+        }
+
+        Owner at = owner.Value;
+        if (_text[at.End..valueStart].Contains('#'))
+        {
+            throw new CfgeditException("a comment between a key and its value cannot be wrapped in a sequence yet");
+        }
+
+        bool sameLine = !EditLayout.HasLineBreak(_text, at.End, valueStart);
+        int dash = piece is YamlSequenceItem ? at.Column + 2 : at.Column + (SequencesIndented() ? IndentUnit().Length : 0);
+        int valueEnd = CollectionSpan(_text, value, owner).End;
+        bool collection = value is YamlBlockMapping or YamlBlockSequence;
+        // A collection's entries align two columns right of the new dash. A scalar's lines move with its owner, so that they keep their place
+        // under it.
+        int delta = collection ? dash + 2 - Column(_text, FirstEntryStart(value)) : dash - at.Column;
+        string body = Reindent(valueStart, valueEnd, delta, dash, !collection);
+        string lead;
+        if (sameLine && piece is YamlSequenceItem)
+        {
+            lead = " ";
+        }
+        else if (sameLine)
+        {
+            lead = _newline + new string(' ', dash);
+        }
+        else
+        {
+            int lastBreak = valueStart - 1;
+            while (!IsLineBreak(_text[lastBreak]))
+            {
+                lastBreak--;
+            }
+
+            lead = _text[at.End..(lastBreak + 1)] + new string(' ', dash);
+        }
+
+        Replace(at.End, valueEnd, lead + "- " + body);
+    }
+
+    private static int FirstEntryStart(YamlValueNode collection)
+    {
+        return collection switch
+        {
+            YamlBlockMapping { Entries.Count: > 0 } mapping => mapping.Entries[0].Start,
+            YamlBlockSequence { Items.Count: > 0 } sequence => sequence.Items[0].Start,
+            _ => throw new InvalidOperationException("A block collection has no entries."),
+        };
+    }
+
+    /// <summary>
+    /// Refuses a block scalar whose header has an explicit indentation indicator (a digit): its content is counted from the indentation of its
+    /// parent, which a wrap changes, so it cannot be re-indented without changing its value.
+    /// </summary>
+    private void RequireNoIndentIndicator(int valueStart, string? refusal = null)
+    {
+        int header = valueStart;
+        while (header < _text.Length && _text[header] is not ('|' or '>'))
+        {
+            header++;
+        }
+
+        int end = LineEnd(header);
+        if (_text[header..end].Any(c => c is >= '1' and <= '9'))
+        {
+            throw new CfgeditException(refusal ?? "a block scalar with an explicit indentation indicator cannot be wrapped in a sequence yet");
+        }
+    }
+
+    /// <summary>
+    /// The text of [start, end) with each line after the first moved by <paramref name="delta"/> columns (spaces are added, or removed). A line
+    /// that is empty stays empty. A scalar's line must stay right of <paramref name="minColumn"/>, else the wrap is refused.
+    /// </summary>
+    private string Reindent(int start, int end, int delta, int minColumn, bool scalar)
+    {
+        var builder = new StringBuilder();
+        int lineStart = start;
+        bool first = true;
+        while (true)
+        {
+            int lineEnd = lineStart;
+            while (lineEnd < end && !IsLineBreak(_text[lineEnd]))
+            {
+                lineEnd++;
+            }
+
+            builder.Append(first ? _text[lineStart..lineEnd] : Shifted(lineStart, lineEnd, delta, minColumn, scalar));
+            first = false;
+            if (lineEnd >= end)
+            {
+                return builder.ToString();
+            }
+
+            int breakEnd = _text[lineEnd] == '\r' && lineEnd + 1 < end && _text[lineEnd + 1] == '\n' ? lineEnd + 2 : lineEnd + 1;
+            builder.Append(_text, lineEnd, breakEnd - lineEnd);
+            lineStart = breakEnd;
+        }
+    }
+
+    private string Shifted(int lineStart, int lineEnd, int delta, int minColumn, bool scalar)
+    {
+        int length = lineEnd - lineStart;
+        if (length == 0)
+        {
+            return string.Empty;
+        }
+
+        int spaces = 0;
+        while (spaces < length && _text[lineStart + spaces] == ' ')
+        {
+            spaces++;
+        }
+
+        bool blank = spaces == length;
+        if (delta >= 0)
+        {
+            if (scalar && !blank && spaces + delta <= minColumn)
+            {
+                throw new CfgeditException("the value cannot be re-indented safely under a new sequence item");
+            }
+
+            return new string(' ', delta) + _text[lineStart..lineEnd];
+        }
+
+        int remove = blank ? Math.Min(-delta, spaces) : -delta;
+        if (!blank && (spaces < remove || (scalar && spaces - remove <= minColumn)))
+        {
+            throw new CfgeditException("the value cannot be re-indented safely under a new sequence item");
+        }
+
+        return _text[(lineStart + remove)..lineEnd];
     }
 
     /// <summary>
@@ -966,6 +1169,530 @@ internal sealed class YamlEditPlanner
         return EndsWithBreak(text) ? text[..^1] : text;
     }
 
+    // ----- MoveNodeTo -----
+
+    /// <summary>Writes an entry into a flow collection, given the destination's mapping and flow flags and the column it would be indented to.</summary>
+    private delegate string EntryRender(bool mapping, bool flow, int column);
+
+    /// <summary>
+    /// A node that moves into another container: its key (or item) and value, the text of its key as it is written there, and the copy
+    /// range of its group (its attached comments, its lines).
+    /// </summary>
+    private sealed record MovingEntry(
+        DocNode Node,
+        DocNode Parent,
+        YamlNode Piece,
+        bool Member,
+        YamlValueNode? Value,
+        string? KeyToken,
+        int KeyStart,
+        int KeyEnd,
+        CopyRange Range);
+
+    /// <summary>An anchor or an alias, at its offset, with the name it has and an identity (the anchor's token, or the alias).</summary>
+    private sealed record AliasMark(int At, string Name, object Id, bool Alias);
+
+    /// <summary>
+    /// The offset in the text where a node moved to <paramref name="index"/> of a container goes: the start of the child there (before its
+    /// attached comments in a block), or the end of the container's entries. Used by the logical edit to place the moved comments in order.
+    /// </summary>
+    internal static int InsertionOffset(YamlModel model, string text, DocNode destination, int index)
+    {
+        YamlValueNode? container = ValueOf(model.SyntaxOf(destination));
+        if (container is YamlFlowMapping or YamlFlowSequence)
+        {
+            IReadOnlyList<DocNode> children = destination.Children;
+            return index < children.Count ? children[index].Start : BracketsOf(container).Close;
+        }
+
+        return BlockPlace(model, text, destination, index).Offset;
+    }
+
+    /// <summary>
+    /// Moves a node, with its attached comments, out of its parent and into a mapping or sequence, at an index among that container's
+    /// children counted before the move. The removal is the one a delete makes. The new text is written where an insert at that index
+    /// would put it, in the destination's layout: a member keeps its key (or takes <see cref="MoveNodeTo.NewKey"/>) in a mapping and loses
+    /// it in a sequence; an item takes a key to enter a mapping; a compact item (<c>- a: 1</c>) becomes a key with its collection below.
+    /// The lines after the first move with their entry, so that they stay under it. An alias keeps the anchor it names.
+    /// </summary>
+    private void PlanMoveTo(MoveNodeTo op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode destination = Node(op.NewParent);
+        RequireMoveTarget(node, destination);
+        int count = destination.Children.Count;
+        if (op.NewIndex < 0 || op.NewIndex > count)
+        {
+            throw new CfgeditException($"index {op.NewIndex} is outside the children, 0 to {count}");
+        }
+
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            PlanMoveCommentTo(node, destination, op);
+            return;
+        }
+
+        if (node.Kind == NodeKind.YamlDocument)
+        {
+            throw new CfgeditException("a document cannot move into a value");
+        }
+
+        DocNode parent = Parent(node);
+        if (parent.Kind is NodeKind.Document or NodeKind.YamlDocument)
+        {
+            throw new CfgeditException("the root value cannot be moved");
+        }
+
+        YamlNode piece = Piece(node) ?? throw Internal("an entry has no syntax");
+        bool member = piece is YamlMappingEntry or YamlFlowMappingEntry;
+        bool mapping = destination.Kind == NodeKind.YamlMapping;
+        string? oldKey = member ? ((MemberStep)node.Path.Steps[^1]).Key : null;
+        if (!mapping && op.NewKey is not null)
+        {
+            throw new CfgeditException("an item of a sequence has no key");
+        }
+
+        if (mapping && op.NewKey is null && !member)
+        {
+            throw new CfgeditException("a key is needed for an entry of a mapping");
+        }
+
+        if (!mapping && oldKey == "<<")
+        {
+            throw new CfgeditException("a merge key cannot move into a sequence");
+        }
+
+        if (mapping)
+        {
+            RequireFreeKey(destination, op.NewKey ?? oldKey!);
+        }
+
+        bool flowSource = IsFlow(parent);
+        if (!flowSource && !EditLayout.StartsLine(_text, piece.Start))
+        {
+            throw new CfgeditException(member ? YamlMoves.FirstKeyRefusal : YamlMoves.FirstItemRefusal);
+        }
+
+        (int keyStart, int keyEnd) = piece switch
+        {
+            YamlMappingEntry entry => (entry.Key.Start, entry.Key.End),
+            YamlFlowMappingEntry entry => (entry.Key.Start, entry.Key.End),
+            _ => (piece.Start, piece.Start),
+        };
+        string? keyToken = !mapping ? null : op.NewKey is { } renamed ? YamlEncoder.EncodeKey(renamed) : _text[keyStart..keyEnd];
+        var moving = new MovingEntry(node, parent, piece, member, ValueOf(piece), keyToken, keyStart, keyEnd, CopySpan(_text, _model, parent, node));
+        RequireAliasOrderAfterMove(moving, destination, op.NewIndex);
+        if (IsFlow(destination))
+        {
+            RequireFlowable(moving);
+            string valueToken = _text[moving.Value!.Start..moving.Value.End];
+            InsertFlowEntry(destination, op.NewIndex, (m, f, column) => EntryTokens(m, f, keyToken, valueToken));
+        }
+        else
+        {
+            int column = BlockColumn(destination);
+            string text = BlockEntryText(moving, mapping, column);
+            (int at, bool onDashLine) = BlockPlace(_model, _text, destination, op.NewIndex);
+            if (onDashLine)
+            {
+                // The child at this index shares its line with a dash: the moved entry takes that line, and the child follows it.
+                Insert(at, text[column..] + new string(' ', column));
+            }
+            else
+            {
+                InsertText(at, text);
+            }
+        }
+
+        if (flowSource)
+        {
+            DeleteFlow(parent, node);
+        }
+        else
+        {
+            DeleteBlock(parent, node);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a move that the document cannot hold: the destination is not a mapping or sequence, it is the node's own container, it is
+    /// inside the node, or it is in another document (a node never moves between documents).
+    /// </summary>
+    private static void RequireMoveTarget(DocNode node, DocNode destination)
+    {
+        if (destination.Kind is not (NodeKind.YamlMapping or NodeKind.YamlSequence))
+        {
+            throw new CfgeditException("a YAML node can only move into a mapping or a sequence");
+        }
+
+        if (ReferenceEquals(destination, node.Parent))
+        {
+            throw new CfgeditException("the node is already in that container");
+        }
+
+        for (DocNode? up = destination; up is not null; up = up.Parent)
+        {
+            if (ReferenceEquals(up, node))
+            {
+                throw new CfgeditException("a node cannot be moved into itself");
+            }
+        }
+
+        if (!ReferenceEquals(DocumentOf(destination), DocumentOf(node)))
+        {
+            throw new CfgeditException("a node cannot move into another document");
+        }
+    }
+
+    /// <summary>The document row (of a stream with several documents) that holds a node, or null when there is none.</summary>
+    private static DocNode? DocumentOf(DocNode node)
+    {
+        for (DocNode? up = node; up is not null; up = up.Parent)
+        {
+            if (up.Kind == NodeKind.YamlDocument)
+            {
+                return up;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// A comment that moves alone: it must start its line, and it keeps its text. It is deleted where it is, and inserted at the index as a
+    /// new comment would be.
+    /// </summary>
+    private void PlanMoveCommentTo(DocNode node, DocNode destination, MoveNodeTo op)
+    {
+        if (op.NewKey is not null)
+        {
+            throw new CfgeditException("a comment has no key");
+        }
+
+        if (!EditLayout.StartsLine(_text, node.Start) || !EditLayout.RestOfLineBlank(_text, node.End))
+        {
+            throw new CfgeditException(YamlMoves.TrailingRefusal);
+        }
+
+        string content = (Piece(node) as YamlComment ?? throw Internal("a comment has no syntax")).Content;
+        DeleteComment(node);
+        InsertComment(destination, op.NewIndex, content);
+    }
+
+    /// <summary>
+    /// Refuses a value that cannot be written in a flow collection as it is: a block value or a block scalar, a value that spans lines, a
+    /// value with no text, a comment in the group, and a plain scalar (or key) with a flow indicator or a comment start in it.
+    /// </summary>
+    private void RequireFlowable(MovingEntry moving)
+    {
+        if (CommentsIn(moving.Range).Any())
+        {
+            throw new CfgeditException("a comment cannot move into a flow collection yet");
+        }
+
+        switch (moving.Value)
+        {
+            case null:
+                throw new CfgeditException("a value with no text cannot move into a flow collection yet");
+            case YamlBlockMapping or YamlBlockSequence:
+                throw new CfgeditException("a block value cannot go into a flow collection");
+            case YamlScalar { Style: YamlScalarStyle.Literal or YamlScalarStyle.Folded }:
+                throw new CfgeditException("a block scalar cannot go into a flow collection");
+        }
+
+        string valueText = _text[moving.Value.Start..moving.Value.End];
+        if (valueText.IndexOfAny(['\r', '\n']) >= 0)
+        {
+            throw new CfgeditException("a multi-line value cannot go into a flow collection yet");
+        }
+
+        if (moving.Value is YamlScalar { Style: YamlScalarStyle.Plain, IsEmpty: false } && !FlowPlain(valueText))
+        {
+            throw new CfgeditException("a plain scalar with a flow indicator cannot go into a flow collection as it is written: quote it first");
+        }
+
+        if (moving.KeyToken is { Length: > 0 } key && key[0] is not ('"' or '\'') && !FlowPlain(key))
+        {
+            throw new CfgeditException("a plain key with a flow indicator cannot go into a flow collection as it is written: quote it first");
+        }
+    }
+
+    /// <summary>True when a plain scalar's text reads the same in a flow collection: no flow indicator, no ": " or " #", and no trailing colon.</summary>
+    private static bool FlowPlain(string text)
+    {
+        return text.IndexOfAny([',', '[', ']', '{', '}']) < 0
+            && !text.Contains(": ", StringComparison.Ordinal)
+            && !text.Contains(":\t", StringComparison.Ordinal)
+            && !text.Contains(" #", StringComparison.Ordinal)
+            && !text.EndsWith(':');
+    }
+
+    /// <summary>
+    /// The text of a moved entry for a block destination at <paramref name="column"/>: the group's leading comments, then the entry with
+    /// its shape changed for the destination, then its lines after the first moved by the change in the entry's column (checked, see
+    /// <see cref="ShiftLines"/>). Every line ends with a line break.
+    /// </summary>
+    private string BlockEntryText(MovingEntry moving, bool mapping, int column)
+    {
+        if (IsFlow(moving.Parent))
+        {
+            return FlowEntryBlockText(moving, mapping, column);
+        }
+
+        DocNode parent = moving.Parent;
+        IReadOnlyList<DocNode> children = parent.Children;
+        int position = IndexOf(parent, moving.Node);
+        int first = EditLayout.Group(parent, position, _text).First;
+        var builder = new StringBuilder();
+        for (int k = first; k < position; k++)
+        {
+            builder.Append(' ', column).Append(_text, children[k].Start, children[k].End - children[k].Start).Append(_newline);
+        }
+
+        YamlNode piece = moving.Piece;
+        int ownerEnd = piece is YamlMappingEntry owned ? owned.Colon.End : ((YamlSequenceItem)piece).Dash.End;
+        int lineEnd = LineEnd(piece.Start);
+        int s = Column(_text, piece.Start);
+        YamlValueNode? value = moving.Value;
+        bool collection = value is YamlBlockMapping or YamlBlockSequence;
+        int entryStart = collection ? FirstEntryStart(value!) : piece.Start;
+        int from = EditLayout.AfterLineBreak(_text, lineEnd);
+        string head;
+        int delta;
+        if (mapping)
+        {
+            if (moving.Member)
+            {
+                head = new string(' ', column) + _text[piece.Start..moving.KeyStart] + moving.KeyToken + _text[moving.KeyEnd..lineEnd];
+                delta = column - s;
+            }
+            else
+            {
+                string key = moving.KeyToken + ":";
+                if (collection && !EditLayout.HasLineBreak(_text, ownerEnd, entryStart))
+                {
+                    // A compact item: its first entry is on the dash's line, and the collection moves below the key.
+                    if (value!.Anchor is not null || value.Tag is not null)
+                    {
+                        throw new CfgeditException("a compact item with properties cannot move into a mapping yet");
+                    }
+
+                    int childColumn = ChildColumn(value, column);
+                    head = new string(' ', column) + key + _newline + new string(' ', childColumn) + _text[entryStart..lineEnd];
+                    delta = childColumn - Column(_text, entryStart);
+                }
+                else if (collection)
+                {
+                    head = new string(' ', column) + key + _text[ownerEnd..lineEnd];
+                    delta = ChildColumn(value!, column) - Column(_text, entryStart);
+                }
+                else
+                {
+                    head = new string(' ', column) + key + _text[ownerEnd..lineEnd];
+                    delta = column - s;
+                }
+            }
+        }
+        else if (moving.Member && collection)
+        {
+            bool compact = value!.Anchor is null && value.Tag is null && _text[ownerEnd..entryStart].All(c => c is ' ' or '\t' or '\r' or '\n');
+            if (compact)
+            {
+                // The collection's first entry takes the dash's line, and the others align with it, two columns right of the dash.
+                int entryLineEnd = LineEnd(entryStart);
+                head = new string(' ', column) + "- " + _text[entryStart..entryLineEnd];
+                from = EditLayout.AfterLineBreak(_text, entryLineEnd);
+                delta = column + 2 - Column(_text, entryStart);
+            }
+            else
+            {
+                head = new string(' ', column) + "-" + _text[ownerEnd..lineEnd];
+                delta = column + 2 - Column(_text, entryStart);
+            }
+        }
+        else
+        {
+            head = new string(' ', column) + "-" + _text[ownerEnd..lineEnd];
+            delta = column - s;
+        }
+
+        RequireNoIndentIndicators(piece);
+        builder.Append(head).Append(_newline).Append(ShiftLines(from, moving.Range.To, delta, column));
+        return builder.ToString();
+    }
+
+    /// <summary>The column of the entries of a block value under a key or dash at <paramref name="column"/>: one unit deeper, and a sequence at the same column when the file's sequences are not indented.</summary>
+    private int ChildColumn(YamlValueNode value, int column)
+    {
+        return column + (value is YamlBlockSequence && !SequencesIndented() ? 0 : IndentUnit().Length);
+    }
+
+    /// <summary>The text of a flow entry (single line) written as a block entry at <paramref name="column"/>.</summary>
+    private string FlowEntryBlockText(MovingEntry moving, bool mapping, int column)
+    {
+        string? valueText = moving.Value is null ? null : _text[moving.Value.Start..moving.Value.End];
+        if (valueText is not null && valueText.IndexOfAny(['\r', '\n']) >= 0)
+        {
+            throw new CfgeditException("a multi-line value cannot move out of a flow collection yet");
+        }
+
+        string lead = mapping ? moving.KeyToken + ":" : "-";
+        return new string(' ', column) + lead + (valueText is null ? string.Empty : " " + valueText) + _newline;
+    }
+
+    /// <summary>
+    /// The lines of [<paramref name="from"/>, <paramref name="to"/>) moved by <paramref name="delta"/> columns, each ending with a line break.
+    /// A line that is not a comment must stay more indented than <paramref name="minColumn"/> (its new parent's column), else the move is
+    /// refused. A comment keeps its text, and its indentation stops at the line's start.
+    /// </summary>
+    private string ShiftLines(int from, int to, int delta, int minColumn)
+    {
+        HashSet<int> comments = CommentStarts();
+        var builder = new StringBuilder();
+        for (int pos = from; pos < to;)
+        {
+            int end = Math.Min(LineEnd(pos), to);
+            int spaces = 0;
+            while (pos + spaces < end && _text[pos + spaces] == ' ')
+            {
+                spaces++;
+            }
+
+            bool blank = pos + spaces == end;
+            bool comment = !blank && comments.Contains(pos + spaces);
+            int width = spaces + delta;
+            if (!blank && !comment && width <= minColumn)
+            {
+                throw new CfgeditException("the value cannot be re-indented safely under its new parent");
+            }
+
+            builder.Append(' ', Math.Max(width, 0)).Append(_text, pos + spaces, end - pos - spaces).Append(_newline);
+            pos = EditLayout.AfterLineBreak(_text, end);
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>The offsets of every comment's '#' in the document.</summary>
+    private HashSet<int> CommentStarts()
+    {
+        return _model.Syntax.Items.SelectMany(YamlDocuments.CommentsIn).Select(comment => comment.Start).ToHashSet();
+    }
+
+    /// <summary>The comments that start in a copy range.</summary>
+    private IEnumerable<YamlComment> CommentsIn(CopyRange range)
+    {
+        return _model.Syntax.Items.SelectMany(YamlDocuments.CommentsIn).Where(comment => comment.Start >= range.From && comment.Start < range.To);
+    }
+
+    /// <summary>Refuses a block scalar with an explicit indentation indicator in the moved entry: its content is counted from its parent's indentation.</summary>
+    private void RequireNoIndentIndicators(YamlNode piece)
+    {
+        foreach (YamlNode part in Walk(piece))
+        {
+            if (part is YamlScalar { Style: YamlScalarStyle.Literal or YamlScalarStyle.Folded })
+            {
+                RequireNoIndentIndicator(part.Start, "a block scalar with an explicit indentation indicator cannot move yet");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Refuses a move that would change which anchor an alias names, or put an alias before its anchor. The anchors and aliases of the
+    /// document are put in their order after the move (the moved ones at the destination's offset), and each alias must name the same
+    /// anchor as before, the nearest one above it. An alias with no anchor above it before the move is left alone.
+    /// </summary>
+    private void RequireAliasOrderAfterMove(MovingEntry moving, DocNode destination, int index)
+    {
+        YamlDocumentNode? document = _model.Syntax.Documents.FirstOrDefault(d => d.Start <= moving.Range.From && moving.Range.From < d.End);
+        if (document is null)
+        {
+            return;
+        }
+
+        var marks = new List<AliasMark>();
+        foreach (YamlNode part in Walk(document))
+        {
+            if (part is YamlValueNode { Anchor: { } anchor })
+            {
+                marks.Add(new AliasMark(anchor.Start, anchor.Text[1..], anchor, false));
+            }
+
+            if (part is YamlAlias alias)
+            {
+                marks.Add(new AliasMark(alias.Start, alias.Name, alias, true));
+            }
+        }
+
+        if (!marks.Any(mark => mark.Alias))
+        {
+            return;
+        }
+
+        marks.Sort((a, b) => a.At.CompareTo(b.At));
+        int insertAt = InsertionOffset(_model, _text, destination, index);
+        List<AliasMark> groupMarks = marks.Where(mark => mark.At >= moving.Range.From && mark.At < moving.Range.To).ToList();
+        var order = new List<AliasMark>();
+        bool placed = false;
+        foreach (AliasMark mark in marks.Where(mark => mark.At < moving.Range.From || mark.At >= moving.Range.To))
+        {
+            if (!placed && mark.At >= insertAt)
+            {
+                order.AddRange(groupMarks);
+                placed = true;
+            }
+
+            order.Add(mark);
+        }
+
+        if (!placed)
+        {
+            order.AddRange(groupMarks);
+        }
+
+        Dictionary<object, object?> before = TargetsOf(marks);
+        Dictionary<object, object?> after = TargetsOf(order);
+        foreach (AliasMark alias in marks.Where(mark => mark.Alias))
+        {
+            object? old = before[alias.Id];
+            if (old is null || ReferenceEquals(old, after[alias.Id]))
+            {
+                continue;
+            }
+
+            throw new CfgeditException(after[alias.Id] is null
+                ? $"the alias *{alias.Name} would come before its anchor &{alias.Name}"
+                : $"the alias *{alias.Name} would no longer refer to the same anchor");
+        }
+    }
+
+    /// <summary>For each alias in an order of anchors and aliases, the anchor it names: the nearest anchor of its name before it, or null.</summary>
+    private static Dictionary<object, object?> TargetsOf(IEnumerable<AliasMark> order)
+    {
+        var latest = new Dictionary<string, object>(StringComparer.Ordinal);
+        var targets = new Dictionary<object, object?>(ReferenceEqualityComparer.Instance);
+        foreach (AliasMark mark in order)
+        {
+            if (mark.Alias)
+            {
+                targets[mark.Id] = latest.GetValueOrDefault(mark.Name);
+            }
+            else
+            {
+                latest[mark.Name] = mark.Id;
+            }
+        }
+
+        return targets;
+    }
+
+    /// <summary>The text of a flow entry, rendered as a token: <c>key: value</c> in a mapping, <c>- value</c> in a block sequence, else <c>value</c>.</summary>
+    private static string EntryTokens(bool mapping, bool flow, string? keyToken, string token)
+    {
+        string head = mapping ? keyToken + ": " : flow ? string.Empty : "- ";
+        return head + token;
+    }
+
     // ----- DeleteNode -----
 
     private void PlanDelete(DeleteNode op)
@@ -1394,12 +2121,21 @@ internal sealed class YamlEditPlanner
     /// </summary>
     private void InsertFlowValue(DocNode parent, int index, NewYamlValue value)
     {
+        InsertFlowEntry(parent, index, (mapping, flow, column) => EntryText(mapping, flow, value, column));
+    }
+
+    /// <summary>
+    /// Writes an entry, rendered by <paramref name="render"/>, into a flow collection at an index. <see cref="InsertFlowValue"/> renders a new
+    /// value, and a move renders the text of the moved entry.
+    /// </summary>
+    private void InsertFlowEntry(DocNode parent, int index, EntryRender render)
+    {
         bool mapping = parent.Kind == NodeKind.YamlMapping;
         YamlValueNode container = ValueOf(Piece(parent)) ?? throw Internal("a flow collection has no syntax");
         IReadOnlyList<DocNode> children = parent.Children;
         if (children.Count == 0)
         {
-            InsertIntoEmptyFlow(parent, container, value);
+            InsertIntoEmptyFlow(parent, container, render);
             return;
         }
 
@@ -1408,7 +2144,7 @@ internal sealed class YamlEditPlanner
             throw new CfgeditException("a flow collection with only comments cannot take an entry yet");
         }
 
-        string entry = EntryText(mapping, true, value, 0);
+        string entry = render(mapping, true, 0);
         string spacing = FlowSpacing(container);
         if (index < children.Count)
         {
@@ -1458,7 +2194,7 @@ internal sealed class YamlEditPlanner
     /// deeper than the owner. A root collection becomes block at column 0. Any other
     /// (a flow inside a flow, or a collection on a later line) gets the entry in its brackets.
     /// </summary>
-    private void InsertIntoEmptyFlow(DocNode parent, YamlValueNode container, NewYamlValue value)
+    private void InsertIntoEmptyFlow(DocNode parent, YamlValueNode container, EntryRender render)
     {
         (int open, int close) = BracketsOf(container);
         bool mapping = parent.Kind == NodeKind.YamlMapping;
@@ -1470,7 +2206,7 @@ internal sealed class YamlEditPlanner
             {
                 // A mapping that is a sequence item is written compact: its first key follows the dash on the dash's line, two columns
                 // right of the dash, and the other members align with it.
-                Replace(HorizontalStart(open), close + 1, " " + EntryText(true, false, value, at.Column + 2));
+                Replace(HorizontalStart(open), close + 1, " " + render(true, false, at.Column + 2));
                 return;
             }
 
@@ -1480,7 +2216,7 @@ internal sealed class YamlEditPlanner
                 column = at.Column;
             }
 
-            Replace(HorizontalStart(open), close + 1, _newline + new string(' ', column) + EntryText(mapping, false, value, column));
+            Replace(HorizontalStart(open), close + 1, _newline + new string(' ', column) + render(mapping, false, column));
             return;
         }
 
@@ -1488,12 +2224,12 @@ internal sealed class YamlEditPlanner
         {
             int start = HorizontalStart(open);
             string prefix = start > EditLayout.LineStart(_text, start) ? _newline : string.Empty;
-            Replace(start, close + 1, prefix + EntryText(mapping, false, value, 0));
+            Replace(start, close + 1, prefix + render(mapping, false, 0));
             return;
         }
 
         string interior = _text[(open + 1)..close];
-        string flowEntry = EntryText(mapping, true, value, 0);
+        string flowEntry = render(mapping, true, 0);
         Replace(open + 1, close, interior.Length == 0 ? flowEntry : " " + flowEntry + " ");
     }
 
@@ -1759,7 +2495,7 @@ internal sealed class YamlEditPlanner
         }
     }
 
-    /// <summary>The key of a copy of a mapping entry: <c>name-copy</c>, then <c>name-copy2</c> and so on, unique among the entries' keys.</summary>
+    /// <summary>The key of a copy of a mapping entry: <c>name2</c>, then the next number up while taken (<see cref="EditLayout.CopyName"/>), unique among the entries' keys.</summary>
     private static string FreshName(DocNode parent, string name)
     {
         var taken = parent.Children

@@ -5,7 +5,7 @@ namespace Cfgedit.Core.Tests.Model;
 
 /// <summary>
 /// Duplicate on TOML: key/values with their comments, tables made by headers (contiguous, and spread over the file), array-of-tables items,
-/// inline array items and inline table members, and the refusals. A copy's key gets the <c>-copy</c> suffix, as in JSON.
+/// inline array items and inline table members, and the refusals. A copy's key takes the next number (<c>a</c> gives <c>a2</c>), as in JSON.
 /// </summary>
 public sealed class TomlEditDuplicateTests
 {
@@ -18,16 +18,16 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("# about a\na = 1 # t\nb = 2\n", Toml, new DuplicateNode(Path(Member("a"))));
 
-        Assert.Equal("# about a\na = 1 # t\n# about a\na-copy = 1 # t\nb = 2\n", text);
+        Assert.Equal("# about a\na = 1 # t\n# about a\na2 = 1 # t\nb = 2\n", text);
     }
 
     [Fact]
     public void A_copy_takes_the_first_free_copy_name()
     {
-        string text = Edit("a = 1\na-copy = 5\n", Toml, new DuplicateNode(Path(Member("a"))));
+        string text = Edit("a = 1\na2 = 5\n", Toml, new DuplicateNode(Path(Member("a"))));
 
         // The copy goes right after its own key/value, and it takes the first copy name that is free.
-        Assert.Equal("a = 1\na-copy2 = 1\na-copy = 5\n", text);
+        Assert.Equal("a = 1\na3 = 1\na2 = 5\n", text);
     }
 
     [Fact]
@@ -35,7 +35,7 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("a = 1", Toml, new DuplicateNode(Path(Member("a"))));
 
-        Assert.Equal("a = 1\na-copy = 1", text);
+        Assert.Equal("a = 1\na2 = 1", text);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("a.b = 1\n", Toml, new DuplicateNode(Path(Member("a"), Member("b"))));
 
-        Assert.Equal("a.b = 1\na.b-copy = 1\n", text);
+        Assert.Equal("a.b = 1\na.b2 = 1\n", text);
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("a = 1\r\nb = 2\r\n", Toml, new DuplicateNode(Path(Member("a"))));
 
-        Assert.Equal("a = 1\r\na-copy = 1\r\nb = 2\r\n", text);
+        Assert.Equal("a = 1\r\na2 = 1\r\nb = 2\r\n", text);
     }
 
     [Fact]
@@ -59,7 +59,7 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("[t]\nx = 1\n[t.u]\ny = 2\n[z]\n", Toml, new DuplicateNode(Path(Member("t"))));
 
-        Assert.Equal("[t]\nx = 1\n[t.u]\ny = 2\n[t-copy]\nx = 1\n[t-copy.u]\ny = 2\n[z]\n", text);
+        Assert.Equal("[t]\nx = 1\n[t.u]\ny = 2\n[t2]\nx = 1\n[t2.u]\ny = 2\n[z]\n", text);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class TomlEditDuplicateTests
     {
         string text = Edit("[a.b]\nx = 1\n[a.b.c]\ny = 2\n", Toml, new DuplicateNode(Path(Member("a"), Member("b"))));
 
-        Assert.Equal("[a.b]\nx = 1\n[a.b.c]\ny = 2\n[a.b-copy]\nx = 1\n[a.b-copy.c]\ny = 2\n", text);
+        Assert.Equal("[a.b]\nx = 1\n[a.b.c]\ny = 2\n[a.b2]\nx = 1\n[a.b2.c]\ny = 2\n", text);
     }
 
     [Fact]
@@ -128,8 +128,8 @@ public sealed class TomlEditDuplicateTests
     [Fact]
     public void An_inline_table_member_is_copied_after_itself_with_its_key_renamed()
     {
-        Assert.Equal("t = { a = 1, a-copy = 1, b = 2 }\n", Edit("t = { a = 1, b = 2 }\n", Toml, new DuplicateNode(Path(Member("t"), Member("a")))));
-        Assert.Equal("t = { a = 1, b = 2, b-copy = 2 }\n", Edit("t = { a = 1, b = 2 }\n", Toml, new DuplicateNode(Path(Member("t"), Member("b")))));
+        Assert.Equal("t = { a = 1, a2 = 1, b = 2 }\n", Edit("t = { a = 1, b = 2 }\n", Toml, new DuplicateNode(Path(Member("t"), Member("a")))));
+        Assert.Equal("t = { a = 1, b = 2, b2 = 2 }\n",Edit("t = { a = 1, b = 2 }\n", Toml, new DuplicateNode(Path(Member("t"), Member("b")))));
     }
 
     [Fact]
@@ -169,6 +169,6 @@ public sealed class TomlEditDuplicateTests
     {
         (string _, NodePath? focus) = EditWithFocus("a = 1\n", Toml, new DuplicateNode(Path(Member("a"))));
 
-        Assert.Equal(Path(Member("a-copy")), focus);
+        Assert.Equal(Path(Member("a2")), focus);
     }
 }

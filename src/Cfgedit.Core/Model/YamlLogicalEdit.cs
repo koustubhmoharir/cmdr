@@ -59,6 +59,13 @@ internal static class YamlLogicalEdit
                         break;
                     }
 
+                    if (change.Kind == YamlNewKind.Sequence)
+                    {
+                        // A mapping wrapped in a sequence keeps its entries, and so their comments.
+                        data = Modify(data, IndicesOf(node), 0, Wrapped) ?? data;
+                        break;
+                    }
+
                     (int start, int end) = YamlEditPlanner.CollectionSpan(before.Source.Text, value, YamlEditPlanner.OwnerOf(model.SyntaxOf(node), before.Source.Text));
                     AddRanks(model, removed, start, end);
                 }
@@ -78,6 +85,9 @@ internal static class YamlLogicalEdit
 
             case MoveNode move:
                 return MoveAt(before, root, data, comments, move);
+
+            case MoveNodeTo moveTo:
+                return MoveToAt(before, root, data, comments, moveTo);
 
             default:
                 throw new InvalidOperationException("The operation " + op.GetType().Name + " is not supported for YAML.");
@@ -177,6 +187,9 @@ internal static class YamlLogicalEdit
                     : plan.Parent.Path.Append(new ItemStep(plan.EntryOrder.IndexOf(CountEntries(plan.Parent.Children, plan.Node))));
                 return after.Resolve(path) is null ? null : path;
             }
+
+            case MoveNodeTo moveTo:
+                return before.MovedNodePath(after, moveTo);
 
             default:
                 return null;
@@ -288,6 +301,77 @@ internal static class YamlLogicalEdit
         }
 
         return Rebuild(root, data, permuted);
+    }
+
+    // ----- Move to another container -----
+
+    /// <summary>
+    /// The logical tree after a MoveNodeTo. The entry leaves its parent and is inserted at its position among the destination's entries. A
+    /// mapping member takes the new key (or keeps its own) and an item takes none. Its comments (those in its layout range) keep their order,
+    /// and they are placed in the #comments array where the destination's offset puts them. A comment that moves alone only changes its rank.
+    /// </summary>
+    private static LogicalNode MoveToAt(ConfigDocument before, LogicalNode root, LogicalNode data, IReadOnlyList<LogicalNode> comments, MoveNodeTo move)
+    {
+        var model = (YamlModel)before.Syntax;
+        string text = before.Source.Text;
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        DocNode destination = Locate(before, move.NewParent);
+        List<YamlComment> all = AllComments(model);
+        int offset = YamlEditPlanner.InsertionOffset(model, text, destination, move.NewIndex);
+        if (node.Kind == NodeKind.YamlComment)
+        {
+            int rank = RankOf(model, node);
+            List<int> rest = Enumerable.Range(0, all.Count).Where(k => k != rank).ToList();
+            var reordered = rest.Select(k => comments[k]).ToList();
+            reordered.Insert(rest.Count(k => all[k].Start < offset), comments[rank]);
+            return Rebuild(root, data, reordered);
+        }
+
+        YamlEditPlanner.CopyRange range = YamlEditPlanner.CopySpan(text, model, parent, node);
+        List<int> sourceIndices = IndicesOf(parent);
+        int entryIndex = CountEntries(parent.Children, node);
+        LogicalNode moved = Get(data, sourceIndices).Children[entryIndex];
+        moved = Renamed(moved, destination.Kind == NodeKind.YamlMapping ? move.NewKey ?? moved.Name : null);
+
+        LogicalNode withoutEntry = Modify(data, sourceIndices, 0, container => WithChildren(container, container.Children.Where((_, k) => k != entryIndex).ToList())) ?? data;
+
+        // The destination's path is corrected when the removal shifted its entry index in the parent.
+        List<int> destinationIndices = IndicesOf(destination);
+        if (destinationIndices.Count > sourceIndices.Count
+            && destinationIndices.Take(sourceIndices.Count).SequenceEqual(sourceIndices)
+            && destinationIndices[sourceIndices.Count] > entryIndex)
+        {
+            destinationIndices[sourceIndices.Count]--;
+        }
+
+        int position = EntriesBefore(destination, move.NewIndex);
+        LogicalNode next = Modify(withoutEntry, destinationIndices, 0, container => WithChildAt(container, position, moved)) ?? withoutEntry;
+
+        List<int> group = Enumerable.Range(0, all.Count).Where(k => all[k].Start >= range.From && all[k].Start < range.To).ToList();
+        var dropped = new HashSet<int>();
+        if (EntryCount(parent) == 1)
+        {
+            // An emptied container drops the comments in its span, except the moved entry's own, which go with it.
+            YamlValueNode container = YamlEditPlanner.ValueOf(model.SyntaxOf(parent)) ?? throw new InvalidOperationException("The collection has no syntax.");
+            if (container is YamlBlockMapping or YamlBlockSequence)
+            {
+                (int start, int end) = YamlEditPlanner.CollectionSpan(text, container, YamlEditPlanner.OwnerOf(model.SyntaxOf(parent), text));
+                AddRanks(model, dropped, start, end);
+            }
+            else
+            {
+                (int open, int close) = BracketsOf(container);
+                AddRanks(model, dropped, open + 1, close);
+            }
+
+            dropped.ExceptWith(group);
+        }
+
+        List<int> remaining = Enumerable.Range(0, all.Count).Where(k => !group.Contains(k) && !dropped.Contains(k)).ToList();
+        var result = remaining.Select(k => comments[k]).ToList();
+        result.InsertRange(remaining.Count(k => all[k].Start < offset), group.Select(k => comments[k]));
+        return Rebuild(root, next, result);
     }
 
     // ----- Insert and duplicate -----
@@ -623,11 +707,24 @@ internal static class YamlLogicalEdit
     /// <summary>The logical node of a scalar changed to another type (ChangeYamlType), with the tag that still fits it.</summary>
     private static LogicalNode ChangedType(ConfigDocument before, DocNode node, LogicalNode old, ChangeYamlType change)
     {
-        if (change.Kind is YamlNewKind.Mapping or YamlNewKind.Sequence)
+        if (change.Kind == YamlNewKind.Sequence)
+        {
+            (bool isEmpty, YamlCoreKind? kind, _) = node.Kind == NodeKind.YamlScalar ? TypingOf(old) : (false, null, false);
+            if (isEmpty || kind == YamlCoreKind.Null)
+            {
+                // A null has nothing to keep: it becomes an empty sequence, as the planner writes it.
+                string? keep = YamlEditPlanner.TagFits(old.YamlTag, null) ? old.YamlTag : null;
+                return new LogicalNode(LogicalKind.Array, old.Name, null, null, [], [], yamlAnchor: old.YamlAnchor, yamlTag: keep);
+            }
+
+            return Wrapped(old);
+        }
+
+        if (change.Kind == YamlNewKind.Mapping)
         {
             string? keep = YamlEditPlanner.TagFits(old.YamlTag, null) ? old.YamlTag : null;
             return new LogicalNode(
-                change.Kind == YamlNewKind.Mapping ? LogicalKind.Object : LogicalKind.Array,
+                LogicalKind.Object,
                 old.Name,
                 null,
                 null,
@@ -692,6 +789,28 @@ internal static class YamlLogicalEdit
         }
     }
 
+    /// <summary>
+    /// A sequence whose only item is the node, which loses its name. The node keeps its anchor and tag, which stay on the item; a collection
+    /// keeps its entries.
+    /// </summary>
+    private static LogicalNode Wrapped(LogicalNode old)
+    {
+        var item = new LogicalNode(
+            old.Kind,
+            null,
+            old.ScalarKind,
+            old.Value,
+            old.Attributes,
+            old.Children,
+            old.AnyValue,
+            old.TomlKind,
+            old.YamlKind,
+            old.YamlPlain,
+            old.YamlAnchor,
+            old.YamlTag);
+        return new LogicalNode(LogicalKind.Array, old.Name, null, null, [], [item]);
+    }
+
     /// <summary>A scalar with a new text, whose tag is kept only when it still fits the kind the text reads as.</summary>
     private static LogicalNode WithTag(LogicalNode old, string text, bool plain, YamlValueKind kind)
     {
@@ -707,7 +826,7 @@ internal static class YamlLogicalEdit
 
     // ----- Tree helpers -----
 
-    private static LogicalNode Renamed(LogicalNode node, string name)
+    private static LogicalNode Renamed(LogicalNode node, string? name)
     {
         return new LogicalNode(
             node.Kind,

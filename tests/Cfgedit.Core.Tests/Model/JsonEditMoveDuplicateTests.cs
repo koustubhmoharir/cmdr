@@ -104,15 +104,15 @@ public sealed class JsonEditMoveDuplicateTests
     {
         string text = Edit("{\n  \"a\": 1,\n  \"b\": 2\n}", Strict, new DuplicateNode(At(Item(0), Member("a"))));
 
-        Assert.Equal("{\n  \"a\": 1,\n  \"a-copy\": 1,\n  \"b\": 2\n}", text);
+        Assert.Equal("{\n  \"a\": 1,\n  \"a2\": 1,\n  \"b\": 2\n}", text);
     }
 
     [Fact]
     public void The_copy_key_skips_suffixes_that_are_taken()
     {
-        string text = Edit("{\"a\": 1, \"a-copy\": 2}", Strict, new DuplicateNode(At(Item(0), Member("a"))));
+        string text = Edit("{\"a\": 1, \"a2\": 2}", Strict, new DuplicateNode(At(Item(0), Member("a"))));
 
-        Assert.Equal("{\"a\": 1, \"a-copy2\": 1, \"a-copy\": 2}", text);
+        Assert.Equal("{\"a\": 1, \"a3\": 1, \"a2\": 2}", text);
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class JsonEditMoveDuplicateTests
     {
         string text = Edit("{\n  \"a\": 1,\n  \"b\": 2\n}", Strict, new DuplicateNode(At(Item(0), Member("b"))));
 
-        Assert.Equal("{\n  \"a\": 1,\n  \"b\": 2,\n  \"b-copy\": 2\n}", text);
+        Assert.Equal("{\n  \"a\": 1,\n  \"b\": 2,\n  \"b2\": 2\n}", text);
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public sealed class JsonEditMoveDuplicateTests
             Strict,
             new DuplicateNode(At(Item(0), Member("o"))));
 
-        Assert.Equal("{\n  \"o\": {\n    \"x\": 1\n  },\n  \"o-copy\": {\n    \"x\": 1\n  }\n}", text);
+        Assert.Equal("{\n  \"o\": {\n    \"x\": 1\n  },\n  \"o2\": {\n    \"x\": 1\n  }\n}", text);
     }
 
     [Fact]
@@ -155,7 +155,7 @@ public sealed class JsonEditMoveDuplicateTests
     {
         string text = Edit("{\n  // about a\n  \"a\": 1\n}", Jsonc, new DuplicateNode(At(Item(0), Member("a"))));
 
-        Assert.Equal("{\n  // about a\n  \"a\": 1,\n  // about a\n  \"a-copy\": 1\n}", text);
+        Assert.Equal("{\n  // about a\n  \"a\": 1,\n  // about a\n  \"a2\": 1\n}", text);
     }
 
     [Fact]
@@ -226,9 +226,9 @@ public sealed class JsonEditChangeTypeTests
     }
 
     [Fact]
-    public void An_object_with_contents_becomes_an_empty_array_and_its_contents_are_dropped()
+    public void An_object_with_contents_is_wrapped_in_an_array_and_its_contents_are_kept()
     {
-        Assert.Equal("{\"a\": []}", Edit("{\"a\": {\"x\": 1}}", Strict, new ChangeJsonType(A, JsonValueKind.Array, null)));
+        Assert.Equal("{\"a\": [{\"x\": 1}]}", Edit("{\"a\": {\"x\": 1}}", Strict, new ChangeJsonType(A, JsonValueKind.Array, null)));
     }
 
     [Fact]

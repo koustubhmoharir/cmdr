@@ -91,6 +91,9 @@ internal sealed class TomlEditPlanner
             case MoveNode move:
                 PlanMove(move);
                 break;
+            case MoveNodeTo moveTo:
+                PlanMoveTo(moveTo);
+                break;
             case ChangeJsonType:
                 throw new CfgeditException("use the TOML type change");
             case InsertAttribute or DeleteAttribute or MoveAttribute:
@@ -236,6 +239,17 @@ internal sealed class TomlEditPlanner
         }
 
         TomlValue syntax = ValueSyntax(node) ?? throw Uneditable();
+        if (change.Kind == TomlNewKind.Array)
+        {
+            // A value that is not an array becomes the array's only item, and its text is kept as it is.
+            if (!isArray)
+            {
+                Replace(syntax.Start, syntax.End, "[" + _text[syntax.Start..syntax.End] + "]");
+            }
+
+            return;
+        }
+
         string text;
         switch (change.Kind)
         {
@@ -290,14 +304,6 @@ internal sealed class TomlEditPlanner
                 }
 
                 text = "{}";
-                break;
-            case TomlNewKind.Array:
-                if (isArray)
-                {
-                    return;
-                }
-
-                text = "[]";
                 break;
             default:
                 throw new CfgeditException("this type is not supported for TOML");
@@ -860,11 +866,16 @@ internal sealed class TomlEditPlanner
         }
 
         CheckKeyFree(table, value.Key);
+        InsertInlineToken(table, index, value.Key, ValueToken(value.Kind, value.Value));
+    }
+
+    /// <summary>Writes a member with a key and a value token into an inline table, at an index among its members.</summary>
+    private void InsertInlineToken(DocNode table, int index, string key, string token)
+    {
         var syntax = (TomlInlineTable)(ValueSyntax(table) ?? throw Internal("an inline table has no syntax"));
         var members = syntax.Entries.OfType<TomlInlineMember>().ToList();
-        string token = ValueToken(value.Kind, value.Value);
         string assign = members.Count > 0 ? Text(members[0].Assignment) : " = ";
-        string member = TomlEncoder.EncodeKey(value.Key) + assign + token;
+        string member = TomlEncoder.EncodeKey(key) + assign + token;
         if (members.Count == 0)
         {
             string interior = _text[(syntax.Start + 1)..(syntax.End - 1)];
@@ -889,8 +900,13 @@ internal sealed class TomlEditPlanner
             throw new CfgeditException("an item of an array has no key");
         }
 
+        InsertArrayToken(array, index, ValueToken(value.Kind, value.Value));
+    }
+
+    /// <summary>Writes an item with a value token into a static array, at an index among its children.</summary>
+    private void InsertArrayToken(DocNode array, int index, string token)
+    {
         var syntax = (TomlArray)(ValueSyntax(array) ?? throw Internal("an array has no syntax"));
-        string token = ValueToken(value.Kind, value.Value);
         IReadOnlyList<DocNode> children = array.Children;
         var items = syntax.Entries.OfType<TomlArrayItem>().ToList();
         if (items.Count == 0)
@@ -984,6 +1000,323 @@ internal sealed class TomlEditPlanner
             ? EditLayout.LineStart(_text, children[index].Start)
             : children.Count == 0 ? _text.Length : EditLayout.AfterLineBreak(_text, children[^1].End);
         WriteLines(offset, [HeaderText(Names(array), true)], section: true);
+    }
+
+    // ----- MoveNodeTo -----
+
+    /// <summary>
+    /// Moves a node into another table or array, with its comments. A key/value, an inline member or an array item moves as a line, a
+    /// member or an item of the new container (<see cref="PlanMoveEntry"/>). A table with its own header, a whole array of tables, or an
+    /// item of one, moves as its header sections (<see cref="PlanMoveSection"/>). The rest is refused with a message.
+    /// </summary>
+    private void PlanMoveTo(MoveNodeTo op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document)
+        {
+            throw new CfgeditException("the root table cannot be moved");
+        }
+
+        if (node.Kind == NodeKind.TomlComment)
+        {
+            throw new CfgeditException("a comment line moves within its own table or array only");
+        }
+
+        DocNode destination = Node(op.NewParent);
+        if (destination.Kind is not (NodeKind.TomlTable or NodeKind.TomlArray))
+        {
+            throw new CfgeditException("the new parent must be a TOML table or array");
+        }
+
+        if (ReferenceEquals(destination, parent))
+        {
+            throw new CfgeditException("the node is already in that container");
+        }
+
+        if (InSubtree(destination, node))
+        {
+            throw new CfgeditException("a node cannot be moved into itself");
+        }
+
+        int count = destination.Children.Count;
+        if (op.NewIndex < 0 || op.NewIndex > count)
+        {
+            throw new CfgeditException($"Index {op.NewIndex} is outside the children, 0 to {count}");
+        }
+
+        switch (_model.ShapeOf(destination))
+        {
+            case TomlContainer.ArrayOfTables:
+                throw new CfgeditException("an array of tables holds tables only; a table can move into one of the array's tables instead");
+            case TomlContainer.Implicit or TomlContainer.Dotted:
+                throw new CfgeditException("a table defined by dotted keys, or only by its sub-tables, cannot take a moved node yet");
+        }
+
+        if (IsSection(node))
+        {
+            PlanMoveSection(node, destination, op);
+        }
+        else
+        {
+            PlanMoveEntry(node, parent, destination, op);
+        }
+    }
+
+    /// <summary>A table with its own header, a whole array of tables, or an item of one: what moves as header sections.</summary>
+    private bool IsSection(DocNode node)
+    {
+        return node.Kind == NodeKind.TomlTable ? _model.ShapeOf(node) == TomlContainer.Header : IsTableArray(node);
+    }
+
+    /// <summary>
+    /// Moves a key/value, an inline member or an array item. A key/value of a table keeps its line (with its attached comment lines above
+    /// and its trailing comment) and goes to a table as a line at the position of the index. An inline member and an item go as their value
+    /// text, and take the destination's key rules. A comment on an entry can only move from a table to a table.
+    /// </summary>
+    private void PlanMoveEntry(DocNode node, DocNode parent, DocNode destination, MoveNodeTo op)
+    {
+        TomlContainer parentShape = _model.ShapeOf(parent);
+        if (node.Kind == NodeKind.TomlTable && _model.ShapeOf(node) == TomlContainer.Dotted)
+        {
+            throw new CfgeditException("a table defined by dotted keys cannot move; move its keys instead");
+        }
+
+        if (node.Kind == NodeKind.TomlTable && _model.ShapeOf(node) == TomlContainer.Implicit)
+        {
+            throw new CfgeditException("a table defined only by its sub-tables cannot move yet");
+        }
+
+        if (parentShape is TomlContainer.Dotted or TomlContainer.Implicit)
+        {
+            throw new CfgeditException("a value under dotted keys cannot move to another table yet; move the table that defines it instead");
+        }
+
+        bool fromTable = parentShape is TomlContainer.Root or TomlContainer.Header;
+        TomlKeyValueItem? keyValue = null;
+        string? name = null;
+        if (fromTable)
+        {
+            keyValue = DirectKeyValue(node) ?? throw Internal("an entry of a table has no key/value");
+            if (keyValue.Key.Parts.Count != 1)
+            {
+                throw new CfgeditException("a dotted key cannot move to another table yet; only a key with one name can move");
+            }
+
+            name = keyValue.Key.Parts[0].Name;
+        }
+        else if (parentShape == TomlContainer.Inline)
+        {
+            name = NameOf(node);
+        }
+
+        TomlContainer destShape = _model.ShapeOf(destination);
+        bool tableDestination = destShape is TomlContainer.Root or TomlContainer.Header;
+        bool tableToTable = fromTable && tableDestination;
+        string? key = null;
+        if (destShape == TomlContainer.Array)
+        {
+            if (op.NewKey is not null)
+            {
+                throw new CfgeditException("an item of an array has no key");
+            }
+        }
+        else
+        {
+            key = op.NewKey ?? name ?? throw new CfgeditException("a key is needed for an item moving into a table");
+            CheckKeyFree(destination, key);
+        }
+
+        int index = IndexOf(parent, node);
+        (int first, int last) = TomlLayout.Block(parent, index, _text);
+        if ((first < index || last > index) && !tableToTable)
+        {
+            throw new CfgeditException("a comment on an entry cannot move into an array or inline table yet");
+        }
+
+        TomlValue value = ValueSyntax(node) ?? throw Internal("an entry has no value");
+        string token = _text[value.Start..value.End];
+        string suffix = string.Empty;
+        string comments = string.Empty;
+        if (keyValue is not null)
+        {
+            // The trailing comment of a line stays with the value; the attached comment lines above it move with it.
+            IReadOnlyList<TomlItem> items = _model.Syntax.Items;
+            int kvIndex = ItemIndexOf(keyValue);
+            int from = kvIndex;
+            while (from > 0 && items[from - 1] is TomlCommentItem)
+            {
+                from--;
+            }
+
+            suffix = _text[value.End..EditLayout.TrimBreaks(_text, value.End, keyValue.End)];
+            for (int k = from; k < kvIndex; k++)
+            {
+                comments += _text[items[k].Start..items[k].End];
+            }
+
+            for (int k = from; k <= kvIndex; k++)
+            {
+                Replace(items[k].Start, items[k].End, string.Empty);
+            }
+        }
+        else
+        {
+            if (parentShape == TomlContainer.Inline)
+            {
+                DeleteInlineMembers(parent, node);
+            }
+            else
+            {
+                DeleteArrayItem(parent, node);
+            }
+        }
+
+        if (!tableDestination && suffix.Trim(' ', '\t').Length > 0)
+        {
+            throw new CfgeditException("a trailing comment on an entry cannot move into an array or inline table yet");
+        }
+
+        switch (destShape)
+        {
+            case TomlContainer.Root or TomlContainer.Header:
+                string line = TomlEncoder.EncodeKey(key!);
+                WriteTableLine(destination, op.NewIndex, format => comments + format.Indent + line + format.Assign + token + suffix);
+                break;
+            case TomlContainer.Inline:
+                InsertInlineToken(destination, op.NewIndex, key!, token);
+                break;
+            case TomlContainer.Array:
+                InsertArrayToken(destination, op.NewIndex, token);
+                break;
+            default:
+                throw Internal("an entry cannot go into a " + destShape);
+        }
+    }
+
+    /// <summary>
+    /// Moves a table with its own header, a whole array of tables, or an item of one, as its header sections: one run of text from its
+    /// first line to its last. Every header in the run gets the new prefix: the destination's names and the new name, which is the
+    /// <see cref="MoveNodeTo.NewKey"/> or the node's own name. The run goes where <see cref="SectionOffset"/> puts it.
+    /// </summary>
+    private void PlanMoveSection(DocNode node, DocNode destination, MoveNodeTo op)
+    {
+        if (_model.ShapeOf(destination) is not (TomlContainer.Root or TomlContainer.Header))
+        {
+            throw new CfgeditException("a table with its own header can only move into a table with a header, or into the root");
+        }
+
+        if (destination.Parent is { Kind: NodeKind.TomlArray } holder && _model.ShapeOf(holder) == TomlContainer.ArrayOfTables)
+        {
+            throw new CfgeditException("a table with its own header cannot move into an item of an array of tables yet");
+        }
+
+        bool item = node.Kind == NodeKind.TomlTable && node.Parent is { Kind: NodeKind.TomlArray };
+        DocNode named = item ? node.Parent ?? throw Internal("an array item has no array") : node;
+        string name = op.NewKey ?? NameOf(named);
+        int depth = Depth(named);
+        CheckKeyFree(destination, name);
+
+        int start = EditLayout.LineStart(_text, node.Start);
+        int end = EditLayout.AfterLineBreak(_text, node.End);
+        RequireContiguous(node, start, end);
+
+        string prefix = string.Join(".", Names(destination).Append(name).Select(TomlEncoder.EncodeKey));
+        var renames = new List<(int Start, int End, string Text)>();
+        foreach (TomlItem entry in _model.Syntax.Items)
+        {
+            if (entry is TomlHeaderItem header && entry.Start >= start && entry.End <= end)
+            {
+                renames.Add((header.Key.Parts[0].Start, header.Key.Parts[depth - 1].End, prefix));
+            }
+        }
+
+        string copy = Rename(_text[start..end], start, renames);
+        int at = SectionOffset(destination, op.NewIndex);
+
+        // The blank line after the run goes with it when the run starts the file or follows a blank line, so that the file keeps one blank line
+        // between sections. It stays when the new place is the blank line itself.
+        int removeEnd = end;
+        if (end < _text.Length && BlankLineAt(end) && (start == 0 || PrecededByBlankLine(start)))
+        {
+            int after = EditLayout.AfterLineBreak(_text, end);
+            if (after > end && (at <= start || at >= after))
+            {
+                removeEnd = after;
+            }
+        }
+
+        string block = LinesBody(at, [copy], section: true, copyText: true);
+        if (at <= start)
+        {
+            Replace(at, removeEnd, block + _text[at..start]);
+        }
+        else
+        {
+            Replace(start, at, _text[removeEnd..at] + block);
+        }
+    }
+
+    /// <summary>
+    /// The offset where a moved section goes in a table: at the child at the index when that child is a section of its own (before its
+    /// comment lines), else after the table's key/values, or after its subtree when the index is past the children.
+    /// </summary>
+    private int SectionOffset(DocNode table, int index)
+    {
+        IReadOnlyList<DocNode> children = table.Children;
+        for (int k = index; k < children.Count; k++)
+        {
+            DocNode child = children[k];
+            if (EditLayout.IsComment(child))
+            {
+                continue;
+            }
+
+            return IsSectionChild(child) ? HeaderOffset(child) : AfterKeyValuesOffset(table);
+        }
+
+        return SubtreeOffset(table);
+    }
+
+    /// <summary>True for a child that is a table with its own header, or an array of tables.</summary>
+    private bool IsSectionChild(DocNode child)
+    {
+        return child.Kind == NodeKind.TomlTable && _model.ShapeOf(child) == TomlContainer.Header
+            || child.Kind == NodeKind.TomlArray && _model.ShapeOf(child) == TomlContainer.ArrayOfTables;
+    }
+
+    /// <summary>The offset of a section's header line, moved up over the comment lines directly above it, which belong to the section.</summary>
+    private int HeaderOffset(DocNode table)
+    {
+        IReadOnlyList<TomlItem> items = _model.Syntax.Items;
+        int k = ItemAt(EditLayout.LineStart(_text, table.Start));
+        while (k > 0 && items[k - 1] is TomlCommentItem)
+        {
+            k--;
+        }
+
+        return items[k].Start;
+    }
+
+    /// <summary>The offset after the last key/value of a table's own section (before its first sub-table header), else after its header.</summary>
+    private int AfterKeyValuesOffset(DocNode table)
+    {
+        IReadOnlyList<TomlItem> items = _model.Syntax.Items;
+        (int start, int end) = SectionRange(table);
+        for (int k = end - 1; k >= start; k--)
+        {
+            if (items[k] is TomlKeyValueItem)
+            {
+                return items[k].End;
+            }
+        }
+
+        if (_model.ShapeOf(table) == TomlContainer.Root)
+        {
+            return TopOffset(end);
+        }
+
+        return items[start].End;
     }
 
     // ----- Table lines -----
@@ -1290,7 +1623,7 @@ internal sealed class TomlEditPlanner
 
     /// <summary>
     /// A key/value with its attached and trailing comments, copied right after its group. The copy's last key segment is renamed
-    /// (<c>name-copy</c>, unique among the siblings).
+    /// (<c>name</c> gives <c>name2</c>, unique among the siblings).
     /// </summary>
     private void DuplicateKeyValue(DocNode parent, DocNode node)
     {
@@ -1467,6 +1800,12 @@ internal sealed class TomlEditPlanner
     /// </summary>
     private void WriteLines(int offset, IReadOnlyList<string> lines, bool section, bool copyText = false)
     {
+        Insert(offset, LinesBody(offset, lines, section, copyText));
+    }
+
+    /// <summary>The text that <see cref="WriteLines"/> writes at an offset: the lines, with the blank lines a section needs around it.</summary>
+    private string LinesBody(int offset, IReadOnlyList<string> lines, bool section, bool copyText)
+    {
         var block = new StringBuilder();
         bool separated = section && SectionsSeparated();
         if (separated && offset > 0 && !PrecededByBlankLine(offset))
@@ -1499,7 +1838,7 @@ internal sealed class TomlEditPlanner
             body = _newline + (body.EndsWith(_newline, StringComparison.Ordinal) ? body[..^_newline.Length] : body);
         }
 
-        Insert(offset, body);
+        return body;
     }
 
     private bool SectionsSeparated()
@@ -1566,7 +1905,7 @@ internal sealed class TomlEditPlanner
         return builder.ToString();
     }
 
-    /// <summary>The name of a copy of a keyed node: <c>name-copy</c>, then <c>name-copy2</c>, unique among the parent's members.</summary>
+    /// <summary>The name of a copy of a keyed node: <c>name2</c>, then the next number up while taken (<see cref="EditLayout.CopyName"/>), unique among the parent's members.</summary>
     private static string FreshName(DocNode parent, string name)
     {
         var taken = parent.Children

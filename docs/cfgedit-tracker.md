@@ -183,3 +183,13 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       `<<` merge-key column refuses new cells. (d1fbc64)
 - [ ] A refused missing cell (alias or merge-key column) is refused when the field is committed, not when Enter opens
       it; refuse before opening the field.
+
+## M12. Structure keys: duplicate, wrap, nest
+
+- [x] `d` duplicates (Ctrl+D dropped), Delete deletes; table: `d` duplicates the row, Delete clears. Copied keys are numbered
+      (`port` gives `port2`, `server1` gives `server2`) in every format. Hints: the obvious keys go right, where the row is cut first.
+- [x] Change type to array / sequence wraps the value (null becomes `[]`), JSON, TOML, YAML; no discard prompt for it; a YAML
+      alias can be wrapped.
+- [x] Alt+Shift+Up/Down nest (`NestBy`, `MoveNodeTo`) in JSON, XML, YAML, TOML and `.env`, with the key prompt for an item
+      entering a keyed container.
+- [ ] Check Alt+Shift+Up/Down in a real terminal *(Windows)*: not run on Windows.

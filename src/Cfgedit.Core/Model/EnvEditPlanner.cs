@@ -51,6 +51,9 @@ internal sealed class EnvEditPlanner
             case MoveNode move:
                 PlanMove(move);
                 break;
+            case MoveNodeTo moveTo:
+                PlanMoveTo(moveTo);
+                break;
             case DuplicateNode duplicate:
                 PlanDuplicate(duplicate);
                 break;
@@ -217,21 +220,7 @@ internal sealed class EnvEditPlanner
     /// </summary>
     private int InsertOffset(DocNode parent, int index)
     {
-        IReadOnlyList<DocNode> children = parent.Children;
-        if (index < children.Count)
-        {
-            return EnvLayout.IsTrailing(children, index)
-                ? children[index - 1].End
-                : children[EnvLayout.Block(parent, index).First].Start;
-        }
-
-        if (children.Count == 0)
-        {
-            return _text.Length;
-        }
-
-        int last = EnvLayout.Block(parent, children.Count - 1).Last;
-        return EnvLayout.IsTrailing(children, last) ? children[last - 1].End : children[last].End;
+        return EnvLayout.InsertOffset(parent, index, _text.Length);
     }
 
     /// <summary>
@@ -545,11 +534,203 @@ internal sealed class EnvEditPlanner
         return Contiguous(parent, first, last, NeighbourNotContiguous).End;
     }
 
+    // ----- MoveNodeTo -----
+
+    /// <summary>
+    /// Moves a unit (see <see cref="PlanMove"/>) into another group, at <see cref="MoveNodeTo.NewIndex"/> among the group's children.
+    /// A member keeps its last segment or takes <see cref="MoveNodeTo.NewKey"/>, and every key under a moved group takes the new prefix.
+    /// The lines are cut and written where an insert there would put them (see <see cref="InsertOffset"/>): their text is kept and only
+    /// their keys change. A lone comment line moves without a key, and only where it still shows in the group (see
+    /// <see cref="RequireShownInGroup"/>). A file without a final line break keeps its way of ending, as in <see cref="PlanMove"/>.
+    /// </summary>
+    private void PlanMoveTo(MoveNodeTo op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document)
+        {
+            throw new CfgeditException("the root cannot be moved");
+        }
+
+        DocNode destination = Node(op.NewParent);
+        if (destination.Kind != NodeKind.EnvGroup)
+        {
+            throw new CfgeditException(destination.Kind == NodeKind.EnvEntry ? "an entry has no children" : "This node cannot have children");
+        }
+
+        if (ReferenceEquals(destination, parent))
+        {
+            throw new CfgeditException("this cannot move there: it is already in that group");
+        }
+
+        for (DocNode? ancestor = destination; ancestor is not null; ancestor = ancestor.Parent)
+        {
+            if (ReferenceEquals(ancestor, node))
+            {
+                throw new CfgeditException("a node cannot move into itself");
+            }
+        }
+
+        int index = IndexOf(parent, node);
+        if (node.Kind == NodeKind.EnvComment && EnvLayout.IsTrailing(parent.Children, index))
+        {
+            throw new CfgeditException("a trailing comment moves with its entry");
+        }
+
+        int count = destination.Children.Count;
+        if (op.NewIndex < 0 || op.NewIndex > count)
+        {
+            throw new CfgeditException($"Index {op.NewIndex} is outside the children, 0 to {count}");
+        }
+
+        (int first, int last) = EditLayout.Group(parent, index, _text);
+        LineSpan unit = Contiguous(parent, first, last, MovedNotContiguous);
+        List<(int Start, int End, string Text)> renames = KeyRenames(op, node, destination);
+        int offset = InsertOffset(destination, op.NewIndex);
+        if (node.Kind == NodeKind.EnvComment)
+        {
+            RequireShownInGroup(destination, offset, unit);
+        }
+
+        if (offset >= unit.Start && offset <= unit.End)
+        {
+            // The lines stay where they are, between the same neighbours: only their keys change.
+            foreach ((int start, int end, string text) in renames)
+            {
+                Replace(start, end, text);
+            }
+
+            return;
+        }
+
+        bool lacksFinalBreak = unit.End == _text.Length && !EndsWithBreak(_text);
+        string block = WithRenames(unit, renames);
+        if (offset < unit.Start)
+        {
+            if (lacksFinalBreak)
+            {
+                // The block was the file's last line. It gets a line break, and the break that ended the line before it goes, so the
+                // file still ends without one. A blank line before it would be the last line after that, so the move is refused.
+                int cut = unit.Start - BreakLengthBefore(unit.Start);
+                if (cut == 0 || IsBreak(_text[cut - 1]))
+                {
+                    throw new CfgeditException(BlankLineWouldGo);
+                }
+
+                Insert(offset, block + _newline);
+                Replace(cut, unit.End, string.Empty);
+                return;
+            }
+
+            Insert(offset, block);
+            Replace(unit.Start, unit.End, string.Empty);
+            return;
+        }
+
+        // Moved down: the block lands at the offset after the unit. At the end of a file without a final line break, it goes after a
+        // line break and gives up its own.
+        Insert(offset, offset == _text.Length && !EndsWithBreak(_text) ? _newline + WithoutBreak(block) : block);
+        Replace(unit.Start, unit.End, string.Empty);
+    }
+
+    /// <summary>
+    /// The new key of each entry under a moved node: the destination's segments, the node's segment (<see cref="MoveNodeTo.NewKey"/>
+    /// when given, else its own), then the rest of the entry's key. A comment has no key. A new key must split into exactly those
+    /// segments, as the tree splits it, and must not collide with an entry that stays. Empty for a comment.
+    /// </summary>
+    private List<(int Start, int End, string Text)> KeyRenames(MoveNodeTo op, DocNode node, DocNode destination)
+    {
+        var renames = new List<(int Start, int End, string Text)>();
+        if (node.Kind == NodeKind.EnvComment)
+        {
+            if (op.NewKey is not null)
+            {
+                throw new CfgeditException("a comment has no key");
+            }
+
+            return renames;
+        }
+
+        List<string> destinationNames = NamesOf(destination.Path);
+        string oldSegment = SegmentOf(node);
+        string segment = op.NewKey ?? oldSegment;
+        ValidateSegment(destinationNames, segment);
+        if (destination.Children.Any(child => SegmentOrNull(child) == segment))
+        {
+            throw new CfgeditException($"a key named {segment} already exists here");
+        }
+
+        int depth = NamesOf(node.Path).Count;
+        int offset = SegmentOffset(Parent(node));
+        List<EnvEntry> entries = ItemsOf(node).OfType<EnvEntry>().ToList();
+        var moved = new HashSet<int>(entries.Select(entry => entry.Start));
+        foreach (EnvEntry entry in entries)
+        {
+            string key = string.Join(Separator, destinationNames.Append(segment)) + entry.Key[(offset + oldSegment.Length)..];
+            string[] expected = [.. destinationNames, segment, .. EnvModelBuilder.SplitKey(entry.Key).Skip(depth)];
+            if (expected.Length > JsonDocument.MaxDepth)
+            {
+                throw new CfgeditException($"a key can have at most {JsonDocument.MaxDepth} parts");
+            }
+
+            if (!EnvKey.IsValid(key) || !EnvModelBuilder.SplitKey(key).SequenceEqual(expected))
+            {
+                throw new CfgeditException($"invalid key '{key}'");
+            }
+
+            if (_syntax.Items.OfType<EnvEntry>().Any(existing => existing.Key == key && !moved.Contains(existing.Start)))
+            {
+                throw new CfgeditException($"a key named {key} already exists");
+            }
+
+            renames.Add((entry.KeySpan.Start, entry.KeySpan.End, key));
+        }
+
+        return renames;
+    }
+
+    /// <summary>
+    /// A lone comment line shows with the entry below it when no blank line comes between them: the comment is attached to that entry,
+    /// and it shows in the entry's group (see <see cref="EnvModelBuilder"/>). Past any comment lines that follow it, the first line that
+    /// is not a comment decides. An entry in the destination keeps the comment in the group; an entry elsewhere does not, and a blank line
+    /// or the end of the file makes the comment a row of the root. So the comment moves only where that rule puts it in the destination.
+    /// </summary>
+    private void RequireShownInGroup(DocNode destination, int offset, LineSpan unit)
+    {
+        List<string> names = NamesOf(destination.Path);
+        foreach (EnvItem item in _syntax.Items)
+        {
+            if (item.Start < offset || (item.Start >= unit.Start && item.Start < unit.End) || item is EnvCommentLine)
+            {
+                continue;
+            }
+
+            if (item is EnvEntry entry)
+            {
+                if (EnvModelBuilder.SplitKey(entry.Key)[..^1].SequenceEqual(names))
+                {
+                    return;
+                }
+
+                throw new CfgeditException("this cannot move there: the comment would show with the entry below it, which is not in that group");
+            }
+
+            break;
+        }
+
+        if (names.Count == 0)
+        {
+            return;
+        }
+
+        throw new CfgeditException("this cannot move there: a comment followed by a blank line or the end of the file shows at the root");
+    }
+
     // ----- DuplicateNode -----
 
     /// <summary>
-    /// Copies a unit (see <see cref="PlanMove"/>) right after itself. The copy's last key segment gets the suffix <c>_copy</c>, then
-    /// <c>_copy2</c> and so on, unique among the siblings; for a group, the segment is renamed in every key under it. A comment line
+    /// Copies a unit (see <see cref="PlanMove"/>) right after itself. The copy's last key segment is renamed by <see cref="EditLayout.CopyName"/>
+    /// (<c>A</c> gives <c>A2</c>, then <c>A3</c>), unique among the siblings; for a group, the segment is renamed in every key under it. A comment line
     /// is copied as it is. A file without a final line break gets one after the original, and the copy ends without one.
     /// </summary>
     private void PlanDuplicate(DuplicateNode op)

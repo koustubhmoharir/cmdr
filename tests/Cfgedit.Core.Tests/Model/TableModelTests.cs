@@ -773,6 +773,25 @@ public sealed class TableModelTests
     }
 
     [Fact]
+    public void Duplicating_a_row_copies_it_after_itself()
+    {
+        const string text = """[{"a": 1}, {"a": 2}]""";
+
+        string after = Edit(text, Strict, Table(ParseJson(text), RootValue).DuplicateRow(0));
+
+        Assert.Equal("""[{"a": 1}, {"a": 1}, {"a": 2}]""", after);
+    }
+
+    [Fact]
+    public void Duplicating_a_row_outside_the_table_is_refused()
+    {
+        const string text = """[{"a": 1}]""";
+        TableModel table = Table(ParseJson(text), RootValue);
+
+        Assert.Throws<CfgeditException>(() => table.DuplicateRow(1));
+    }
+
+    [Fact]
     public void Adding_a_row_before_the_first_copies_the_shape_with_empty_values()
     {
         const string text = """[{"a": 1, "b": "x"}, {"a": 2, "b": "y"}]""";

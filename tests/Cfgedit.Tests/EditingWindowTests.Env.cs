@@ -169,11 +169,11 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void d_on_an_entry_deletes_it_with_the_comment_shown_with_it()
+    public void Delete_on_an_entry_deletes_it_with_the_comment_shown_with_it()
     {
         OpenedFile file = Open(".env", "# note\nA=1\nB=2\n");
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, new Key('d')));
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.Delete));
 
         Assert.Equal("B=2\n", Text(session));
     }
@@ -187,6 +187,22 @@ public sealed partial class EditingWindowTests
 
         Assert.Equal("B=2\nA=1\n", Text(session));
         Assert.Equal(2, session.Window.Tree.CursorRow);
+    }
+
+    [Fact]
+    public void Alt_Shift_Up_on_an_entry_below_a_group_moves_it_into_that_group_as_its_last_member()
+    {
+        OpenedFile file = Open(".env", "G__X=1\nA=2\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown, Key.CursorDown, Key.CursorUp.WithAlt.WithShift));
+
+        Assert.Equal("G__X=1\nG__A=2\n", Text(session));
     }
 
     [Fact]

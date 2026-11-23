@@ -215,28 +215,28 @@ public sealed class EnvEditMoveDuplicateTests
     // ----- Duplicate -----
 
     [Fact]
-    public void A_duplicate_entry_is_named_with_copy_and_focused()
+    public void A_duplicate_entry_is_named_with_a_number_and_focused()
     {
         (string text, NodePath? focus) = EditWithFocus("A=1\nB=2\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A=1\nA_copy=1\nB=2\n", text);
-        Assert.Equal(Root("A_copy"), focus);
+        Assert.Equal("A=1\nA2=1\nB=2\n", text);
+        Assert.Equal(Root("A2"), focus);
     }
 
     [Fact]
-    public void A_second_copy_is_named_with_copy_and_a_number()
+    public void A_second_copy_takes_the_next_number_that_is_free()
     {
-        string text = Edit("A=1\nA_copy=9\n", Env, new DuplicateNode(Root("A")));
+        string text = Edit("A=1\nA2=9\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A=1\nA_copy2=1\nA_copy=9\n", text);
+        Assert.Equal("A=1\nA3=1\nA2=9\n", text);
     }
 
     [Fact]
     public void The_copy_name_avoids_a_group_of_the_same_name_among_the_siblings()
     {
-        string text = Edit("A=1\nA_copy__X=2\n", Env, new DuplicateNode(Root("A")));
+        string text = Edit("A=1\nA2__X=2\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A=1\nA_copy2=1\nA_copy__X=2\n", text);
+        Assert.Equal("A=1\nA3=1\nA2__X=2\n", text);
     }
 
     [Fact]
@@ -244,7 +244,7 @@ public sealed class EnvEditMoveDuplicateTests
     {
         string text = Edit("# about A\nA=1 # t\nB=2\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("# about A\nA=1 # t\n# about A\nA_copy=1 # t\nB=2\n", text);
+        Assert.Equal("# about A\nA=1 # t\n# about A\nA2=1 # t\nB=2\n", text);
     }
 
     [Fact]
@@ -252,8 +252,8 @@ public sealed class EnvEditMoveDuplicateTests
     {
         (string text, NodePath? focus) = EditWithFocus("A__X=1\nA__Y=2\nB=3\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A__X=1\nA__Y=2\nA_copy__X=1\nA_copy__Y=2\nB=3\n", text);
-        Assert.Equal(Root("A_copy"), focus);
+        Assert.Equal("A__X=1\nA__Y=2\nA2__X=1\nA2__Y=2\nB=3\n", text);
+        Assert.Equal(Root("A2"), focus);
     }
 
     [Fact]
@@ -261,7 +261,7 @@ public sealed class EnvEditMoveDuplicateTests
     {
         string text = Edit("P__A__X=1\nP__A__Y=2\n", Env, new DuplicateNode(At(Item(0), Member("P"), Member("A"))));
 
-        Assert.Equal("P__A__X=1\nP__A__Y=2\nP__A_copy__X=1\nP__A_copy__Y=2\n", text);
+        Assert.Equal("P__A__X=1\nP__A__Y=2\nP__A2__X=1\nP__A2__Y=2\n", text);
     }
 
     [Fact]
@@ -269,7 +269,7 @@ public sealed class EnvEditMoveDuplicateTests
     {
         string text = Edit("A=1\nB=2", Env, new DuplicateNode(Root("B")));
 
-        Assert.Equal("A=1\nB=2\nB_copy=2", text);
+        Assert.Equal("A=1\nB=2\nB2=2", text);
     }
 
     [Fact]
@@ -277,7 +277,7 @@ public sealed class EnvEditMoveDuplicateTests
     {
         string text = Edit("A=1\nB=2", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A=1\nA_copy=1\nB=2", text);
+        Assert.Equal("A=1\nA2=1\nB=2", text);
     }
 
     [Fact]
@@ -285,7 +285,7 @@ public sealed class EnvEditMoveDuplicateTests
     {
         string text = Edit("A=1\r\nB=2\r\n", Env, new DuplicateNode(Root("A")));
 
-        Assert.Equal("A=1\r\nA_copy=1\r\nB=2\r\n", text);
+        Assert.Equal("A=1\r\nA2=1\r\nB=2\r\n", text);
     }
 
     [Fact]

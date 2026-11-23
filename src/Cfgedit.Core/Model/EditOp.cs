@@ -39,6 +39,19 @@ public sealed record DeleteAttribute(NodePath Element, int Index) : EditOp;
 public sealed record MoveNode(NodePath Node, int NewIndex) : EditOp;
 
 /// <summary>
+/// Moves a node, with its attached comments, out of its parent and into <see cref="NewParent"/>, a container that is not the
+/// node's current parent and is not inside the node. <see cref="NewIndex"/> is an index among the new parent's children,
+/// comments included, in the document before the edit (as <see cref="InsertNode.Index"/>). A comment node moves alone.
+/// The root value cannot be moved.
+/// </summary>
+/// <remarks>
+/// <see cref="NewKey"/> names the node in a keyed container (a JSON object): a member keeps its key when it is null and is
+/// renamed otherwise, and an array item needs one. In an array <see cref="NewKey"/> must be null, and a member's key is
+/// dropped. A comment has no key, so it must be null. The key must be unique in the new parent.
+/// </remarks>
+public sealed record MoveNodeTo(NodePath Node, NodePath NewParent, int NewIndex, string? NewKey) : EditOp;
+
+/// <summary>
 /// Moves an attribute to a new position among its element's attributes. <see cref="NewIndex"/> counts positions in the list
 /// after the attribute is removed, and is clamped to the list's range.
 /// </summary>
@@ -46,24 +59,30 @@ public sealed record MoveAttribute(NodePath Element, int Index, int NewIndex) : 
 
 /// <summary>
 /// Changes the JSON type of a value. <see cref="Value"/> is the new scalar's value: the string for String (null means
-/// empty), the number text for Number (required), ignored for True, False and Null, and ignored for Object and Array,
-/// which become empty. The contents of a container that changes to anything else are dropped.
+/// empty), the number text for Number (required), ignored for True, False and Null, and ignored for Object, which becomes empty.
+/// The contents of a container that changes to a scalar or to an object are dropped.
+/// Array wraps a value that is not an array: the value becomes the array's only item, unchanged. A null becomes an empty array,
+/// since it has nothing to keep. An array changed to an array is left as it is.
 /// </summary>
 public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? Value) : EditOp;
 
 /// <summary>
 /// Changes the TOML type of a value: a scalar, an inline table or an inline array. <see cref="Value"/> is the new scalar's text:
 /// required for DateTime, optional for the others (null means the kind's default, and for the same kind it means no change).
-/// The contents of a container that changes to anything else are dropped. A table defined by headers or dotted keys, and an
-/// array of tables, cannot change type.
+/// Array wraps a value that is not an array: the value's text is kept as the array's only item. An array stays an array.
+/// Table gives an empty inline table, and the contents of a container that changes to anything else are dropped. A table defined
+/// by headers or dotted keys, and an array of tables, cannot change type.
 /// </summary>
 public sealed record ChangeTomlType(NodePath Node, TomlNewKind Kind, string? Value) : EditOp;
 
 /// <summary>
 /// Changes the YAML type of a value: a scalar, or a block or flow mapping or sequence. <see cref="Value"/> is the new scalar's text: the
 /// string for String (null means empty), the number text for Number (null means <c>0</c>), <c>true</c> or <c>false</c> for Boolean (null
-/// means <c>false</c>); it is ignored for Null, Mapping and Sequence. Null is written <c>null</c>, Mapping <c>{}</c> and Sequence <c>[]</c>.
-/// A container's contents are dropped. An anchor stays; a tag stays only when it still fits the new type. An alias cannot change type.
+/// means <c>false</c>); it is ignored for Null and Mapping. Null is written <c>null</c> and Mapping <c>{}</c>.
+/// Sequence wraps a value that is not a sequence: the value becomes the sequence's only item, unchanged, with its anchor and tag. A sequence
+/// changed to a sequence is left as it is. A collection's contents are dropped when it changes to a scalar or a mapping. A scalar's anchor stays;
+/// a tag stays only when it still fits the new type. A null (explicit, or a missing value) becomes an empty sequence, keeping its anchor,
+/// and not a wrapped null. An alias can only be wrapped in a sequence; it cannot change to anything else.
 /// </summary>
 public sealed record ChangeYamlType(NodePath Node, YamlNewKind Kind, string? Value) : EditOp;
 
@@ -91,7 +110,8 @@ public enum YamlNewKind
 
 /// <summary>
 /// Inserts a copy of a node right after the node and its attached comments. A JSON member's copy is renamed
-/// <c>&lt;key&gt;-copy</c>, or <c>&lt;key&gt;-copy2</c>, <c>-copy3</c> and so on, until its key is unique among its siblings.
+/// <c>&lt;key&gt;2</c>, or the next number up when that is taken (a trailing number is incremented, so <c>server1</c> gives
+/// <c>server2</c>), until its key is unique among its siblings.
 /// </summary>
 public sealed record DuplicateNode(NodePath Node) : EditOp;
 

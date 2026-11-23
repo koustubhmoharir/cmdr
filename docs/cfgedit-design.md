@@ -116,8 +116,9 @@ string, a logical value, an `Editable` flag, a style and a source span. One row 
   JSONC enables comments and trailing commas, and JSON5 enables all.
 - **Value types.** A scalar's type is kept while its value is edited. A string edit takes any text, including newlines;
   a number edit is validated against the dialect's number grammar; a bool or null edit is a choice. Changing the type is a
-  separate command (`t`: string / number / true / false / null / object / array). Converting a container to a scalar
-  needs a Confirm when the container is not empty.
+  separate command (`t`: string / number / true / false / null / object / array). Changing to array wraps the value as
+  the array's only item (`1` becomes `[1]`; a multi-line container goes on its own lines one unit deeper); a null becomes
+  `[]`. Converting a container to anything else needs a Confirm when the container is not empty.
 - **Strings** are encoded minimally for the dialect when edited: `\"` or `\'` matching the original quote character,
   `\\`, control characters as `\n \t \r \b \f` or `\uXXXX`. Everything else, non-ASCII included, is written literally.
   Unedited strings keep their original escapes.
@@ -216,7 +217,7 @@ Limitations accepted for phase 1:
 │  </configuration>                                                        │
 ╰──────────────────────────────────────────────────────────────────────────╯
 /configuration/appSettings/add[2]/@value   string   "30"
-Enter Edit  Space Fold  a Add  d Delete  t Type  T Table  ^Z Undo  ^S Save  ^Q Quit
+a/i Add  d Dup  t Type  / Find  y Copy  ^T Text  Tab Next  ^O Open  ^Z Undo  ^S Save  Del Delete  Enter Edit  ^Q Quit
 ```
 
 JSON rows: `▾ servers: {4}`, `port: 8080`, `name: web`. **Strings are shown without quotes** and are told apart by colour.
@@ -242,8 +243,10 @@ The cursor is a (row, part) pair. Printable shortcuts apply only in the tree, ne
 | Enter, F2 | Edit the focused part (inline). Values with newlines, or Ctrl+Enter, open the multi-line editor. |
 | a / i | Add after / before the focused node. On a container's summary (`{n}`, `[n]`, and `{0}` on an empty XML element) add inside it: `a` last, `i` first. On the JSON root marker `$`, add a comment beside the root. On an attribute part this adds an attribute, otherwise a sibling node. |
 | A / I | Add a child last / first, from any part of an XML element or a JSON object or array |
-| d, Delete | Delete the focused node or attribute (undo restores it; no confirmation) |
+| Delete | Delete the focused node or attribute (undo restores it; no confirmation) |
+| d | Duplicate the focused node: the copy goes right after it, with its attached comments, and the cursor moves to the copy. A copied key gets the next number (`port` gives `port2`, `server1` gives `server2`), then the next free one |
 | Alt+Up/Down, K/J | Move the node among its siblings. Alt+Left/Right moves an attribute. |
+| Alt+Shift+Up/Down | Nest: move the node into the container just above (as its last child) / below (as its first child); at the first / last position, move it out of its parent, before / after it; next to a non-container, an ordinary one-step move. Keys: a member keeps its key, numbered when taken (`port2`); an item entering a keyed container asks for a key; a member entering an array drops its key. The root's own entries do not move out (`already first` / `already last`). (`ConfigDocument.NestBy`, `MoveNodeTo`) |
 | t | Change the JSON value type / convert an XML text-only element to element content |
 | T | Open the table editor for the focused array/element (or its parent) |
 | y / Y | Copy the focused value / path (OSC 52) |
@@ -282,7 +285,8 @@ detail line.
 - A nested container shows `{…}` / `[…]` / `<…>` and cannot be edited in the table. Enter jumps to that node in the tree.
 - A missing cell shows as a dim `·`. Editing it adds the key or attribute at the position matching the column order. A
   missing JSON cell takes the column's most common type.
-- `d` on a cell removes the key or attribute. `d` on the index column deletes the row.
+- Delete on a cell removes the key or attribute. Delete on the index column deletes the row.
+- `d` duplicates the row: the copy goes right after it, and the cursor moves to the copy in the same column.
 
 **Rows.** `a`/`i` adds a row after/before, copying the current row's shape with empty values. Alt+Up/Down moves a row.
 There is no sorting in phase 1, because sorting reorders the file.
@@ -366,7 +370,11 @@ after its entry. The path text on the detail line is the full key
 - Delete: an entry deletes its line and the comments shown with it; a group deletes all its lines.
 - Move (Alt+Up/Down): swaps the lines of two adjacent siblings. A move is refused, with a message, when either
   sibling's lines are not contiguous in the file.
-- Duplicate: copies the entry's line below it with the last key segment suffixed `_copy` (then `_copy2`, `_copy3`, …), unique among the siblings.
+- Nest (Alt+Shift+Up/Down): an entry or group moving into or out of a group is a key rename (`A__x` into `A__B` becomes
+  `A__B__x`; a group renames the prefix of every key under it) plus a line move to where an insert would go. Each line
+  keeps its `export`, spacing and value text. Refused: non-contiguous group lines, a key collision, a lone comment whose
+  entry below would not be in the destination.
+- Duplicate: copies the entry's line below it with the last key segment numbered (`port` gives `port2`, `server1` gives `server2`; then the next free number), unique among the siblings.
 - Change type: refused ("`.env` values are all strings").
 - Table editor: not offered for `.env` in M9.
 
@@ -429,10 +437,16 @@ it (a header section, a dotted-key line, an inline table). Children are in order
   including its subtables. An array-of-tables item deletes its section and the sections of its subtables.
 - Move (Alt+Up/Down): key/values within one section, items of an inline array, items of an array of tables, and
   sibling header sections, when the units are contiguous; otherwise refused with a message (as `.env`).
-- Duplicate: as JSON (`-copy` key suffix; bare keys allow `-`); an array-of-tables item is duplicated as a section.
+- Duplicate: as JSON (the copy's key is numbered, `port` gives `port2`); an array-of-tables item is duplicated as a section.
 - Change type: scalars change kind through the type menu (string, integer, float, boolean, date-time, table, array),
-  as JSON. A scalar becomes `{}` or `[]`. A header-defined table or an array of tables cannot change type: delete
-  it instead (message).
+  as JSON. A scalar becomes `{}`; changing to array wraps it (`a = 1` becomes `a = [1]`, the value text verbatim). A
+  header-defined table or an array of tables cannot change type: delete it instead (message).
+- Nest (Alt+Shift+Up/Down): key/values into or out of header tables, the root, inline tables, inline arrays and
+  array-of-tables items; a key/value goes after the destination's key/values when the index would put it after a subtable
+  header. A header table (or an array of tables, or one item) moves as one run of sections with every header renamed to
+  the new prefix, placed where a new subtable would go. Refused: dotted or implicit tables (moving or as destination), a
+  header table into an inline table, an array or an array-of-tables item, an entry with comments into an inline container,
+  and comment lines.
 - Table editor: an array of tables, and an inline array of inline tables, open as a table (rows are items).
 
 **Verification.** Two checks for every edit, after cfgedit's own reparse: (1) a TOML logical tree, data (tables as
@@ -496,11 +510,18 @@ add writes it) does not keep its quotes; otherwise the plainest safe style:
   containers are written `{}` / `[]`; adding the first item to an empty `{}` or `[]` that is the value of a block
   mapping entry or block sequence item turns it into block style. An empty `{}` that is a sequence item becomes a compact block mapping on the dash line (`- key: value`). Add dialog kinds: string, number, boolean, null,
   mapping, sequence, comment.
-- Delete, move (Alt+Up/Down), duplicate (`-copy` keys): as JSON and `.env`, with comment groups; moves refused when
+- Delete, move (Alt+Up/Down), duplicate (numbered keys, `port` gives `port2`): as JSON and `.env`, with comment groups; moves refused when
   units are not contiguous. A deleted or moved node keeps its anchor and tag; deleting an anchored node that an alias
   still refers to is refused ("*name refers to it").
 - Anchors, aliases, tags: not editable; an alias node can be deleted or moved.
-- Change type: string, number, boolean, null, mapping, sequence, as JSON; containers become `{}`/`[]`.
+- Change type: string, number, boolean, null, mapping, sequence, as JSON; a container becomes `{}`. Changing to sequence
+  wraps the value: a block sequence with one item in block context (a block collection re-indented as a compact `- a: 1`
+  item), `[v]` in flow context; anchors and tags stay on the item; a null becomes `[]`; an alias can be wrapped but not
+  changed otherwise. Refused: a block scalar with an indentation indicator, a comment between key and value.
+- Nest (Alt+Shift+Up/Down): within one document. Member ↔ item conversion as the wrap does (`k: v` becomes `- v`; a
+  compact item becomes `key:` with its collection below). Refused: a block value or multi-line value into a flow
+  collection, a plain scalar or key that is not valid plain in flow context, a `<<` member into a sequence, a block scalar
+  with an indentation indicator, and any move after which an alias would precede its anchor or resolve to a different one.
 - Several documents: documents can be deleted; adding a document is not supported in M11.
 - Table editor: a sequence of mappings or of scalars opens as a table, as JSON.
 

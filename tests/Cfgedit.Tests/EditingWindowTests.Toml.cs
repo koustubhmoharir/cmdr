@@ -149,6 +149,29 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
+    public void t_on_an_inline_table_with_children_changed_to_an_array_asks_nothing_and_wraps_it()
+    {
+        OpenedFile file = Open("settings.toml", "o = {a = 1}\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(6), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), null, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish(expectOpened: false);
+            });
+
+        Assert.Equal("o = [{a = 1}]\n", Text(session));
+    }
+
+    [Fact]
     public void t_on_a_string_changes_it_to_an_integer_of_value_zero()
     {
         OpenedFile file = Open("settings.toml", "a = \"x\"\n");
@@ -197,7 +220,7 @@ public sealed partial class EditingWindowTests
         // a is defined by a dotted key at the root and by the header [a.q] below [b]: two pieces, one table.
         OpenedFile file = Open("settings.toml", "a.x = 1\n[b]\ny = 2\n[a.q]\nz = 3\n");
 
-        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('d')));
+        Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, Key.Delete));
 
         Assert.Equal("[b]\ny = 2\n", Text(session));
     }
@@ -251,6 +274,22 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         Assert.Equal("  $ {0}", Inside(session.Screens[^1], 1));
+    }
+
+    [Fact]
+    public void Alt_Shift_Down_on_a_TOML_key_value_above_a_table_moves_it_into_that_table_at_its_start()
+    {
+        OpenedFile file = Open("settings.toml", "a = 1\n[t]\nx = 2\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (_, w) => Keys(w, Key.CursorDown, Key.CursorDown.WithAlt.WithShift));
+
+        Assert.Equal("[t]\na = 1\nx = 2\n", Text(session));
     }
 
     [Fact]

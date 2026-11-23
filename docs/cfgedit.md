@@ -59,7 +59,7 @@ or Ctrl+Q quits.
 │                   batch="true"/>                                │
 ╰─────────────────────────────────────────────────────────────────╯
 /configuration/appSettings/add[1]/@value  attribute  Production
-Enter Edit  ^S Save  / Find  a/i Add  d Del  t Type  ^Z Undo  …^Q Quit
+a/i Add  d Dup  t Type  / Find  y Copy  ^T Text  Tab Next  ^O Open  ^Z U…^Q Quit
 ```
 
 Each row has one or more parts: a JSON key and its value, an XML element name and each attribute's name and value, a
@@ -85,11 +85,12 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | `a` / `i` | Add after / before. On a container's `{n}` or `[n]`, add inside it (`a` last, `i` first). An empty XML element shows `{0}` after its tag, and `a` / `i` on it add a child. On the `$` marker of a JSON document, add a comment after / before the root. Next to a similar sibling the new entry copies its shape (`<add key="" value=""/>`); otherwise a dialog asks what to add |
 | `A` / `I` | Add a child last / first, from any part of an XML element or a JSON object or array |
 | `+` | Add an attribute to the element |
-| `d`, Delete | Delete the node, or the attribute under the cursor (undo restores it) |
+| Delete | Delete the node, or the attribute under the cursor (undo restores it) |
 | Alt+Up/Down, K/J | Move the node among its siblings, with its comments |
+| Alt+Shift+Up/Down | Move the node into the object, array or element just above it (as its last child) / just below it (as its first child). When the node is first / last in its parent, it moves out, before / after the parent. Next to a value that holds nothing, it moves one step, like Alt+Up/Down. An array item going into an object asks for its key; a member going into an array loses its key; a key already taken there gets the next number (`port2`) |
 | Alt+Left/Right | Move the attribute |
-| `t` | Change a JSON value's type |
-| Ctrl+D | Duplicate the node |
+| `t` | Change a JSON value's type. Changing to array wraps the value: `"a": 1` becomes `"a": [1]` (a null becomes `[]`) |
+| `d` | Duplicate the node. The copy goes right after it, with its attached comments, and the cursor moves to the copy. A copied key gets a number: `port` gives `port2`, `server1` gives `server2`, then the next free number |
 | `T` | Open the table editor |
 | `/`, Ctrl+F | Find in keys, names and values; n / F3 next, N / Shift+F3 previous. Enter goes to the next match; Esc closes the search |
 | `y` / `Y` | Copy the value / the path to the clipboard |
@@ -123,7 +124,8 @@ An alias in a cell shows its name (`*b`) and is read-only. Esc returns to the tr
 |---|---|
 | Arrows, hjkl | Move between cells |
 | Enter, F2 | Edit the cell; editing an empty cell (`·`) adds that key or attribute to the row |
-| `d` | Clear the cell (remove the key or attribute); on the `#` column, delete the row |
+| Delete | Clear the cell (remove the key or attribute); on the `#` column, delete the row |
+| `d` | Duplicate the row: the copy goes right after it, and the cursor moves to the copy in the same column |
 | `a` / `i` | Add a row after / before, shaped like the current one |
 | Alt+Up/Down | Move the row |
 | Enter on `{n}`, `[n]`, `<…>` | Open that nested value in the tree |
@@ -154,7 +156,8 @@ Grouping is case-sensitive, and the lines of a group do not have to be next to e
   merge with a sibling.
 - **Adding** inside a group writes `Group__Key=`. The dialog offers an entry (its key, with an empty value) or a comment.
 - **Deleting** an entry deletes its line and the comments shown with it. Alt+Up/Down moves an entry among its siblings;
-  the move is refused when either sibling's lines are not next to each other.
+  the move is refused when either sibling's lines are not next to each other. Alt+Shift+Up/Down moves an entry or a group
+  into the group above / below, or out of its group, by renaming its keys (`A__x` moving into `A__B` becomes `A__B__x`).
 - **Types and tables:** every value is a string, so `t` says so and `T` has no table editor for `.env`.
 
 ## TOML files
@@ -174,13 +177,18 @@ their value as JSON scalars do (strings without quotes), and the detail line nam
   its section, a `[parent.key]` header for a new table in a header-defined table, a dotted key in a dotted table. `a` on an
   item of an array of tables copies its shape, with empty values.
 - **Types:** `t` opens the type menu (string, integer, float, boolean, date-time, table, array). A date-time asks for its
-  text. A table or array with children asks before they are dropped. A table defined by a header or by dotted keys cannot
-  change type: delete it instead.
+  text. Changing to array wraps the value (`a = 1` becomes `a = [1]`); a table with children changed to anything else asks
+  before they are dropped. A table defined by a header or by dotted keys cannot change type: delete it instead.
 - **Deleting** a table deletes every piece that defines it, its subtables included. Alt+Up/Down moves a key/value, an item or
   a sibling header section; a move is refused when the units are not next to each other.
+- **Moving into and out of tables:** Alt+Shift+Up/Down moves a key/value into the table above / below or out of its table, and
+  items and members between inline arrays and inline tables. A key/value always goes before the table's subtable headers. A
+  header table moves with its subtables, and their headers are renamed (`[a.b]` moving into `x` becomes `[x.b]`). Refused,
+  with a message: tables defined by dotted keys or only by their subtables, a header table going into an inline table or an
+  array, and an entry with comments going into an inline table or array.
 - **Tables:** `T` on an array of tables, or on an inline array of inline tables or of plain values, opens it as a table
   (see Table editor). A table cell is edited like a value, and a missing cell is added with the most common kind of its
-  column. `a`, `i`, `d` and Alt+Up/Down add, delete and move rows as they do in JSON.
+  column. `a`, `i`, `d` and Alt+Up/Down add, duplicate and move rows as they do in JSON, and Delete deletes a row.
 - **Text mode:** a file that is not valid TOML 1.0 opens in text mode at the error. Two valid constructs that the second
   parser (Tomlyn) misreads are refused with a message and open in text mode: a `[x.sub]` header, or a new `[[x]]` item,
   when another table follows an array of tables `[[x]]`.
@@ -214,15 +222,21 @@ file open as a tree.
   new item next to a sequence item copies its shape, so a sequence of mappings gets a compact `- name: ''` item. Adding to
   an empty `{}` or `[]` turns it into block style. An empty `{}` that is a sequence item becomes a compact mapping on the
   dash line. Flow collections take JSON-style commas.
-- **Types:** `t` opens the type menu (string, number, boolean, null, mapping, sequence). A mapping or sequence with children
-  asks before they are dropped. An alias cannot change type.
+- **Types:** `t` opens the type menu (string, number, boolean, null, mapping, sequence). Changing to sequence wraps the value:
+  `a: 1` becomes `a:` with the item `- 1` below it (in a flow collection, `[1]`); a null becomes `[]`. A mapping or sequence
+  with children changed to anything else asks before they are dropped. An alias can only be wrapped in a sequence. A block
+  scalar with an indentation indicator (`|2`) cannot be wrapped.
 - **Deleting** a node deletes it with its comments. An anchor that an alias still refers to cannot be deleted; the message
   names the alias, as in `*b refers to it`.
 - **Moving:** Alt+Up/Down moves an entry or an item among its siblings. A document can be moved the same way, and a
-  document can be deleted, but adding a document is refused (`adding a document is not supported`).
+  document can be deleted, but adding a document is refused (`adding a document is not supported`). Alt+Shift+Up/Down moves a
+  node into the mapping or sequence above / below, or out of its parent, within its document; a member going into a sequence
+  becomes a `- ` item and an item going into a mapping asks for its key. Refused, with a message: a block value going into a
+  flow collection, a plain scalar that flow syntax would read differently (quote it first), a merge key (`<<`) going into a
+  sequence, and a move after which an alias would come before its anchor or refer to another anchor.
 - **Tables:** `T` on a sequence whose items are all mappings, or all scalars, opens it as a table (see Table editor). A missing
   cell is added with the most common kind of its column (integers and floats count as numbers; a tie gives a string), and a
-  cell is edited like a value, keeping its style. `a`, `i`, `d` and Alt+Up/Down add, delete and move rows as in JSON. A sequence
+  cell is edited like a value, keeping its style. `a`, `i`, `d` and Alt+Up/Down add, duplicate and move rows as in JSON, and Delete deletes a row. A sequence
   with an alias item, or with items of mixed kinds, is not a table. An alias cell cannot be edited or cleared in the table.
 
 ## What is kept

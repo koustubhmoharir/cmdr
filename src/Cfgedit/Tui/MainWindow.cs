@@ -857,8 +857,9 @@ internal sealed class MainWindow : Window, ISearchHost
     // ----- Structure keys -----
 
     /// <summary>
-    /// The structure keys of the tree: add (a, i, A, I, +), delete (d, Delete), move (Alt+Up/Down, K, J, Alt+Left/Right), change the type (t),
-    /// and duplicate (Ctrl+D). Returns false for a key they do not bind. They apply only while no field is open.
+    /// The structure keys of the tree: add (a, i, A, I, +), delete (Delete), move (Alt+Up/Down, K, J, Alt+Left/Right), change the type (t),
+    /// and duplicate (d). Alt+Shift+Up and Alt+Shift+Down nest the node into the container beside it, or out of its parent (see
+    /// <see cref="NestFocused"/>). Returns false for a key they do not bind, Ctrl+D among them. They apply only while no field is open.
     /// </summary>
     private bool HandleStructureKey(Key key)
     {
@@ -882,9 +883,21 @@ internal sealed class MainWindow : Window, ISearchHost
         {
             AddAttribute();
         }
-        else if (IsPlain(key, 'd') || key == Key.Delete)
+        else if (key == Key.Delete)
         {
             DeleteFocused();
+        }
+        else if (IsPlain(key, 'd'))
+        {
+            DuplicateFocused();
+        }
+        else if (key == Key.CursorUp.WithAlt.WithShift)
+        {
+            NestFocused(-1);
+        }
+        else if (key == Key.CursorDown.WithAlt.WithShift)
+        {
+            NestFocused(1);
         }
         else if (key == Key.CursorUp.WithAlt || IsPlain(key, 'K'))
         {
@@ -905,10 +918,6 @@ internal sealed class MainWindow : Window, ISearchHost
         else if (IsPlain(key, 't'))
         {
             ChangeType();
-        }
-        else if (key == Key.D.WithCtrl)
-        {
-            DuplicateFocused();
         }
         else
         {
@@ -1134,7 +1143,7 @@ internal sealed class MainWindow : Window, ISearchHost
         }
     }
 
-    /// <summary>d and Delete: the attribute under the cursor, or else the node, with no confirmation. Undo restores it.</summary>
+    /// <summary>Delete: the attribute under the cursor, or else the node, with no confirmation. Undo restores it.</summary>
     private void DeleteFocused()
     {
         if (!TryCursor(out DocNode node, out DocPart part))
@@ -1167,6 +1176,55 @@ internal sealed class MainWindow : Window, ISearchHost
         }
 
         ApplyAndShow(move, node.Path);
+    }
+
+    /// <summary>
+    /// Alt+Shift+Up and Alt+Shift+Down: the node enters the container beside it (at its end going up, at its start going down), or leaves
+    /// its parent at that end of the parent. Next to a scalar it is an ordinary one-step move. An array item that enters an object asks
+    /// for its key first: Esc cancels, and a key the object already has keeps the dialog open with the error. Where it cannot move it says
+    /// so. An attribute under the cursor moves its element, not itself: attributes move with Alt+Left and Alt+Right.
+    /// </summary>
+    private void NestFocused(int delta)
+    {
+        if (!TryCursor(out DocNode node, out _))
+        {
+            return;
+        }
+
+        NestStep? step = _controller.Document.NestBy(node.Path, delta);
+        if (step is null)
+        {
+            ShowAtEnd(delta);
+            return;
+        }
+
+        if (step.NeedsKey && step.Op is MoveNodeTo into)
+        {
+            AskNestKey(node, into);
+            return;
+        }
+
+        ApplyAndShow(step.Op, node.Path);
+    }
+
+    /// <summary>Asks for the key an array item takes when it enters an object, and moves it there. Esc changes nothing.</summary>
+    private void AskNestKey(DocNode node, MoveNodeTo move)
+    {
+        NodePath? moved = null;
+        bool done = TextPromptDialog.Ask(Ui, "Key for " + PathText.Format(_controller.Document, node, null), "Key", string.Empty, key =>
+        {
+            if (_controller.Apply(move with { NewKey = key }, out string? error) is not { } result)
+            {
+                return error ?? "the node cannot be moved";
+            }
+
+            moved = result.Focus;
+            return null;
+        });
+        if (done && moved is not null)
+        {
+            Refresh(moved);
+        }
     }
 
     /// <summary>Alt+Left/Right: the attribute under the cursor moves among its element's attributes. At the end it says so.</summary>
@@ -1210,7 +1268,8 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// t: the type menu of a JSON value, with the current type chosen. A container that has children asks before its contents are
-    /// dropped. A number keeps the text when it is a valid number, else 0; a string keeps the text of a scalar, else is empty.
+    /// dropped, unless the change is to an array, which keeps them. A number keeps the text when it is a valid number, else 0; a string
+    /// keeps the text of a scalar, else is empty.
     /// </summary>
     private void ChangeType()
     {
@@ -1257,8 +1316,9 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        // A change to an array keeps the children (the value is wrapped, or a null has none), so nothing is discarded.
         bool container = node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;
-        if (container && node.Children.Count > 0
+        if (container && kind != JsonValueKind.Array && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;
@@ -1288,7 +1348,7 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// The TOML type menu of a value, a table or an array, with the current type chosen. A date-time asks for its text, which starts as
-    /// the current text. A table or array with children asks before they are dropped. A refusal of the planner (a header table, say) is
+    /// the current text. A table or array with children asks before they are dropped, unless the change is to an array, which keeps them. A refusal of the planner (a header table, say) is
     /// shown as information, as the .env note is.
     /// </summary>
     private void ChangeTomlTypeOf(DocNode node)
@@ -1345,8 +1405,9 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        // A change to an array keeps the children (the value is wrapped), so nothing is discarded.
         bool container = node.Kind is NodeKind.TomlTable or NodeKind.TomlArray;
-        if (container && node.Children.Count > 0
+        if (container && kind != TomlNewKind.Array && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;
@@ -1399,8 +1460,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// The YAML type menu of a scalar, a mapping or a sequence, with the current type chosen. A string keeps the text of a scalar, else is
-    /// empty; a number, boolean or null takes the kind's default. A mapping or sequence with children asks before they are dropped. An alias
-    /// cannot change type: the planner's refusal is shown before any menu. A refusal of the planner is shown as information.
+    /// empty; a number, boolean or null takes the kind's default. A mapping or sequence with children asks before they are dropped, unless
+    /// the change is to a sequence, which keeps them. An alias can only be wrapped in a sequence: its menu opens on sequence, and any other
+    /// choice shows the planner's refusal. A refusal of the planner is shown as information.
     /// </summary>
     private void ChangeYamlTypeOf(DocNode node)
     {
@@ -1411,13 +1473,8 @@ internal sealed class MainWindow : Window, ISearchHost
         }
 
         ConfigDocument doc = _controller.Document;
-        if (node.Kind == NodeKind.YamlAlias)
-        {
-            _ = PreflightYaml(doc, new ChangeYamlType(node.Path, YamlNewKind.String, string.Empty));
-            return;
-        }
-
-        YamlNewKind current = CurrentYamlKind(node);
+        bool alias = node.Kind == NodeKind.YamlAlias;
+        YamlNewKind current = alias ? YamlNewKind.Sequence : CurrentYamlKind(node);
         string target = PathText.Format(doc, node, null);
         int? choice = ChoiceDialog.Ask(Ui, "Type of " + target, YamlTypeNames, Array.IndexOf(YamlTypeKinds, current));
         if (choice is not { } picked)
@@ -1426,7 +1483,7 @@ internal sealed class MainWindow : Window, ISearchHost
         }
 
         YamlNewKind kind = YamlTypeKinds[picked];
-        if (kind == current)
+        if (!alias && kind == current)
         {
             return;
         }
@@ -1438,8 +1495,9 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        // A change to a sequence keeps the children (a mapping is wrapped, a sequence stays), so nothing is discarded.
         bool container = node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence;
-        if (container && node.Children.Count > 0
+        if (container && kind != YamlNewKind.Sequence && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;
@@ -1515,7 +1573,7 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The value text of a scalar, as the tree shows it, or null for a container and for an XML node.</summary>
     private static string? ScalarText(DocNode node) => node.Parts.FirstOrDefault(part => part.Kind == PartKind.Value)?.Value;
 
-    /// <summary>Ctrl+D: a copy of the node after it.</summary>
+    /// <summary>d: a copy of the node after it, with the cursor on the copy.</summary>
     private void DuplicateFocused()
     {
         if (!TryCursor(out DocNode node, out _))
@@ -1591,8 +1649,8 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// The table's keys: the table view's cursor keys first, then Enter and F2 (edit), d (clear or delete a row), a and A (add a row), Alt+Up and
-    /// Alt+Down (move a row), y and Y (copy), and Esc (leave). The controller's keys (Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+Q and Ctrl+O) work as in the tree.
+    /// The table's keys: the table view's cursor keys first, then Enter and F2 (edit), Delete (clear or delete a row), d (duplicate a row), a and i
+    /// (add a row), Alt+Up and Alt+Down (move a row), y and Y (copy), and Esc (leave). The controller's keys (Ctrl+Z, Ctrl+Y, Ctrl+S, Ctrl+Q and Ctrl+O) work as in the tree.
     /// The search keys say they are not available. While the editor is open, the table takes no keys except those.
     /// </summary>
     private bool HandleTableKey(Key key)
@@ -1660,9 +1718,15 @@ internal sealed class MainWindow : Window, ISearchHost
             return true;
         }
 
-        if (IsPlain(key, 'd') || key == Key.Delete)
+        if (key == Key.Delete)
         {
             ClearTableCell();
+            return true;
+        }
+
+        if (IsPlain(key, 'd'))
+        {
+            DuplicateTableRow();
             return true;
         }
 
@@ -1898,7 +1962,7 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// d: deletes the cursor's row when the cursor is on the index column, else clears the cell (its member, attribute, element or text). A
+    /// Delete: deletes the cursor's row when the cursor is on the index column, else clears the cell (its member, attribute, element or text). A
     /// missing cell has nothing to clear.
     /// </summary>
     private void ClearTableCell()
@@ -1963,6 +2027,33 @@ internal sealed class MainWindow : Window, ISearchHost
         {
             BeginTableEdit(multiline: false);
         }
+    }
+
+    /// <summary>
+    /// d: a copy of the cursor's row after it, with the cursor on the copy in the same column.
+    /// </summary>
+    private void DuplicateTableRow()
+    {
+        TableModel table = _table!;
+        int row = _tableView.CursorRow;
+        int column = _tableView.CursorColumn;
+        EditOp op;
+        try
+        {
+            op = table.DuplicateRow(row);
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(ex.Message, error: true);
+            return;
+        }
+
+        if (!ApplyTableOp(op) || _table is null)
+        {
+            return;
+        }
+
+        _tableView.Place(row + 1, column);
     }
 
     /// <summary>Alt+Up and Alt+Down: the cursor's row moves among the rows, and the cursor goes with it. At either end it says so.</summary>

@@ -77,10 +77,10 @@ public sealed class YamlEditTypeTests
     // ----- Containers -----
 
     [Fact]
-    public void A_scalar_becomes_an_empty_mapping_or_sequence()
+    public void A_scalar_becomes_an_empty_mapping_and_a_sequence_wraps_it()
     {
         Assert.Equal("a: {}\n", Edit("a: foo\n", Yaml, Change(YamlNewKind.Mapping, null, Member("a"))));
-        Assert.Equal("a: []\n", Edit("a: foo\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+        Assert.Equal("a:\n  - foo\n", Edit("a: foo\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
     }
 
     [Fact]
@@ -90,9 +90,9 @@ public sealed class YamlEditTypeTests
     }
 
     [Fact]
-    public void A_block_mapping_becomes_an_empty_sequence_on_its_key_line_and_drops_its_lines()
+    public void A_block_mapping_is_wrapped_in_a_sequence_and_its_entries_are_kept()
     {
-        Assert.Equal("a: []\nb: 3\n", Edit("a:\n  x: 1\n  y: 2\nb: 3\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+        Assert.Equal("a:\n  - x: 1\n    y: 2\nb: 3\n", Edit("a:\n  x: 1\n  y: 2\nb: 3\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
     }
 
     [Fact]
@@ -124,7 +124,182 @@ public sealed class YamlEditTypeTests
     [Fact]
     public void A_block_collection_keeps_the_comment_after_its_last_entry()
     {
-        Assert.Equal("a: [] # tail\n", Edit("a:\n  x: 1 # tail\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+        Assert.Equal("a:\n  - x: 1 # tail\n", Edit("a:\n  x: 1 # tail\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    // ----- Wrapping in a sequence -----
+
+    [Fact]
+    public void A_scalar_in_a_flow_sequence_is_wrapped_in_brackets()
+    {
+        Assert.Equal("[[a], b]\n", Edit("[a, b]\n", Yaml, Change(YamlNewKind.Sequence, null, Item(0))));
+    }
+
+    [Fact]
+    public void A_flow_mapping_value_is_wrapped_in_brackets()
+    {
+        Assert.Equal("a: [{x: 1}]\n", Edit("a: {x: 1}\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_scalar_in_a_flow_mapping_is_wrapped_in_brackets()
+    {
+        Assert.Equal("{a: [1]}\n", Edit("{a: 1}\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_scalar_with_a_trailing_comment_keeps_the_comment_on_the_item()
+    {
+        Assert.Equal("a:\n  - foo # c\n", Edit("a: foo # c\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_scalar_on_the_line_after_its_key_is_wrapped_on_that_line()
+    {
+        Assert.Equal("a:\n  - foo\nb: 1\n", Edit("a:\n  foo\nb: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_multi_line_plain_scalar_keeps_its_continuation_under_the_item()
+    {
+        Assert.Equal("a:\n  - foo\n    bar\nb: 1\n", Edit("a: foo\n  bar\nb: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_literal_block_scalar_keeps_its_value_and_moves_under_the_item()
+    {
+        Assert.Equal("a:\n  - |\n    x\n    y\nb: 1\n", Edit("a: |\n  x\n  y\nb: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_block_scalar_with_an_explicit_indentation_indicator_is_refused()
+    {
+        CfgeditException ex = Fails("a: >2\n   x\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a")));
+
+        Assert.Equal("a block scalar with an explicit indentation indicator cannot be wrapped in a sequence yet", ex.Message);
+    }
+
+    [Fact]
+    public void A_block_mapping_keeps_a_comment_between_its_entries_with_the_entries()
+    {
+        Assert.Equal("a:\n  - x: 1\n    # note\n    y: 2\n", Edit("a:\n  x: 1\n  # note\n  y: 2\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_sequence_under_a_key_with_unindented_sequences_is_wrapped_at_the_key_column()
+    {
+        Assert.Equal("k:\n- 1\na:\n- foo\n", Edit("k:\n- 1\na: foo\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_nested_sequence_item_is_wrapped_under_its_dash()
+    {
+        Assert.Equal("a:\n  - - x\n  - y\n", Edit("a:\n  - x\n  - y\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"), Item(0))));
+    }
+
+    [Fact]
+    public void A_block_sequence_is_a_sequence_already_and_is_unchanged()
+    {
+        Assert.Equal("a:\n  - x\n", Edit("a:\n  - x\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void An_anchored_and_tagged_scalar_keeps_them_on_the_item()
+    {
+        Assert.Equal("a:\n  - &x !!str foo\n", Edit("a: &x !!str foo\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void An_alias_is_wrapped_in_a_sequence()
+    {
+        Assert.Equal("a: &x 1\nb:\n  - *x\n", Edit("a: &x 1\nb: *x\n", Yaml, Change(YamlNewKind.Sequence, null, Member("b"))));
+    }
+
+    [Fact]
+    public void An_alias_changed_to_a_mapping_is_still_refused()
+    {
+        CfgeditException ex = Fails("a: &x 1\nb: *x\n", Yaml, Change(YamlNewKind.Mapping, null, Member("b")));
+
+        Assert.Equal("an alias can only be wrapped in a sequence", ex.Message);
+    }
+
+    [Fact]
+    public void A_root_scalar_becomes_a_root_sequence_item()
+    {
+        Assert.Equal("- foo\n", Edit("foo\n", Yaml, Change(YamlNewKind.Sequence, null)));
+    }
+
+    [Fact]
+    public void A_root_block_mapping_is_wrapped_and_its_entries_move_under_the_dash()
+    {
+        Assert.Equal("- a: 1\n  b: 2\n", Edit("a: 1\nb: 2\n", Yaml, Change(YamlNewKind.Sequence, null)));
+    }
+
+    [Fact]
+    public void A_mapping_item_that_starts_on_its_dash_is_wrapped_as_a_nested_item()
+    {
+        Assert.Equal("- - a: 1\n    b: 2\n", Edit("- a: 1\n  b: 2\n", Yaml, Change(YamlNewKind.Sequence, null, Item(0))));
+    }
+
+    [Fact]
+    public void A_block_mapping_with_an_anchor_on_its_key_line_keeps_the_anchor_on_the_item()
+    {
+        Assert.Equal("a:\n  - &x\n    b: 1\n", Edit("a: &x\n  b: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_missing_value_becomes_an_empty_sequence()
+    {
+        Assert.Equal("a: []\nb: 1\n", Edit("a:\nb: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void An_explicit_null_becomes_an_empty_sequence()
+    {
+        Assert.Equal("a: []\nb: 1\n", Edit("a: null\nb: 1\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_tilde_and_a_capitalised_null_become_an_empty_sequence()
+    {
+        Assert.Equal("a: []\n", Edit("a: ~\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+        Assert.Equal("a: []\n", Edit("a: Null\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void An_anchored_null_becomes_an_empty_sequence_and_keeps_its_anchor()
+    {
+        Assert.Equal("a: &x []\n", Edit("a: &x null\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_missing_item_becomes_an_empty_sequence()
+    {
+        Assert.Equal("- []\n- 1\n", Edit("-\n- 1\n", Yaml, Change(YamlNewKind.Sequence, null, Item(0))));
+    }
+
+    [Fact]
+    public void Entries_indented_deeper_than_the_new_item_move_left_under_it()
+    {
+        // The file's unit is two (the first step it takes is two, and ties go to the first): the new dash goes two columns under the key,
+        // and the entries move left to meet it.
+        Assert.Equal("c:\n  z: 1\n  q: 2\na:\n  - x: 1\n    y: 2\n", Edit("c:\n  z: 1\n  q: 2\na:\n        x: 1\n        y: 2\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_comment_between_a_key_and_its_value_is_refused()
+    {
+        CfgeditException ex = Fails("a: # c\n  foo\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a")));
+
+        Assert.Equal("a comment between a key and its value cannot be wrapped in a sequence yet", ex.Message);
+    }
+
+    [Fact]
+    public void A_root_value_on_the_document_marker_line_is_refused()
+    {
+        CfgeditException ex = Fails("--- foo\n", Yaml, Change(YamlNewKind.Sequence, null));
+
+        Assert.Equal("a root value on the document's marker line cannot be wrapped in a sequence yet", ex.Message);
     }
 
     // ----- Tags -----
@@ -158,11 +333,11 @@ public sealed class YamlEditTypeTests
     // ----- Refusals -----
 
     [Fact]
-    public void An_alias_cannot_change_type()
+    public void An_alias_can_only_be_wrapped_in_a_sequence()
     {
         CfgeditException ex = Fails("a: &x 1\nb: *x\n", Yaml, Change(YamlNewKind.String, "y", Member("b")));
 
-        Assert.Equal("an alias cannot change type", ex.Message);
+        Assert.Equal("an alias can only be wrapped in a sequence", ex.Message);
     }
 
     [Fact]
