@@ -159,10 +159,11 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 
 ## M11. YAML (design: "Phase 2" › "YAML (M11)")
 
-- [ ] Core syntax: lossless CST and parser for the subset (block and flow collections, five scalar styles, comments,
+- [x] Core syntax: lossless CST and parser for the subset (block and flow collections, five scalar styles, comments,
       documents, directives, anchors, aliases, tags), refusals naming what is unsupported, scalar encoders. Tests:
       byte-identical round trip, yaml-test-suite (vendored): every case refused or read as expected, every error case
-      refused.
+      refused. (e674ae1) 402 cases: 94 errors refused; of 308 others, 233 accepted (values match for the 213
+      single-document ones), 75 refused with named reasons. Folded scalars are rewritten as literal when edited.
 - [ ] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
 - [ ] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
       move, duplicate, change type; anchors/aliases rules; YAML logical edit.
