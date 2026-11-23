@@ -228,14 +228,14 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void T_says_that_the_table_editor_is_not_available_for_yaml_yet()
+    public void T_on_a_YAML_member_that_is_not_a_sequence_says_there_is_no_table_here()
     {
         OpenedFile file = Open("settings.yaml", "a: 1\n");
 
         Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('T')));
 
         Assert.Equal("a: 1\n", Text(session));
-        Assert.Equal("the table editor is not available for YAML yet", session.Screens[^1].Text(MessageRow));
+        Assert.Equal("no table here: not a list of objects or values", session.Screens[^1].Text(MessageRow));
     }
 
     // ----- New file -----

@@ -115,7 +115,9 @@ unsaved changes asks whether to save, discard or cancel; the default is Save.
 array of tables (`[[items]]`) or inline array whose items are all inline tables or all plain values, or an XML element
 with repeated child elements of the same name (one column per attribute, per single text-only child element, and for the
 text). In TOML, the rows are the items, and the columns are their keys in the order they first appear; a subtable or an
-array in a cell shows its count, `{n}` or `[n]`. Esc returns to the tree. There is no table editor for YAML yet: `T` says so.
+array in a cell shows its count, `{n}` or `[n]`. A YAML sequence whose items are all mappings, or all scalars, opens the same way:
+the rows are the items, the columns are the keys in order of first appearance, and a nested mapping or sequence shows its count.
+An alias in a cell shows its name (`*b`) and is read-only. Esc returns to the tree.
 
 | Key | |
 |---|---|
@@ -216,7 +218,10 @@ file open as a tree.
   names the alias, as in `*b refers to it`.
 - **Moving:** Alt+Up/Down moves an entry or an item among its siblings. A document can be moved the same way, and a
   document can be deleted, but adding a document is refused (`adding a document is not supported`).
-- **Tables:** there is no table editor for YAML yet.
+- **Tables:** `T` on a sequence whose items are all mappings, or all scalars, opens it as a table (see Table editor). A missing
+  cell is added with the most common kind of its column (integers and floats count as numbers; a tie gives a string), and a
+  cell is edited like a value, keeping its style. `a`, `i`, `d` and Alt+Up/Down add, delete and move rows as in JSON. A sequence
+  with an alias item, or with items of mixed kinds, is not a table. An alias cell cannot be edited or cleared in the table.
 
 ## What is kept
 

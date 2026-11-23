@@ -70,12 +70,17 @@ public static class PathText
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(row);
         ArgumentNullException.ThrowIfNull(name);
-        if (document.Format is not XmlFormat)
+        switch (document.Format)
         {
-            return JsonPath(row) + (IsIdentifier(name) ? "." + name : "[" + JsonQuote(name) + "]");
+            case XmlFormat:
+                return XmlPath(row) + (attribute ? "/@" : "/") + name;
+            case TomlFormat:
+                return TomlPath(row) + "." + (IsBareKey(name) ? name : JsonQuote(name));
+            case YamlFormat:
+                return YamlPath(row) + "." + YamlKey(name);
+            default:
+                return JsonPath(row) + (IsIdentifier(name) ? "." + name : "[" + JsonQuote(name) + "]");
         }
-
-        return XmlPath(row) + (attribute ? "/@" : "/") + name;
     }
 
     /// <summary>

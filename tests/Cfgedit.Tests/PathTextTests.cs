@@ -306,6 +306,21 @@ public sealed class PathTextTests
     }
 
     [Fact]
+    public void A_missing_table_cell_is_named_in_the_path_syntax_of_its_format()
+    {
+        ConfigDocument yaml = TreeFixtures.Parse("items:\n  - name: a\n", "yaml");
+        DocNode yamlRow = TreeFixtures.Find(yaml, new ItemStep(0), new MemberStep("items", 0), new ItemStep(0));
+        Assert.Equal("items[0].port", PathText.WithName(yaml, yamlRow, "port", attribute: false));
+        Assert.Equal("items[0].<<", PathText.WithName(yaml, yamlRow, "<<", attribute: false));
+        Assert.Equal("items[0].\"a: b\"", PathText.WithName(yaml, yamlRow, "a: b", attribute: false));
+
+        ConfigDocument toml = TreeFixtures.Parse("[[items]]\nname = \"a\"\n", "toml");
+        DocNode tomlRow = TreeFixtures.Find(toml, new ItemStep(0), new MemberStep("items", 0), new ItemStep(0));
+        Assert.Equal("items[0].port", PathText.WithName(toml, tomlRow, "port", attribute: false));
+        Assert.Equal("items[0].\"my key\"", PathText.WithName(toml, tomlRow, "my key", attribute: false));
+    }
+
+    [Fact]
     public void Yaml_kinds_name_the_scalar_kinds_of_the_core_schema_and_the_structural_parts()
     {
         ConfigDocument doc = TreeFixtures.Parse("b: true\ni: 1\nf: 1.5\nn: ~\ns: x\nm:\n  k: 1\nq: [1]\nal: &a 1\nr: *a\n", "yaml");

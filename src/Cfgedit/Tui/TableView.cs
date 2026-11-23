@@ -355,7 +355,8 @@ internal sealed class TableView : View
 
     /// <summary>
     /// The text a cell shows, before it is cut to its column, and the style it is drawn in. A missing cell is a dim middle dot, a nested
-    /// cell its display, an empty string (JSON or TOML) a dim <c>""</c>, and any other value its logical value.
+    /// cell its display, an empty string (JSON, TOML or YAML) a dim <c>""</c>, a YAML null with no text a dim <c>null</c>, and any other value its
+    /// logical value.
     /// </summary>
     private static (string Text, StyleKind Style) ShownOf(TableCell cell)
     {
@@ -374,20 +375,43 @@ internal sealed class TableView : View
             return (string.Empty, StyleKind.Text);
         }
 
-        if ((cell.Node?.JsonKind == JsonValueKind.String || cell.Node?.TomlKind == TomlValueKind.String) && cell.Part.Value.Length == 0)
+        if ((cell.Node?.JsonKind == JsonValueKind.String || cell.Node?.TomlKind == TomlValueKind.String
+                || cell.Node?.YamlKind == YamlValueKind.String) && cell.Part.Value.Length == 0)
         {
             return ("\"\"", StyleKind.Punctuation);
+        }
+
+        if (cell.Node?.YamlKind == YamlValueKind.Null && cell.Part.Value.Length == 0)
+        {
+            return ("null", StyleKind.Punctuation);
         }
 
         return (cell.Part.Value, StyleOf(cell));
     }
 
-    /// <summary>The style of a present value: the JSON kind's, an attribute's, or the text of an element.</summary>
+    /// <summary>The style of a present value: the JSON kind's, an attribute's, the text of an element, or a YAML alias's read-only style.</summary>
     private static StyleKind StyleOf(TableCell cell)
     {
         if (cell.Part!.Kind == PartKind.AttributeValue)
         {
             return StyleKind.AttributeValue;
+        }
+
+        if (cell.Part.Kind == PartKind.Alias)
+        {
+            return StyleKind.ReadOnly;
+        }
+
+        if (cell.Node?.YamlKind is { } yamlKind)
+        {
+            return yamlKind switch
+            {
+                YamlValueKind.String => StyleKind.String,
+                YamlValueKind.Integer or YamlValueKind.Float => StyleKind.Number,
+                YamlValueKind.Boolean => StyleKind.Bool,
+                YamlValueKind.Null => StyleKind.Null,
+                _ => StyleKind.Text,
+            };
         }
 
         if (cell.Node?.TomlKind is { } tomlKind)

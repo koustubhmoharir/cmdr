@@ -1432,5 +1432,296 @@ public sealed class TableModelTests
         Assert.Throws<CfgeditException>(() => table.EditCell(2, 0, "x"));
     }
 
+    // ----- YAML -----
+
+    private const string YamlItems = "services:\n  - name: web\n    port: 80\n  - name: db\n    tags: x\n";
+
+    private const string YamlNumbers = "nums:\n  - 10\n  - 20\n  - 30\n";
+
+    private static ConfigDocument ParseYaml(string text) => ModelTestSupport.Parse(text, EditTestSupport.Yaml);
+
+    private static NodePath YamlSequence(string key) => At(Item(0), Member(key));
+
+    private static NodePath YamlItem(string key, int index) => At(Item(0), Member(key), Item(index));
+
+    // ----- TryCreate: YAML -----
+
+    [Fact]
+    public void A_YAML_sequence_of_mappings_is_a_table_whose_rows_are_its_items()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Equal(new[] { YamlItem("services", 0), YamlItem("services", 1) }, table.Rows);
+        Assert.Equal(YamlSequence("services"), table.Container);
+    }
+
+    [Fact]
+    public void A_row_path_gives_the_YAML_sequence_as_the_container()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlItem("services", 1));
+
+        Assert.Equal(YamlSequence("services"), table.Container);
+        Assert.Equal(2, table.Rows.Count);
+    }
+
+    [Fact]
+    public void A_YAML_sequence_of_scalars_is_a_table_with_one_value_column()
+    {
+        TableModel table = Table(ParseYaml(YamlNumbers), YamlSequence("nums"));
+
+        Assert.Equal(new[] { new TableColumn(TableColumnKind.Value, "value") }, table.Columns);
+        Assert.Equal(YamlItem("nums", 2), table.Rows[2]);
+        Assert.Equal("30", table.Cell(2, 0).Display);
+        Assert.Equal(YamlValueKind.Integer, table.Cell(2, 0).Node!.YamlKind);
+    }
+
+    [Fact]
+    public void A_YAML_sequence_mixing_mappings_and_scalars_is_not_a_table()
+    {
+        Assert.Null(TableModel.TryCreate(ParseYaml("items:\n  - name: a\n  - 3\n"), YamlSequence("items")));
+    }
+
+    [Fact]
+    public void A_YAML_sequence_with_an_alias_item_is_not_a_table()
+    {
+        const string text = "base: &a\n  name: x\nitems:\n  - *a\n  - name: b\n";
+
+        Assert.Null(TableModel.TryCreate(ParseYaml(text), YamlSequence("items")));
+    }
+
+    [Fact]
+    public void An_empty_YAML_sequence_and_a_sequence_of_sequences_are_not_tables()
+    {
+        Assert.Null(TableModel.TryCreate(ParseYaml("items: []\n"), YamlSequence("items")));
+        Assert.Null(TableModel.TryCreate(ParseYaml("items:\n  - [1, 2]\n  - [3]\n"), YamlSequence("items")));
+    }
+
+    [Fact]
+    public void A_YAML_root_mapping_is_not_a_table()
+    {
+        Assert.Null(TableModel.TryCreate(ParseYaml(YamlItems), At(Item(0))));
+    }
+
+    [Fact]
+    public void Comments_in_a_YAML_sequence_are_not_rows()
+    {
+        TableModel table = Table(ParseYaml("items:\n  # first\n  - name: a\n  # last\n  - name: b\n"), YamlSequence("items"));
+
+        Assert.Equal(2, table.Rows.Count);
+    }
+
+    // ----- Columns and cells: YAML -----
+
+    [Fact]
+    public void YAML_columns_are_the_union_of_the_keys_in_first_seen_order()
+    {
+        TableModel table = Table(ParseYaml("items:\n  - b: 1\n    a: 2\n  - c: 3\n    a: 4\n"), YamlSequence("items"));
+
+        Assert.Equal(
+            new[] { new TableColumn(TableColumnKind.Key, "b"), new TableColumn(TableColumnKind.Key, "a"), new TableColumn(TableColumnKind.Key, "c") },
+            table.Columns);
+        Assert.Equal("4", table.Cell(1, 1).Display);
+    }
+
+    [Fact]
+    public void A_YAML_key_absent_from_a_row_is_a_missing_cell()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.True(table.Cell(0, 2).IsMissing);
+        Assert.True(table.Cell(1, 1).IsMissing);
+        Assert.Equal("web", table.Cell(0, 0).Display);
+    }
+
+    [Fact]
+    public void A_YAML_nested_mapping_and_sequence_are_nested_cells_that_show_their_counts()
+    {
+        const string text = "items:\n  - name: a\n    list: [1, 2]\n    meta:\n      x: 1\n  - name: b\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        Assert.True(table.Cell(0, 1).IsNested);
+        Assert.Equal("[2]", table.Cell(0, 1).Display);
+        Assert.True(table.Cell(0, 2).IsNested);
+        Assert.Equal("{1}", table.Cell(0, 2).Display);
+    }
+
+    [Fact]
+    public void A_YAML_alias_member_is_a_read_only_cell_that_shows_its_name()
+    {
+        const string text = "base: &b\n  restart: always\nitems:\n  - name: a\n    opts: *b\n  - name: b\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        TableCell cell = table.Cell(0, 1);
+        Assert.Equal(NodeKind.YamlAlias, cell.Node!.Kind);
+        Assert.Equal(PartKind.Alias, cell.Part!.Kind);
+        Assert.Equal("*b", cell.Display);
+        Assert.True(table.Cell(1, 1).IsMissing);
+    }
+
+    [Fact]
+    public void Each_YAML_scalar_cell_has_its_kind_for_the_editor()
+    {
+        TableModel table = Table(ParseYaml("items:\n  - a: 1.5\n    b: 'x'\n    c: true\n    d: ~\n"), YamlSequence("items"));
+
+        Assert.Equal(YamlValueKind.Float, table.Cell(0, 0).Node!.YamlKind);
+        Assert.Equal(YamlValueKind.String, table.Cell(0, 1).Node!.YamlKind);
+        Assert.Equal(YamlValueKind.Boolean, table.Cell(0, 2).Node!.YamlKind);
+        Assert.Equal(YamlValueKind.Null, table.Cell(0, 3).Node!.YamlKind);
+    }
+
+    // ----- Edits: YAML -----
+
+    [Fact]
+    public void Setting_a_YAML_cell_keeps_its_style()
+    {
+        const string text = "items:\n  - name: 'web'\n    port: 80\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        Assert.Equal("items:\n  - name: 'db'\n    port: 80\n", Edit(text, EditTestSupport.Yaml, table.EditCell(0, 0, "db")));
+        Assert.Equal("items:\n  - name: 'web'\n    port: 8080\n", Edit(text, EditTestSupport.Yaml, table.EditCell(0, 1, "8080")));
+    }
+
+    [Fact]
+    public void A_missing_YAML_number_cell_gets_the_number_kind_of_its_column()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        EditOp op = table.EditCell(1, 1, "5432");
+
+        Assert.Equal(new InsertNode(YamlItem("services", 1), 1, new NewYamlValue("port", YamlNewKind.Number, "5432")), op);
+        Assert.Equal("services:\n  - name: web\n    port: 80\n  - name: db\n    port: 5432\n    tags: x\n", Edit(YamlItems, EditTestSupport.Yaml, op));
+    }
+
+    [Fact]
+    public void A_missing_YAML_string_cell_is_inserted_as_a_string_at_the_end_of_its_row()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        EditOp op = table.EditCell(0, 2, "t");
+
+        Assert.Equal(new InsertNode(YamlItem("services", 0), 2, new NewYamlValue("tags", YamlNewKind.String, "t")), op);
+        Assert.Equal("services:\n  - name: web\n    port: 80\n    tags: t\n  - name: db\n    tags: x\n", Edit(YamlItems, EditTestSupport.Yaml, op));
+    }
+
+    [Fact]
+    public void A_missing_YAML_boolean_cell_takes_the_boolean_kind_of_its_column()
+    {
+        const string text = "items:\n  - name: a\n    on: true\n  - name: b\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        Assert.Equal("items:\n  - name: a\n    on: true\n  - name: b\n    on: false\n", Edit(text, EditTestSupport.Yaml, table.EditCell(1, 1, "false")));
+    }
+
+    [Fact]
+    public void A_missing_YAML_cell_in_a_column_with_a_tie_of_kinds_is_a_string()
+    {
+        const string text = "items:\n  - name: a\n    port: 80\n  - name: b\n    port: x\n  - name: c\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        EditOp op = table.EditCell(2, 1, "9");
+
+        Assert.Equal(new InsertNode(YamlItem("items", 2), 1, new NewYamlValue("port", YamlNewKind.String, "9")), op);
+        Assert.Equal("items:\n  - name: a\n    port: 80\n  - name: b\n    port: x\n  - name: c\n    port: '9'\n", Edit(text, EditTestSupport.Yaml, op));
+    }
+
+    [Fact]
+    public void Clearing_a_YAML_cell_deletes_its_key()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        EditOp? op = table.ClearCell(0, 1);
+
+        Assert.NotNull(op);
+        Assert.Equal(new DeleteNode(At(Item(0), Member("services"), Item(0), Member("port"))), op);
+        Assert.Equal("services:\n  - name: web\n  - name: db\n    tags: x\n", Edit(YamlItems, EditTestSupport.Yaml, op));
+        Assert.Null(table.ClearCell(0, 2));
+    }
+
+    [Fact]
+    public void A_YAML_alias_cell_cannot_be_edited_or_cleared_and_a_nested_cell_cannot_be_cleared()
+    {
+        const string text = "base: &b\n  restart: always\nitems:\n  - name: a\n    opts: *b\n    list: [1]\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        CfgeditException edit = Assert.Throws<CfgeditException>(() => table.EditCell(0, 1, "x"));
+        Assert.Equal("an alias cannot be edited", edit.Message);
+        CfgeditException clear = Assert.Throws<CfgeditException>(() => table.ClearCell(0, 1));
+        Assert.Equal("an alias cannot be cleared in the table; delete it in the tree", clear.Message);
+        Assert.Throws<CfgeditException>(() => table.EditCell(0, 2, "x"));
+        Assert.Throws<CfgeditException>(() => table.ClearCell(0, 2));
+    }
+
+    [Fact]
+    public void A_missing_cell_in_a_column_of_aliases_or_merge_keys_is_refused()
+    {
+        const string text = "base: &b\n  restart: always\nitems:\n  - name: a\n    <<: *b\n    opts: *b\n  - name: c\n";
+        TableModel table = Table(ParseYaml(text), YamlSequence("items"));
+
+        CfgeditException merge = Assert.Throws<CfgeditException>(() => table.EditCell(1, 1, "x"));
+        Assert.Equal("this column holds aliases; add one in the tree", merge.Message);
+        CfgeditException alias = Assert.Throws<CfgeditException>(() => table.EditCell(1, 2, "x"));
+        Assert.Equal("this column holds aliases; add one in the tree", alias.Message);
+    }
+
+    [Fact]
+    public void The_typed_edit_by_kind_is_refused_for_YAML_because_its_type_is_changed_in_the_tree()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Throws<CfgeditException>(() => table.EditCell(0, 1, JsonValueKind.Number, "1"));
+    }
+
+    [Fact]
+    public void Adding_a_YAML_row_after_copies_the_shape_in_compact_form_with_empty_values()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Equal(
+            "services:\n  - name: web\n    port: 80\n  - name: ''\n    port: 0\n  - name: db\n    tags: x\n",
+            Edit(YamlItems, EditTestSupport.Yaml, table.AddRow(0)));
+    }
+
+    [Fact]
+    public void Adding_a_YAML_row_before_the_first_copies_its_shape()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Equal(
+            "services:\n  - name: ''\n    port: 0\n  - name: web\n    port: 80\n  - name: db\n    tags: x\n",
+            Edit(YamlItems, EditTestSupport.Yaml, table.AddRow(-1)));
+    }
+
+    [Fact]
+    public void Deleting_and_moving_YAML_rows()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Equal("services:\n  - name: db\n    tags: x\n", Edit(YamlItems, EditTestSupport.Yaml, table.DeleteRow(0)));
+        Assert.Equal(
+            "services:\n  - name: db\n    tags: x\n  - name: web\n    port: 80\n",
+            Edit(YamlItems, EditTestSupport.Yaml, table.MoveRow(0, 1)));
+    }
+
+    [Fact]
+    public void YAML_scalar_rows_are_set_added_moved_and_deleted_and_cannot_be_cleared()
+    {
+        TableModel table = Table(ParseYaml(YamlNumbers), YamlSequence("nums"));
+
+        Assert.Equal("nums:\n  - 10\n  - 25\n  - 30\n", Edit(YamlNumbers, EditTestSupport.Yaml, table.EditCell(1, 0, "25")));
+        Assert.Equal("nums:\n  - 10\n  - 0\n  - 20\n  - 30\n", Edit(YamlNumbers, EditTestSupport.Yaml, table.AddRow(0)));
+        Assert.Equal("nums:\n  - 20\n  - 30\n  - 10\n", Edit(YamlNumbers, EditTestSupport.Yaml, table.MoveRow(0, 2)));
+        Assert.Equal("nums:\n  - 10\n  - 30\n", Edit(YamlNumbers, EditTestSupport.Yaml, table.DeleteRow(1)));
+        Assert.Throws<CfgeditException>(() => table.ClearCell(0, 0));
+    }
+
+    [Fact]
+    public void A_YAML_row_outside_the_table_is_refused()
+    {
+        TableModel table = Table(ParseYaml(YamlItems), YamlSequence("services"));
+
+        Assert.Throws<CfgeditException>(() => table.DeleteRow(2));
+        Assert.Throws<CfgeditException>(() => table.EditCell(2, 0, "x"));
+    }
+
     private static ConfigDocument ParseJsonc(string text) => ModelTestSupport.Parse(text, Jsonc);
 }

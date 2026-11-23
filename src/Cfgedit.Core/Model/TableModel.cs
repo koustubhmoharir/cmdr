@@ -36,7 +36,7 @@ public sealed record TableColumn(TableColumnKind Kind, string Name);
 public sealed record TableCell(DocNode? Node, DocPart? Part, bool IsMissing, bool IsNested, string Display);
 
 /// <summary>
-/// A table view of an array of objects, an array of scalars (JSON or TOML), or an XML element's same-named child elements. The model is built
+/// A table view of an array of objects, an array of scalars (JSON, TOML or YAML), or an XML element's same-named child elements. The model is built
 /// from a <see cref="ConfigDocument"/> and never changes it: each edit method returns the <see cref="EditOp"/> that would make the
 /// change, and the caller applies it.
 /// </summary>
@@ -66,6 +66,8 @@ public sealed class TableModel
         JsonScalars,
         TomlObjects,
         TomlScalars,
+        YamlObjects,
+        YamlScalars,
         XmlElements,
     }
 
@@ -84,7 +86,8 @@ public sealed class TableModel
     /// <summary>
     /// Builds the table for a node, or returns null when the node is not a table. The node may be the container or one of its rows.
     /// A JSON array is a table when its items (ignoring comments) are all objects, or all scalars, with at least one item. A TOML array
-    /// (an array of tables, or an inline array) is a table by the same rule, its items being tables or scalars. An XML
+    /// (an array of tables, or an inline array) is a table by the same rule, its items being tables or scalars. A YAML sequence is a
+    /// table when its items are all mappings, or all scalars (an alias item is neither). An XML
     /// element is a table when it has at least two child elements of the same name. For a row, the rows are its siblings of its name.
     /// For a container, the name is the one with the most elements, ties going to the name seen first.
     /// </summary>
@@ -101,13 +104,14 @@ public sealed class TableModel
             return null;
         }
 
-        if (target.Kind is NodeKind.JsonArray or NodeKind.TomlArray)
+        if (target.Kind is NodeKind.JsonArray or NodeKind.TomlArray or NodeKind.YamlSequence)
         {
             return ArrayTable(document, target);
         }
 
-        if ((target.Kind is NodeKind.JsonObject or NodeKind.JsonScalar or NodeKind.TomlTable or NodeKind.TomlScalar)
-            && target.Parent?.Kind is NodeKind.JsonArray or NodeKind.TomlArray)
+        if ((target.Kind is NodeKind.JsonObject or NodeKind.JsonScalar or NodeKind.TomlTable or NodeKind.TomlScalar
+                or NodeKind.YamlMapping or NodeKind.YamlScalar or NodeKind.YamlAlias)
+            && target.Parent?.Kind is NodeKind.JsonArray or NodeKind.TomlArray or NodeKind.YamlSequence)
         {
             return ArrayTable(document, target.Parent);
         }
@@ -140,12 +144,14 @@ public sealed class TableModel
         {
             case TableShape.JsonScalars:
             case TableShape.TomlScalars:
+            case TableShape.YamlScalars:
             {
                 DocPart value = ValuePart(rowNode);
                 return new TableCell(rowNode, value, false, false, value.Value);
             }
             case TableShape.JsonObjects:
             case TableShape.TomlObjects:
+            case TableShape.YamlObjects:
                 return ObjectCell(rowNode, col);
             default:
                 return XmlCell(rowNode, col);
@@ -182,6 +188,11 @@ public sealed class TableModel
             throw new CfgeditException("this cell holds a nested value and cannot be edited in the table; edit it in the tree");
         }
 
+        if (cell.Node?.Kind == NodeKind.YamlAlias)
+        {
+            throw new CfgeditException("an alias cannot be edited");
+        }
+
         if (cell.Part is { } part)
         {
             return new SetPart(cell.Node!.Path, part.Kind, part.AttributeIndex, value);
@@ -191,6 +202,18 @@ public sealed class TableModel
         {
             case TableColumnKind.Key when _shape == TableShape.TomlObjects:
                 return InsertMember(row, column, new NewTomlValue(col.Name, MostCommonTomlKind(column), value));
+            case TableColumnKind.Key when _shape == TableShape.YamlObjects:
+            {
+                // A column of aliases (a merge key's <<, typically) takes an alias, which the table cannot write; a string there would
+                // change what the key means.
+                if (col.Name == "<<" || HasOnlyAliases(column))
+                {
+                    throw new CfgeditException("this column holds aliases; add one in the tree");
+                }
+
+                YamlNewKind kind = MostCommonYamlKind(column);
+                return InsertMember(row, column, new NewYamlValue(col.Name, kind, kind == YamlNewKind.Null ? null : value));
+            }
             case TableColumnKind.Key:
             {
                 JsonValueKind kind = MostCommonScalarKind(column);
@@ -257,6 +280,11 @@ public sealed class TableModel
             throw new CfgeditException("a TOML value's type is changed in the tree, not in the table");
         }
 
+        if (_shape is TableShape.YamlObjects or TableShape.YamlScalars)
+        {
+            throw new CfgeditException("a YAML value's type is changed in the tree, not in the table");
+        }
+
         TableCell cell = Cell(row, column);
         if (cell.IsNested)
         {
@@ -296,7 +324,7 @@ public sealed class TableModel
     {
         CheckRow(row);
         CheckColumn(column);
-        if (_shape is TableShape.JsonScalars or TableShape.TomlScalars)
+        if (_shape is TableShape.JsonScalars or TableShape.TomlScalars or TableShape.YamlScalars)
         {
             throw new CfgeditException("an array value cannot be cleared; delete its row instead");
         }
@@ -312,6 +340,11 @@ public sealed class TableModel
         if (cell.IsNested)
         {
             throw new CfgeditException("this cell holds a nested value and cannot be cleared in the table; edit it in the tree");
+        }
+
+        if (cell.Node?.Kind == NodeKind.YamlAlias)
+        {
+            throw new CfgeditException("an alias cannot be cleared in the table; delete it in the tree");
         }
 
         if (cell.IsMissing)
@@ -395,7 +428,7 @@ public sealed class TableModel
 
     private static TableModel? ArrayTable(ConfigDocument document, DocNode array)
     {
-        List<DocNode> items = array.Children.Where(child => child.Kind is not (NodeKind.JsonComment or NodeKind.TomlComment)).ToList();
+        List<DocNode> items = array.Children.Where(child => child.Kind is not (NodeKind.JsonComment or NodeKind.TomlComment or NodeKind.YamlComment)).ToList();
         if (items.Count == 0)
         {
             return null;
@@ -403,7 +436,8 @@ public sealed class TableModel
 
         bool json = items.All(item => item.JsonKind == JsonValueKind.Object);
         bool toml = !json && items.All(item => item.Kind == NodeKind.TomlTable);
-        if (json || toml)
+        bool yaml = !json && !toml && items.All(item => item.Kind == NodeKind.YamlMapping);
+        if (json || toml || yaml)
         {
             var keys = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -418,10 +452,11 @@ public sealed class TableModel
                 }
             }
 
+            TableShape shape = json ? TableShape.JsonObjects : toml ? TableShape.TomlObjects : TableShape.YamlObjects;
             return new TableModel(
                 document,
                 array,
-                json ? TableShape.JsonObjects : TableShape.TomlObjects,
+                shape,
                 items,
                 keys.Select(key => new TableColumn(TableColumnKind.Key, key)).ToList());
         }
@@ -436,6 +471,12 @@ public sealed class TableModel
         {
             return new TableModel(
                 document, array, TableShape.TomlScalars, items, [new TableColumn(TableColumnKind.Value, "value")]);
+        }
+
+        if (items.All(item => item.Kind == NodeKind.YamlScalar))
+        {
+            return new TableModel(
+                document, array, TableShape.YamlScalars, items, [new TableColumn(TableColumnKind.Value, "value")]);
         }
 
         return null;
@@ -551,13 +592,22 @@ public sealed class TableModel
         return obj.Children.FirstOrDefault(child => child.Path.Steps[^1] is MemberStep step && step.Key == key);
     }
 
-    /// <summary>A cell of a row object: a JSON member or a TOML key. A nested object or array (or TOML table or array) shows its count.</summary>
+    /// <summary>
+    /// A cell of a row object: a JSON member, a TOML key or a YAML mapping member. A nested object or array (or TOML table or array, or YAML
+    /// mapping or sequence) shows its count. A YAML alias shows its name, as a read-only value (its part is the alias, which cannot be edited).
+    /// </summary>
     private TableCell ObjectCell(DocNode rowNode, TableColumn col)
     {
         DocNode? member = MemberNamed(rowNode, col.Name);
         if (member is null)
         {
             return new TableCell(null, null, true, false, string.Empty);
+        }
+
+        if (member.Kind == NodeKind.YamlAlias)
+        {
+            DocPart alias = member.Parts.First(part => part.Kind == PartKind.Alias);
+            return new TableCell(member, alias, false, false, alias.Value);
         }
 
         if (IsNestedMember(member))
@@ -673,6 +723,63 @@ public sealed class TableModel
         };
     }
 
+    /// <summary>
+    /// The YAML kind that a missing cell of a column is inserted with: the most common kind among the present scalar cells, with integers and
+    /// floats counted as Number. A tie, or no scalar cell, gives a string.
+    /// </summary>
+    /// <summary>True when every present cell of a YAML column is an alias (and at least one is present).</summary>
+    private bool HasOnlyAliases(int column)
+    {
+        bool any = false;
+        for (int r = 0; r < _rowNodes.Count; r++)
+        {
+            if (Cell(r, column).Node is { } node)
+            {
+                if (node.Kind != NodeKind.YamlAlias)
+                {
+                    return false;
+                }
+
+                any = true;
+            }
+        }
+
+        return any;
+    }
+
+    private YamlNewKind MostCommonYamlKind(int column)
+    {
+        var counts = new Dictionary<YamlNewKind, int>();
+        for (int r = 0; r < _rowNodes.Count; r++)
+        {
+            if (Cell(r, column).Node is { Kind: NodeKind.YamlScalar, YamlKind: { } kind })
+            {
+                YamlNewKind mapped = NewYamlKindOf(kind);
+                counts[mapped] = counts.GetValueOrDefault(mapped) + 1;
+            }
+        }
+
+        if (counts.Count == 0)
+        {
+            return YamlNewKind.String;
+        }
+
+        int max = counts.Values.Max();
+        var top = counts.Where(pair => pair.Value == max).ToList();
+        return top.Count == 1 ? top[0].Key : YamlNewKind.String;
+    }
+
+    private static YamlNewKind NewYamlKindOf(YamlValueKind kind)
+    {
+        return kind switch
+        {
+            YamlValueKind.Integer or YamlValueKind.Float => YamlNewKind.Number,
+            YamlValueKind.Boolean => YamlNewKind.Boolean,
+            YamlValueKind.Null => YamlNewKind.Null,
+            _ => YamlNewKind.String,
+        };
+    }
+
     private JsonValueKind MostCommonScalarKind(int column)
     {
         var counts = new Dictionary<JsonValueKind, int>();
@@ -774,16 +881,20 @@ public sealed class TableModel
 
     // ----- Shared helpers -----
 
-    /// <summary>A member that is a container: a JSON object or array, or a TOML table or array (inline, or a header or array of tables).</summary>
+    /// <summary>
+    /// A member that is a container: a JSON object or array, a TOML table or array (inline, or a header or array of tables), or a YAML
+    /// mapping or sequence.
+    /// </summary>
     private static bool IsNestedMember(DocNode member)
     {
-        return member.JsonKind is JsonValueKind.Object or JsonValueKind.Array || member.Kind is NodeKind.TomlTable or NodeKind.TomlArray;
+        return member.JsonKind is JsonValueKind.Object or JsonValueKind.Array
+            || member.Kind is NodeKind.TomlTable or NodeKind.TomlArray or NodeKind.YamlMapping or NodeKind.YamlSequence;
     }
 
-    /// <summary>An array container: a JSON array or a TOML array.</summary>
+    /// <summary>An array container: a JSON array, a TOML array or a YAML sequence.</summary>
     private static bool IsArrayNode(DocNode node)
     {
-        return node.JsonKind == JsonValueKind.Array || node.Kind == NodeKind.TomlArray;
+        return node.JsonKind == JsonValueKind.Array || node.Kind is NodeKind.TomlArray or NodeKind.YamlSequence;
     }
 
     private static bool IsScalar(JsonValueKind? kind)

@@ -1570,12 +1570,6 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        if (_controller.Document.Format is YamlFormat)
-        {
-            ShowMessage("the table editor is not available for YAML yet", error: false);
-            return;
-        }
-
         TableModel? model = TableModel.TryCreate(_controller.Document, node.Path);
         if (model is null)
         {
@@ -1596,9 +1590,9 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>Why a node is not a table, as the message of T says it: the list is empty, it is not a list of objects or values, or an element has no repeats.</summary>
     private static string RefusalOfTable(DocNode node)
     {
-        if (node.Kind is NodeKind.JsonArray or NodeKind.TomlArray)
+        if (node.Kind is NodeKind.JsonArray or NodeKind.TomlArray or NodeKind.YamlSequence)
         {
-            return node.Children.All(child => child.Kind is NodeKind.JsonComment or NodeKind.TomlComment)
+            return node.Children.All(child => child.Kind is NodeKind.JsonComment or NodeKind.TomlComment or NodeKind.YamlComment)
                 ? "the list is empty"
                 : "not a list of objects or values";
         }
