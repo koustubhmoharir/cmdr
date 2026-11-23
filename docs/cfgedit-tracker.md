@@ -167,7 +167,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
       (9de7ebd) Until the TUI item, `CfgeditHost.RefuseUnfinished` refuses YAML files, and `DocumentFile.InitialText`
       still returns `{}` for YAML: fix both then.
-- [ ] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
-      move, duplicate, change type; anchors/aliases rules; YAML logical edit.
+- [x] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
+      move, duplicate, change type; anchors/aliases rules; YAML logical edit. (3e895ac, 3051fba, 2c31467)
+- [ ] MoveBy can offer a move the planner then refuses (first key of a `- key:` item, a trailing comment); the TUI
+      shows the refusal. Consider having MoveBy skip those.
 - [ ] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, table editor, new file,
       `--format yaml`; user guide.
