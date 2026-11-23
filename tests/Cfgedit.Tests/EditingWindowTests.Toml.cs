@@ -13,8 +13,6 @@ namespace Cfgedit.Tests;
 /// </summary>
 public sealed partial class EditingWindowTests
 {
-    private const string NoTomlTable = "the table editor is not available for TOML yet";
-
     // ----- Rows and the cursor -----
 
     [Fact]
@@ -216,14 +214,14 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
-    public void T_says_the_table_editor_is_not_available_for_toml_and_changes_nothing()
+    public void T_on_a_TOML_value_that_is_no_table_says_why_and_changes_nothing()
     {
         OpenedFile file = Open("settings.toml", "a = 1\n");
 
         Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown, new Key('T')));
 
         Assert.Equal("a = 1\n", Text(session));
-        Assert.Equal(NoTomlTable, session.Screens[^1].Text(22));
+        Assert.Equal("no table here: not a list of objects or values", session.Screens[^1].Text(MessageRow));
     }
 
     // ----- New file -----

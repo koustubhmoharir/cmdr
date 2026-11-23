@@ -5,7 +5,7 @@ namespace Cfgedit.Core.Model;
 /// <summary>The kinds of table column.</summary>
 public enum TableColumnKind
 {
-    /// <summary>A JSON member key of the row objects.</summary>
+    /// <summary>A member key of the row objects: a JSON member or a TOML key.</summary>
     Key,
 
     /// <summary>The value of each item of an array of scalars.</summary>
@@ -22,7 +22,7 @@ public enum TableColumnKind
 }
 
 /// <summary>
-/// A column of a table. <see cref="Name"/> is the JSON key, the attribute or child element name, "value" for an array of
+/// A column of a table. <see cref="Name"/> is the JSON or TOML key, the attribute or child element name, "value" for an array of
 /// scalars, or "text" for the text column.
 /// </summary>
 public sealed record TableColumn(TableColumnKind Kind, string Name);
@@ -36,7 +36,7 @@ public sealed record TableColumn(TableColumnKind Kind, string Name);
 public sealed record TableCell(DocNode? Node, DocPart? Part, bool IsMissing, bool IsNested, string Display);
 
 /// <summary>
-/// A table view of an array of objects, an array of scalars, or an XML element's same-named child elements. The model is built
+/// A table view of an array of objects, an array of scalars (JSON or TOML), or an XML element's same-named child elements. The model is built
 /// from a <see cref="ConfigDocument"/> and never changes it: each edit method returns the <see cref="EditOp"/> that would make the
 /// change, and the caller applies it.
 /// </summary>
@@ -64,6 +64,8 @@ public sealed class TableModel
     {
         JsonObjects,
         JsonScalars,
+        TomlObjects,
+        TomlScalars,
         XmlElements,
     }
 
@@ -81,7 +83,8 @@ public sealed class TableModel
 
     /// <summary>
     /// Builds the table for a node, or returns null when the node is not a table. The node may be the container or one of its rows.
-    /// A JSON array is a table when its items (ignoring comments) are all objects, or all scalars, with at least one item. An XML
+    /// A JSON array is a table when its items (ignoring comments) are all objects, or all scalars, with at least one item. A TOML array
+    /// (an array of tables, or an inline array) is a table by the same rule, its items being tables or scalars. An XML
     /// element is a table when it has at least two child elements of the same name. For a row, the rows are its siblings of its name.
     /// For a container, the name is the one with the most elements, ties going to the name seen first.
     /// </summary>
@@ -98,14 +101,15 @@ public sealed class TableModel
             return null;
         }
 
-        if (target.Kind == NodeKind.JsonArray)
+        if (target.Kind is NodeKind.JsonArray or NodeKind.TomlArray)
         {
-            return JsonTable(document, target);
+            return ArrayTable(document, target);
         }
 
-        if ((target.Kind == NodeKind.JsonObject || target.Kind == NodeKind.JsonScalar) && target.Parent?.Kind == NodeKind.JsonArray)
+        if ((target.Kind is NodeKind.JsonObject or NodeKind.JsonScalar or NodeKind.TomlTable or NodeKind.TomlScalar)
+            && target.Parent?.Kind is NodeKind.JsonArray or NodeKind.TomlArray)
         {
-            return JsonTable(document, target.Parent);
+            return ArrayTable(document, target.Parent);
         }
 
         if (target.Kind == NodeKind.XmlElement)
@@ -135,12 +139,14 @@ public sealed class TableModel
         switch (_shape)
         {
             case TableShape.JsonScalars:
+            case TableShape.TomlScalars:
             {
                 DocPart value = ValuePart(rowNode);
                 return new TableCell(rowNode, value, false, false, value.Value);
             }
             case TableShape.JsonObjects:
-                return JsonCell(rowNode, col);
+            case TableShape.TomlObjects:
+                return ObjectCell(rowNode, col);
             default:
                 return XmlCell(rowNode, col);
         }
@@ -150,7 +156,9 @@ public sealed class TableModel
     /// The edit that sets a cell. An existing part is set. A missing JSON member is inserted into the row object, a missing
     /// attribute is inserted into the row element, and a missing child element is inserted among the row's children in column order.
     /// A missing JSON cell takes the column's most common scalar kind (String on a tie or when there is none); the value text is
-    /// ignored for True, False and Null. The text column of a row that is <c>&lt;a/&gt;</c> gets its text.
+    /// ignored for True, False and Null. A missing TOML cell takes the column's most common TOML kind, with the typed text as its value:
+    /// the four date-time forms count as one kind, and a tie or no scalar cell gives a string. The text column of a row that is
+    /// <c>&lt;a/&gt;</c> gets its text.
     /// </summary>
     /// <param name="row">The row index.</param>
     /// <param name="column">The column index.</param>
@@ -181,10 +189,12 @@ public sealed class TableModel
 
         switch (col.Kind)
         {
+            case TableColumnKind.Key when _shape == TableShape.TomlObjects:
+                return InsertMember(row, column, new NewTomlValue(col.Name, MostCommonTomlKind(column), value));
             case TableColumnKind.Key:
             {
                 JsonValueKind kind = MostCommonScalarKind(column);
-                return InsertMember(row, column, kind, kind is JsonValueKind.String or JsonValueKind.Number ? value : null);
+                return InsertMember(row, column, new NewJsonValue(col.Name, kind, kind is JsonValueKind.String or JsonValueKind.Number ? value : null));
             }
             case TableColumnKind.Attribute:
                 return InsertAttribute(rowNode, column, value);
@@ -242,6 +252,11 @@ public sealed class TableModel
             throw new CfgeditException("an XML cell has no type; set its text instead");
         }
 
+        if (_shape is TableShape.TomlObjects or TableShape.TomlScalars)
+        {
+            throw new CfgeditException("a TOML value's type is changed in the tree, not in the table");
+        }
+
         TableCell cell = Cell(row, column);
         if (cell.IsNested)
         {
@@ -252,7 +267,7 @@ public sealed class TableModel
         string? text = takesText ? value ?? string.Empty : null;
         if (cell.IsMissing)
         {
-            return InsertMember(row, column, kind, text);
+            return InsertMember(row, column, new NewJsonValue(Columns[column].Name, kind, text));
         }
 
         DocNode typed = _shape == TableShape.JsonScalars ? _rowNodes[row] : cell.Node!;
@@ -281,7 +296,7 @@ public sealed class TableModel
     {
         CheckRow(row);
         CheckColumn(column);
-        if (_shape == TableShape.JsonScalars)
+        if (_shape is TableShape.JsonScalars or TableShape.TomlScalars)
         {
             throw new CfgeditException("an array value cannot be cleared; delete its row instead");
         }
@@ -378,15 +393,17 @@ public sealed class TableModel
 
     // ----- Building -----
 
-    private static TableModel? JsonTable(ConfigDocument document, DocNode array)
+    private static TableModel? ArrayTable(ConfigDocument document, DocNode array)
     {
-        List<DocNode> items = array.Children.Where(child => child.Kind != NodeKind.JsonComment).ToList();
+        List<DocNode> items = array.Children.Where(child => child.Kind is not (NodeKind.JsonComment or NodeKind.TomlComment)).ToList();
         if (items.Count == 0)
         {
             return null;
         }
 
-        if (items.All(item => item.JsonKind == JsonValueKind.Object))
+        bool json = items.All(item => item.JsonKind == JsonValueKind.Object);
+        bool toml = !json && items.All(item => item.Kind == NodeKind.TomlTable);
+        if (json || toml)
         {
             var keys = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -402,13 +419,23 @@ public sealed class TableModel
             }
 
             return new TableModel(
-                document, array, TableShape.JsonObjects, items, keys.Select(key => new TableColumn(TableColumnKind.Key, key)).ToList());
+                document,
+                array,
+                json ? TableShape.JsonObjects : TableShape.TomlObjects,
+                items,
+                keys.Select(key => new TableColumn(TableColumnKind.Key, key)).ToList());
         }
 
         if (items.All(item => IsScalar(item.JsonKind)))
         {
             return new TableModel(
                 document, array, TableShape.JsonScalars, items, [new TableColumn(TableColumnKind.Value, "value")]);
+        }
+
+        if (items.All(item => item.Kind == NodeKind.TomlScalar))
+        {
+            return new TableModel(
+                document, array, TableShape.TomlScalars, items, [new TableColumn(TableColumnKind.Value, "value")]);
         }
 
         return null;
@@ -519,23 +546,24 @@ public sealed class TableModel
 
     // ----- Cells -----
 
-    private DocNode? JsonMember(DocNode obj, string key)
+    private static DocNode? MemberNamed(DocNode obj, string key)
     {
         return obj.Children.FirstOrDefault(child => child.Path.Steps[^1] is MemberStep step && step.Key == key);
     }
 
-    private TableCell JsonCell(DocNode rowNode, TableColumn col)
+    /// <summary>A cell of a row object: a JSON member or a TOML key. A nested object or array (or TOML table or array) shows its count.</summary>
+    private TableCell ObjectCell(DocNode rowNode, TableColumn col)
     {
-        DocNode? member = JsonMember(rowNode, col.Name);
+        DocNode? member = MemberNamed(rowNode, col.Name);
         if (member is null)
         {
             return new TableCell(null, null, true, false, string.Empty);
         }
 
-        if (member.JsonKind is JsonValueKind.Object or JsonValueKind.Array)
+        if (IsNestedMember(member))
         {
             string count = member.Parts.First(part => part.Kind == PartKind.Summary).Value;
-            string display = member.JsonKind == JsonValueKind.Object ? "{" + count + "}" : "[" + count + "]";
+            string display = IsArrayNode(member) ? "[" + count + "]" : "{" + count + "}";
             return new TableCell(member, null, false, true, display);
         }
 
@@ -590,20 +618,59 @@ public sealed class TableModel
 
     // ----- Edit helpers -----
 
-    private EditOp InsertMember(int row, int column, JsonValueKind kind, string? text)
+    /// <summary>Inserts a member into a row, before the first member of a later column, else at the end.</summary>
+    private EditOp InsertMember(int row, int column, NewNode member)
     {
         DocNode rowNode = _rowNodes[row];
         int index = rowNode.Children.Count;
         foreach (DocNode child in rowNode.Children)
         {
-            if (child.Path.Steps[^1] is MemberStep member && ColumnIndex(TableColumnKind.Key, member.Key) > column)
+            if (child.Path.Steps[^1] is MemberStep step && ColumnIndex(TableColumnKind.Key, step.Key) > column)
             {
                 index = Document.InsertionIndexBefore(child.Path);
                 break;
             }
         }
 
-        return new InsertNode(rowNode.Path, index, new NewJsonValue(Columns[column].Name, kind, text));
+        return new InsertNode(rowNode.Path, index, member);
+    }
+
+    /// <summary>
+    /// The TOML kind that a missing cell of a column is inserted with: the most common kind among the present scalar cells, with the
+    /// four date-time forms counted as one kind (DateTime). A tie, or no scalar cell, gives a string.
+    /// </summary>
+    private TomlNewKind MostCommonTomlKind(int column)
+    {
+        var counts = new Dictionary<TomlNewKind, int>();
+        for (int r = 0; r < _rowNodes.Count; r++)
+        {
+            if (Cell(r, column).Node?.TomlKind is { } kind)
+            {
+                TomlNewKind mapped = NewKindOf(kind);
+                counts[mapped] = counts.GetValueOrDefault(mapped) + 1;
+            }
+        }
+
+        if (counts.Count == 0)
+        {
+            return TomlNewKind.String;
+        }
+
+        int max = counts.Values.Max();
+        var top = counts.Where(pair => pair.Value == max).ToList();
+        return top.Count == 1 ? top[0].Key : TomlNewKind.String;
+    }
+
+    private static TomlNewKind NewKindOf(TomlValueKind kind)
+    {
+        return kind switch
+        {
+            TomlValueKind.String => TomlNewKind.String,
+            TomlValueKind.Integer => TomlNewKind.Integer,
+            TomlValueKind.Float => TomlNewKind.Float,
+            TomlValueKind.Boolean => TomlNewKind.Boolean,
+            _ => TomlNewKind.DateTime,
+        };
     }
 
     private JsonValueKind MostCommonScalarKind(int column)
@@ -706,6 +773,18 @@ public sealed class TableModel
     }
 
     // ----- Shared helpers -----
+
+    /// <summary>A member that is a container: a JSON object or array, or a TOML table or array (inline, or a header or array of tables).</summary>
+    private static bool IsNestedMember(DocNode member)
+    {
+        return member.JsonKind is JsonValueKind.Object or JsonValueKind.Array || member.Kind is NodeKind.TomlTable or NodeKind.TomlArray;
+    }
+
+    /// <summary>An array container: a JSON array or a TOML array.</summary>
+    private static bool IsArrayNode(DocNode node)
+    {
+        return node.JsonKind == JsonValueKind.Array || node.Kind == NodeKind.TomlArray;
+    }
 
     private static bool IsScalar(JsonValueKind? kind)
     {

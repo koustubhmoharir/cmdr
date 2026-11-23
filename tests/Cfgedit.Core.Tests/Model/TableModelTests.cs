@@ -1091,5 +1091,346 @@ public sealed class TableModelTests
             after);
     }
 
+    // ----- TOML -----
+
+    private const string TwoItems = "[[items]]\nname = \"web\"\nport = 8080\n[[items]]\nname = \"db\"\ntags = \"x\"\n";
+
+    private const string TwoPoints = "points = [{x = 1, y = 2}, {x = 3}]\n";
+
+    private static ConfigDocument ParseToml(string text) => ModelTestSupport.Parse(text, EditTestSupport.Toml);
+
+    private static NodePath ArrayAt(string key) => At(Item(0), Member(key));
+
+    private static NodePath TomlItem(string key, int index) => At(Item(0), Member(key), Item(index));
+
+    // ----- TryCreate: TOML -----
+
+    [Fact]
+    public void An_array_of_tables_is_a_table_whose_rows_are_its_items()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(ArrayAt("items"), table.Container);
+        Assert.Equal(new[] { TomlItem("items", 0), TomlItem("items", 1) }, table.Rows);
+    }
+
+    [Fact]
+    public void A_row_of_an_array_of_tables_gives_the_array_as_the_container()
+    {
+        TableModel table = Table(ParseToml(TwoItems), TomlItem("items", 1));
+
+        Assert.Equal(ArrayAt("items"), table.Container);
+        Assert.Equal(2, table.Rows.Count);
+    }
+
+    [Fact]
+    public void An_inline_array_of_inline_tables_is_a_table_and_its_comments_are_not_rows()
+    {
+        const string text = "points = [\n  # first\n  {x = 1},\n  {x = 2}, # second\n]\n";
+
+        TableModel table = Table(ParseToml(text), TomlItem("points", 1));
+
+        Assert.Equal(ArrayAt("points"), table.Container);
+        Assert.Equal(new[] { TomlItem("points", 0), TomlItem("points", 1) }, table.Rows);
+    }
+
+    [Fact]
+    public void An_inline_array_of_scalars_is_a_table_with_one_value_column()
+    {
+        TableModel table = Table(ParseToml("nums = [10, \"x\", true]\n"), TomlItem("nums", 2));
+
+        Assert.Equal(ArrayAt("nums"), table.Container);
+        Assert.Equal(new[] { new TableColumn(TableColumnKind.Value, "value") }, table.Columns);
+        Assert.Equal(3, table.Rows.Count);
+    }
+
+    [Theory]
+    [InlineData("a = [{x = 1}, 2]\n")]
+    [InlineData("a = [[1], [2]]\n")]
+    [InlineData("a = []\n")]
+    [InlineData("a = [{x = 1}, [2]]\n")]
+    public void A_TOML_array_that_is_not_a_table_gives_null(string text)
+    {
+        Assert.Null(TableModel.TryCreate(ParseToml(text), ArrayAt("a")));
+    }
+
+    [Fact]
+    public void A_TOML_table_member_is_not_a_table()
+    {
+        Assert.Null(TableModel.TryCreate(ParseToml("[t]\nx = 1\n"), ArrayAt("t")));
+    }
+
+    // ----- Columns and cells: TOML -----
+
+    [Fact]
+    public void TOML_columns_are_the_union_of_the_keys_in_first_seen_order()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(
+            new[] { new TableColumn(TableColumnKind.Key, "name"), new TableColumn(TableColumnKind.Key, "port"), new TableColumn(TableColumnKind.Key, "tags") },
+            table.Columns);
+        Assert.Equal("web", table.Cell(0, 0).Display);
+        Assert.Equal("8080", table.Cell(0, 1).Display);
+        Assert.Equal("x", table.Cell(1, 2).Display);
+    }
+
+    [Fact]
+    public void A_TOML_key_absent_from_a_row_is_a_missing_cell()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        TableCell missing = table.Cell(0, 2);
+        Assert.True(missing.IsMissing);
+        Assert.Null(missing.Node);
+        Assert.Equal(string.Empty, missing.Display);
+        Assert.True(table.Cell(1, 1).IsMissing);
+    }
+
+    [Fact]
+    public void A_TOML_subtable_and_array_are_nested_cells_that_show_their_counts()
+    {
+        const string text = "[[items]]\nname = \"a\"\nlist = [1, 2]\n[items.meta]\nx = 1\ny = 2\n";
+        TableModel table = Table(ParseToml(text), ArrayAt("items"));
+
+        Assert.Equal(
+            new[]
+            {
+                new TableColumn(TableColumnKind.Key, "name"), new TableColumn(TableColumnKind.Key, "list"),
+                new TableColumn(TableColumnKind.Key, "meta"),
+            },
+            table.Columns);
+        Assert.True(table.Cell(0, 1).IsNested);
+        Assert.Null(table.Cell(0, 1).Part);
+        Assert.Equal("[2]", table.Cell(0, 1).Display);
+        Assert.Equal("{2}", table.Cell(0, 2).Display);
+    }
+
+    [Fact]
+    public void Inline_table_members_are_cells_and_an_absent_one_is_missing()
+    {
+        TableModel table = Table(ParseToml(TwoPoints), ArrayAt("points"));
+
+        Assert.Equal("1", table.Cell(0, 0).Display);
+        Assert.True(table.Cell(1, 1).IsMissing);
+    }
+
+    [Fact]
+    public void Scalar_array_cells_are_the_items_themselves()
+    {
+        TableModel table = Table(ParseToml("nums = [10, \"x\", true]\n"), ArrayAt("nums"));
+
+        Assert.Equal("10", table.Cell(0, 0).Display);
+        Assert.Equal(TomlItem("nums", 0), table.Cell(0, 0).Node!.Path);
+        Assert.Equal("x", table.Cell(1, 0).Display);
+        Assert.Equal("true", table.Cell(2, 0).Display);
+    }
+
+    [Fact]
+    public void A_TOML_cell_has_its_kind_for_the_editor_and_its_value_part()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(TomlValueKind.Integer, table.Cell(0, 1).Node!.TomlKind);
+        Assert.Equal(PartKind.Value, table.Cell(0, 1).Part!.Kind);
+    }
+
+    // ----- Edits: TOML -----
+
+    [Fact]
+    public void Setting_a_TOML_cell_sets_its_value_part()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        EditOp op = table.EditCell(0, 0, "Web");
+
+        Assert.IsType<SetPart>(op);
+        Assert.Equal("[[items]]\nname = \"Web\"\nport = 8080\n[[items]]\nname = \"db\"\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void Setting_a_TOML_integer_cell_writes_the_number()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        EditOp op = table.EditCell(0, 1, "9000");
+
+        Assert.Equal("[[items]]\nname = \"web\"\nport = 9000\n[[items]]\nname = \"db\"\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void A_missing_TOML_cell_gets_the_most_common_kind_of_its_column_with_the_typed_text()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        EditOp op = table.EditCell(1, 1, "5432");
+
+        Assert.Equal(new InsertNode(TomlItem("items", 1), 1, new NewTomlValue("port", TomlNewKind.Integer, "5432")), op);
+        Assert.Equal("[[items]]\nname = \"web\"\nport = 8080\n[[items]]\nname = \"db\"\nport = 5432\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void A_missing_TOML_string_cell_is_inserted_as_a_string_at_the_end_of_its_row()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        EditOp op = table.EditCell(0, 2, "t");
+
+        Assert.Equal(new InsertNode(TomlItem("items", 0), 2, new NewTomlValue("tags", TomlNewKind.String, "t")), op);
+        Assert.Equal("[[items]]\nname = \"web\"\nport = 8080\ntags = \"t\"\n[[items]]\nname = \"db\"\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void Date_time_forms_count_as_one_kind_for_a_missing_cell()
+    {
+        // Offset (1), integer (1) and local date (1): a tie if the four date-time forms were counted apart, a date-time once they are one kind.
+        const string text = "[[e]]\nat = 1979-05-27T07:32:00Z\n[[e]]\nat = 3\n[[e]]\nat = 1979-05-28\n[[e]]\n";
+        TableModel table = Table(ParseToml(text), ArrayAt("e"));
+
+        EditOp op = table.EditCell(3, 0, "1979-06-01");
+
+        Assert.Equal(new InsertNode(TomlItem("e", 3), 0, new NewTomlValue("at", TomlNewKind.DateTime, "1979-06-01")), op);
+        Assert.Equal(text + "at = 1979-06-01\n", Edit(text, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void A_missing_TOML_cell_refuses_text_that_its_kind_does_not_take()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        CfgeditException error = Fails(TwoItems, EditTestSupport.Toml, table.EditCell(1, 1, "x"));
+
+        Assert.Contains("'x' is not a valid integer", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_typed_edit_by_kind_is_refused_for_TOML_because_its_type_is_changed_in_the_tree()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Throws<CfgeditException>(() => table.EditCell(0, 1, JsonValueKind.Number, "1"));
+    }
+
+    [Fact]
+    public void Clearing_a_TOML_cell_deletes_its_key()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        EditOp? op = table.ClearCell(0, 1);
+
+        Assert.IsType<DeleteNode>(op);
+        Assert.Equal("[[items]]\nname = \"web\"\n[[items]]\nname = \"db\"\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void Clearing_a_missing_or_nested_TOML_cell()
+    {
+        const string text = "[[items]]\nname = \"a\"\nlist = [1, 2]\n[items.meta]\nx = 1\n[[items]]\nname = \"b\"\n";
+        TableModel table = Table(ParseToml(text), ArrayAt("items"));
+
+        Assert.Null(table.ClearCell(1, 1));
+        Assert.Throws<CfgeditException>(() => table.ClearCell(0, 1));
+    }
+
+    [Fact]
+    public void Adding_a_row_after_copies_the_shape_of_the_row_with_empty_values()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        CompositeEdit op = table.AddRow(0);
+
+        Assert.Equal(
+            "[[items]]\nname = \"web\"\nport = 8080\n[[items]]\nname = \"\"\nport = 0\n[[items]]\nname = \"db\"\ntags = \"x\"\n",
+            Edit(TwoItems, EditTestSupport.Toml, op));
+    }
+
+    [Fact]
+    public void Adding_a_row_before_the_first_copies_its_shape()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(
+            "[[items]]\nname = \"\"\nport = 0\n[[items]]\nname = \"web\"\nport = 8080\n[[items]]\nname = \"db\"\ntags = \"x\"\n",
+            Edit(TwoItems, EditTestSupport.Toml, table.AddRow(-1)));
+    }
+
+    [Fact]
+    public void Adding_a_row_after_the_last_copies_the_last_row_at_the_end()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(
+            TwoItems + "[[items]]\nname = \"\"\ntags = \"\"\n",
+            Edit(TwoItems, EditTestSupport.Toml, table.AddRow(1)));
+    }
+
+    [Fact]
+    public void Deleting_a_row_deletes_the_array_of_tables_item()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal("[[items]]\nname = \"db\"\ntags = \"x\"\n", Edit(TwoItems, EditTestSupport.Toml, table.DeleteRow(0)));
+    }
+
+    [Fact]
+    public void Moving_a_row_moves_the_array_of_tables_item()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Equal(
+            "[[items]]\nname = \"db\"\ntags = \"x\"\n[[items]]\nname = \"web\"\nport = 8080\n",
+            Edit(TwoItems, EditTestSupport.Toml, table.MoveRow(0, 1)));
+    }
+
+    [Fact]
+    public void Editing_an_inline_table_cell_sets_it_and_a_missing_one_is_inserted_in_the_column_order()
+    {
+        TableModel table = Table(ParseToml(TwoPoints), ArrayAt("points"));
+
+        Assert.Equal("points = [{x = 5, y = 2}, {x = 3}]\n", Edit(TwoPoints, EditTestSupport.Toml, table.EditCell(0, 0, "5")));
+        Assert.Equal("points = [{x = 1, y = 2}, {x = 3, y = 4}]\n", Edit(TwoPoints, EditTestSupport.Toml, table.EditCell(1, 1, "4")));
+    }
+
+    [Fact]
+    public void Adding_a_row_of_an_inline_array_of_inline_tables_copies_the_shape_inline()
+    {
+        TableModel table = Table(ParseToml(TwoPoints), ArrayAt("points"));
+
+        Assert.Equal("points = [{x = 1, y = 2}, {x = 0, y = 0}, {x = 3}]\n", Edit(TwoPoints, EditTestSupport.Toml, table.AddRow(0)));
+    }
+
+    [Fact]
+    public void Deleting_and_moving_inline_table_rows()
+    {
+        TableModel table = Table(ParseToml(TwoPoints), ArrayAt("points"));
+
+        Assert.Equal("points = [{x = 1, y = 2}]\n", Edit(TwoPoints, EditTestSupport.Toml, table.DeleteRow(1)));
+        Assert.Equal("points = [{x = 3}, {x = 1, y = 2}]\n", Edit(TwoPoints, EditTestSupport.Toml, table.MoveRow(0, 1)));
+    }
+
+    [Fact]
+    public void Scalar_array_rows_are_set_added_moved_and_deleted_and_cannot_be_cleared()
+    {
+        const string text = "nums = [10, 20, 30]\n";
+        TableModel table = Table(ParseToml(text), ArrayAt("nums"));
+
+        EditOp set = table.EditCell(1, 0, "25");
+        Assert.IsType<SetPart>(set);
+        Assert.Equal("nums = [10, 25, 30]\n", Edit(text, EditTestSupport.Toml, set));
+        Assert.Equal("nums = [10, 0, 20, 30]\n", Edit(text, EditTestSupport.Toml, table.AddRow(0)));
+        Assert.Equal("nums = [20, 30, 10]\n", Edit(text, EditTestSupport.Toml, table.MoveRow(0, 2)));
+        Assert.Equal("nums = [10, 30]\n", Edit(text, EditTestSupport.Toml, table.DeleteRow(1)));
+        Assert.Throws<CfgeditException>(() => table.ClearCell(0, 0));
+    }
+
+    [Fact]
+    public void A_TOML_row_outside_the_table_is_refused()
+    {
+        TableModel table = Table(ParseToml(TwoItems), ArrayAt("items"));
+
+        Assert.Throws<CfgeditException>(() => table.DeleteRow(2));
+        Assert.Throws<CfgeditException>(() => table.EditCell(2, 0, "x"));
+    }
+
     private static ConfigDocument ParseJsonc(string text) => ModelTestSupport.Parse(text, Jsonc);
 }

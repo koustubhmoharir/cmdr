@@ -355,7 +355,7 @@ internal sealed class TableView : View
 
     /// <summary>
     /// The text a cell shows, before it is cut to its column, and the style it is drawn in. A missing cell is a dim middle dot, a nested
-    /// cell its display, an empty JSON string a dim <c>""</c>, and any other value its logical value.
+    /// cell its display, an empty string (JSON or TOML) a dim <c>""</c>, and any other value its logical value.
     /// </summary>
     private static (string Text, StyleKind Style) ShownOf(TableCell cell)
     {
@@ -374,7 +374,7 @@ internal sealed class TableView : View
             return (string.Empty, StyleKind.Text);
         }
 
-        if (cell.Node?.JsonKind == JsonValueKind.String && cell.Part.Value.Length == 0)
+        if ((cell.Node?.JsonKind == JsonValueKind.String || cell.Node?.TomlKind == TomlValueKind.String) && cell.Part.Value.Length == 0)
         {
             return ("\"\"", StyleKind.Punctuation);
         }
@@ -388,6 +388,18 @@ internal sealed class TableView : View
         if (cell.Part!.Kind == PartKind.AttributeValue)
         {
             return StyleKind.AttributeValue;
+        }
+
+        if (cell.Node?.TomlKind is { } tomlKind)
+        {
+            return tomlKind switch
+            {
+                TomlValueKind.String => StyleKind.String,
+                TomlValueKind.Boolean => StyleKind.Bool,
+                TomlValueKind.Integer or TomlValueKind.Float or TomlValueKind.OffsetDateTime or TomlValueKind.LocalDateTime
+                    or TomlValueKind.LocalDate or TomlValueKind.LocalTime => StyleKind.Number,
+                _ => StyleKind.Text,
+            };
         }
 
         return cell.Node?.JsonKind switch

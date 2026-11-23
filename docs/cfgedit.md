@@ -111,9 +111,11 @@ unsaved changes asks whether to save, discard or cancel; the default is Save.
 
 ## Table editor
 
-`T` on a list shows it as a table: a JSON array whose items are all objects (one column per key) or all plain values, or
-an XML element with repeated child elements of the same name (one column per attribute, per single text-only child
-element, and for the text). Esc returns to the tree.
+`T` on a list shows it as a table: a JSON array whose items are all objects (one column per key) or all plain values, a TOML
+array of tables (`[[items]]`) or inline array whose items are all inline tables or all plain values, or an XML element
+with repeated child elements of the same name (one column per attribute, per single text-only child element, and for the
+text). In TOML, the rows are the items, and the columns are their keys in the order they first appear; a subtable or an
+array in a cell shows its count, `{n}` or `[n]`. Esc returns to the tree.
 
 | Key | |
 |---|---|
@@ -172,7 +174,9 @@ their value as JSON scalars do (strings without quotes), and the detail line nam
   change type: delete it instead.
 - **Deleting** a table deletes every piece that defines it, its subtables included. Alt+Up/Down moves a key/value, an item or
   a sibling header section; a move is refused when the units are not next to each other.
-- **Tables:** `T` has no table editor for TOML yet, and says so.
+- **Tables:** `T` on an array of tables, or on an inline array of inline tables or of plain values, opens it as a table
+  (see Table editor). A table cell is edited like a value, and a missing cell is added with the most common kind of its
+  column. `a`, `i`, `d` and Alt+Up/Down add, delete and move rows as they do in JSON.
 - **Text mode:** a file that is not valid TOML 1.0 opens in text mode at the error. Two valid constructs that the second
   parser (Tomlyn) misreads are refused with a message and open in text mode: a `[x.sub]` header, or a new `[[x]]` item,
   when another table follows an array of tables `[[x]]`.
