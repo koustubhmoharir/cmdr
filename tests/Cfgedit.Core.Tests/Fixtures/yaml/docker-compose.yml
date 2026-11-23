@@ -1,0 +1,44 @@
+version: "3.9"
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  web:
+    image: example/web:1.4
+    build:
+      context: ./web
+      args:
+        - NODE_ENV=production
+    ports:
+      - "8080:80"   # http
+      - 8443:443
+    environment:
+      DATABASE_URL: postgres://db:5432/app
+      LOG_LEVEL: info
+    depends_on: [db, cache]
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+
+  db:
+    image: postgres:16
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: >-
+        placeholder-not-a-secret
+
+  cache:
+    image: redis:7
+    command: >
+      redis-server
+      --appendonly yes
+    logging: *default-logging
+
+volumes:
+  db-data: {}

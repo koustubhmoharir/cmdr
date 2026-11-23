@@ -1,0 +1,20 @@
+Defaults: &defaults
+  Logging:
+    LogLevel:
+      Default: Information
+      Microsoft: Warning
+  AllowedHosts: "*"
+
+Development:
+  <<: *defaults
+  Logging:
+    LogLevel:
+      Default: Debug
+
+Production:
+  <<: [*defaults]
+  ConnectionStrings:
+    Main: "Server=db;Database=app"
+  Retries: 3
+  Ratio: 0.75
+  Enabled: yes

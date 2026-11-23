@@ -1,0 +1,7 @@
+name: crlf
+items:
+  - one
+  - "two"
+notes: |
+  first line
+  second line
