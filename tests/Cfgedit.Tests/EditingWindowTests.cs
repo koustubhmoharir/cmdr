@@ -659,6 +659,140 @@ public sealed partial class EditingWindowTests : IDisposable
         Assert.Equal(JsonText, Text(session));
     }
 
+    [Fact]
+    public void Ctrl_Enter_with_the_text_area_focused_commits_the_text()
+    {
+        Session session = PressInMultiLine(Key.Enter.WithCtrl);
+
+        Assert.Equal("{\n  \"name\": \"a\\nb\",\n  \"port\": 8080\n}", Text(session));
+    }
+
+    [Fact]
+    public void F2_with_the_text_area_focused_commits_the_text()
+    {
+        Session session = PressInMultiLine(Key.F2);
+
+        Assert.Equal("{\n  \"name\": \"a\\nb\",\n  \"port\": 8080\n}", Text(session));
+    }
+
+    [Fact]
+    public void Esc_with_the_text_area_focused_cancels_and_leaves_the_value()
+    {
+        Session session = PressInMultiLine(Key.Esc);
+
+        Assert.Equal(JsonText, Text(session));
+    }
+
+    [Fact]
+    public void Enter_in_the_multi_line_editor_adds_a_line_feed_and_does_not_commit()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+        string? typed = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the multi-line editor",
+                    v => v is MultilineEditor,
+                    v =>
+                    {
+                        var editor = (MultilineEditor)v;
+                        editor.Area.Text = "a";
+                        editor.Area.CaretOffset = 1;
+                        editor.Area.SetFocus();
+                        app.Keyboard.RaiseKeyDownEvent(Key.Enter);
+                        typed = editor.Area.Text;
+                    },
+                    "Cancel");
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter.WithCtrl);
+                dialog.Finish();
+            });
+
+        Assert.Equal("a\n", typed);
+        Assert.Equal(JsonText, Text(session));
+    }
+
+    [Fact]
+    public void Tab_in_the_multi_line_editor_moves_the_focus_to_the_buttons_and_adds_no_tab()
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+        bool areaFocused = true;
+        bool buttonFocused = false;
+        string? text = null;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the multi-line editor",
+                    v => v is MultilineEditor,
+                    v =>
+                    {
+                        var editor = (MultilineEditor)v;
+                        editor.Area.Text = "a";
+                        editor.Area.SetFocus();
+                        app.Keyboard.RaiseKeyDownEvent(Key.Tab);
+                        areaFocused = editor.Area.HasFocus;
+                        buttonFocused = ButtonsOf(v).Any(button => button.HasFocus);
+                        text = editor.Area.Text;
+                    },
+                    "Cancel");
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter.WithCtrl);
+                dialog.Finish();
+            });
+
+        Assert.False(areaFocused);
+        Assert.True(buttonFocused);
+        Assert.Equal("a", text);
+        Assert.Equal(JsonText, Text(session));
+    }
+
+    /// <summary>
+    /// Opens the multi-line editor on the name, sets its text to "a" and "b" on two lines, focuses the text area, and presses the key
+    /// through the application, so that the key reaches the focused view first. The key itself must close the editor.
+    /// </summary>
+    private Session PressInMultiLine(Key key)
+    {
+        OpenedFile file = Open("settings.json", JsonText);
+
+        return Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var dialog = new DialogWatch(
+                    app,
+                    "the multi-line editor",
+                    v => v is MultilineEditor,
+                    v =>
+                    {
+                        var editor = (MultilineEditor)v;
+                        editor.Area.Text = "a\nb";
+                        editor.Area.SetFocus();
+                        app.Keyboard.RaiseKeyDownEvent(key);
+                    },
+                    button: null);
+                Keys(w, Key.CursorDown, Key.CursorRight, Key.Enter.WithCtrl);
+                dialog.Finish();
+            });
+    }
+
     // ----- Undo and redo -----
 
     [Fact]

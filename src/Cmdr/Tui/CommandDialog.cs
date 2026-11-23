@@ -2,15 +2,12 @@ using System.Collections.ObjectModel;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Shared.Processes;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using static Cmdr.Tui.DialogControls;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0 in favour of an editor package that is not in use here. It is still
-// the multi-line text control of this version, and the dialogs need one for description, args and env.
-#pragma warning disable CS0618
 
 namespace Cmdr.Tui;
 
@@ -44,11 +41,11 @@ internal sealed class CommandDialog : Dialog<bool>
 
     private readonly DropDownList _group;
     private readonly TextField _name;
-    private readonly TextView _description;
+    private readonly TextArea _description;
     private readonly TextField _program;
-    private readonly TextView _args;
+    private readonly TextArea _args;
     private readonly TextField _cwd;
-    private readonly TextView _env;
+    private readonly TextArea _env;
     private readonly OptionSelector<StopMethod> _method;
     private readonly TextField _stopInput;
     private readonly CheckBox _logEnabled;

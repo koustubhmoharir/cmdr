@@ -1,10 +1,8 @@
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0; cmdr's dialogs use it for their multi-line fields (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cfgedit.Tui;
 
@@ -16,7 +14,7 @@ namespace Cfgedit.Tui;
 internal sealed class MultilineEditor : Dialog<bool>
 {
     private readonly IApplication _app;
-    private readonly TextView _area;
+    private readonly TextArea _area;
     private readonly Label _error;
     private readonly Func<string, string?> _apply;
 
@@ -31,14 +29,14 @@ internal sealed class MultilineEditor : Dialog<bool>
         Width = Dim.Func(_ => Math.Max(1, _app.Screen.Width - 2));
         Height = Dim.Func(_ => Math.Max(1, _app.Screen.Height));
 
-        _area = new TextView
+        _area = new TextArea
         {
             X = 0,
             Y = 0,
             Width = Dim.Fill(),
             Height = Dim.Fill(1),
-            Multiline = true,
-            TabKeyAddsTab = false,
+            TabInserts = false,
+            LineBreak = "\n",
             Text = text,
         };
         _error = new Label { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1, Text = string.Empty };
@@ -68,7 +66,7 @@ internal sealed class MultilineEditor : Dialog<bool>
     internal string ErrorText => _error.Text;
 
     /// <summary>The text area, for the tests.</summary>
-    internal TextView Area => _area;
+    internal TextArea Area => _area;
 
     /// <summary>
     /// Shows the editor and returns when it closes. Returns true when the text was committed (or the apply found nothing to change), and

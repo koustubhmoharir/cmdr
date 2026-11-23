@@ -1,7 +1,5 @@
+using Shared.Tui;
 using Terminal.Gui.Views;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0; DialogControls.Area builds one (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tui;
 
@@ -72,14 +70,13 @@ internal static class DialogControls
     public static TextField Field(int x, int y, int width, FieldDraft draft) =>
         new() { X = x, Y = y, Width = width, Text = draft.Initial, ReadOnly = !draft.Editable };
 
-    public static TextView Area(int x, int y, int width, int height, string text) => new()
+    /// <summary>A multi-line area: Enter adds a line, and Tab moves the focus (see <see cref="TextArea"/>).</summary>
+    public static TextArea Area(int x, int y, int width, int height, string text) => new()
     {
         X = x,
         Y = y,
         Width = width,
         Height = height,
-        Multiline = true,
-        TabKeyAddsTab = false,
         Text = text,
     };
 }

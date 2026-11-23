@@ -14,6 +14,15 @@
                       AdditionalProperties="$(TerminalGuiBuildProperties)" />
   </ItemGroup>
 
+  <!--
+    The editor that replaces the obsolete TextView (TextArea in this project). It is alpha, lives in a separate repository and is built
+    against upstream Terminal.Gui, so it is pinned exactly and upgraded deliberately. NuGet resolves its Terminal.Gui dependency to the
+    fork project above.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Terminal.Gui.Editor" Version="[2.5.7]" />
+  </ItemGroup>
+
   <!-- A clone without the submodule would otherwise fail with hundreds of missing-type errors. -->
   <Target Name="CheckTerminalGuiSubmodule" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
           Condition="!Exists('$(MSBuildThisFileDirectory)..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj')">

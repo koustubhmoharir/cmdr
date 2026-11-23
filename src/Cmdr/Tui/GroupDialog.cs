@@ -1,14 +1,12 @@
 using System.Collections.ObjectModel;
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using static Cmdr.Tui.DialogControls;
-
-// See CommandDialog: TextView is the multi-line control of Terminal.Gui 2.5.0.
-#pragma warning disable CS0618
 
 namespace Cmdr.Tui;
 
@@ -45,8 +43,8 @@ internal sealed class GroupDialog : Dialog<bool>
     private readonly TextField _name;
     private readonly OptionSelector<GroupMode> _mode;
     private readonly TextField _cwd;
-    private readonly TextView _description;
-    private readonly TextView _env;
+    private readonly TextArea _description;
+    private readonly TextArea _env;
     private readonly CheckBox _expanded;
     private readonly Label _envScriptSummary;
     private readonly TextField _secret;

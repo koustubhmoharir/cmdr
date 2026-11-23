@@ -4,7 +4,8 @@ using Cfgedit.Tui;
 namespace Cfgedit.Tests;
 
 /// <summary>
-/// Which editor a part opens with. The round trip is checked on the Terminal.Gui controls themselves, and the kinds on real documents.
+/// Which editor a part opens with. The inline field is checked by a round trip through the Terminal.Gui text field, the multi-line rule
+/// on its own, and the kinds on real documents.
 /// </summary>
 public sealed class EditRulesTests
 {
@@ -29,28 +30,30 @@ public sealed class EditRulesTests
         Assert.False(EditRules.CanEditInline(text));
     }
 
-    [Fact]
-    public void A_value_with_a_line_feed_round_trips_through_the_multi_line_editor()
+    [Theory]
+    [InlineData("")]
+    [InlineData("a\nb")]
+    [InlineData("x\n\n")]
+    [InlineData("a\tb")]
+    [InlineData("a\0b")]
+    [InlineData("\U0001F44D\U0001F3FD\nb")]
+    public void A_value_without_a_CR_can_be_edited_in_the_multi_line_editor(string text)
     {
-        Assert.True(EditRules.CanEditMultiline("a\nb"));
+        Assert.True(EditRules.CanEditMultiline(text));
+    }
+
+    [Theory]
+    [InlineData("a\r\nb")]
+    [InlineData("a\rb")]
+    [InlineData("a\r")]
+    [InlineData("\r")]
+    public void A_value_with_a_CR_cannot_be_edited_in_the_multi_line_editor(string text)
+    {
+        Assert.False(EditRules.CanEditMultiline(text));
     }
 
     [Fact]
-    public void A_crlf_pair_is_not_kept_by_the_multi_line_editor_so_it_is_read_only()
-    {
-        Assert.False(EditRules.CanEditMultiline("a\r\nb"));
-    }
-
-    [Fact]
-    public void The_editors_crlf_line_breaks_on_windows_are_read_back_as_line_feeds()
-    {
-        // TextView joins its lines with Environment.NewLine; on Windows that is CRLF, which must not reach the document.
-        Assert.Equal("a\nb\nc", EditRules.WithLineFeeds("a\r\nb\r\nc", "\r\n"));
-        Assert.Equal("a\nb", EditRules.WithLineFeeds("a\nb", "\n"));
-    }
-
-    [Fact]
-    public void A_lone_carriage_return_can_be_edited_in_neither_control()
+    public void A_lone_carriage_return_can_be_edited_in_neither_editor()
     {
         Assert.False(EditRules.CanEditInline("a\rb"));
         Assert.False(EditRules.CanEditMultiline("a\rb"));

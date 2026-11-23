@@ -3,11 +3,11 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using Shared.Processes;
+using Shared.Tui;
 using Terminal.Gui.App;
+using Terminal.Gui.Input;
+using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
-
-// TextView is obsolete in Terminal.Gui 2.5.0; the dialogs under test use it (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tests;
 
@@ -42,8 +42,8 @@ public sealed class MultilineFieldDialogTests
             return null;
         });
 
-        Assert.True(Private<TextView>(dialog, "_args").ReadOnly);
-        Assert.True(Private<TextView>(dialog, "_env").ReadOnly);
+        Assert.True(Private<TextArea>(dialog, "_args").ReadOnly);
+        Assert.True(Private<TextArea>(dialog, "_env").ReadOnly);
 
         Private<TextField>(dialog, "_name").Text = "renamed";
         Assert.True(TryCommit(dialog));
@@ -75,11 +75,11 @@ public sealed class MultilineFieldDialogTests
             return null;
         });
 
-        Assert.False(Private<TextView>(dialog, "_args").ReadOnly);
-        Assert.False(Private<TextView>(dialog, "_env").ReadOnly);
+        Assert.False(Private<TextArea>(dialog, "_args").ReadOnly);
+        Assert.False(Private<TextArea>(dialog, "_env").ReadOnly);
 
-        Private<TextView>(dialog, "_args").Text = "-c\necho two";
-        Private<TextView>(dialog, "_env").Text = "A=2\n!B";
+        Private<TextArea>(dialog, "_args").Text = "-c\necho two";
+        Private<TextArea>(dialog, "_env").Text = "A=2\n!B";
         Assert.True(TryCommit(dialog));
 
         CommandSpec committed = Assert.Single(commits);
@@ -103,7 +103,7 @@ public sealed class MultilineFieldDialogTests
             return null;
         });
 
-        Assert.True(Private<TextView>(dialog, "_env").ReadOnly);
+        Assert.True(Private<TextArea>(dialog, "_env").ReadOnly);
 
         Private<TextField>(dialog, "_name").Text = "renamed";
         Assert.True(TryCommit(dialog));
@@ -311,6 +311,151 @@ public sealed class MultilineFieldDialogTests
 
         GroupSettings committed = Assert.Single(commits);
         Assert.Equal("typed", field == "_name" ? committed.Name : committed.Cwd);
+    }
+
+    [Fact]
+    public void Tab_in_an_editable_args_area_moves_the_focus_out_of_it()
+    {
+        using TempSession temp = TempSession.Sample();
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        var commits = new List<CommandSpec>();
+        using var dialog = OpenCommand(app, temp.Session, ArgsCommand(new List<string> { "-c" }), commits);
+        View? focusedAfterTab = null;
+
+        RunDialog(app, dialog, () =>
+        {
+            Private<TextArea>(dialog, "_args").SetFocus();
+            app.Keyboard.RaiseKeyDownEvent(Key.Tab);
+            focusedAfterTab = Deepest(dialog);
+        });
+
+        Assert.False(IsWithin(focusedAfterTab, Private<TextArea>(dialog, "_args")));
+        Assert.True(IsWithin(focusedAfterTab, Private<OptionSelector<StopMethod>>(dialog, "_method")));
+    }
+
+    [Fact]
+    public void Tab_in_a_read_only_args_area_moves_the_focus_out_of_it()
+    {
+        using TempSession temp = TempSession.Sample();
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        var commits = new List<CommandSpec>();
+        using var dialog = OpenCommand(app, temp.Session, ArgsCommand(AwkwardArgs.ToList()), commits);
+        View? focusedAfterTab = null;
+        bool readOnly = false;
+
+        RunDialog(app, dialog, () =>
+        {
+            TextArea args = Private<TextArea>(dialog, "_args");
+            readOnly = args.ReadOnly;
+            args.SetFocus();
+            app.Keyboard.RaiseKeyDownEvent(Key.Tab);
+            focusedAfterTab = Deepest(dialog);
+        });
+
+        Assert.True(readOnly);
+        Assert.False(IsWithin(focusedAfterTab, Private<TextArea>(dialog, "_args")));
+        Assert.True(IsWithin(focusedAfterTab, Private<OptionSelector<StopMethod>>(dialog, "_method")));
+    }
+
+    [Fact]
+    public void Enter_in_the_args_area_adds_a_line_and_OK_commits_both_lines()
+    {
+        using TempSession temp = TempSession.Sample();
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        var commits = new List<CommandSpec>();
+        using var dialog = OpenCommand(app, temp.Session, ArgsCommand(new List<string> { "-c" }), commits);
+        string? textAfterEnter = null;
+
+        RunDialog(app, dialog, () =>
+        {
+            TextArea args = Private<TextArea>(dialog, "_args");
+            args.SetFocus();
+            args.CaretOffset = args.Text.Length;
+            app.Keyboard.RaiseKeyDownEvent(Key.Enter);
+            textAfterEnter = args.Text;
+            foreach (char ch in "echo two")
+            {
+                app.Keyboard.RaiseKeyDownEvent((Key)ch);
+            }
+
+            dialog.Buttons[0].NewKeyDownEvent(Key.Enter);
+        });
+
+        Assert.Equal("-c\n", textAfterEnter);
+        CommandSpec committed = Assert.Single(commits);
+        Assert.Equal(new[] { "-c", "echo two" }, committed.Args);
+    }
+
+    [Fact]
+    public void A_terminal_paste_with_CRLF_into_the_args_area_gives_two_arguments()
+    {
+        using TempSession temp = TempSession.Sample();
+        using IApplication app = Application.Create();
+        app.Init("ansi");
+        var commits = new List<CommandSpec>();
+        using var dialog = OpenCommand(app, temp.Session, ArgsCommand(new List<string>()), commits);
+
+        RunDialog(app, dialog, () =>
+        {
+            TextArea args = Private<TextArea>(dialog, "_args");
+            args.SetFocus();
+            args.Text = string.Empty;
+            args.CaretOffset = 0;
+            app.RaisePasteEvent("a\r\nb");
+            dialog.Buttons[0].NewKeyDownEvent(Key.Enter);
+        });
+
+        CommandSpec committed = Assert.Single(commits);
+        Assert.Equal(new[] { "a", "b" }, committed.Args);
+    }
+
+    private static CommandSpec ArgsCommand(IReadOnlyList<string> args) =>
+        new() { Name = "first", Program = "sh", Args = args.ToList() };
+
+    /// <summary>Runs the dialog, performs the steps once it has shown, then stops it if the steps did not close it.</summary>
+    private static void RunDialog(IApplication app, Dialog<bool> dialog, Action steps)
+    {
+        app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+        {
+            app.LayoutAndDraw();
+            steps();
+            if (app.TopRunnableView == dialog)
+            {
+                app.RequestStop(dialog);
+            }
+
+            return false;
+        });
+        app.Run(dialog);
+    }
+
+    /// <summary>The view with the focus, following the focused chain of the views down from <paramref name="root"/>.</summary>
+    private static View? Deepest(View root)
+    {
+        View? current = root;
+        while (current?.Focused is { } next)
+        {
+            current = next;
+        }
+
+        return current;
+    }
+
+    /// <summary>Whether <paramref name="view"/> is <paramref name="ancestor"/> or one of its subviews, at any depth.</summary>
+    private static bool IsWithin(View? view, View ancestor)
+    {
+        for (View? current = view; current is not null; current = current.SuperView)
+        {
+            if (ReferenceEquals(current, ancestor))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The other single-line field edited in a test, so that the field under test is only read.</summary>

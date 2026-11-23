@@ -1,13 +1,11 @@
 using Cmdr.Core.Config;
 using Cmdr.Core.Session;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using static Cmdr.Tui.DialogControls;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0; DialogControls.Area builds one (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tui;
 
@@ -31,7 +29,7 @@ internal sealed class FileDialog : Dialog<bool>
 
     private readonly IApplication _app;
     private readonly Func<FileSettings, string?> _commit;
-    private readonly TextView _env;
+    private readonly TextArea _env;
     private readonly TextField _baseEnv;
     private readonly TextField _secret;
     private readonly Label _envScriptSummary;

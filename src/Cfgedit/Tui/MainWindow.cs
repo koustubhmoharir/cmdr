@@ -69,9 +69,6 @@ internal sealed class MainWindow : Window, ISearchHost
     private Action? _cancelExpiry;
     private string? _shownHints;
 
-    // True while the text is shown read-only: the view's text does not round-trip to the file's text (mixed line breaks).
-    private bool _textReadOnly;
-
     // True while the window sets the view's text itself, so that the change is not read back as an edit.
     private bool _showingText;
 
@@ -136,7 +133,7 @@ internal sealed class MainWindow : Window, ISearchHost
         _tree.CursorChanged += ShowDetail;
         _tree.KeyPressed += ClearMessage;
         _tableView.CursorChanged += ShowTableDetail;
-        _textView.ContentsChanged += (_, _) =>
+        _textView.ContentChanged += (_, _) =>
         {
             if (_showingText)
             {
@@ -447,8 +444,8 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// Shows the text in the text view, with the cursor at an offset. The text is read-only when the view's text does not come back
-    /// as the file's text, which is the case when the file mixes line breaks.
+    /// Shows the text in the text view, with the caret at an offset. The view's line break is the file's, so Enter and a paste write
+    /// the same line breaks as the file has.
     /// </summary>
     private void ShowText(int offset)
     {
@@ -457,9 +454,8 @@ internal sealed class MainWindow : Window, ISearchHost
         _showingText = true;
         try
         {
+            _textView.LineBreak = _controller.Newline;
             _textView.Text = text.Text;
-            _textReadOnly = TextModeRules.WithNewline(_textView.Text, _controller.Newline) != text.Text;
-            _textView.ReadOnly = _textReadOnly;
             MoveTextCursor(offset);
         }
         finally
@@ -472,16 +468,11 @@ internal sealed class MainWindow : Window, ISearchHost
         _textView.SetFocus();
         UpdateTitle();
         ShowHints();
-        if (_textReadOnly)
-        {
-            ShowMessage("text mode is read-only: the file mixes line endings, and editing it here would change them", error: false);
-        }
     }
 
     /// <summary>Shows the tree, with the focus on a node (or the document when null), and the document as it is.</summary>
     private void ShowTree(NodePath? focus)
     {
-        _textReadOnly = false;
         _textView.Visible = false;
         _tree.Visible = true;
         _tree.SetDocument(_controller.Document, focus);
@@ -510,22 +501,21 @@ internal sealed class MainWindow : Window, ISearchHost
         ShowText(_controller.CursorOffset);
     }
 
-    /// <summary>Takes the view's text and cursor into the controller. Nothing is taken while the text is read-only, so it stays the file's text.</summary>
+    /// <summary>Takes the view's text and caret into the controller.</summary>
     private void SyncText()
     {
-        if (_controller.Mode != EditMode.Text || _textReadOnly)
+        if (_controller.Mode != EditMode.Text)
         {
             return;
         }
 
-        _controller.SetText(_textView.Text, _textView.CurrentRow, _textView.CurrentColumn);
+        _controller.SetText(_textView.Text, _textView.CaretOffset);
     }
 
-    /// <summary>Moves the text view's cursor to an offset in the text.</summary>
+    /// <summary>Moves the text view's caret to an offset in the text, clamped to the text.</summary>
     private void MoveTextCursor(int offset)
     {
-        (int row, int column) = TextModeRules.PositionOf(_controller.Text!.Text, _controller.Newline, offset);
-        _textView.InsertionPoint = new (column, row);
+        _textView.CaretOffset = Math.Clamp(offset, 0, _textView.Text.Length);
     }
 
     /// <summary>The offset in the text of a parse error's line and column, or the end of the text when the position is past it.</summary>
@@ -2298,7 +2288,7 @@ internal sealed class MainWindow : Window, ISearchHost
         string dirty = _controller.IsDirty ? "*" : string.Empty;
         string mode = _table is not null ? $" [table {TablePath()}]"
             : _controller.Mode == EditMode.Tree ? string.Empty
-            : _textReadOnly ? " [text, read-only]" : " [text]";
+            : " [text]";
         _frame.Title = $"{FileName}{dirty} [{_controller.File.Format.Name}]{mode}";
     }
 

@@ -547,8 +547,10 @@ first commit, not after a review.
 
 **Text and display**
 
-- All widths go through Shared.Core `DisplayWidth`, which works per grapheme cluster. A tab pads to the next 8 columns,
-  and zero-width graphemes take no column but stay in copies.
+- All widths go through Shared.Core `DisplayWidth`, which works per grapheme cluster. Zero-width graphemes take no
+  column but stay in copies. In cmdr's output pane a tab pads to the next 8 columns, as terminals do.
+- The exception is the text editors (the Shared.Tui `TextArea`, a `Terminal.Gui.Editor.Editor`): the editor package
+  measures and draws its own text, per grapheme cluster, with a tab 4 columns wide.
 - Wrapping and truncation never split a surrogate pair or a grapheme.
 
 **Saving**

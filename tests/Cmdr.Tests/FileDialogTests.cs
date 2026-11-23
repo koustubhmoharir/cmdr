@@ -3,12 +3,10 @@ using Cmdr.Core.Config;
 using Cmdr.Core.Session;
 using Cmdr.Tui;
 using FileDialog = Cmdr.Tui.FileDialog;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Views;
 using CmdrSession = Cmdr.Core.Session.Session;
-
-// TextView is obsolete in Terminal.Gui 2.5.0; the dialog under test uses it (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tests;
 
@@ -135,7 +133,7 @@ public sealed class FileDialogTests : IDisposable
             committed.Add(settings);
             return null;
         });
-        Private<TextView>(dialog, "_env").Text = "A=1\n!B";
+        Private<TextArea>(dialog, "_env").Text = "A=1\n!B";
         Private<TextField>(dialog, "_baseEnv").Text = "IMPORTED";
         Private<TextField>(dialog, "_secret").Text = " TOKEN , OTHER ";
 

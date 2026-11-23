@@ -1,8 +1,6 @@
 using Cfgedit.Core.Model;
+using Shared.Tui;
 using Terminal.Gui.Views;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0; the multi-line editor and its round trip use it as cmdr's dialogs do.
-#pragma warning disable CS0618
 
 namespace Cfgedit.Tui;
 
@@ -25,18 +23,17 @@ internal enum EditorKind
 }
 
 /// <summary>
-/// Which editor a part opens with, decided by a round trip through the Terminal.Gui text controls. A value is edited inline only
-/// when a <see cref="TextField"/> holds it exactly, and in the multi-line editor only when a <see cref="TextView"/> does. Pure apart
-/// from building the two controls.
+/// Which editor a part opens with. A value is edited inline only when a <see cref="TextField"/> holds it exactly (decided by a round
+/// trip through the field), and in the multi-line editor only when it has no CR (see <see cref="CanEditMultiline"/>). Pure apart from
+/// building the field.
 /// </summary>
 internal static class EditRules
 {
     /// <summary>The message for a part that cannot be edited at all, such as an index or a summary.</summary>
     public const string CannotEdit = "this part cannot be edited";
 
-    /// <summary>The message for a value that neither text control holds exactly, such as one with a lone CR.</summary>
+    /// <summary>The message for a value that neither editor can show, such as one with a CR.</summary>
     public const string TextModeOnly = "this value can only be edited in text mode (Ctrl+T)";
-
 
     /// <summary>
     /// True when a single-line field holds the text exactly: setting it and reading it back gives the same text, and it has no line break.
@@ -56,42 +53,27 @@ internal static class EditRules
     }
 
     /// <summary>
-    /// True when the multi-line editor holds the text exactly: setting it and reading it back gives the same text, and no CR stands alone.
-    /// The control keeps a lone CR as text, but the terminal reads it as a line break, so the value is read-only. A CR LF pair is not
-    /// kept by the control (it reads back as LF), so such a value fails the round trip.
+    /// True when the multi-line editor can show the value and give it back unchanged: the value has no CR. The editor keeps its text
+    /// as it is, but a terminal shows a CR as a line break, so a CR in the value would be drawn as one; such a value is edited in text
+    /// mode instead. The rule is the same on every platform.
     /// </summary>
     /// <param name="text">The text.</param>
-    /// <summary>
-    /// True when the multi-line editor can show the value and give it back unchanged. A value with any CR cannot be: the
-    /// editor joins its lines with <see cref="Environment.NewLine"/> (CRLF on Windows), so its line breaks are read back as
-    /// LF (see <see cref="TextOf"/>), and a CR the user did not type would be lost or doubled. Such values are edited in
-    /// text mode. The rule is the same on every platform.
-    /// </summary>
     public static bool CanEditMultiline(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (text.Contains('\r'))
-        {
-            return false;
-        }
-
-        var area = new TextView { Multiline = true, TabKeyAddsTab = false, Text = text };
-        return TextOf(area) == text;
-    }
-
-    /// <summary>The multi-line editor's text with its line breaks as LF, whatever <see cref="Environment.NewLine"/> is.</summary>
-    public static string TextOf(TextView area)
-    {
-        ArgumentNullException.ThrowIfNull(area);
-        return WithLineFeeds(area.Text, Environment.NewLine);
+        return !text.Contains('\r');
     }
 
     /// <summary>
-    /// <paramref name="text"/>, as joined with <paramref name="newline"/> by the editor, with each of those line breaks as LF.
-    /// Separate from <see cref="TextOf"/> so that the Windows case can be tested anywhere.
+    /// The multi-line editor's text, as it is. The editor's line break is LF, so Enter and a paste write only LF, and the text needs no
+    /// conversion before it is written back.
     /// </summary>
-    internal static string WithLineFeeds(string text, string newline) =>
-        newline == "\n" ? text : text.Replace(newline, "\n", StringComparison.Ordinal);
+    /// <param name="area">The text area of the editor.</param>
+    public static string TextOf(TextArea area)
+    {
+        ArgumentNullException.ThrowIfNull(area);
+        return area.Text;
+    }
 
     private static readonly char[] LineBreaks = ['\r', '\n'];
 

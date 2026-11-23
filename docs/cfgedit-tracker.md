@@ -104,6 +104,12 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       Checked in a real terminal on a CRLF file. (3722a07) *(Windows)*: newline mapping through `Environment.NewLine` is
       unit-tested but has not been run on Windows.
 - [x] `--check`. (3722a07)
+- [x] Text mode and the multi-line editor moved from the obsolete `TextView` to Shared.Tui `TextArea`
+      (Terminal.Gui.Editor 2.5.7, pinned). The text is kept verbatim, so mixed line endings are editable. Enter and paste
+      insert the file's line break. Terminal paste inserts the pasted text, not the clipboard. Fixes a single-line paste
+      that drew as blanks until the cursor moved (a `TextView` redraw bug). cmdr's and logvu's dialogs moved too.
+      *(Windows)*: paste in Windows Terminal and Enter's line break not run on Windows. Not yet checked in a real
+      terminal.
 
 ## M6. Search and copy
 

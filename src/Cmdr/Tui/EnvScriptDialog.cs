@@ -1,12 +1,10 @@
 using Cmdr.Core.Config;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using static Cmdr.Tui.DialogControls;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0; DialogControls.Area builds one (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tui;
 
@@ -29,7 +27,7 @@ internal sealed class EnvScriptDialog : Dialog<bool>
 
     private readonly IApplication _app;
     private readonly TextField _program;
-    private readonly TextView _args;
+    private readonly TextArea _args;
     private readonly TextField _cwd;
     private readonly TextField _timeout;
     private readonly OptionSelector<EnvScriptRerun> _rerun;

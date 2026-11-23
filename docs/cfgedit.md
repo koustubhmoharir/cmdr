@@ -134,8 +134,10 @@ A file that does not parse opens as plain text, with the cursor at the error and
 press F5 to see the tree. Ctrl+T switches between the tree and the text at any time, keeping the cursor on the same place.
 Ctrl+S on text that does not parse asks before saving it anyway.
 
-Text mode is read-only when the file mixes line endings (for example CRLF and LF), because the text editor would change
-them.
+Text mode shows the file's text exactly as it is, line endings included, and saving writes back only what you changed.
+Enter and paste insert the file's own line ending (CRLF in a CRLF file). A file that mixes line endings is editable
+too: its other lines keep theirs, and new line breaks use the one the file uses most. Tab inserts a tab character, drawn
+four columns wide.
 
 ## `.env` files
 

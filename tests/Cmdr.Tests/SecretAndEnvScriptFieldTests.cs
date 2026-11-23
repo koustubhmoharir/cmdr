@@ -5,9 +5,6 @@ using Cmdr.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Views;
 
-// TextView is obsolete in Terminal.Gui 2.5.0; the dialogs under test use it (see CommandDialog).
-#pragma warning disable CS0618
-
 namespace Cmdr.Tests;
 
 /// <summary>

@@ -1,13 +1,11 @@
 using System.Reflection;
 using Cmdr.Core.Config;
 using Cmdr.Tui;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
-
-// TextView is obsolete in Terminal.Gui 2.5.0; the dialog under test uses it (see CommandDialog).
-#pragma warning disable CS0618
 
 namespace Cmdr.Tests;
 
@@ -54,7 +52,7 @@ public sealed class EnvScriptDialogTests
         using var dialog = new EnvScriptDialog(app, "Environment script", Script());
 
         Assert.Equal("node", Private<TextField>(dialog, "_program").Text);
-        Assert.Equal("tools/env.js\n--json", Private<TextView>(dialog, "_args").Text);
+        Assert.Equal("tools/env.js\n--json", Private<TextArea>(dialog, "_args").Text);
         Assert.Equal("scripts", Private<TextField>(dialog, "_cwd").Text);
         Assert.Equal("5", Private<TextField>(dialog, "_timeout").Text);
         Assert.Equal(EnvScriptRerun.EachStart, Private<OptionSelector<EnvScriptRerun>>(dialog, "_rerun").Value);

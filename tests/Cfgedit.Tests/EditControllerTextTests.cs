@@ -51,7 +51,7 @@ public sealed class EditControllerTextTests
         using var dir = new Scratch();
         var controller = Open(dir, "{\"a\": 1}\n");
         controller.EnterText(0);
-        controller.SetText("{\"a\": 2}", 0, 0);
+        controller.SetText("{\"a\": 2}", 0);
 
         controller.Reparse(out CfgeditException? error);
         Assert.Null(error);
@@ -71,10 +71,10 @@ public sealed class EditControllerTextTests
         var controller = Open(dir, "{\"a\": 1}\n");
         controller.EnterText(0);
 
-        controller.SetText("{\"a\": 1}\n ", 0, 0);
+        controller.SetText("{\"a\": 1}\n ", 0);
         Assert.True(controller.IsDirty);
 
-        controller.SetText("{\"a\": 1}\n", 0, 0);
+        controller.SetText("{\"a\": 1}\n", 0);
         Assert.False(controller.IsDirty);
     }
 
@@ -84,7 +84,7 @@ public sealed class EditControllerTextTests
         using var dir = new Scratch();
         var controller = Open(dir, "{}");
         controller.EnterText(0);
-        controller.SetText("{\"a\" 1}", 0, 5);
+        controller.SetText("{\"a\" 1}", 5);
 
         NodePath? focus = controller.Reparse(out CfgeditException? error);
 
@@ -95,17 +95,32 @@ public sealed class EditControllerTextTests
     }
 
     [Fact]
-    public void The_cursor_maps_through_a_CRLF_document_to_the_offset_of_its_line_and_column()
+    public void The_caret_offset_is_kept_as_given_in_a_CRLF_document()
     {
         using var dir = new Scratch();
         var controller = Open(dir, "{\r\n\"a\": 1\r\n}");
         controller.EnterText(0);
 
-        controller.SetText("{" + Environment.NewLine + "\"a\": 1" + Environment.NewLine + "}", 1, 3);
+        // Offset 6 is the third character of the second line, after the two-character CRLF.
+        controller.SetText("{\r\n\"a\": 1\r\n}", 6);
 
         Assert.Equal("\r\n", controller.Newline);
         Assert.Equal(6, controller.CursorOffset);
         Assert.Equal("{\r\n\"a\": 1\r\n}", controller.Text!.Text);
+    }
+
+    [Fact]
+    public void The_text_is_taken_verbatim_so_mixed_line_breaks_are_kept_and_the_text_is_not_dirty()
+    {
+        using var dir = new Scratch();
+        const string text = "{\r\n  \"a\": 1,\n  \"b\": 2\r\n}";
+        var controller = Open(dir, text);
+        controller.EnterText(0);
+
+        controller.SetText(text, 0);
+
+        Assert.Equal(text, controller.Text!.Text);
+        Assert.False(controller.IsDirty);
     }
 
     [Fact]
@@ -150,7 +165,7 @@ public sealed class EditControllerTextTests
     {
         using var dir = new Scratch();
         var controller = Open(dir, "{\"a\" 1}");
-        controller.SetText("{\"a\" 2}", 0, 0);
+        controller.SetText("{\"a\" 2}", 0);
 
         CloseResult result = controller.CloseFlow(() => UnsavedChoice.Save, () => ExternalChangeChoice.Cancel, () => false);
 

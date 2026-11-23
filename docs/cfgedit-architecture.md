@@ -1028,9 +1028,10 @@ The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, 
   columns left in the tree or table from its X. Its width is a `Dim.Func`, so it follows typing, moves and resizes.
 - **Which editor.** Following cmdr's FieldDraft lesson, a value is edited inline only when a TextField round trip
   reproduces it exactly: set `Text`, read it back, compare. Otherwise:
-  - If a multi-line TextView round trip reproduces it, F2 and Enter open the multi-line editor instead.
-  - If neither does (e.g. a value with a lone CR), the part is read-only in the tree, and the message says "this value
-    can only be edited in text mode (Ctrl+T)".
+  - If it has no CR (`EditRules.CanEditMultiline`), F2 and Enter open the multi-line editor instead. The editor keeps
+    any text exactly, but a terminal draws a CR as a line break, so a value with a CR is not shown there.
+  - Otherwise (e.g. a value with a lone CR), the part is read-only in the tree, and the message says "this value can
+    only be edited in text mode (Ctrl+T)".
 - **Keys in the field.**
   - Enter commits with `SetPart`. Esc cancels.
   - Tab commits and moves to the next editable part (this row, then later rows), opening the editor there. Shift+Tab
@@ -1043,8 +1044,8 @@ The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, 
   never changes a value by itself: every edit goes through an editor or menu and an explicit commit (user decision,
   2026-11-22).
 
-**Multi-line editor.** A dialog with a `TextView` (Multiline, `TabKeyAddsTab = false`; cmdr's `FieldDraft.Area` is the
-model). It suppresses the obsolete warning as cmdr does.
+**Multi-line editor.** A dialog with a Shared.Tui `TextArea` (`TabInserts = false`, `LineBreak = "\n"`, the same
+control as cmdr's `FieldDraft.Area`). Enter and paste add only LF, so the text is applied as it is read.
 
 - Buttons Cancel and OK; OK is last, so it is the default.
 - Ctrl+Enter or F2 commits, Esc cancels.
@@ -1120,14 +1121,12 @@ model). It suppresses the obsolete warning as cmdr does.
 
 ### The text view
 
-- **Control.** `TextModeView` is a `TextView` with `TabKeyAddsTab = true`, suppressing the obsolete warning as cmdr
-  does, filling the tree's place in the window. The title gets a `[text]` tag.
-- **Round-trip rule.** `TextView.Text` joins lines with `Environment.NewLine`, so text read from the view gets its line
-  breaks replaced with the document's own newline (`SourceText.Newline`). This is exact only when the source uses one
-  line break style throughout, with no CR outside that style. So text mode is editable only when
-  `WithNewline(Read(view), source.Newline) == source.Text` right after loading. Otherwise the view is read-only, and the
-  message says "text mode is read-only: the file mixes line endings, and editing it here would change them". That
-  still shows the error positions, which is useful.
+- **Control.** `TextModeView` is a Shared.Tui `TextArea` (a `Terminal.Gui.Editor.Editor`, which replaces the obsolete
+  `TextView`) with `TabInserts = true`, filling the tree's place in the window. The title gets a `[text]` tag.
+- **Exact text.** The editor keeps its text as given, so the view holds `SourceText.Text` verbatim and
+  `EditController.SetText(text, caretOffset)` takes it back unchanged, with the caret as an offset into it. No line
+  break is converted in either direction, and a file with mixed line endings is editable. `ShowText` sets the view's
+  `LineBreak` to `SourceText.Newline` (the dominant style), so Enter and each line break of a paste insert it.
 - **Leaving with no changes.** If the text read back equals the text that went in, the switch back changes nothing and
   records no undo step.
 - **Errors.** An open parse error places the cursor at its line and column and shows `line:col: message` in the message
@@ -1140,7 +1139,7 @@ model). It suppresses the obsolete warning as cmdr does.
     parsed, the history starts from the new document.
   - Failure: the cursor moves to the error, and the message shows it.
 - **Ctrl+T** switches between tree and text at any time.
-  - Tree → text: the cursor goes to the focused part's source offset (`DocPart.Start`, mapped to line and column).
+  - Tree → text: the caret goes to the focused part's source offset (`DocPart.Start`).
   - Text → tree: reparse first, as F5 does. On success the tree focuses the deepest node whose span contains the
     cursor's offset.
 - **Ctrl+S** in text mode reparses first. If the text parses, the save is the normal one. If it doesn't, the user is
@@ -1148,7 +1147,7 @@ model). It suppresses the obsolete warning as cmdr does.
   `DocumentFile.SaveText(SourceText)`, through the same exact-write path and postcondition as `Save`.
 - **Ctrl+Q and Ctrl+O** use the unsaved-changes flow. Dirty means the current text differs from the bytes last loaded or
   saved, in text mode as in tree mode.
-- **Ctrl+Z / Ctrl+Y** in text mode are the TextView's own undo and redo of typing. Document-level undo applies in tree
+- **Ctrl+Z / Ctrl+Y** in text mode are the editor's own undo and redo of typing. Document-level undo applies in tree
   mode.
 - **Esc** does nothing in text mode, so it can't lose edits by accident.
 
@@ -1164,13 +1163,15 @@ model). It suppresses the obsolete warning as cmdr does.
 
 - **DocumentFile:** Open on a parse error gives the text and the error; on a decoding error it throws. SaveText writes
   exact bytes.
-- **Round-trip rule:** LF, CRLF and CR documents, mixed endings (read-only), a final newline and none, tabs.
+- **Exact text:** mixed endings editable and saved byte for byte; Enter and paste insert the file's line break (LF and
+  CRLF); single-line pastes drawn at once; caret offsets across CRLF and multi-unit graphemes. (Originally a round-trip
+  rule for the TextView, which normalised line breaks; replaced with the move to `TextArea`, 2026-11-23.)
 - **TerminalHarness:**
   - opening a broken file: text mode, cursor at the error, the message
   - F5 failing, then succeeding: the tree and the undo step
   - Ctrl+T both ways with cursor mapping (JSON and XML)
   - Ctrl+S on unparseable text (both answers)
   - Ctrl+Q dirty in text mode
-  - the read-only mixed-endings case
+  - the mixed-endings file edited and saved with its other line breaks unchanged
 - **Program:** `--check` exit codes and output, and a broken file now opening the TUI (through the host delegate).
 - **pty check** by the reviewer.

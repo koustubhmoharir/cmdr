@@ -3,6 +3,7 @@ using Logvu.Core.Filter;
 using Logvu.Core.Parsing;
 using Logvu.Tui;
 using Shared.Core;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
@@ -68,9 +69,7 @@ public sealed class FilterDialogTests
         Control<TextField>(dialog, "_from").Text = "10:00";
         Control<TextField>(dialog, "_text").Text = "time.*out";
         Control<CheckBox>(dialog, "_regex").Value = CheckState.Checked;
-#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
-        Control<TextView>(dialog, "_predicates").Text = "code equals 42";
-#pragma warning restore CS0618
+        Control<TextArea>(dialog, "_predicates").Text = "code equals 42";
 
         Assert.True(dialog.TryRead(out FilterEdit? edit, out string? error));
 
@@ -126,9 +125,7 @@ public sealed class FilterDialogTests
     {
         using IApplication app = CreateApp();
         using var dialog = new FilterDialog(app, null, Zone, () => Now);
-#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
-        Control<TextView>(dialog, "_predicates").Text = "code equals 42\nnot a predicate";
-#pragma warning restore CS0618
+        Control<TextArea>(dialog, "_predicates").Text = "code equals 42\nnot a predicate";
 
         Assert.False(dialog.TryRead(out _, out string? error));
 
@@ -224,9 +221,7 @@ public sealed class FilterDialogTests
             Control<CheckBox>(dialog, "_wholeWord"),
             Control<TextField>(dialog, "_from"),
             Control<TextField>(dialog, "_to"),
-#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
-            Control<TextView>(dialog, "_predicates"),
-#pragma warning restore CS0618
+            Control<TextArea>(dialog, "_predicates"),
         ];
 
         System.Drawing.Rectangle frame = default;
@@ -286,9 +281,7 @@ public sealed class FilterDialogTests
             Control<CheckBox>(dialog, "_wholeWord"),
             Control<TextField>(dialog, "_from"),
             Control<TextField>(dialog, "_to"),
-#pragma warning disable CS0618 // TextView is obsolete; the dialog still uses it
-            Control<TextView>(dialog, "_predicates"),
-#pragma warning restore CS0618
+            Control<TextArea>(dialog, "_predicates"),
             dialog.Buttons[0],
             dialog.Buttons[1],
             dialog.Buttons[2],
@@ -407,6 +400,75 @@ public sealed class FilterDialogTests
 
         Assert.Equal(LogLevel.Trace, afterRight);
         Assert.Equal(LogLevel.Debug, afterLeft);
+    }
+
+    [Fact]
+    public void Enter_in_the_predicates_adds_a_line_and_Apply_reads_both_lines()
+    {
+        using IApplication app = CreateApp();
+        using var dialog = new FilterDialog(app, null, Zone, () => Now);
+        string? textAfterEnter = null;
+        app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+        {
+            app.LayoutAndDraw();
+            TextArea predicates = Control<TextArea>(dialog, "_predicates");
+            predicates.Text = "code equals 42";
+            predicates.SetFocus();
+            predicates.CaretOffset = predicates.Text.Length;
+            app.Keyboard.RaiseKeyDownEvent(Key.Enter);
+            textAfterEnter = predicates.Text;
+            foreach (char ch in "user equals alice")
+            {
+                app.Keyboard.RaiseKeyDownEvent((Key)ch);
+            }
+
+            dialog.Buttons[2].NewKeyDownEvent(Key.Enter);
+            if (app.TopRunnableView == dialog)
+            {
+                app.RequestStop(dialog);
+            }
+
+            return false;
+        });
+        app.Run(dialog);
+
+        Assert.Equal("code equals 42\n", textAfterEnter);
+        Assert.NotNull(dialog.Result);
+        Assert.Equal(
+            [new FieldPredicate("code", FieldOperator.Equals, "42"), new FieldPredicate("user", FieldOperator.Equals, "alice")],
+            dialog.Result!.Filter!.Fields);
+    }
+
+    [Fact]
+    public void A_terminal_paste_with_CRLF_into_the_predicates_gives_one_predicate_per_line()
+    {
+        using IApplication app = CreateApp();
+        using var dialog = new FilterDialog(app, null, Zone, () => Now);
+        string? predicatesText = null;
+        app.AddTimeout(TimeSpan.FromMilliseconds(100), () =>
+        {
+            app.LayoutAndDraw();
+            TextArea predicates = Control<TextArea>(dialog, "_predicates");
+            predicates.SetFocus();
+            predicates.Text = string.Empty;
+            predicates.CaretOffset = 0;
+            app.RaisePasteEvent("code equals 42\r\nuser equals alice");
+            predicatesText = predicates.Text;
+            dialog.Buttons[2].NewKeyDownEvent(Key.Enter);
+            if (app.TopRunnableView == dialog)
+            {
+                app.RequestStop(dialog);
+            }
+
+            return false;
+        });
+        app.Run(dialog);
+
+        Assert.Equal("code equals 42\nuser equals alice", predicatesText);
+        Assert.NotNull(dialog.Result);
+        Assert.Equal(
+            [new FieldPredicate("code", FieldOperator.Equals, "42"), new FieldPredicate("user", FieldOperator.Equals, "alice")],
+            dialog.Result!.Filter!.Fields);
     }
 
     /// <summary>Whether <paramref name="view"/> is <paramref name="ancestor"/> or one of its subviews, at any depth.</summary>

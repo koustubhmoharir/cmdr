@@ -93,7 +93,7 @@ public sealed class EditController
     private SourceText? _text;
     private int _cursorOffset;
 
-    // The line break the text mode keeps: the view's text is written back with this one, whatever the view joins its lines with.
+    // The file's line break. The text view inserts it on Enter and on a paste, so the text it adds has the file's own line breaks.
     private string _newline = Environment.NewLine;
 
     /// <summary>Starts the state for a file. A file that parses starts in tree mode; one that does not starts in text mode with its text.</summary>
@@ -133,7 +133,7 @@ public sealed class EditController
     /// <summary>In text mode, the cursor's offset in <see cref="Text"/>. Zero in tree mode.</summary>
     public int CursorOffset => _cursorOffset;
 
-    /// <summary>The line break of the text in text mode, which the view's text is written back with.</summary>
+    /// <summary>The file's line break. The text view inserts it on Enter and on a paste.</summary>
     public string Newline => _newline;
 
     /// <summary>True when an edit can be undone. Undo is a tree-mode operation.</summary>
@@ -249,13 +249,12 @@ public sealed class EditController
     }
 
     /// <summary>
-    /// In text mode, takes the view's text and cursor. The text is written back with <see cref="Newline"/> as its line break, and the
-    /// cursor is mapped to an offset in it (see <see cref="TextModeRules"/>). Does nothing in tree mode.
+    /// In text mode, takes the view's text and caret. The text is the view's text verbatim, with its line breaks as they are, and the
+    /// caret is an offset in it. Does nothing in tree mode.
     /// </summary>
-    /// <param name="viewText">The view's text, with its lines joined by <see cref="Environment.NewLine"/>.</param>
-    /// <param name="row">The view's cursor row, from zero.</param>
-    /// <param name="column">The view's cursor column, in grapheme clusters from zero.</param>
-    public void SetText(string viewText, int row, int column)
+    /// <param name="viewText">The view's text.</param>
+    /// <param name="caretOffset">The view's caret, as an offset in <paramref name="viewText"/>.</param>
+    public void SetText(string viewText, int caretOffset)
     {
         ArgumentNullException.ThrowIfNull(viewText);
         if (_text is null)
@@ -263,8 +262,8 @@ public sealed class EditController
             return;
         }
 
-        _text = _text.WithText(TextModeRules.WithNewline(viewText, _newline));
-        _cursorOffset = TextModeRules.OffsetOf(viewText, row, column, _newline);
+        _text = _text.WithText(viewText);
+        _cursorOffset = caretOffset;
     }
 
     /// <summary>

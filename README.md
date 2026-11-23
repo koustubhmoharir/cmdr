@@ -538,4 +538,5 @@ version 1607 or later.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The published executables include third-party components under their own licences; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

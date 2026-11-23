@@ -1,12 +1,9 @@
 using Logvu.Core.Filter;
+using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
-
-// TextView is marked obsolete in Terminal.Gui 2.5.0 in favour of an editor package that is not in use here. It is still the multi-line
-// text control of this version, and the field predicates need one (see CommandDialog, which uses it the same way).
-#pragma warning disable CS0618
 
 namespace Logvu.Tui;
 
@@ -51,7 +48,7 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
     private readonly CheckBox _wholeWord;
     private readonly TextField _from;
     private readonly TextField _to;
-    private readonly TextView _predicates;
+    private readonly TextArea _predicates;
 
     /// <summary>Creates the editor, pre-filled from the active filter. Its fields are shown when it runs.</summary>
     /// <param name="app">The application, for the message boxes and the screen size.</param>
@@ -110,14 +107,12 @@ internal sealed class FilterDialog : Dialog<FilterEdit>
         _to = Field(LabelWidth, 5, input.To);
 
         // Rows 6 to 9: the predicates, one per line.
-        _predicates = new TextView
+        _predicates = new TextArea
         {
             X = LabelWidth,
             Y = 6,
             Width = FieldWidth,
             Height = PredicateRows,
-            Multiline = true,
-            TabKeyAddsTab = false,
             Text = input.Predicates,
         };
 
