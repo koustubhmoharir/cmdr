@@ -156,3 +156,15 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       run on Windows.
 - [x] Table editor for arrays of tables and inline arrays of inline tables or values. Checked in a real terminal:
       cell edit and a shaped row added to `[[backends]]`. (4e701b7)
+
+## M11. YAML (design: "Phase 2" › "YAML (M11)")
+
+- [ ] Core syntax: lossless CST and parser for the subset (block and flow collections, five scalar styles, comments,
+      documents, directives, anchors, aliases, tags), refusals naming what is unsupported, scalar encoders. Tests:
+      byte-identical round trip, yaml-test-suite (vendored): every case refused or read as expected, every error case
+      refused.
+- [ ] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
+- [ ] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
+      move, duplicate, change type; anchors/aliases rules; YAML logical edit.
+- [ ] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, table editor, new file,
+      `--format yaml`; user guide.

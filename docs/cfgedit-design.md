@@ -458,12 +458,60 @@ caps tables and values at 256 levels each, and Tomlyn counts both in one number.
 
 ### YAML (M11)
 
-Designed in detail at the start of its milestone. Outline:
+**Detection.** `.yaml`, `.yml`, or `--format yaml`. A new file starts empty and is shown as an empty mapping root, so
+the first add writes `key: value`.
 
-- YAML, config subset: block and flow mappings and sequences, all scalar styles (plain, single, double, literal,
-  folded) kept on edit, comments, multi-document files, anchors, aliases and tags shown and kept but not editable.
-  Complex keys (`? `), and anything else outside the subset, open the file in text mode. Every edit is also parsed by
-  YamlDotNet and compared.
+**Subset.** YAML 1.2, UTF-8 (a BOM is kept). Supported: block mappings and sequences (including sequences not
+indented under their key), flow mappings and sequences (one line or several), the five scalar styles (plain, single
+quoted, double quoted, literal `|`, folded `>`, with chomping and indentation indicators), comments, `---` and `...`
+markers, several documents, `%YAML`/`%TAG` directives, anchors, aliases, tags and merge keys (`<<: *base`). Outside the
+subset, the file opens in text mode with a message naming what is not supported: complex keys (`? `), keys that are
+collections, aliases or block scalars, keys spanning lines, and anything YAML itself rejects. The safety property:
+for any input, cfgedit either refuses it or reads exactly the data YAML defines; it never misreads.
+
+**Syntax.** A lossless CST, as for the other formats: every token keeps its span, indentation, comments and line
+breaks are trivia, printing it reproduces the bytes. Parse errors carry line and column.
+
+**Tree.** The root is the stream. A file with one document shows that document's root as the root row (`$` marker,
+like JSON). A file with several documents shows them as rows `---[0]`, `---[1]`… under the root. Mappings are
+`key: {n}`, sequences `key: [n]`, items `[i]`, scalars `key: value` (values shown decoded, without quotes, as JSON's).
+Anchors (`&name`), tags (`!tag`) and aliases (`*name`) are read-only parts on the row; an alias shows `*name` as its
+value and is not expanded; a merge key is an ordinary member whose value is an alias or a sequence of aliases.
+Comments attach as for `.env` and TOML: a comment line above an entry (no blank line between) is shown with it,
+trailing comments are rows after their entry, others are rows in place. Path text: `servers[1].port`, keys quoted
+when not plain-safe, documents as `---[1]`. The detail line shows a scalar's kind: plain scalars by the YAML 1.2 core
+schema (`null`, `boolean`, `integer`, `float`, `string`), quoted and block scalars as `string`.
+
+**Edits.**
+
+- Scalar value: the style is kept when it can hold the value and, for plain scalars, when the new text resolves to
+  the same core-schema kind (so editing a string to `true` writes `"true"`); otherwise the plainest safe style:
+  plain, else single quoted, else double quoted; a value with line breaks becomes a literal block scalar (`|`, with
+  `|-` or `|+` chosen to keep the trailing line breaks exact). A folded scalar is kept folded only if the new value
+  folds back to itself; otherwise it becomes literal.
+- Key rename: written plain when safe, else quoted; refused onto an existing sibling key.
+- Add: into a block mapping, `key: value` at the siblings' indentation, after the group of the entry it follows; into
+  a block sequence, `- value`; into flow collections, as JSON (commas, one-line or one-per-line style). New
+  containers are written `{}` / `[]`; adding the first item to an empty `{}` or `[]` that is the value of a block
+  mapping entry or block sequence item turns it into block style. Add dialog kinds: string, number, boolean, null,
+  mapping, sequence, comment.
+- Delete, move (Alt+Up/Down), duplicate (`-copy` keys): as JSON and `.env`, with comment groups; moves refused when
+  units are not contiguous. A deleted or moved node keeps its anchor and tag; deleting an anchored node that an alias
+  still refers to is refused ("*name refers to it").
+- Anchors, aliases, tags: not editable; an alias node can be deleted or moved.
+- Change type: string, number, boolean, null, mapping, sequence, as JSON; containers become `{}`/`[]`.
+- Several documents: documents can be deleted; adding a document is not supported in M11.
+- Table editor: a sequence of mappings or of scalars opens as a table, as JSON.
+
+**Verification.** After cfgedit's own reparse: (1) a YAML logical tree, data (mappings with scalar keys, sequences,
+scalars as text plus plain-or-not, anchors, aliases and tags by name) plus comments in file order, is compared with
+the edit applied to the logical tree before, by a YAML logical edit; (2) YamlDotNet parses the new text
+(RepresentationModel), converted to the same shape, and must match. Opening a file runs check (2) too; a disagreement
+opens it in text mode with a message. cfgedit's parser is tested against the yaml-test-suite
+(github.com/yaml/yaml-test-suite, MIT): for every case, cfgedit either refuses it or produces the expected data;
+every case marked as an error is refused.
+
+**Dependency.** `YamlDotNet` 18.1.0, referenced by `Cfgedit.Core` only and used only for verification.
 
 ## Engineering rules (from cmdr's review rounds)
 
