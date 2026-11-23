@@ -10,9 +10,10 @@ using static Shared.Processes.Tests.ProcessTestHelpers;
 namespace Shared.Processes.Tests;
 
 /// <summary>
-/// Windows only: app execution alias detection, and a diagnostic matrix that starts the Microsoft Store pwsh alias with each of the four
-/// create strategies. The matrix is written to the test output and included in the failure message, so one run on Windows is enough to
-/// diagnose a failure. On other systems, and where the alias is not installed, these tests return early.
+/// Windows only: app execution alias detection, and a diagnostic matrix that starts the Microsoft Store pwsh alias in its job both
+/// ways (job list attribute; suspended, assigned, resumed) and through the public Launch. The matrix is written to the test output
+/// and included in the failure message, so one run on Windows is enough to diagnose a failure. On other systems, and where the
+/// alias is not installed, these tests return early.
 /// </summary>
 [SupportedOSPlatform("windows")]
 [Collection("Windows processes")]
@@ -75,24 +76,17 @@ public class WindowsAppAliasTests
         var matrix = new StringBuilder();
         matrix.AppendLine($"alias: {alias} (IsAppExecLink={WindowsAppAlias.IsAppExecLink(alias)})");
 
-        var strategies = new (string Name, WindowsCreateStrategy Strategy)[]
-        {
-            ("Default", WindowsCreateStrategy.Default),
-            ("PassApplicationName only", new WindowsCreateStrategy(PassApplicationName: true, JobListAttribute: false)),
-            ("JobListAttribute only", new WindowsCreateStrategy(PassApplicationName: false, JobListAttribute: true)),
-            ("AppAlias", WindowsCreateStrategy.AppAlias),
-        };
-
-        foreach ((string name, WindowsCreateStrategy strategy) in strategies)
+        // Recorded only: with the job list attribute CreateProcessW is expected to refuse the alias (access denied).
+        foreach (bool jobListAttribute in new[] { true, false })
         {
             Attempt attempt = await AttemptAsync(
-                $"{name} (PassApplicationName={strategy.PassApplicationName}, JobListAttribute={strategy.JobListAttribute})",
-                onExited => platform.Launch(platform.Prepare(AliasSpec(alias, dir.Path)), onExited, strategy));
+                jobListAttribute ? "job list attribute" : "suspended, assigned, resumed",
+                onExited => platform.Launch(platform.Prepare(AliasSpec(alias, dir.Path)), onExited, jobListAttribute));
             matrix.AppendLine(attempt.Describe());
         }
 
         Attempt automatic = await AttemptAsync(
-            "public Launch (strategy picked automatically)",
+            "public Launch (way picked automatically)",
             onExited => platform.Launch(platform.Prepare(AliasSpec(alias, dir.Path)), onExited));
         matrix.AppendLine(automatic.Describe());
 

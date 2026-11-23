@@ -4,9 +4,9 @@ namespace Shared.Processes;
 
 /// <summary>
 /// Recognises Windows app execution aliases: the zero-byte reparse points in <c>%LOCALAPPDATA%\Microsoft\WindowsApps</c>, such as
-/// the one for a Microsoft Store <c>pwsh.exe</c>. The normal launch (full path as the application name, created in its job by
-/// PROC_THREAD_ATTRIBUTE_JOB_LIST) fails for one with access denied, so <see cref="WindowsProcessPlatform"/> launches these with
-/// <see cref="WindowsCreateStrategy.AppAlias"/>. Which of the two differences is needed is recorded by WindowsAppAliasTests.
+/// the one for a Microsoft Store <c>pwsh.exe</c>. CreateProcessW fails with access denied when one is created in its job by
+/// PROC_THREAD_ATTRIBUTE_JOB_LIST (with or without an application name; WindowsAppAliasTests records both ways), so
+/// <see cref="WindowsProcessPlatform"/> creates these suspended, assigns them to the job and resumes them.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class WindowsAppAlias

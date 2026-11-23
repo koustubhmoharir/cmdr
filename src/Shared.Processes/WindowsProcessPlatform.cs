@@ -9,22 +9,6 @@ using Microsoft.Win32.SafeHandles;
 namespace Shared.Processes;
 
 /// <summary>
-/// How <see cref="WindowsProcessPlatform"/> creates a child. With <see cref="PassApplicationName"/> false the application name is
-/// null, so CreateProcessW takes the program from the command line. With <see cref="JobListAttribute"/> false the child is created
-/// suspended, assigned to its job and resumed, instead of being created in the job by PROC_THREAD_ATTRIBUTE_JOB_LIST.
-/// </summary>
-internal readonly record struct WindowsCreateStrategy(bool PassApplicationName, bool JobListAttribute)
-{
-    /// <summary>The normal launch: the program path is the application name, and the child is created in its job.</summary>
-    public static WindowsCreateStrategy Default { get; } = new(PassApplicationName: true, JobListAttribute: true);
-
-    /// <summary>
-    /// The launch of an app execution alias: no application name, and the child is created suspended, assigned to its job, then resumed.
-    /// </summary>
-    public static WindowsCreateStrategy AppAlias { get; } = new(PassApplicationName: false, JobListAttribute: false);
-}
-
-/// <summary>
 /// Windows implementation: each command runs in its own hidden console (<c>CreateNoWindow</c>), created with CreateProcessW
 /// inside a new kill-on-close job object. Ctrl+C is delivered by the cmdr helper mode (see <see cref="CtrlCHelper"/>).
 /// </summary>
@@ -33,8 +17,8 @@ internal readonly record struct WindowsCreateStrategy(bool PassApplicationName, 
 /// assignment afterwards, so a child it spawns is tracked from its first instruction. It inherits only its own standard
 /// handles (PROC_THREAD_ATTRIBUTE_HANDLE_LIST), so concurrent launches cannot leak each other's pipe ends into the wrong child.
 /// The job list attribute needs Windows 10 version 1607 or later; on older systems the launch fails with a message saying so.
-/// An app execution alias (see <see cref="WindowsAppAlias"/>) is the exception: it is created suspended, assigned to the job and
-/// then resumed, with no application name (see <see cref="WindowsCreateStrategy"/>).
+/// An app execution alias (see <see cref="WindowsAppAlias"/>) is the exception, because CreateProcessW refuses the job list
+/// attribute for one: it is created suspended, assigned to the job and then resumed, so it still runs no instruction outside the job.
 /// With console stdin (<see cref="PreparedLaunch.NullStdin"/>) the child's standard input is the null handle, so it reads its
 /// own hidden console rather than cmdr's terminal.
 /// </remarks>
@@ -191,18 +175,19 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
     {
         ArgumentNullException.ThrowIfNull(launch);
 
-        // The normal launch of an app execution alias fails with access denied; see WindowsAppAlias.
+        // CreateProcessW fails with access denied when an app execution alias is created with the job list attribute.
         string fileName = launch.StartInfo.FileName;
         bool appAlias = Path.IsPathFullyQualified(fileName) && WindowsAppAlias.IsAppExecLink(fileName);
-        return Launch(launch, onExited, appAlias ? WindowsCreateStrategy.AppAlias : WindowsCreateStrategy.Default);
+        return Launch(launch, onExited, jobListAttribute: !appAlias);
     }
 
     /// <summary>
-    /// Launches with an explicit <paramref name="strategy"/>. The public overload picks <see cref="WindowsCreateStrategy.AppAlias"/>
-    /// for an app execution alias and <see cref="WindowsCreateStrategy.Default"/> otherwise; tests call this overload to force each one.
+    /// Launches with the child created in its job by the job list attribute (<paramref name="jobListAttribute"/> true), or created
+    /// suspended, assigned to the job and resumed (false). The public overload chooses false only for an app execution alias; tests
+    /// call this overload to force each way.
     /// </summary>
     /// <exception cref="Win32Exception">See the public <see cref="Launch(PreparedLaunch, Action{ILaunchedProcess})"/>; also AssignProcessToJobObject or ResumeThread failed.</exception>
-    internal LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited, WindowsCreateStrategy strategy)
+    internal LaunchedTree Launch(PreparedLaunch launch, Action<ILaunchedProcess> onExited, bool jobListAttribute)
     {
         ArgumentNullException.ThrowIfNull(launch);
         ArgumentNullException.ThrowIfNull(onExited);
@@ -214,7 +199,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             psi.FileName,
             psi.ArgumentList.Count == 0 ? psi.Arguments : null,
             psi.ArgumentList);
-        string? applicationName = strategy.PassApplicationName && Path.IsPathFullyQualified(psi.FileName) ? psi.FileName : null;
+        string? applicationName = Path.IsPathFullyQualified(psi.FileName) ? psi.FileName : null;
         string environment = WindowsEnvironmentBlock.Build(psi.Environment);
 
         SafeJobHandle job = CreateKillOnCloseJob();
@@ -222,7 +207,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         ChildPipes pipes;
         try
         {
-            (info, pipes) = CreateChild(psi, applicationName, commandLine, environment, job, strategy);
+            (info, pipes) = CreateChild(psi, applicationName, commandLine, environment, job, jobListAttribute);
         }
         catch
         {
@@ -298,7 +283,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         string commandLine,
         string environment,
         SafeJobHandle job,
-        WindowsCreateStrategy strategy)
+        bool jobListAttribute)
     {
         lock (InheritableHandleLock)
         {
@@ -306,7 +291,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             try
             {
                 pipes = new ChildPipes(psi.RedirectStandardInput);
-                PROCESS_INFORMATION info = CreateInJob(psi, applicationName, commandLine, environment, job, pipes, strategy);
+                PROCESS_INFORMATION info = CreateInJob(psi, applicationName, commandLine, environment, job, pipes, jobListAttribute);
                 pipes.CloseClientCopies();
                 return (info, pipes);
             }
@@ -320,7 +305,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
 
     /// <summary>
     /// Creates the child with CreateProcessW, with only the handles of <paramref name="pipes"/> inherited, and puts it in
-    /// <paramref name="job"/>: by the job list attribute, or, when <see cref="WindowsCreateStrategy.JobListAttribute"/> is false, by
+    /// <paramref name="job"/>: by the job list attribute, or, when <paramref name="jobListAttribute"/> is false, by
     /// creating it suspended and assigning and resuming it afterwards. Standard input is the null handle unless it is redirected.
     /// </summary>
     /// <exception cref="Win32Exception">CreateProcessW, the job assignment or the resume failed, or the attribute list could not be built (see <see cref="ProcThreadAttributes"/>).</exception>
@@ -331,11 +316,11 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
         string environment,
         SafeJobHandle job,
         ChildPipes pipes,
-        WindowsCreateStrategy strategy)
+        bool jobListAttribute)
     {
         using var attributes = new ProcThreadAttributes(
             pipes.InheritableHandles,
-            strategy.JobListAttribute ? job.DangerousGetHandle() : (nint?)null);
+            jobListAttribute ? job.DangerousGetHandle() : (nint?)null);
 
         nint commandLinePtr = 0;
         nint environmentPtr = 0;
@@ -354,7 +339,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
             startup.LpAttributeList = attributes.List;
 
             uint flags = WindowsNative.ExtendedStartupInfoPresent | WindowsNative.CreateNoWindow | WindowsNative.CreateUnicodeEnvironment;
-            if (!strategy.JobListAttribute)
+            if (!jobListAttribute)
             {
                 flags |= WindowsNative.CreateSuspended;
             }
@@ -382,7 +367,7 @@ internal sealed class WindowsProcessPlatform : IProcessPlatform
                     $"Could not start '{psi.FileName}' in '{psi.WorkingDirectory}': {new Win32Exception(error).Message}");
             }
 
-            if (!strategy.JobListAttribute)
+            if (!jobListAttribute)
             {
                 AssignToJobAndResume(job, info, psi);
             }
