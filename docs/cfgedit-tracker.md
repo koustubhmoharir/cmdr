@@ -154,4 +154,5 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] TUI: rows, path text, add dialog kinds, type menu, new `.toml` file, `--format toml`; user guide. Checked in a
       real terminal at 80x24: table rename across `[server]` and `[server.limits]`, save. (972ea1a) *(Windows)*: not
       run on Windows.
-- [ ] Table editor for arrays of tables and inline arrays of inline tables (`T` says "not available for TOML yet").
+- [x] Table editor for arrays of tables and inline arrays of inline tables or values. Checked in a real terminal:
+      cell edit and a shaped row added to `[[backends]]`. (4e701b7)
