@@ -125,6 +125,106 @@ public sealed class JsonEditChangeTypeTableTests
         Assert.Equal(expected, Edit(text, Strict, new ChangeJsonType(At(Item(0), Item(0)), JsonValueKind.Array, null)));
     }
 
+    // ----- Unwrapping: a one-item array changes to its item's own type -----
+
+    [Fact]
+    public void A_one_item_array_unwraps_to_its_item_for_each_kind()
+    {
+        Assert.Equal("{\"a\": \"s\"}", Edit("{\"a\": [\"s\"]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.String, null)));
+        Assert.Equal("{\"a\": 1}", Edit("{\"a\": [1]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Number, null)));
+        Assert.Equal("{\"a\": true}", Edit("{\"a\": [true]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.True, null)));
+        Assert.Equal("{\"a\": false}", Edit("{\"a\": [false]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.False, null)));
+        Assert.Equal("{\"a\": null}", Edit("{\"a\": [null]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Null, null)));
+        Assert.Equal("{\"a\": {\"x\": 1}}", Edit("{\"a\": [{\"x\": 1}]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Object, null)));
+    }
+
+    [Fact]
+    public void A_root_one_item_array_unwraps()
+    {
+        Assert.Equal("1", Edit("[1]", Strict, new ChangeJsonType(RootValue, JsonValueKind.Number, null)));
+    }
+
+    [Fact]
+    public void An_element_of_another_kind_keeps_the_old_result()
+    {
+        Assert.Equal("{\"a\": \"\"}", Edit("{\"a\": [1]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.String, null)));
+        Assert.Equal("{\"a\": {}}", Edit("{\"a\": [true]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Object, null)));
+    }
+
+    [Fact]
+    public void A_true_element_does_not_unwrap_for_false()
+    {
+        Assert.Equal("{\"a\": false}", Edit("{\"a\": [true]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.False, null)));
+    }
+
+    [Fact]
+    public void A_number_without_a_value_for_a_number_array_of_two_keeps_its_requirement()
+    {
+        CfgeditException error = Fails("{\"a\": [1, 2]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Number, null));
+
+        Assert.Equal("A number needs a value", error.Message);
+    }
+
+    [Fact]
+    public void A_two_item_array_keeps_the_old_result_with_a_value()
+    {
+        Assert.Equal("{\"a\": \"x\"}", Edit("{\"a\": [1, 2]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.String, "x")));
+    }
+
+    [Fact]
+    public void A_one_item_array_with_a_value_keeps_the_old_result()
+    {
+        Assert.Equal("{\"a\": 7}", Edit("{\"a\": [1]}", Strict, new ChangeJsonType(MemberA, JsonValueKind.Number, "7")));
+    }
+
+    [Fact]
+    public void A_one_item_array_with_a_comment_is_refused()
+    {
+        CfgeditException error = Fails("{\"a\": [1 /* c */]}", Jsonc, new ChangeJsonType(MemberA, JsonValueKind.Number, null));
+
+        Assert.Equal("the array has comments, which would be lost: delete them first", error.Message);
+    }
+
+    [Fact]
+    public void A_multi_line_object_item_is_de_indented_to_the_member_indentation()
+    {
+        string text = "{\n  \"a\": [\n    {\n      \"x\": 1\n    }\n  ]\n}";
+
+        Assert.Equal("{\n  \"a\": {\n    \"x\": 1\n  }\n}", Edit(text, Strict, new ChangeJsonType(MemberA, JsonValueKind.Object, null)));
+    }
+
+    [Fact]
+    public void Lines_inside_a_multi_line_block_comment_of_an_unwrapped_item_keep_their_text()
+    {
+        string text = "{\n  \"a\": [\n    {\n      /* first\n    second */\n      \"x\": 1\n    }\n  ]\n}";
+        string expected = "{\n  \"a\": {\n    /* first\n    second */\n    \"x\": 1\n  }\n}";
+
+        Assert.Equal(expected, Edit(text, Jsonc, new ChangeJsonType(MemberA, JsonValueKind.Object, null)));
+    }
+
+    [Fact]
+    public void Wrapping_then_unwrapping_gives_back_the_original_text()
+    {
+        string text = "{\n  \"k\": {\n    \"a\": 1,\n    \"b\": 2\n  }\n}";
+        NodePath member = At(Item(0), Member("k"));
+
+        string wrapped = Edit(text, Strict, new ChangeJsonType(member, JsonValueKind.Array, null));
+
+        Assert.Equal(text, Edit(wrapped, Strict, new ChangeJsonType(member, JsonValueKind.Object, null)));
+    }
+
+    [Fact]
+    public void Unwraps_is_true_only_for_a_one_item_array_whose_item_has_the_kind()
+    {
+        ConfigDocument one = ConfigDocument.Load("{\"a\": [1]}"u8, null, Strict);
+        ConfigDocument two = ConfigDocument.Load("{\"a\": [1, 2]}"u8, null, Strict);
+
+        Assert.True(one.Unwraps(new ChangeJsonType(MemberA, JsonValueKind.Number, null)));
+        Assert.False(one.Unwraps(new ChangeJsonType(MemberA, JsonValueKind.Number, "7")));
+        Assert.False(one.Unwraps(new ChangeJsonType(MemberA, JsonValueKind.String, null)));
+        Assert.False(two.Unwraps(new ChangeJsonType(MemberA, JsonValueKind.Number, null)));
+    }
+
     [Fact]
     public void A_multi_line_root_object_is_wrapped_in_a_multi_line_array()
     {

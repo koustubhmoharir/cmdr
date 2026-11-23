@@ -1079,7 +1079,7 @@ control as cmdr's `FieldDraft.Area`). Enter and paste add only LF, so the text i
   `ConfigDocument.MovedNodePath` gives the focus for JSON, XML and YAML; TOML and `.env` find the moved node themselves.
 - **`t`** opens the JSON type menu.
   - To Number: the current text if it is a valid number, else "0". To String: the current raw text of a scalar, else "".
-  - Container → scalar or object with children asks first, with Change as the default. To array wraps the value and asks nothing.
+  - Container → scalar or object with children asks first, with Change as the default. To array wraps the value and asks nothing. A one-element array to its element's type unwraps it and asks nothing (no value is passed, so the planner keeps the element).
   - On XML: "types apply to JSON only".
 - **`d`** duplicates the focused node (`DuplicateNode`), with the cursor on the copy. In the table editor `d` duplicates the row
   (`TableModel.DuplicateRow`), and Delete clears the cell or deletes the row on the index column.

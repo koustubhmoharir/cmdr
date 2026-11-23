@@ -216,6 +216,12 @@ internal sealed class TomlEditPlanner
             throw new CfgeditException("the root table cannot change type");
         }
 
+        if (ArrayUnwrap.ElementOf(node, change) is { } element)
+        {
+            UnwrapArray(node, element);
+            return;
+        }
+
         TomlValueKind? scalarKind = null;
         bool isTable = false;
         bool isArray = false;
@@ -313,6 +319,37 @@ internal sealed class TomlEditPlanner
         {
             Replace(syntax.Start, syntax.End, text);
         }
+    }
+
+    /// <summary>
+    /// Replaces an array that holds one value by that value, the inverse of the wrap. An inline array's text becomes its element's text. An array
+    /// of tables with one item becomes a table: the item's <c>[[</c> and <c>]]</c> become <c>[</c> and <c>]</c>, and its sub-tables and arrays keep
+    /// their headers, which name the same tables under the table. An array with a comment anywhere inside is refused: the comment would be lost.
+    /// </summary>
+    private void UnwrapArray(DocNode array, DocNode element)
+    {
+        if (HasCommentWithin(array))
+        {
+            throw new CfgeditException("the array has comments, which would be lost: delete them first");
+        }
+
+        if (element.Kind == NodeKind.TomlTable && !IsInline(element))
+        {
+            TomlHeaderItem header = _model.PiecesOf(element).OfType<TomlHeaderItem>().FirstOrDefault() ?? throw Uneditable();
+            Replace(header.OpenSpan.Start, header.OpenSpan.End, "[");
+            Replace(header.CloseSpan.Start, header.CloseSpan.End, "]");
+            return;
+        }
+
+        TomlValue arrayValue = ValueSyntax(array) ?? throw Uneditable();
+        TomlValue itemValue = ValueSyntax(element) ?? throw Uneditable();
+        Replace(arrayValue.Start, arrayValue.End, _text[itemValue.Start..itemValue.End]);
+    }
+
+    /// <summary>True when a comment lies anywhere under the node.</summary>
+    private static bool HasCommentWithin(DocNode node)
+    {
+        return node.Children.Any(child => EditLayout.IsComment(child) || HasCommentWithin(child));
     }
 
     private void PlanDelete(DeleteNode op)

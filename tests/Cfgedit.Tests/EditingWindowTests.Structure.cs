@@ -1185,6 +1185,54 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
+    public void t_on_a_one_item_array_changed_to_its_items_type_unwraps_it_and_asks_nothing()
+    {
+        OpenedFile file = Open("nested.json", "{\n  \"o\": [\"web\"]\n}");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(0), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), null, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish(expectOpened: false);
+            });
+
+        Assert.Equal("{\n  \"o\": \"web\"\n}", Text(session));
+    }
+
+    [Fact]
+    public void t_on_a_two_item_array_changed_to_a_string_still_asks_before_discarding_them()
+    {
+        OpenedFile file = Open("nested.json", "{\n  \"o\": [\"web\", \"x\"]\n}");
+        bool asked = false;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(0), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), _ => asked = true, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish();
+            });
+
+        Assert.True(asked);
+        Assert.Equal("{\n  \"o\": \"\"\n}", Text(session));
+    }
+
+    [Fact]
     public void t_on_an_XML_element_says_types_apply_to_JSON_only()
     {
         OpenedFile file = Open("app.config", Config);

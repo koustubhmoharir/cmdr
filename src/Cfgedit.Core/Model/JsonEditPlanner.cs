@@ -498,6 +498,12 @@ internal sealed class JsonEditPlanner
             return;
         }
 
+        if (ArrayUnwrap.ElementOf(node, op) is { } element)
+        {
+            UnwrapArray(node, element);
+            return;
+        }
+
         string text;
         if (op.Kind == JsonValueKind.String && node.JsonKind == JsonValueKind.String)
         {
@@ -514,6 +520,34 @@ internal sealed class JsonEditPlanner
         }
 
         Replace(start, end, text);
+    }
+
+    /// <summary>
+    /// Replaces an array that holds one value by that value, the inverse of <see cref="WrapInArray"/>. The value's text is kept, and its lines
+    /// after the first move back by the difference between its indentation and the indentation of the line the array starts on, except a line
+    /// that begins inside a block comment or a multi-line string. An array with comments is refused, since they would be lost.
+    /// </summary>
+    private void UnwrapArray(DocNode array, DocNode element)
+    {
+        if (ArrayUnwrap.HasComment(array))
+        {
+            throw new CfgeditException("the array has comments, which would be lost: delete them first");
+        }
+
+        (int start, int end) = ValueSpan(array);
+        (int valueStart, int valueEnd) = ValueSpan(element);
+        var verbatim = new List<(int Start, int End)>();
+        CollectVerbatim(element, verbatim);
+        int delta = EditLayout.LineIndent(_text, valueStart).Length - EditLayout.LineIndent(_text, start).Length;
+        string core = EditLayout.IndentedLines(
+            _text,
+            valueStart,
+            valueEnd,
+            verbatim,
+            add: delta < 0 ? new string(' ', -delta) : string.Empty,
+            remove: Math.Max(0, delta),
+            substitutions: []);
+        Replace(start, end, core);
     }
 
     /// <summary>

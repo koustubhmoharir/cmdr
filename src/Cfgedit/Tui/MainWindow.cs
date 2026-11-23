@@ -1316,15 +1316,17 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        // A change to an array keeps the children (the value is wrapped, or a null has none), so nothing is discarded.
+        // An array of one element of the chosen kind unwraps: no value is given, and nothing is lost. Otherwise a change to an array keeps
+        // the children (the value is wrapped, or a null has none), and a change to anything else asks before they are dropped.
+        bool unwraps = doc.Unwraps(new ChangeJsonType(node.Path, kind, null));
         bool container = node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;
-        if (container && kind != JsonValueKind.Array && node.Children.Count > 0
+        if (!unwraps && container && kind != JsonValueKind.Array && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;
         }
 
-        string? value = kind switch
+        string? value = unwraps ? null : kind switch
         {
             JsonValueKind.Number => NumberText(doc, node),
             JsonValueKind.String => ScalarText(node) ?? string.Empty,
@@ -1374,8 +1376,14 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        // An array of one element of the chosen kind unwraps: the element keeps its own value, so none is asked for.
+        bool unwraps = doc.Unwraps(new ChangeTomlType(node.Path, kind, null));
         string? value = null;
-        if (kind == TomlNewKind.DateTime)
+        if (unwraps)
+        {
+            // No value: the element's text stays.
+        }
+        else if (kind == TomlNewKind.DateTime)
         {
             string text = ScalarText(node) ?? string.Empty;
             if (!TextPromptDialog.Ask(Ui, "Date-time of " + target, "Value", text, entered =>
@@ -1405,9 +1413,9 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        // A change to an array keeps the children (the value is wrapped), so nothing is discarded.
+        // A change to an array keeps the children (the value is wrapped), and an unwrap keeps the element, so nothing is discarded.
         bool container = node.Kind is NodeKind.TomlTable or NodeKind.TomlArray;
-        if (container && kind != TomlNewKind.Array && node.Children.Count > 0
+        if (!unwraps && container && kind != TomlNewKind.Array && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;
@@ -1488,16 +1496,18 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        string? value = kind == YamlNewKind.String ? ScalarText(node) ?? string.Empty : null;
+        // A sequence of one element of the chosen kind unwraps: no value is given, and the element keeps its own.
+        bool unwraps = doc.Unwraps(new ChangeYamlType(node.Path, kind, null));
+        string? value = !unwraps && kind == YamlNewKind.String ? ScalarText(node) ?? string.Empty : null;
         var op = new ChangeYamlType(node.Path, kind, value);
         if (!PreflightYaml(doc, op))
         {
             return;
         }
 
-        // A change to a sequence keeps the children (a mapping is wrapped, a sequence stays), so nothing is discarded.
+        // A change to a sequence keeps the children (a mapping is wrapped, a sequence stays), and an unwrap keeps the element, so nothing is discarded.
         bool container = node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence;
-        if (container && kind != YamlNewKind.Sequence && node.Children.Count > 0
+        if (!unwraps && container && kind != YamlNewKind.Sequence && node.Children.Count > 0
             && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
         {
             return;

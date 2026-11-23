@@ -172,6 +172,54 @@ public sealed partial class EditingWindowTests
     }
 
     [Fact]
+    public void t_on_a_one_item_inline_array_changed_to_its_items_type_unwraps_it_and_asks_nothing()
+    {
+        OpenedFile file = Open("settings.toml", "a = [1]\n");
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(1), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), null, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish(expectOpened: false);
+            });
+
+        Assert.Equal("a = 1\n", Text(session));
+    }
+
+    [Fact]
+    public void t_on_a_two_item_inline_array_changed_to_an_integer_still_asks_before_discarding_them()
+    {
+        OpenedFile file = Open("settings.toml", "a = [1, 2]\n");
+        bool asked = false;
+
+        Session session = Run(
+            file,
+            80,
+            24,
+            null,
+            null,
+            (app, w) =>
+            {
+                using var menu = new DialogWatch(app, "the type menu", v => v is ChoiceDialog, PickItem(1), null);
+                using var confirm = new DialogWatch(app, "the discard prompt", IsDialogTitled("Type"), _ => asked = true, "Change");
+                Keys(w, Key.CursorDown, new Key('t'));
+                menu.Finish();
+                confirm.Finish();
+            });
+
+        Assert.True(asked);
+        Assert.Equal("a = 0\n", Text(session));
+    }
+
+    [Fact]
     public void t_on_a_string_changes_it_to_an_integer_of_value_zero()
     {
         OpenedFile file = Open("settings.toml", "a = \"x\"\n");

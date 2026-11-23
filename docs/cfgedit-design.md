@@ -118,7 +118,8 @@ string, a logical value, an `Editable` flag, a style and a source span. One row 
   a number edit is validated against the dialect's number grammar; a bool or null edit is a choice. Changing the type is a
   separate command (`t`: string / number / true / false / null / object / array). Changing to array wraps the value as
   the array's only item (`1` becomes `[1]`; a multi-line container goes on its own lines one unit deeper); a null becomes
-  `[]`. Converting a container to anything else needs a Confirm when the container is not empty.
+  `[]`. A one-element array changed to its element's own type unwraps to that element (`[1]` to number becomes `1`, with
+  no value and no Confirm). Converting a container to anything else needs a Confirm when the container is not empty.
 - **Strings** are encoded minimally for the dialect when edited: `\"` or `\'` matching the original quote character,
   `\\`, control characters as `\n \t \r \b \f` or `\uXXXX`. Everything else, non-ASCII included, is written literally.
   Unedited strings keep their original escapes.
@@ -439,8 +440,10 @@ it (a header section, a dotted-key line, an inline table). Children are in order
   sibling header sections, when the units are contiguous; otherwise refused with a message (as `.env`).
 - Duplicate: as JSON (the copy's key is numbered, `port` gives `port2`); an array-of-tables item is duplicated as a section.
 - Change type: scalars change kind through the type menu (string, integer, float, boolean, date-time, table, array),
-  as JSON. A scalar becomes `{}`; changing to array wraps it (`a = 1` becomes `a = [1]`, the value text verbatim). A
-  header-defined table or an array of tables cannot change type: delete it instead (message).
+  as JSON. A scalar becomes `{}`; changing to array wraps it (`a = 1` becomes `a = [1]`, the value text verbatim), and a
+  one-item inline array unwraps to its item (`a = [1]` becomes `a = 1`). A one-item array of tables unwraps to a table
+  (`[[x]]` becomes `[x]`, its sub-tables keep their headers). A header-defined table or an array of tables with more than one
+  item cannot change type: delete it instead (message).
 - Nest (Alt+Shift+Up/Down): key/values into or out of header tables, the root, inline tables, inline arrays and
   array-of-tables items; a key/value goes after the destination's key/values when the index would put it after a subtable
   header. A header table (or an array of tables, or one item) moves as one run of sections with every header renamed to
@@ -517,7 +520,10 @@ add writes it) does not keep its quotes; otherwise the plainest safe style:
 - Change type: string, number, boolean, null, mapping, sequence, as JSON; a container becomes `{}`. Changing to sequence
   wraps the value: a block sequence with one item in block context (a block collection re-indented as a compact `- a: 1`
   item), `[v]` in flow context; anchors and tags stay on the item; a null becomes `[]`; an alias can be wrapped but not
-  changed otherwise. Refused: a block scalar with an indentation indicator, a comment between key and value.
+  changed otherwise. A one-item sequence changed to its item's own type unwraps to the item (`a:` with `- v` below becomes
+  `a: v`; a mapping item goes on the lines under the key), and the sequence's anchor moves onto the item. Refused: a block
+  scalar with an indentation indicator, a comment between key and value, and a sequence with a comment or with an anchor
+  that its item also has.
 - Nest (Alt+Shift+Up/Down): within one document. Member ↔ item conversion as the wrap does (`k: v` becomes `- v`; a
   compact item becomes `key:` with its collection below). Refused: a block value or multi-line value into a flow
   collection, a plain scalar or key that is not valid plain in flow context, a `<<` member into a sequence, a block scalar

@@ -822,6 +822,13 @@ internal static class LogicalEdit
 
     private static LogicalNode ChangeType(LogicalNode node, ChangeJsonType change)
     {
+        if (change.Value is null && change.Kind != JsonValueKind.Array && node.Kind == LogicalKind.Array && UnwrappedItem(node) is { } element
+            && (element.Kind == LogicalKind.Object ? change.Kind == JsonValueKind.Object : element.ScalarKind == change.Kind))
+        {
+            // The array's only item replaces it, and takes its name.
+            return new LogicalNode(element.Kind, node.Name, element.ScalarKind, element.Value, element.Attributes, element.Children);
+        }
+
         if (change.Kind == JsonValueKind.Array)
         {
             if (node.Kind == LogicalKind.Array)
@@ -851,6 +858,17 @@ internal static class LogicalEdit
             _ => null,
         };
         return ValueNode(node.Name, change.Kind, value);
+    }
+
+    /// <summary>The only child of an array when it has exactly one and no comment: the item an unwrap keeps. Null otherwise.</summary>
+    private static LogicalNode? UnwrappedItem(LogicalNode array)
+    {
+        if (array.Children.Any(child => child.Kind == LogicalKind.Comment) || array.Children.Count != 1)
+        {
+            return null;
+        }
+
+        return array.Children[0];
     }
 
     private static LogicalNode Renamed(LogicalNode node, string name)

@@ -49,6 +49,13 @@ internal static class YamlLogicalEdit
             case ChangeYamlType change:
             {
                 DocNode node = Locate(before, change.Node);
+                if (ArrayUnwrap.ElementOf(node, change) is not null)
+                {
+                    // The sequence's only item replaces it, and takes its name. The planner has refused a sequence with comments.
+                    data = Modify(data, IndicesOf(node), 0, n => Unwrapped(n, change)) ?? data;
+                    break;
+                }
+
                 if (node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence)
                 {
                     YamlValueNode value = YamlEditPlanner.ValueOf(model.SyntaxOf(node)) ?? throw new InvalidOperationException("The collection has no syntax.");
@@ -702,6 +709,32 @@ internal static class YamlLogicalEdit
         }
 
         return Scalar(old.Name, text, plain, old.YamlAnchor, old.YamlTag);
+    }
+
+    /// <summary>
+    /// The logical node of a sequence unwrapped to its only item: the item takes the sequence's name. Its own anchor and tag stay; the sequence's
+    /// anchor moves onto it, and its tag stays only when it is a non-core tag that still fits (the planner's rule).
+    /// </summary>
+    private static LogicalNode Unwrapped(LogicalNode sequence, ChangeYamlType change)
+    {
+        LogicalNode item = sequence.Children.Single(child => child.Kind != LogicalKind.Comment);
+        bool mapping = change.Kind == YamlNewKind.Mapping;
+        bool keepTag = sequence.YamlTag is { } tag && !tag.StartsWith(YamlTags.CorePrefix, StringComparison.Ordinal)
+            && YamlEditPlanner.TagFits(tag, mapping ? null : item.YamlKind);
+        string? itemTag = item.YamlTag ?? (keepTag ? sequence.YamlTag : null);
+        return new LogicalNode(
+            item.Kind,
+            sequence.Name,
+            item.ScalarKind,
+            item.Value,
+            item.Attributes,
+            item.Children,
+            false,
+            item.TomlKind,
+            item.YamlKind,
+            item.YamlPlain,
+            item.YamlAnchor ?? sequence.YamlAnchor,
+            itemTag);
     }
 
     /// <summary>The logical node of a scalar changed to another type (ChangeYamlType), with the tag that still fits it.</summary>

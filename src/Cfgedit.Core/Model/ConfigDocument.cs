@@ -154,6 +154,25 @@ public sealed class ConfigDocument
         return result;
     }
 
+    /// <summary>
+    /// True when a type change unwraps its array: the change has no value, its node is an array (JSON, TOML or YAML) with exactly one
+    /// element, and that element already has the new type. Such a change replaces the array by its element, and asks nothing, since
+    /// nothing is lost. An array with comments still unwraps by this test: the planner refuses it, and says why.
+    /// </summary>
+    /// <param name="change">A JSON, TOML or YAML type change. Any other operation gives false.</param>
+    public bool Unwraps(EditOp change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        DocNode? node = change switch
+        {
+            ChangeJsonType { Value: null } json => Resolve(json.Node),
+            ChangeTomlType { Value: null } toml => Resolve(toml.Node),
+            ChangeYamlType { Value: null } yaml => Resolve(yaml.Node),
+            _ => null,
+        };
+        return node is not null && ArrayUnwrap.ElementOf(node, change) is not null;
+    }
+
     /// <summary>Returns the node at a path, or null when no node is there.</summary>
     public DocNode? Resolve(NodePath path)
     {
@@ -809,5 +828,88 @@ public sealed class ConfigDocument
         }
 
         return best;
+    }
+}
+
+/// <summary>
+/// The unwrap of an array. A type change with no value, of an array of JSON, TOML or YAML with exactly one element, to the element's own
+/// type, replaces the array by that element (the reverse of the wrap). This is the one definition of which element that is: the planners,
+/// the logical edits and <see cref="ConfigDocument.Unwraps"/> all ask it.
+/// </summary>
+internal static class ArrayUnwrap
+{
+    /// <summary>
+    /// The array's only element when <paramref name="change"/> unwraps <paramref name="node"/>, else null. The element must be the array's
+    /// only entry, comments not counted, and of the new kind: a JSON value of the same kind, a TOML scalar of the kind or a table, or a YAML
+    /// scalar of the kind or a mapping. Comments are not refused here (the planners do that), and a change with a value never unwraps.
+    /// </summary>
+    public static DocNode? ElementOf(DocNode node, EditOp change)
+    {
+        switch (change)
+        {
+            case ChangeJsonType { Value: null } json when node.Kind == NodeKind.JsonArray && json.Kind != JsonValueKind.Array:
+            {
+                DocNode? element = Only(node);
+                return element is not null && element.JsonKind == json.Kind ? element : null;
+            }
+
+            case ChangeTomlType { Value: null } toml when node.Kind == NodeKind.TomlArray && toml.Kind != TomlNewKind.Array:
+            {
+                DocNode? element = Only(node);
+                bool fits = element is not null && (toml.Kind == TomlNewKind.Table
+                    ? element.Kind == NodeKind.TomlTable
+                    : element.Kind == NodeKind.TomlScalar && TomlLogicalEdit.NewKindOf(element.TomlKind) == toml.Kind);
+                return fits ? element : null;
+            }
+
+            case ChangeYamlType { Value: null } yaml when node.Kind == NodeKind.YamlSequence && yaml.Kind != YamlNewKind.Sequence:
+            {
+                DocNode? element = Only(node);
+                bool fits = element is not null && (yaml.Kind == YamlNewKind.Mapping
+                    ? element.Kind == NodeKind.YamlMapping
+                    : element.Kind == NodeKind.YamlScalar && YamlKindFits(element.YamlKind, yaml.Kind));
+                return fits ? element : null;
+            }
+
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>True when the container has a comment among its children.</summary>
+    public static bool HasComment(DocNode container) => container.Children.Any(EditLayout.IsComment);
+
+    /// <summary>The only child that is not a comment, when there is exactly one.</summary>
+    private static DocNode? Only(DocNode container)
+    {
+        DocNode? only = null;
+        foreach (DocNode child in container.Children)
+        {
+            if (EditLayout.IsComment(child))
+            {
+                continue;
+            }
+
+            if (only is not null)
+            {
+                return null;
+            }
+
+            only = child;
+        }
+
+        return only;
+    }
+
+    private static bool YamlKindFits(YamlValueKind? element, YamlNewKind kind)
+    {
+        return kind switch
+        {
+            YamlNewKind.String => element == YamlValueKind.String,
+            YamlNewKind.Number => element is YamlValueKind.Integer or YamlValueKind.Float,
+            YamlNewKind.Boolean => element == YamlValueKind.Boolean,
+            YamlNewKind.Null => element == YamlValueKind.Null,
+            _ => false,
+        };
     }
 }

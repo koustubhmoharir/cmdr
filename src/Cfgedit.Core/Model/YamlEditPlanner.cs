@@ -298,6 +298,12 @@ internal sealed class YamlEditPlanner
     private void PlanChangeType(ChangeYamlType change)
     {
         DocNode node = Node(change.Node);
+        if (ArrayUnwrap.ElementOf(node, change) is { } element)
+        {
+            UnwrapSequence(node, element);
+            return;
+        }
+
         switch (node.Kind)
         {
             case NodeKind.YamlScalar:
@@ -317,6 +323,112 @@ internal sealed class YamlEditPlanner
             default:
                 throw new CfgeditException("only a value has a type");
         }
+    }
+
+    /// <summary>
+    /// Replaces a sequence that holds one value by that value, the inverse of <see cref="WrapInSequence"/>. A flow sequence's text becomes its
+    /// item's text. In a block sequence the item goes where the sequence was: after its owner's colon or dash (a scalar or a flow value on the
+    /// owner's line, a mapping on the lines under it, one unit deeper than the key, or compact after a dash), or at the document's start. A
+    /// mapping's lines move to keep their place under their new owner. The sequence's anchor moves onto the item, and its tag stays only
+    /// when it is a non-core tag that still fits, so the core <c>!!seq</c> goes. A sequence with a comment is refused, since it would be lost.
+    /// </summary>
+    private void UnwrapSequence(DocNode node, DocNode element)
+    {
+        YamlNode? piece = Piece(node);
+        YamlValueNode sequence = ValueOf(piece) ?? throw Internal("a sequence to unwrap has no syntax");
+        if (YamlDocuments.CommentsIn(sequence).Any() || ArrayUnwrap.HasComment(node))
+        {
+            throw new CfgeditException("the sequence has comments, which would be lost: delete them first");
+        }
+
+        YamlValueNode? item = ValueOf(Piece(element));
+        if (sequence.Anchor is not null && item?.Anchor is not null)
+        {
+            throw new CfgeditException("the sequence and its item both have an anchor, which cannot be merged: delete one of them first");
+        }
+
+        string? sequenceTag = TagOf(sequence);
+        bool keepTag = sequence.Tag is not null && sequenceTag is not null
+            && !sequenceTag.StartsWith(YamlTags.CorePrefix, StringComparison.Ordinal)
+            && TagFits(sequenceTag, element.Kind == NodeKind.YamlMapping ? null : element.YamlKind);
+        if (keepTag && item?.Tag is not null)
+        {
+            throw new CfgeditException("the sequence and its item both have a tag, which cannot be merged: delete one of them first");
+        }
+
+        var props = new List<string>();
+        if (sequence.Anchor is { } anchor)
+        {
+            props.Add(anchor.Text);
+        }
+
+        if (keepTag)
+        {
+            props.Add(sequence.Tag!.Text);
+        }
+
+        string lead = string.Join(" ", props);
+        if (item is YamlScalar { Style: YamlScalarStyle.Literal or YamlScalarStyle.Folded })
+        {
+            RequireNoIndentIndicator(item.Start, "a block scalar with an explicit indentation indicator cannot be unwrapped yet");
+        }
+
+        if (sequence is YamlFlowSequence)
+        {
+            string flowText = item is null ? string.Empty : _text[item.Start..item.End];
+            Replace(sequence.Start, sequence.End, props.Count == 0 ? flowText : lead + (flowText.Length > 0 ? " " + flowText : string.Empty));
+            return;
+        }
+
+        Owner? owner = OwnerOf(piece, _text);
+        if (owner is null)
+        {
+            // A root sequence: its item takes its place at the start of the document.
+            if (item is null)
+            {
+                Replace(sequence.Start, CollectionSpan(_text, sequence, null).End, lead);
+            }
+            else if (item is YamlBlockMapping)
+            {
+                (int itemStart, int itemEnd) = CollectionSpan(_text, item, null);
+                string body = Reindent(itemStart, itemEnd, -Column(_text, itemStart), 0, scalar: false);
+                Replace(sequence.Start, CollectionSpan(_text, sequence, null).End, (props.Count > 0 ? lead + _newline : string.Empty) + body);
+            }
+            else
+            {
+                string itemText = _text[item.Start..EditLayout.TrimBreaks(_text, item.Start, item.End)];
+                Replace(sequence.Start, CollectionSpan(_text, sequence, null).End, props.Count == 0 ? itemText : lead + " " + itemText);
+            }
+
+            return;
+        }
+
+        Owner at = owner.Value;
+        int itemOffset = item?.Start ?? at.End;
+        if (_text[at.End..itemOffset].Contains('#'))
+        {
+            throw new CfgeditException("a comment between a key and its value cannot be unwrapped yet");
+        }
+
+        int end = CollectionSpan(_text, sequence, owner).End;
+        if (item is YamlBlockMapping)
+        {
+            (int itemStart, int itemEnd) = CollectionSpan(_text, item, null);
+            // A mapping under a key is one unit deeper than the key; a mapping that is a dash's item stays compact, on the dash's line.
+            bool compact = piece is YamlSequenceItem && props.Count == 0;
+            int target = piece is YamlSequenceItem ? at.Column + 2 : at.Column + IndentUnit().Length;
+            string body = Reindent(itemStart, itemEnd, target - Column(_text, itemStart), target, scalar: false);
+            string text = compact
+                ? " " + body
+                : (props.Count > 0 ? " " + lead : string.Empty) + _newline + new string(' ', target) + body;
+            Replace(at.End, end, text);
+            return;
+        }
+
+        // A block scalar's text ends with its line break, which the sequence's span does not take: the line break after the sequence stays.
+        string scalarText = item is null ? string.Empty : _text[item.Start..EditLayout.TrimBreaks(_text, item.Start, item.End)];
+        string joined = props.Count > 0 ? lead + (scalarText.Length > 0 ? " " + scalarText : string.Empty) : scalarText;
+        Replace(at.End, end, joined.Length == 0 ? string.Empty : " " + joined);
     }
 
     private void ChangeScalar(DocNode node, ChangeYamlType change)

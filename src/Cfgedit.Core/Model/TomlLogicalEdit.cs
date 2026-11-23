@@ -58,6 +58,13 @@ internal static class TomlLogicalEdit
                     break;
                 }
 
+                if (ArrayUnwrap.ElementOf(node, change) is not null)
+                {
+                    // The array's only item replaces it, and takes its name. The planner has refused an array with comments.
+                    data = Modify(data, IndicesOf(node), 0, n => Renamed(n.Children[0], n.Name)) ?? data;
+                    break;
+                }
+
                 if (change.Kind == TomlNewKind.Array)
                 {
                     // The value keeps its text and comments (an inline value holds none), as the array's only item.
@@ -1288,7 +1295,8 @@ internal static class TomlLogicalEdit
         }
     }
 
-    private static TomlNewKind? NewKindOf(TomlValueKind? kind)
+    /// <summary>The new-type menu kind of a scalar's TOML kind (every date-time form is a date-time), or null.</summary>
+    internal static TomlNewKind? NewKindOf(TomlValueKind? kind)
     {
         return kind switch
         {

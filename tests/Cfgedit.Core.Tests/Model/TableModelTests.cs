@@ -551,6 +551,17 @@ public sealed class TableModelTests
     }
 
     [Fact]
+    public void A_cell_holding_an_array_is_nested_and_refused_before_any_type_change()
+    {
+        const string text = """[{"a": [1]}]""";
+        TableModel table = Table(ParseJson(text), RootValue);
+
+        CfgeditException error = Assert.Throws<CfgeditException>(() => table.EditCell(0, 0, JsonValueKind.Number, "5"));
+
+        Assert.Equal("this cell holds a nested value and cannot be edited in the table; edit it in the tree", error.Message);
+    }
+
+    [Fact]
     public void A_missing_JSON_member_is_inserted_before_the_first_member_of_a_later_column()
     {
         const string text = """[{"a": "1", "b": "2", "c": "3"}, {"a": "x", "c": "y"}]""";

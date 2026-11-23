@@ -89,7 +89,7 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | Alt+Up/Down, K/J | Move the node among its siblings, with its comments |
 | Alt+Shift+Up/Down | Move the node into the object, array or element just above it (as its last child) / just below it (as its first child). When the node is first / last in its parent, it moves out, before / after the parent. Next to a value that holds nothing, it moves one step, like Alt+Up/Down. An array item going into an object asks for its key; a member going into an array loses its key; a key already taken there gets the next number (`port2`) |
 | Alt+Left/Right | Move the attribute |
-| `t` | Change a JSON value's type. Changing to array wraps the value: `"a": 1` becomes `"a": [1]` (a null becomes `[]`) |
+| `t` | Change a JSON value's type. Changing to array wraps the value: `"a": 1` becomes `"a": [1]` (a null becomes `[]`). A one-element array changed to its element's type unwraps: `"a": [1]` becomes `"a": 1` |
 | `d` | Duplicate the node. The copy goes right after it, with its attached comments, and the cursor moves to the copy. A copied key gets a number: `port` gives `port2`, `server1` gives `server2`, then the next free number |
 | `T` | Open the table editor |
 | `/`, Ctrl+F | Find in keys, names and values; n / F3 next, N / Shift+F3 previous. Enter goes to the next match; Esc closes the search |
@@ -177,8 +177,8 @@ their value as JSON scalars do (strings without quotes), and the detail line nam
   its section, a `[parent.key]` header for a new table in a header-defined table, a dotted key in a dotted table. `a` on an
   item of an array of tables copies its shape, with empty values.
 - **Types:** `t` opens the type menu (string, integer, float, boolean, date-time, table, array). A date-time asks for its
-  text. Changing to array wraps the value (`a = 1` becomes `a = [1]`); a table with children changed to anything else asks
-  before they are dropped. A table defined by a header or by dotted keys cannot change type: delete it instead.
+  text. Changing to array wraps the value (`a = 1` becomes `a = [1]`), and a one-item array changed to its item's type
+  unwraps (`a = [1]` becomes `a = 1`); a table with children changed to anything else asks before they are dropped. A table defined by a header or by dotted keys cannot change type: delete it instead.
 - **Deleting** a table deletes every piece that defines it, its subtables included. Alt+Up/Down moves a key/value, an item or
   a sibling header section; a move is refused when the units are not next to each other.
 - **Moving into and out of tables:** Alt+Shift+Up/Down moves a key/value into the table above / below or out of its table, and
@@ -223,7 +223,8 @@ file open as a tree.
   an empty `{}` or `[]` turns it into block style. An empty `{}` that is a sequence item becomes a compact mapping on the
   dash line. Flow collections take JSON-style commas.
 - **Types:** `t` opens the type menu (string, number, boolean, null, mapping, sequence). Changing to sequence wraps the value:
-  `a: 1` becomes `a:` with the item `- 1` below it (in a flow collection, `[1]`); a null becomes `[]`. A mapping or sequence
+  `a: 1` becomes `a:` with the item `- 1` below it (in a flow collection, `[1]`); a null becomes `[]`. A one-item sequence
+  changed to its item's type unwraps (`a:` with `- 1` below becomes `a: 1`). A mapping or sequence
   with children changed to anything else asks before they are dropped. An alias can only be wrapped in a sequence. A block
   scalar with an indentation indicator (`|2`) cannot be wrapped.
 - **Deleting** a node deletes it with its comments. An anchor that an alias still refers to cannot be deleted; the message

@@ -62,14 +62,16 @@ public sealed record MoveAttribute(NodePath Element, int Index, int NewIndex) : 
 /// empty), the number text for Number (required), ignored for True, False and Null, and ignored for Object, which becomes empty.
 /// The contents of a container that changes to a scalar or to an object are dropped.
 /// Array wraps a value that is not an array: the value becomes the array's only item, unchanged. A null becomes an empty array,
-/// since it has nothing to keep. An array changed to an array is left as it is.
+/// since it has nothing to keep. An array changed to an array is left as it is. An array of one element of the new kind, with no
+/// value, unwraps: the element replaces the array (the reverse of the wrap). It is refused when the array has comments.
 /// </summary>
 public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? Value) : EditOp;
 
 /// <summary>
 /// Changes the TOML type of a value: a scalar, an inline table or an inline array. <see cref="Value"/> is the new scalar's text:
 /// required for DateTime, optional for the others (null means the kind's default, and for the same kind it means no change).
-/// Array wraps a value that is not an array: the value's text is kept as the array's only item. An array stays an array.
+/// Array wraps a value that is not an array: the value's text is kept as the array's only item. An array stays an array, unless it
+/// has one item of the new kind and no value, which unwraps to that item (an array of tables with one item becomes a table).
 /// Table gives an empty inline table, and the contents of a container that changes to anything else are dropped. A table defined
 /// by headers or dotted keys, and an array of tables, cannot change type.
 /// </summary>
@@ -82,7 +84,8 @@ public sealed record ChangeTomlType(NodePath Node, TomlNewKind Kind, string? Val
 /// Sequence wraps a value that is not a sequence: the value becomes the sequence's only item, unchanged, with its anchor and tag. A sequence
 /// changed to a sequence is left as it is. A collection's contents are dropped when it changes to a scalar or a mapping. A scalar's anchor stays;
 /// a tag stays only when it still fits the new type. A null (explicit, or a missing value) becomes an empty sequence, keeping its anchor,
-/// and not a wrapped null. An alias can only be wrapped in a sequence; it cannot change to anything else.
+/// and not a wrapped null. An alias can only be wrapped in a sequence; it cannot change to anything else. A sequence of one item of the
+/// new kind, with no value, unwraps to that item: the item keeps its own anchor and tag, and the sequence's anchor moves onto it.
 /// </summary>
 public sealed record ChangeYamlType(NodePath Node, YamlNewKind Kind, string? Value) : EditOp;
 

@@ -127,6 +127,132 @@ public sealed class YamlEditTypeTests
         Assert.Equal("a:\n  - x: 1 # tail\n", Edit("a:\n  x: 1 # tail\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"))));
     }
 
+    // ----- Unwrapping: a one-item sequence changes to its item's own type -----
+
+    [Fact]
+    public void A_one_item_flow_sequence_unwraps_to_each_kind()
+    {
+        Assert.Equal("a: x\n", Edit("a: [x]\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+        Assert.Equal("a: 1\n", Edit("a: [1]\n", Yaml, Change(YamlNewKind.Number, null, Member("a"))));
+        Assert.Equal("a: true\n", Edit("a: [true]\n", Yaml, Change(YamlNewKind.Boolean, null, Member("a"))));
+        Assert.Equal("a: ~\n", Edit("a: [~]\n", Yaml, Change(YamlNewKind.Null, null, Member("a"))));
+        Assert.Equal("a: {x: 1}\n", Edit("a: [{x: 1}]\n", Yaml, Change(YamlNewKind.Mapping, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_one_item_block_sequence_under_a_key_unwraps_to_a_value_on_the_key_line()
+    {
+        Assert.Equal("a: v\n", Edit("a:\n  - v\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+        Assert.Equal("a: 5\n", Edit("a:\n  - 5\n", Yaml, Change(YamlNewKind.Number, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_one_item_root_sequence_unwraps_to_its_value()
+    {
+        Assert.Equal("v\n", Edit("- v\n", Yaml, Change(YamlNewKind.String, null, [])));
+    }
+
+    [Fact]
+    public void A_block_mapping_item_unwraps_to_a_block_mapping_one_unit_deeper_than_the_key()
+    {
+        Assert.Equal("a:\n  x: 1\n  y: 2\n", Edit("a:\n  - x: 1\n    y: 2\n", Yaml, Change(YamlNewKind.Mapping, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_root_block_mapping_item_unwraps_to_the_root_mapping()
+    {
+        Assert.Equal("x: 1\ny: 2\n", Edit("- x: 1\n  y: 2\n", Yaml, Change(YamlNewKind.Mapping, null, [])));
+    }
+
+    [Fact]
+    public void A_literal_block_scalar_item_keeps_its_value_and_its_lines()
+    {
+        Assert.Equal("a: |\n    text\n", Edit("a:\n  - |\n    text\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_root_literal_block_scalar_item_keeps_its_value()
+    {
+        Assert.Equal("|\n  text\n", Edit("- |\n  text\n", Yaml, Change(YamlNewKind.String, null, [])));
+    }
+
+    [Fact]
+    public void A_block_scalar_item_with_an_explicit_indentation_indicator_cannot_unwrap()
+    {
+        CfgeditException refused = Fails("a:\n  - |2\n      text\n", Yaml, Change(YamlNewKind.String, null, Member("a")));
+
+        Assert.Equal("a block scalar with an explicit indentation indicator cannot be unwrapped yet", refused.Message);
+    }
+
+    [Fact]
+    public void A_flow_sequence_anchor_moves_onto_its_item()
+    {
+        Assert.Equal("a: &s v\n", Edit("a: &s [v]\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_sequence_anchor_moves_onto_an_item_without_one()
+    {
+        Assert.Equal("a: &s v\n", Edit("a: &s\n  - v\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_sequence_with_an_anchor_and_an_anchored_item_is_refused()
+    {
+        CfgeditException refused = Fails("a: &s\n  - &e v\n", Yaml, Change(YamlNewKind.String, null, Member("a")));
+
+        Assert.Equal("the sequence and its item both have an anchor, which cannot be merged: delete one of them first", refused.Message);
+    }
+
+    [Fact]
+    public void A_core_sequence_tag_is_dropped_when_the_sequence_unwraps()
+    {
+        Assert.Equal("a: v\n", Edit("a: !!seq\n  - v\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_compact_mapping_item_under_a_dash_unwraps_on_the_dash_line()
+    {
+        Assert.Equal("- x: 1\n  y: 2\n", Edit("- - x: 1\n    y: 2\n", Yaml, Change(YamlNewKind.Mapping, null, Item(0))));
+    }
+
+    [Fact]
+    public void A_sequence_with_a_comment_is_refused()
+    {
+        CfgeditException refused = Fails("a:\n  - v # note\n", Yaml, Change(YamlNewKind.String, null, Member("a")));
+
+        Assert.Equal("the sequence has comments, which would be lost: delete them first", refused.Message);
+    }
+
+    [Fact]
+    public void A_sequence_of_an_element_of_another_kind_keeps_the_old_result()
+    {
+        Assert.Equal("a: ''\n", Edit("a:\n  - 1\n", Yaml, Change(YamlNewKind.String, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_two_item_sequence_keeps_the_old_result()
+    {
+        Assert.Equal("a: 0\n", Edit("a:\n  - 1\n  - 2\n", Yaml, Change(YamlNewKind.Number, null, Member("a"))));
+    }
+
+    [Fact]
+    public void A_one_item_sequence_with_a_value_keeps_the_old_result()
+    {
+        Assert.Equal("a: 7\n", Edit("a: [1]\n", Yaml, Change(YamlNewKind.Number, "7", Member("a"))));
+    }
+
+    [Fact]
+    public void Wrapping_then_unwrapping_gives_back_the_original_block_and_flow_text()
+    {
+        string block = Edit("a: v\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a")));
+        Assert.Equal("a: v\n", Edit(block, Yaml, Change(YamlNewKind.String, null, Member("a"))));
+
+        string flow = Edit("a: {k: v}\n", Yaml, Change(YamlNewKind.Sequence, null, Member("a"), Member("k")));
+        Assert.Equal("a: {k: [v]}\n", flow);
+        Assert.Equal("a: {k: v}\n", Edit(flow, Yaml, Change(YamlNewKind.String, null, Member("a"), Member("k"))));
+    }
+
     // ----- Wrapping in a sequence -----
 
     [Fact]

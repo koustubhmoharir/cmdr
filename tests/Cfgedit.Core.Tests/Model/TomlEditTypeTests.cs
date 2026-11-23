@@ -226,9 +226,79 @@ public sealed class TomlEditTypeTests
     [Fact]
     public void An_array_of_tables_cannot_change_type()
     {
-        CfgeditException error = Fails("[[a]]\nx = 1\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Table, null));
+        CfgeditException error = Fails("[[a]]\nx = 1\n[[a]]\nx = 2\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Table, null));
 
         Assert.Equal("an array of tables cannot change type; delete it instead", error.Message);
+    }
+
+    // ----- Unwrapping: a one-item array changes to its item's own type -----
+
+    [Fact]
+    public void A_one_item_inline_array_unwraps_to_each_scalar_kind()
+    {
+        Assert.Equal("a = 1\n", Edit("a = [1]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Integer, null)));
+        Assert.Equal("a = \"s\"\n", Edit("a = [\"s\"]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.String, null)));
+        Assert.Equal("a = 1.5\n", Edit("a = [1.5]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Float, null)));
+        Assert.Equal("a = true\n", Edit("a = [true]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Boolean, null)));
+        Assert.Equal("a = 1979-05-27\n", Edit("a = [1979-05-27]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.DateTime, null)));
+    }
+
+    [Fact]
+    public void A_one_item_inline_array_of_an_inline_table_unwraps_to_the_table()
+    {
+        Assert.Equal("a = {x = 1}\n", Edit("a = [{x = 1}]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Table, null)));
+    }
+
+    [Fact]
+    public void An_element_of_another_kind_keeps_the_old_result()
+    {
+        Assert.Equal("a = \"\"\n", Edit("a = [1]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.String, null)));
+    }
+
+    [Fact]
+    public void A_two_item_array_keeps_the_old_result()
+    {
+        Assert.Equal("a = 0\n", Edit("a = [1, 2]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Integer, null)));
+    }
+
+    [Fact]
+    public void A_one_item_array_with_a_value_keeps_the_old_result()
+    {
+        Assert.Equal("a = 7\n", Edit("a = [1]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Integer, "7")));
+    }
+
+    [Fact]
+    public void A_one_item_array_with_a_comment_is_refused()
+    {
+        CfgeditException error = Fails("a = [\n  1, # c\n]\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Integer, null));
+
+        Assert.Equal("the array has comments, which would be lost: delete them first", error.Message);
+    }
+
+    [Fact]
+    public void Wrapping_then_unwrapping_gives_back_the_original_text()
+    {
+        string wrapped = Edit("a = 1\n", Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Array, null));
+
+        Assert.Equal("a = [1]\n", wrapped);
+        Assert.Equal("a = 1\n", Edit(wrapped, Toml, new ChangeTomlType(Path(Member("a")), TomlNewKind.Integer, null)));
+    }
+
+    [Fact]
+    public void A_one_item_array_of_tables_becomes_a_table_and_its_sub_tables_keep_their_headers()
+    {
+        string text = "[[x]]\nk = 1\n[x.sub]\nj = 2\n[[x.list]]\nn = 3\n";
+        string expected = "[x]\nk = 1\n[x.sub]\nj = 2\n[[x.list]]\nn = 3\n";
+
+        Assert.Equal(expected, Edit(text, Toml, new ChangeTomlType(Path(Member("x")), TomlNewKind.Table, null)));
+    }
+
+    [Fact]
+    public void An_array_of_tables_item_with_a_comment_is_refused()
+    {
+        CfgeditException error = Fails("[[x]]\n# note\nk = 1\n", Toml, new ChangeTomlType(Path(Member("x")), TomlNewKind.Table, null));
+
+        Assert.Equal("the array has comments, which would be lost: delete them first", error.Message);
     }
 
     [Fact]
