@@ -301,7 +301,7 @@ public sealed partial class EditingWindowTests
                     },
                     "OK");
 
-                // Down reaches the element, and Right its summary, the {0} after the tag.
+                // Down reaches the element, and Right its summary, the (0) after the tag.
                 Keys(w, Key.CursorDown, Key.CursorRight, new Key('a'));
                 dialog.Finish();
             });

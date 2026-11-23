@@ -23,7 +23,7 @@ public enum StyleKind
     /// <summary>A JSON <c>null</c>.</summary>
     Null,
 
-    /// <summary>A container's member or item count, such as <c>{3}</c>.</summary>
+    /// <summary>A container's member or item count, such as <c>(3)</c>.</summary>
     Summary,
 
     /// <summary>Punctuation, such as <c>&lt;</c>, <c>=</c>, quotes and the markers of comments. Dimmed.</summary>

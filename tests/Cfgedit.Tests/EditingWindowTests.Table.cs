@@ -26,7 +26,7 @@ public sealed partial class EditingWindowTests
     // The column a is a boolean in the first row and missing in the second, so a missing a cell is in a column of booleans.
     private const string BooleanArray = "[{\"a\": true, \"b\": 1}, {\"b\": 2}]";
 
-    // A nested object: its cell shows {2} and is not edited in the table.
+    // A nested object: its cell shows {…} (2) and is not edited in the table.
     private const string NestedArray = "[{\"name\": \"a\", \"meta\": {\"x\": 1, \"y\": 2}}]";
 
     private const string TableConfig = "<configuration>\n  <appSettings>\n    <add key=\"a\" value=\"1\"/>\n    <add key=\"b\" value=\"2\"/>\n  </appSettings>\n</configuration>";
@@ -171,8 +171,8 @@ public sealed partial class EditingWindowTests
     {
         OpenedFile nested = Open("list.json", NestedArray);
         TerminalScreen screen = Run(nested, 80, 24, null, null, (_, w) => Keys(w, new Key('T'))).Screens[^1];
-        Assert.Equal("0  a     {2}", Inside(screen, 2));
-        Assert.True(screen.At("{2}").Style.HasFlag(TextStyle.Faint));
+        Assert.Equal("0  a     {…} (2)", Inside(screen, 2));
+        Assert.True(screen.At("{…} (2)").Style.HasFlag(TextStyle.Faint));
 
         OpenedFile missing = Open("list.json", TableArray);
         TerminalScreen dots = Run(missing, 80, 24, null, null, (_, w) => Keys(w, new Key('T'))).Screens[^1];

@@ -11,7 +11,7 @@ internal readonly record struct DocMatch(DocNode Node, int Part, int Start, int 
 
 /// <summary>
 /// The matches of a pattern in a document, in document order. A part's logical value is searched: the parts searched are every part
-/// of every node except the summaries (<c>{3}</c>) and the indexes of JSON items, and the end-tag names of XML elements, which repeat
+/// of every node except the summaries (<c>(3)</c>) and the indexes of JSON items, and the end-tag names of XML elements, which repeat
 /// the element name. The declaration and the doctype are searched. Pure: no views.
 /// </summary>
 /// <remarks>

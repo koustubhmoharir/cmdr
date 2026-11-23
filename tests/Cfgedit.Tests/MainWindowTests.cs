@@ -36,7 +36,7 @@ public sealed class MainWindowTests : IDisposable
         Assert.Contains("settings.json [jsonc]", screen.Text(0), StringComparison.Ordinal);
         Assert.Equal("\x256D", screen.Cells[0][0].Grapheme);
         Assert.Equal("\x2570", screen.Cells[21][0].Grapheme);
-        Assert.StartsWith("\x2502\x25BE $ {2}", screen.Text(1), StringComparison.Ordinal);
+        Assert.StartsWith("\x2502\x25BE $ {…} (2)", screen.Text(1), StringComparison.Ordinal);
         Assert.Equal("$  object  2", screen.Text(22));
         Assert.Equal(HintsAt80, screen.Text(23));
     }

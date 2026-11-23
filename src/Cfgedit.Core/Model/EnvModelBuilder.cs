@@ -352,7 +352,7 @@ internal static class EnvModelBuilder
             null);
     }
 
-    /// <summary>The summary part of a group: its count, shown as <c>{n}</c>. It has no text of its own, so it sits at a point.</summary>
+    /// <summary>The summary part of a group: its count, shown as <c>{…} (n)</c>. It has no text of its own, so it sits at a point.</summary>
     private static DocPart SummaryPart(int count, int position)
     {
         return new DocPart(PartKind.Summary, count.ToString(CultureInfo.InvariantCulture), false, false, position, position);

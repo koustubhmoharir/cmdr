@@ -26,7 +26,7 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Equal("▾ $ {2}", Inside(screen, 1));
+        Assert.Equal("▾ $ {…} (2)", Inside(screen, 1));
         Assert.StartsWith("$  root", screen.Text(22), StringComparison.Ordinal);
     }
 
@@ -38,8 +38,8 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null, (_, w) => Keys(w, Key.CursorDown));
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Equal("▾ $ {1}", Inside(screen, 1));
-        Assert.Equal("  ▾ Logging: {1}", Inside(screen, 2));
+        Assert.Equal("▾ $ {…} (1)", Inside(screen, 1));
+        Assert.Equal("  ▾ Logging: {…} (1)", Inside(screen, 2));
         Assert.Equal("      Level = info", Inside(screen, 3));
     }
 
@@ -92,8 +92,8 @@ public sealed partial class EditingWindowTests
         Assert.Equal("Add to $", title);
         Assert.Equal(AddKind.EnvEntry, kind);
         Assert.Equal("Logging__Level=info\n", Text(session));
-        Assert.Equal("▾ $ {1}", Inside(session.Screens[^1], 1));
-        Assert.Equal("  ▾ Logging: {1}", Inside(session.Screens[^1], 2));
+        Assert.Equal("▾ $ {…} (1)", Inside(session.Screens[^1], 1));
+        Assert.Equal("  ▾ Logging: {…} (1)", Inside(session.Screens[^1], 2));
     }
 
     [Fact]
@@ -254,6 +254,6 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         // An empty root has nothing to fold, so no fold glyph, as for an empty JSON root.
-        Assert.Equal("  $ {0}", Inside(session.Screens[^1], 1));
+        Assert.Equal("  $ {…} (0)", Inside(session.Screens[^1], 1));
     }
 }

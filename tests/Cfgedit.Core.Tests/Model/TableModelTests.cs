@@ -374,7 +374,7 @@ public sealed class TableModelTests
 
         Assert.True(cell.IsNested);
         Assert.Null(cell.Part);
-        Assert.Equal("[2]", cell.Display);
+        Assert.Equal("[…] (2)", cell.Display);
         Assert.Equal(At(Item(0), Item(0), Member("c")), cell.Node!.Path);
     }
 
@@ -385,7 +385,7 @@ public sealed class TableModelTests
 
         Assert.True(cell.IsNested);
         Assert.Null(cell.Part);
-        Assert.Equal("{1}", cell.Display);
+        Assert.Equal("{…} (1)", cell.Display);
     }
 
     [Fact]
@@ -1232,8 +1232,8 @@ public sealed class TableModelTests
             table.Columns);
         Assert.True(table.Cell(0, 1).IsNested);
         Assert.Null(table.Cell(0, 1).Part);
-        Assert.Equal("[2]", table.Cell(0, 1).Display);
-        Assert.Equal("{2}", table.Cell(0, 2).Display);
+        Assert.Equal("[…] (2)", table.Cell(0, 1).Display);
+        Assert.Equal("{…} (2)", table.Cell(0, 2).Display);
     }
 
     [Fact]
@@ -1570,9 +1570,9 @@ public sealed class TableModelTests
         TableModel table = Table(ParseYaml(text), YamlSequence("items"));
 
         Assert.True(table.Cell(0, 1).IsNested);
-        Assert.Equal("[2]", table.Cell(0, 1).Display);
+        Assert.Equal("[…] (2)", table.Cell(0, 1).Display);
         Assert.True(table.Cell(0, 2).IsNested);
-        Assert.Equal("{1}", table.Cell(0, 2).Display);
+        Assert.Equal("{…} (1)", table.Cell(0, 2).Display);
     }
 
     [Fact]

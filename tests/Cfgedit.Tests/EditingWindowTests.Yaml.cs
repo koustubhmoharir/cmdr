@@ -25,8 +25,8 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Equal("▾ $ {2}", Inside(screen, 1));
-        Assert.Equal("  ▾ x-base: &base {1}", Inside(screen, 2));
+        Assert.Equal("▾ $ {…} (2)", Inside(screen, 1));
+        Assert.Equal("  ▾ x-base: &base {…} (1)", Inside(screen, 2));
     }
 
     [Fact]
@@ -38,7 +38,7 @@ public sealed partial class EditingWindowTests
 
         TerminalScreen screen = session.Screens[^1];
         Assert.Equal("▾ ---[0]", Inside(screen, 1));
-        Assert.Equal("  ▾ $ {1}", Inside(screen, 2));
+        Assert.Equal("  ▾ $ {…} (1)", Inside(screen, 2));
     }
 
     // ----- Add -----
@@ -384,7 +384,7 @@ public sealed partial class EditingWindowTests
         var file = new OpenedFile(path, DocumentFile.CreateNew(path, choice.Format, choice.RootName));
         Session session = Run(file, 80, 24, null, null);
 
-        Assert.Equal("  $ {0}", Inside(session.Screens[^1], 1));
+        Assert.Equal("  $ {…} (0)", Inside(session.Screens[^1], 1));
     }
 
     [Fact]

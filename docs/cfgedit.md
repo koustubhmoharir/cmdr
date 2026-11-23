@@ -82,7 +82,7 @@ first attribute. A title ending in `*` means there are unsaved changes.
 | `*` / `-` | Unfold the whole subtree / fold the parent |
 | Enter, F2 | Edit the part. On `true`, `false` or `null`, choose the type instead |
 | Tab, Shift+Tab | Next / previous editable part |
-| `a` / `i` | Add after / before. On a container's `{n}` or `[n]`, add inside it (`a` last, `i` first). An empty XML element shows `{0}` after its tag, and `a` / `i` on it add a child. On the `$` marker of a JSON document, add a comment after / before the root. Next to a similar sibling the new entry copies its shape (`<add key="" value=""/>`); otherwise a dialog asks what to add |
+| `a` / `i` | Add after / before. On a container's `{…} (n)` or `[…] (n)`, add inside it (`a` last, `i` first). An empty XML element shows `(0)` after its tag, and `a` / `i` on it add a child. On the `$` marker of a JSON document, add a comment after / before the root. Next to a similar sibling the new entry copies its shape (`<add key="" value=""/>`); otherwise a dialog asks what to add |
 | `A` / `I` | Add a child last / first, from any part of an XML element or a JSON object or array |
 | `+` | Add an attribute to the element |
 | Delete | Delete the node, or the attribute under the cursor (undo restores it) |
@@ -116,7 +116,7 @@ unsaved changes asks whether to save, discard or cancel; the default is Save.
 array of tables (`[[items]]`) or inline array whose items are all inline tables or all plain values, or an XML element
 with repeated child elements of the same name (one column per attribute, per single text-only child element, and for the
 text). In TOML, the rows are the items, and the columns are their keys in the order they first appear; a subtable or an
-array in a cell shows its count, `{n}` or `[n]`. A YAML sequence whose items are all mappings, or all scalars, opens the same way:
+array in a cell shows its count, `{…} (n)` or `[…] (n)`. A YAML sequence whose items are all mappings, or all scalars, opens the same way:
 the rows are the items, the columns are the keys in order of first appearance, and a nested mapping or sequence shows its count.
 An alias in a cell shows its name (`*b`) and is read-only. Esc returns to the tree.
 
@@ -128,7 +128,7 @@ An alias in a cell shows its name (`*b`) and is read-only. Esc returns to the tr
 | `d` | Duplicate the row: the copy goes right after it, and the cursor moves to the copy in the same column |
 | `a` / `i` | Add a row after / before, shaped like the current one |
 | Alt+Up/Down | Move the row |
-| Enter on `{n}`, `[n]`, `<…>` | Open that nested value in the tree |
+| Enter on `{…} (n)`, `[…] (n)`, `<…>` | Open that nested value in the tree |
 
 ## Text mode
 
@@ -207,10 +207,10 @@ with no line break. The message for the last one says to add a line break at the
 file open as a tree.
 
 - **Rows:** a file with one document shows that document's root as `$`. A file with several documents shows each one as a
-  row `---[0]`, `---[1]` and so on. A mapping member is `key: {n}` and a sequence member `key: [n]`, and an item is `0: …`.
+  row `---[0]`, `---[1]` and so on. A mapping member is `key: {…} (n)` and a sequence member `key: […] (n)`, and an item is `0: …`.
   A scalar shows its value without quotes, an empty string as `""` and a null with no text as `null`. The detail line
   names the YAML kind: `null`, `boolean`, `integer`, `float` or `string` (quoted and block scalars are strings).
-- **Anchors, tags and aliases** are shown on their row, between the key and the value (`base: &b {3}`, `port: !!str 80`,
+- **Anchors, tags and aliases** are shown on their row, between the key and the value (`base: &b {…} (3)`, `port: !!str 80`,
   `use: *b`). They cannot be edited. An alias is shown as written and is not expanded. A merge key is an ordinary member
   whose value is an alias.
 - **Values** keep their style when the style can hold the new text. A plain value that is changed to `true` is written

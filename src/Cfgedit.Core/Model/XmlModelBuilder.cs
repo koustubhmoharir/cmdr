@@ -209,7 +209,7 @@ internal static class XmlModelBuilder
 
     /// <summary>
     /// An empty element: a self-closing one, <c>&lt;a&gt;&lt;/a&gt;</c>, or an element written across lines whose only content is
-    /// whitespace between markup. It has no child node and no text, so it gets a summary part, <c>{0}</c>. An element with text, or with
+    /// whitespace between markup. It has no child node and no text, so it gets a summary part, <c>(0)</c>. An element with text, or with
     /// any child element, comment, CDATA or PI, does not.
     /// </summary>
     private static bool IsEmptyElement(XmlElementSyntax element)

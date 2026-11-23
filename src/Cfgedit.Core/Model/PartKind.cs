@@ -18,7 +18,7 @@ public enum PartKind
     /// <summary>A JSON scalar's value.</summary>
     Value,
 
-    /// <summary>A JSON container's count of members or items, shown as <c>{3}</c> or <c>[5]</c>. Not editable.</summary>
+    /// <summary>A JSON container's count of members or items, shown as <c>{…} (3)</c> or <c>[…] (5)</c>. Not editable.</summary>
     Summary,
 
     /// <summary>An XML element's start-tag name.</summary>

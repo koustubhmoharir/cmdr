@@ -277,6 +277,28 @@ public static class RowLayout
         return string.Concat(items.Take(cut).Select(item => item.Text)) + Ellipsis;
     }
 
+    /// <summary>
+    /// A container's summary as the bracket rows show it: <c>[…] (3)</c> for an array, <c>{…} (3)</c> for an object. The brackets and the
+    /// ellipsis are punctuation, and the space, the parentheses and the count are the dimmed summary. The whole is one part, so it is one
+    /// cursor target between its <see cref="Begin"/> and <see cref="End"/>.
+    /// </summary>
+    /// <param name="items">The items to add to.</param>
+    /// <param name="array">True for an array (brackets), false for an object (braces).</param>
+    /// <param name="count">The count, the summary part's value.</param>
+    /// <param name="part">The summary part's index.</param>
+    /// <param name="width">The columns the count may take (the count is cut like other text).</param>
+    private static void ContainerSummary(List<Item> items, bool array, string count, int part, int width)
+    {
+        items.Add(Begin(part));
+        items.Add(Fixed(array ? "[" : "{", StyleKind.Punctuation, part));
+        items.Add(Fixed(Ellipsis, StyleKind.Punctuation, part));
+        items.Add(Fixed(array ? "]" : "}", StyleKind.Punctuation, part));
+        items.Add(Fixed(" (", StyleKind.Summary, part));
+        AddText(items, count, StyleKind.Summary, part, width);
+        items.Add(Fixed(")", StyleKind.Summary, part));
+        items.Add(End(part));
+    }
+
     /// <summary>The raw marker after a part that is edited as source text.</summary>
     private static void AddRaw(List<Item> items, DocPart part)
     {
@@ -364,11 +386,7 @@ public static class RowLayout
                         items.Add(Fixed(": ", StyleKind.Punctuation, -1));
                     }
 
-                    items.Add(Begin(i));
-                    items.Add(Fixed(node.JsonKind == JsonValueKind.Array ? "[" : "{", StyleKind.Punctuation, i));
-                    AddText(items, part.Value, StyleKind.Summary, i, width);
-                    items.Add(Fixed(node.JsonKind == JsonValueKind.Array ? "]" : "}", StyleKind.Punctuation, i));
-                    items.Add(End(i));
+                    ContainerSummary(items, node.JsonKind == JsonValueKind.Array, part.Value, i, width);
                     break;
                 default:
                     throw new ArgumentException("A JSON node has an unexpected part: " + part.Kind + ".", nameof(row));
@@ -381,9 +399,9 @@ public static class RowLayout
     // ----- .env -----
 
     /// <summary>
-    /// A .env row: a group as its segment and <c>{n}</c> like a JSON member, the root as <c>$ {n}</c> like the JSON root, an entry as
-    /// <c>segment = value</c> with an empty value as <c>""</c>, and a comment as <c>#</c> and its text. The text keeps the spaces after the
-    /// <c>#</c>, as a JSON comment keeps them after <c>//</c>.
+    /// A .env row: a group as its segment and <c>{…} (n)</c> like a JSON member, the root as <c>$ {…} (n)</c> like the JSON root, an
+    /// entry as <c>segment = value</c> with an empty value as <c>""</c>, and a comment as <c>#</c> and its text. The text keeps the
+    /// spaces after the <c>#</c>, as a JSON comment keeps them after <c>//</c>.
     /// </summary>
     private static List<Item> EnvItems(Row row, bool collapsed, int width)
     {
@@ -435,11 +453,7 @@ public static class RowLayout
                         items.Add(Fixed(": ", StyleKind.Punctuation, -1));
                     }
 
-                    items.Add(Begin(i));
-                    items.Add(Fixed("{", StyleKind.Punctuation, i));
-                    AddText(items, part.Value, StyleKind.Summary, i, width);
-                    items.Add(Fixed("}", StyleKind.Punctuation, i));
-                    items.Add(End(i));
+                    ContainerSummary(items, false, part.Value, i, width);
                     break;
                 default:
                     throw new ArgumentException(".env node has an unexpected part: " + part.Kind + ".", nameof(row));
@@ -452,9 +466,9 @@ public static class RowLayout
     // ----- TOML -----
 
     /// <summary>
-    /// A TOML row, as the JSON and .env rows show theirs: a scalar as <c>key = value</c>, a table as <c>key: {n}</c>, an array as
-    /// <c>key: [n]</c>, an array item as its index then its value or count (<c>0: "a"</c>), the root as <c>$ {n}</c>, and a comment as
-    /// <c>#</c> and its text. The text keeps the spaces after the <c>#</c>. An empty string is <c>""</c>.
+    /// A TOML row, as the JSON and .env rows show theirs: a scalar as <c>key = value</c>, a table as <c>key: {…} (n)</c>, an array as
+    /// <c>key: […] (n)</c>, an array item as its index then its value or count (<c>0: "a"</c>), the root as <c>$ {…} (n)</c>, and a
+    /// comment as <c>#</c> and its text. The text keeps the spaces after the <c>#</c>. An empty string is <c>""</c>.
     /// </summary>
     private static List<Item> TomlItems(Row row, bool collapsed, int width)
     {
@@ -516,11 +530,7 @@ public static class RowLayout
                         items.Add(Fixed(": ", StyleKind.Punctuation, -1));
                     }
 
-                    items.Add(Begin(i));
-                    items.Add(Fixed(node.Kind == NodeKind.TomlArray ? "[" : "{", StyleKind.Punctuation, i));
-                    AddText(items, part.Value, StyleKind.Summary, i, width);
-                    items.Add(Fixed(node.Kind == NodeKind.TomlArray ? "]" : "}", StyleKind.Punctuation, i));
-                    items.Add(End(i));
+                    ContainerSummary(items, node.Kind == NodeKind.TomlArray, part.Value, i, width);
                     break;
                 default:
                     throw new ArgumentException("A TOML node has an unexpected part: " + part.Kind + ".", nameof(row));
@@ -585,9 +595,9 @@ public static class RowLayout
     // ----- YAML -----
 
     /// <summary>
-    /// A YAML row, as the TOML rows show theirs, with YAML's separator: a mapping member as <c>key: {n}</c>, <c>key: [n]</c> or <c>key: value</c>,
-    /// a sequence item as its index then its value or count (<c>0: "a"</c>), a document as <c>---[0]</c>, the root as <c>$ {n}</c>, and a comment
-    /// as <c>#</c> and its text. An anchor, a tag and an alias are shown read-only, before the value. A null with no text is a dim <c>null</c>.
+    /// A YAML row, as the TOML rows show theirs, with YAML's separator: a mapping member as <c>key: {…} (n)</c>, <c>key: […] (n)</c>
+    /// or <c>key: value</c>, a sequence item as its index then its value or count (<c>0: "a"</c>), a document as <c>---[0]</c>, the
+    /// root as <c>$ {…} (n)</c>, and a comment as <c>#</c> and its text. An anchor, a tag and an alias are shown read-only, before the value. A null with no text is a dim <c>null</c>.
     /// </summary>
     private static List<Item> YamlItems(Row row, bool collapsed, int width)
     {
@@ -669,11 +679,7 @@ public static class RowLayout
                     break;
                 case PartKind.Summary:
                     Separate();
-                    items.Add(Begin(i));
-                    items.Add(Fixed(node.Kind == NodeKind.YamlSequence ? "[" : "{", StyleKind.Punctuation, i));
-                    AddText(items, part.Value, StyleKind.Summary, i, width);
-                    items.Add(Fixed(node.Kind == NodeKind.YamlSequence ? "]" : "}", StyleKind.Punctuation, i));
-                    items.Add(End(i));
+                    ContainerSummary(items, node.Kind == NodeKind.YamlSequence, part.Value, i, width);
                     break;
                 default:
                     throw new ArgumentException("A YAML node has an unexpected part: " + part.Kind + ".", nameof(row));
@@ -776,8 +782,9 @@ public static class RowLayout
 
     /// <summary>
     /// An element's start row: <c>&lt;name attrs&gt;</c>, with the text and the closing tag of a text-only element, or an
-    /// ellipsis (<c>&#x2026;</c>) and the closing tag of a collapsed one. An empty element ends with its summary, <c>{0}</c>. The attributes wrap: an attribute that does not fit goes to a new line, aligned
-    /// under the first attribute's name, and the tail follows the same rule.
+    /// ellipsis (<c>&#x2026;</c>) and the closing tag of a collapsed one. An empty element ends with its summary, <c>(0)</c>. The
+    /// attributes wrap: an attribute that does not fit goes to a new line, aligned under the first attribute's name, and the tail
+    /// follows the same rule.
     /// </summary>
     private static RowLines LayoutElement(Row row, bool collapsed, int indent, int width, Func<int, PartMarks?>? marks)
     {
@@ -845,13 +852,13 @@ public static class RowLayout
         int summary = IndexOf(parts, PartKind.Summary);
         if (summary >= 0)
         {
-            // An empty element's count, <c>{0}</c>, follows the tag end with a space. It is part of the tag end's unit, so that it wraps
-            // with the tag end: <c>/&gt; {0}</c>, <c>&lt;/a&gt; {0}</c> or <c>&gt; {0}</c>.
+            // An empty element's count, <c>(0)</c>, follows the tag end with a space. It is part of the tag end's unit, so that it wraps
+            // with the tag end: <c>/&gt; (0)</c>, <c>&lt;/a&gt; (0)</c> or <c>&gt; (0)</c>.
             Unit tail = units[^1];
-            var items = new List<Item>(tail.Items) { Fixed(" ", StyleKind.Punctuation, -1), Begin(summary) };
-            items.Add(Fixed("{", StyleKind.Punctuation, summary));
+            var items = new List<Item>(tail.Items) { Fixed(" ", StyleKind.Summary, -1), Begin(summary) };
+            items.Add(Fixed("(", StyleKind.Summary, summary));
             AddText(items, parts[summary].Value, StyleKind.Summary, summary, width);
-            items.Add(Fixed("}", StyleKind.Punctuation, summary));
+            items.Add(Fixed(")", StyleKind.Summary, summary));
             items.Add(End(summary));
             units[^1] = new Unit(items, tail.Separated);
         }

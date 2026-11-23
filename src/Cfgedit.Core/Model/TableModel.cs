@@ -30,7 +30,7 @@ public sealed record TableColumn(TableColumnKind Kind, string Name);
 /// <summary>
 /// One cell of a table. <see cref="Node"/> is the member, the attribute's row element, the child element, or the row element for
 /// the text column; null when a JSON member or a child element is absent. <see cref="Part"/> is the value, attribute value or text
-/// part, or null for a missing or nested cell. <see cref="Display"/> is the logical value, <c>{n}</c> or <c>[n]</c> for a nested
+/// part, or null for a missing or nested cell. <see cref="Display"/> is the logical value, <c>{…} (n)</c> or <c>[…] (n)</c> for a nested
 /// JSON container, <c>&lt;...&gt;</c> for a nested XML element, and empty for a missing cell.
 /// </summary>
 public sealed record TableCell(DocNode? Node, DocPart? Part, bool IsMissing, bool IsNested, string Display);
@@ -621,7 +621,7 @@ public sealed class TableModel
         if (IsNestedMember(member))
         {
             string count = member.Parts.First(part => part.Kind == PartKind.Summary).Value;
-            string display = IsArrayNode(member) ? "[" + count + "]" : "{" + count + "}";
+            string display = (IsArrayNode(member) ? "[…]" : "{…}") + " (" + count + ")";
             return new TableCell(member, null, false, true, display);
         }
 

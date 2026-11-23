@@ -23,7 +23,7 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Equal("▾ $ {2}", Inside(screen, 1));
+        Assert.Equal("▾ $ {…} (2)", Inside(screen, 1));
         Assert.StartsWith("$  table", screen.Text(22), StringComparison.Ordinal);
     }
 
@@ -35,14 +35,14 @@ public sealed partial class EditingWindowTests
         Session session = Run(file, 80, 24, null, null);
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Equal("▾ $ {3}", Inside(screen, 1));
+        Assert.Equal("▾ $ {…} (3)", Inside(screen, 1));
         Assert.Equal("    # top", Inside(screen, 2));
         Assert.Equal("    a = x", Inside(screen, 3));
-        Assert.Equal("  ▾ t: {1}", Inside(screen, 4));
-        Assert.Equal("    ▾ list: [1]", Inside(screen, 5));
+        Assert.Equal("  ▾ t: {…} (1)", Inside(screen, 4));
+        Assert.Equal("    ▾ list: […] (1)", Inside(screen, 5));
         Assert.Equal("        0: 1", Inside(screen, 6));
-        Assert.Equal("  ▾ items: [1]", Inside(screen, 7));
-        Assert.Equal("    ▾ 0: {1}", Inside(screen, 8));
+        Assert.Equal("  ▾ items: […] (1)", Inside(screen, 7));
+        Assert.Equal("    ▾ 0: {…} (1)", Inside(screen, 8));
         Assert.Equal("        n = true", Inside(screen, 9));
     }
 
@@ -321,7 +321,7 @@ public sealed partial class EditingWindowTests
         var file = new OpenedFile(path, DocumentFile.CreateNew(path, choice.Format, choice.RootName));
         Session session = Run(file, 80, 24, null, null);
 
-        Assert.Equal("  $ {0}", Inside(session.Screens[^1], 1));
+        Assert.Equal("  $ {…} (0)", Inside(session.Screens[^1], 1));
     }
 
     [Fact]

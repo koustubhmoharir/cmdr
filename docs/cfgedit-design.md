@@ -100,7 +100,7 @@ string, a logical value, an `Editable` flag, a style and a source span. One row 
 
 | Format | Node | Parts on its row |
 |---|---|---|
-| JSON | member of object | key, value (scalar) or summary `{3}` / `[5]` (container) |
+| JSON | member of object | key, value (scalar) or summary `{…} (3)` / `[…] (5)` (container) |
 | JSON | array item | index (not editable), value or summary |
 | JSON | comment | comment text |
 | XML | element | start name, then name + value for each attribute, then text content if the element only contains text |
@@ -242,7 +242,7 @@ The cursor is a (row, part) pair. Printable shortcuts apply only in the tree, ne
 | Space | Expand / collapse the row's node. On a leaf, toggles its parent. |
 | `*` / `-` | Expand the whole subtree / collapse to the parent |
 | Enter, F2 | Edit the focused part (inline). Values with newlines, or Ctrl+Enter, open the multi-line editor. |
-| a / i | Add after / before the focused node. On a container's summary (`{n}`, `[n]`, and `{0}` on an empty XML element) add inside it: `a` last, `i` first. On the JSON root marker `$`, add a comment beside the root. On an attribute part this adds an attribute, otherwise a sibling node. |
+| a / i | Add after / before the focused node. On a container's summary (`{…} (n)`, `[…] (n)`, and `(0)` on an empty XML element) add inside it: `a` last, `i` first. On the JSON root marker `$`, add a comment beside the root. On an attribute part this adds an attribute, otherwise a sibling node. |
 | A / I | Add a child last / first, from any part of an XML element or a JSON object or array |
 | Delete | Delete the focused node or attribute (undo restores it; no confirmation) |
 | d | Duplicate the focused node: the copy goes right after it, with its attached comments, and the cursor moves to the copy. A copied key gets the next number (`port` gives `port2`, `server1` gives `server2`), then the next free one |
@@ -351,8 +351,8 @@ or `\` gets a warning on the detail line: loaders may expand `$`, and they disag
 is, and every entry with that prefix, adjacent or not, appears under it in file order. Grouping is case-sensitive, as
 dotenv is.
 
-**Tree.** The document has one root node, a group with the `$` marker and a `{n}` count like a JSON root, so an empty
-file still has a row to add to. Groups show their segment and `{n}`; entries show their last segment and the value;
+**Tree.** The document has one root node, a group with the `$` marker and a `{…} (n)` count like a JSON root, so an empty
+file still has a row to add to. Groups show their segment and `{…} (n)`; entries show their last segment and the value;
 comments are rows. A comment is shown with the entry below it (inside that entry's group); a comment followed by a
 blank line or the end of the file is a row of the root. A trailing comment (`A=1 # note`) is shown as a comment row right
 after its entry. The path text on the detail line is the full key
@@ -396,13 +396,13 @@ multi-line basic, multi-line literal, including line-ending backslashes), intege
 `0o`, `0b`), floats (fraction, exponent, `inf`, `nan`, signs), booleans, the four date-time forms, arrays (multi-line,
 trailing comma, comments inside) and inline tables (one line). Parse errors carry line and column.
 
-**Semantic tree.** The tree shows TOML's data, not its text. The root table has the `$` marker and `{n}`. A table can
+**Semantic tree.** The tree shows TOML's data, not its text. The root table has the `$` marker and `{…} (n)`. A table can
 be defined in pieces: its own `[a]` header, `[a.b]` headers below it, `a.b.c = 1` dotted keys, and an implicit
 parent created by a deeper header. Each table node is the merged table; it remembers every *piece* of text that defines
 it (a header section, a dotted-key line, an inline table). Children are in order of first appearance in the file.
 
-- Table: key and `{n}`. Array (inline `[...]`): key and `[n]`. Array of tables (`[[x]]`): key and `[n]`; its items
-  are tables, shown with their index and `{n}`. Inline tables are tables. Scalar: `key = value`, with the value shown
+- Table: key and `{…} (n)`. Array (inline `[...]`): key and `[…] (n)`. Array of tables (`[[x]]`): key and `[…] (n)`; its items
+  are tables, shown with their index and `{…} (n)`. Inline tables are tables. Scalar: `key = value`, with the value shown
   as JSON scalars are (strings without quotes, other kinds as written) and its kind on the detail line: `string`,
   `integer`, `float`, `boolean`, `offset date-time`, `local date-time`, `local date`, `local time`.
 - Comments: a comment line is shown with the key/value or header below it when only comment lines lie between them
@@ -491,7 +491,7 @@ breaks are trivia, printing it reproduces the bytes. Parse errors carry line and
 
 **Tree.** The root is the stream. A file with one document shows that document's root as the root row (`$` marker,
 like JSON). A file with several documents shows them as rows `---[0]`, `---[1]`… under the root. Mappings are
-`key: {n}`, sequences `key: [n]`, items `[i]`, scalars `key: value` (values shown decoded, without quotes, as JSON's).
+`key: {…} (n)`, sequences `key: […] (n)`, items `[i]`, scalars `key: value` (values shown decoded, without quotes, as JSON's).
 Anchors (`&name`), tags (`!tag`) and aliases (`*name`) are read-only parts on the row; an alias shows `*name` as its
 value and is not expanded; a merge key is an ordinary member whose value is an alias or a sequence of aliases.
 Comments attach as for `.env` and TOML: a comment line above an entry (no blank line between) is shown with it,

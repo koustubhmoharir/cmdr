@@ -882,7 +882,7 @@ whole into `tests/Cfgedit.Tests`, changing only the namespace.
   - The result is a list of `DisplayLine(int Indent, IReadOnlyList<Segment> Segments)` plus, for each part, its
     (line, start column, end column) so that the view can draw the cursor and map mouse clicks.
 - **JSON:**
-  - A member is `key: value`, an item `0: value` (the index dimmed), and a container's value `{3}` / `[5]` (Summary).
+  - A member is `key: value`, an item `0: value` (the index dimmed), and a container's value `{…} (3)` / `[…] (5)` (Summary).
   - Strings have no quotes. An empty string is a dimmed `""`.
   - Numbers, bools and null are written as they are, each in its own style.
   - Comments are `// text` or `/* text */`, dimmed.
@@ -1056,7 +1056,7 @@ control as cmdr's `FieldDraft.Area`). Enter and paste add only LF, so the text i
 **Structure keys** (design table):
 
 - **`a` / `i`** add after / before the focused node, using `InsertionIndexAfter/Before`. On a container's summary part
-  (`{n}`, `[n]`, and the `{0}` of an empty XML element, which `XmlModelBuilder` gives a zero-width `PartKind.Summary` part) they add
+  (`{…} (n)`, `[…] (n)`, and the `(0)` of an empty XML element, which `XmlModelBuilder` gives a zero-width `PartKind.Summary` part) they add
   inside it: `a` at the end, `i` at the start. On the JSON root's `PartKind.Root` marker (`$`) they
   add beside the root value, in the document.
   - On an attribute part they add an attribute: a dialog asks for the name, then the value is edited inline.
