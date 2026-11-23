@@ -47,3 +47,31 @@ internal struct PROCESS_INFORMATION
     public int DwProcessId;
     public int DwThreadId;
 }
+
+/// <summary>FILETIME: a 64-bit count of 100-nanosecond intervals, as two 32-bit halves.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct FILETIME
+{
+    public uint DwLowDateTime;
+    public uint DwHighDateTime;
+}
+
+/// <summary>
+/// WIN32_FIND_DATAW (592 bytes on x64), the result of FindFirstFileW. For an app execution alias <see cref="DwFileAttributes"/> has
+/// the reparse point bit and <see cref="DwReserved0"/> holds the reparse tag. The name buffers are fixed-size, as in the SDK, so the
+/// struct is blittable and can be passed by pointer.
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct WIN32_FIND_DATAW
+{
+    public uint DwFileAttributes;
+    public FILETIME FtCreationTime;
+    public FILETIME FtLastAccessTime;
+    public FILETIME FtLastWriteTime;
+    public uint NFileSizeHigh;
+    public uint NFileSizeLow;
+    public uint DwReserved0;
+    public uint DwReserved1;
+    public fixed char CFileName[260];
+    public fixed char CAlternateFileName[14];
+}

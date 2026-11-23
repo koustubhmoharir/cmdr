@@ -165,4 +165,36 @@ internal static partial class WindowsNative
     /// <summary>Reports whether <paramref name="process"/> is in <paramref name="job"/> (or any job, for a null job). <paramref name="result"/> is non-zero when it is.</summary>
     [LibraryImport(Kernel32, EntryPoint = "IsProcessInJob", SetLastError = true)]
     internal static partial int IsProcessInJob(nint process, nint job, out int result);
+
+    /// <summary>CREATE_SUSPENDED: the primary thread starts suspended, so the process can be put in its job before it runs.</summary>
+    internal const uint CreateSuspended = 0x00000004;
+
+    /// <summary>FILE_ATTRIBUTE_REPARSE_POINT: the entry is a reparse point (a symbolic link, a mount point or an app execution alias).</summary>
+    internal const uint FileAttributeReparsePoint = 0x00000400;
+
+    /// <summary>IO_REPARSE_TAG_APPEXECLINK: the reparse tag of an app execution alias, such as the Store launcher in WindowsApps.</summary>
+    internal const uint IoReparseTagAppExecLink = 0x8000001B;
+
+    /// <summary>INVALID_HANDLE_VALUE: what FindFirstFileW returns on failure.</summary>
+    internal static readonly nint InvalidHandleValue = -1;
+
+    /// <summary>
+    /// Starts a search for <paramref name="fileName"/>, which matches only that entry when it has no wildcards. On a match it fills
+    /// <paramref name="findData"/> and returns a search handle to close with <see cref="FindClose"/>. Returns
+    /// <see cref="InvalidHandleValue"/> on failure.
+    /// </summary>
+    [LibraryImport(Kernel32, EntryPoint = "FindFirstFileW", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    internal static unsafe partial nint FindFirstFileW(string fileName, WIN32_FIND_DATAW* findData);
+
+    /// <summary>Closes a search handle from <see cref="FindFirstFileW"/>. Non-zero is success.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "FindClose", SetLastError = true)]
+    internal static partial int FindClose(nint findFile);
+
+    /// <summary>Decrements a thread's suspend count. Returns the previous count, or 0xFFFFFFFF on failure.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "ResumeThread", SetLastError = true)]
+    internal static partial uint ResumeThread(nint thread);
+
+    /// <summary>Ends a process with the given exit code. Non-zero is success.</summary>
+    [LibraryImport(Kernel32, EntryPoint = "TerminateProcess", SetLastError = true)]
+    internal static partial int TerminateProcess(nint process, uint exitCode);
 }
