@@ -262,6 +262,76 @@ public sealed class PathTextTests
     }
 
     [Fact]
+    public void Toml_paths_are_dotted_keys_with_brackets_for_items_and_dollar_for_the_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a.b = 1\n[[servers]]\nport = 80\n[[servers]]\nport = 81\n[t]\n\"my.key\" = 2\n", "toml");
+
+        Assert.Equal("$", Path(doc, new ItemStep(0)));
+        Assert.Equal("a", Path(doc, new ItemStep(0), new MemberStep("a", 0)));
+        Assert.Equal("a.b", Path(doc, new ItemStep(0), new MemberStep("a", 0), new MemberStep("b", 0)));
+        Assert.Equal("servers", Path(doc, new ItemStep(0), new MemberStep("servers", 0)));
+        Assert.Equal("servers[1]", Path(doc, new ItemStep(0), new MemberStep("servers", 0), new ItemStep(1)));
+        Assert.Equal(
+            "servers[1].port",
+            Path(doc, new ItemStep(0), new MemberStep("servers", 0), new ItemStep(1), new MemberStep("port", 0)));
+        Assert.Equal("t.\"my.key\"", Path(doc, new ItemStep(0), new MemberStep("t", 0), new MemberStep("my.key", 0)));
+    }
+
+    [Fact]
+    public void Toml_comment_paths_are_the_parents_path_and_a_comment_marker_as_in_json()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("# c\na = 1\n[t]\n# d\nx = 2\n", "toml");
+
+        Assert.Equal("$/#comment[1]", Path(doc, new ItemStep(0), new CommentStep(0)));
+        Assert.Equal("t/#comment[1]", Path(doc, new ItemStep(0), new MemberStep("t", 0), new CommentStep(0)));
+    }
+
+    [Fact]
+    public void Toml_kinds_name_each_scalar_by_its_toml_kind_and_each_container_by_its_shape()
+    {
+        ConfigDocument doc = TreeFixtures.Parse(
+            "s = \"x\"\ni = 1\nf = 1.5\nb = true\no = 1979-05-27T07:32:00Z\nl = 1979-05-27T07:32:00\nd = 1979-05-27\nt = 07:32:00\n"
+            + "items = [1]\n[table]\nk = 1\n[[rows]]\nx = 1\n",
+            "toml");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+        DocNode items = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("items", 0));
+        DocNode item = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("items", 0), new ItemStep(0));
+        DocNode table = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("table", 0));
+        DocNode rows = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("rows", 0));
+        DocNode row = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("rows", 0), new ItemStep(0));
+
+        Assert.Equal("table", PathText.KindName(root, null));
+        Assert.Equal("root", PathText.KindName(root, root.Parts[0]));
+        Assert.Equal("table", PathText.KindName(root, root.Parts[1]));
+        Assert.Equal("table", PathText.KindName(table, null));
+        Assert.Equal("key", PathText.KindName(table, table.Parts[0]));
+        Assert.Equal("array", PathText.KindName(items, null));
+        Assert.Equal("array", PathText.KindName(items, items.Parts[1]));
+        Assert.Equal("index", PathText.KindName(item, item.Parts[0]));
+        Assert.Equal("integer", PathText.KindName(item, item.Parts[1]));
+        Assert.Equal("array", PathText.KindName(rows, null));
+        Assert.Equal("table", PathText.KindName(row, null));
+        Assert.Equal("string", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("s", 0)), null));
+        Assert.Equal("integer", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("i", 0)), null));
+        Assert.Equal("float", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("f", 0)), null));
+        Assert.Equal("boolean", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("b", 0)), null));
+        Assert.Equal("offset date-time", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("o", 0)), null));
+        Assert.Equal("local date-time", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("l", 0)), null));
+        Assert.Equal("local date", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("d", 0)), null));
+        Assert.Equal("local time", PathText.KindName(TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("t", 0)), null));
+    }
+
+    [Fact]
+    public void Toml_comment_kind_is_comment_and_the_comment_part_is_comment()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("# c\na = 1\n", "toml");
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new CommentStep(0));
+
+        Assert.Equal("comment", PathText.KindName(comment, null));
+        Assert.Equal("comment", PathText.KindName(comment, comment.Parts[0]));
+    }
+
+    [Fact]
     public void Env_paths_are_the_full_key_with_double_underscores_and_the_root_is_dollar()
     {
         ConfigDocument doc = TreeFixtures.Parse("Logging__LogLevel__Default=info\n", "env");

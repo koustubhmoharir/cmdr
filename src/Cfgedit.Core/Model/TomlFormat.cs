@@ -5,7 +5,7 @@ namespace Cfgedit.Core.Model;
 
 /// <summary>
 /// The TOML format (TOML 1.0). Parsing checks the syntax, the TOML rules about tables and keys, and then the text again with Tomlyn.
-/// Editing covers values, keys, comments, types and deletes; adding, duplicating and moving are not supported yet.
+/// Editing covers values, keys, comments, types, adds, deletes, duplicates and moves.
 /// </summary>
 public sealed class TomlFormat : IConfigFormat
 {
@@ -23,8 +23,21 @@ public sealed class TomlFormat : IConfigFormat
         return new ConfigDocument(this, source, model.Tree, model);
     }
 
+    /// <summary>
+    /// True when the node is an array of tables: an array defined by <c>[[x]]</c> headers, which holds tables only. False for any other
+    /// node, and for a document that is not TOML.
+    /// </summary>
+    /// <param name="document">The document.</param>
+    /// <param name="node">A node of the document.</param>
+    public static bool IsArrayOfTables(ConfigDocument document, DocNode node)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        ArgumentNullException.ThrowIfNull(node);
+        return node.Kind == NodeKind.TomlArray && document.Syntax is TomlModel model && model.ShapeOf(node) == TomlContainer.ArrayOfTables;
+    }
+
     /// <inheritdoc/>
-    /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid, or it is not supported for TOML yet.</exception>
+    /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid.</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
         ArgumentNullException.ThrowIfNull(document);

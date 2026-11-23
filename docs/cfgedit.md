@@ -5,7 +5,7 @@ attribute at a time. You type the value as it should be; cfgedit writes it with 
 you did not edit stays byte-for-byte as it was: comments, blank lines, indentation, quote styles, number spelling,
 encoding, byte order mark and line endings.
 
-Reads and writes XML, JSON, JSON with comments (JSONC), JSON5 and `.env` files (dotenv). Runs on Linux and Windows. Built from this
+Reads and writes XML, JSON, JSON with comments (JSONC), JSON5, `.env` files (dotenv) and TOML files. Runs on Linux and Windows. Built from this
 repository alongside cmdr; see the main [README](../README.md#install) for the .NET 10 SDK and the Terminal.Gui submodule.
 
 ```sh
@@ -18,7 +18,7 @@ dotnet publish src/Cfgedit -c Release -r win-x64      # or linux-x64 → cfgedit
 ## Usage
 
 ```sh
-cfgedit <file> [--format xml|json|jsonc|json5|env]
+cfgedit <file> [--format xml|json|jsonc|json5|env|toml]
 cfgedit --check <file> [--format …]
 cfgedit
 cfgedit --version
@@ -27,12 +27,13 @@ cfgedit --version
 The format comes from the extension: `.json` and `.jsonc` are JSONC (comments and trailing commas are accepted when the
 file has them, and never added), `.json5` is JSON5, and `.xml .config .csproj .props .targets .xaml .resx .nuspec .xsd
 .xslt .svg` are XML. A file named `.env`, `.env.<anything>` (`.env.local`) or `<anything>.env` is a `.env` file. A known
-extension wins, so `.env.json` is JSONC. Any other file is recognised by its first character (`<` is XML, `{` or `[` is
-JSON5). `--format` overrides this; `--format json` is strict JSON and refuses comments.
+extension wins, so `.env.json` is JSONC. A `.toml` file is TOML 1.0 (`.env.toml` is TOML too, as the extension wins). Any other
+file is recognised by its first character (`<` is XML, `{` or `[` is JSON5). `--format` overrides this; `--format json` is
+strict JSON and refuses comments.
 
 A path that does not exist asks whether to create it; a new XML file asks for the name of its root element, and a file
-whose format is not known from its name asks for the format (`.env` is one of the choices). The file is written on the
-first save.
+whose format is not known from its name asks for the format (`.env` and `.toml` are among the choices). The file is written
+on the first save.
 
 `cfgedit --check <file>` only parses the file: it prints nothing and exits 0 when the file is valid, and prints
 `path:line:col: message` and exits 1 when it is not.
@@ -149,6 +150,32 @@ Grouping is case-sensitive, and the lines of a group do not have to be next to e
 - **Deleting** an entry deletes its line and the comments shown with it. Alt+Up/Down moves an entry among its siblings;
   the move is refused when either sibling's lines are not next to each other.
 - **Types and tables:** every value is a string, so `t` says so and `T` has no table editor for `.env`.
+
+## TOML files
+
+A TOML table is shown by its meaning, not by how the text spells it: `[a]`, `[a.b]`, `a.b.c = 1` and an implicit `a` made by
+`[a.b]` are one table `a` with its members, and a table's members are listed in the order they first appear. An array of
+tables (`[[items]]`) is an array whose items are tables; an inline array or inline table is shown the same way. Scalars show
+their value as JSON scalars do (strings without quotes), and the detail line names the TOML kind: `string`, `integer`,
+`float`, `boolean`, `offset date-time`, `local date-time`, `local date` or `local time`.
+
+- **Values** are written as typed for numbers and dates. A string keeps its form when that form can hold the new text
+  (literal, or multi-line for a value with line breaks); otherwise it is written in basic quotes.
+- **Renaming** a table renames its key in every place that names it, including headers below it (`[a.b]`) and dotted keys,
+  as one undo step. A rename onto an existing sibling is refused.
+- **Adding** `a` on a table, or on the root, offers string, integer, float, boolean, date-time (asks for its text), table,
+  array and comment, and asks for a key. Where the text goes follows the table: a key/value after the table's last one in
+  its section, a `[parent.key]` header for a new table in a header-defined table, a dotted key in a dotted table. `a` on an
+  item of an array of tables copies its shape, with empty values.
+- **Types:** `t` opens the type menu (string, integer, float, boolean, date-time, table, array). A date-time asks for its
+  text. A table or array with children asks before they are dropped. A table defined by a header or by dotted keys cannot
+  change type: delete it instead.
+- **Deleting** a table deletes every piece that defines it, its subtables included. Alt+Up/Down moves a key/value, an item or
+  a sibling header section; a move is refused when the units are not next to each other.
+- **Tables:** `T` has no table editor for TOML yet, and says so.
+- **Text mode:** a file that is not valid TOML 1.0 opens in text mode at the error. Two valid constructs that the second
+  parser (Tomlyn) misreads are refused with a message and open in text mode: a `[x.sub]` header, or a new `[[x]]` item,
+  when another table follows an array of tables `[[x]]`.
 
 ## What is kept
 

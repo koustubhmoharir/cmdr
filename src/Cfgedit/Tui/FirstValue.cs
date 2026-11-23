@@ -58,7 +58,8 @@ internal static class FirstValue
     private static bool IsValue(DocNode node, DocPart part)
     {
         bool isValue = part.Kind is PartKind.AttributeValue or PartKind.Text
-            || (part.Kind == PartKind.Value && (node.Kind == NodeKind.EnvEntry || node.JsonKind is JsonValueKind.String or JsonValueKind.Number));
+            || (part.Kind == PartKind.Value
+                && (node.Kind is NodeKind.EnvEntry or NodeKind.TomlScalar || node.JsonKind is JsonValueKind.String or JsonValueKind.Number));
         return isValue && EditRules.KindOf(node, part) is EditorKind.Inline or EditorKind.Multiline;
     }
 }

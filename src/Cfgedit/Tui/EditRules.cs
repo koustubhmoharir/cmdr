@@ -115,6 +115,12 @@ internal static class EditRules
             }
         }
 
+        // A TOML key is one line: a quoted key with a line break has no single-line field, so it is not edited in the tree.
+        if (part.Kind == PartKind.Key && node.Kind is NodeKind.TomlTable or NodeKind.TomlArray or NodeKind.TomlScalar)
+        {
+            return CanEditInline(part.Value) ? EditorKind.Inline : EditorKind.None;
+        }
+
         if (CanEditInline(part.Value))
         {
             return EditorKind.Inline;

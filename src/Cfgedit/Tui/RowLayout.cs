@@ -98,6 +98,8 @@ public static class RowLayout
                 SingleLine(indent, JsonItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.EnvGroup or NodeKind.EnvEntry or NodeKind.EnvComment =>
                 SingleLine(indent, EnvItems(row, collapsed, columns), node.Parts.Count, columns, marks),
+            NodeKind.TomlTable or NodeKind.TomlArray or NodeKind.TomlScalar or NodeKind.TomlComment =>
+                SingleLine(indent, TomlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
             NodeKind.XmlText or NodeKind.XmlCData or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction
                 or NodeKind.XmlDeclaration or NodeKind.XmlDoctype =>
                 SingleLine(indent, XmlItems(row, collapsed, columns), node.Parts.Count, columns, marks),
@@ -442,6 +444,114 @@ public static class RowLayout
         }
 
         return items;
+    }
+
+    // ----- TOML -----
+
+    /// <summary>
+    /// A TOML row, as the JSON and .env rows show theirs: a scalar as <c>key = value</c>, a table as <c>key: {n}</c>, an array as
+    /// <c>key: [n]</c>, an array item as its index then its value or count (<c>0: "a"</c>), the root as <c>$ {n}</c>, and a comment as
+    /// <c>#</c> and its text. The text keeps the spaces after the <c>#</c>. An empty string is <c>""</c>.
+    /// </summary>
+    private static List<Item> TomlItems(Row row, bool collapsed, int width)
+    {
+        DocNode node = row.Node;
+        List<Item> items = FoldItems(row, collapsed);
+        if (node.Kind == NodeKind.TomlComment)
+        {
+            items.Add(Fixed("#", StyleKind.Punctuation, -1));
+            items.Add(Begin(0));
+            AddText(items, node.Parts[0].Value, StyleKind.Comment, 0, width);
+            items.Add(End(0));
+            return items;
+        }
+
+        bool labelled = node.Parts.Any(part => part.Kind is PartKind.Key or PartKind.Index);
+        bool keyed = node.Parts.Any(part => part.Kind == PartKind.Key);
+        for (int i = 0; i < node.Parts.Count; i++)
+        {
+            DocPart part = node.Parts[i];
+            switch (part.Kind)
+            {
+                case PartKind.Root:
+                    items.Add(Begin(i));
+                    items.Add(Fixed(part.Value, StyleKind.ReadOnly, i));
+                    items.Add(End(i));
+                    items.Add(Fixed(" ", StyleKind.Punctuation, -1));
+                    break;
+                case PartKind.Key:
+                    items.Add(Begin(i));
+                    if (part.Value.Length == 0)
+                    {
+                        items.Add(Fixed("\"\"", StyleKind.Punctuation, i));
+                    }
+                    else
+                    {
+                        AddText(items, part.Value, StyleKind.Key, i, width);
+                    }
+
+                    items.Add(End(i));
+                    break;
+                case PartKind.Index:
+                    items.Add(Begin(i));
+                    AddText(items, part.Value, StyleKind.Index, i, width);
+                    items.Add(End(i));
+                    break;
+                case PartKind.Value:
+                    if (labelled)
+                    {
+                        items.Add(Fixed(keyed ? " = " : ": ", StyleKind.Punctuation, -1));
+                    }
+
+                    items.Add(Begin(i));
+                    TomlScalarItems(items, node.TomlKind, part.Value, i, width);
+                    items.Add(End(i));
+                    break;
+                case PartKind.Summary:
+                    if (labelled)
+                    {
+                        items.Add(Fixed(": ", StyleKind.Punctuation, -1));
+                    }
+
+                    items.Add(Begin(i));
+                    items.Add(Fixed(node.Kind == NodeKind.TomlArray ? "[" : "{", StyleKind.Punctuation, i));
+                    AddText(items, part.Value, StyleKind.Summary, i, width);
+                    items.Add(Fixed(node.Kind == NodeKind.TomlArray ? "]" : "}", StyleKind.Punctuation, i));
+                    items.Add(End(i));
+                    break;
+                default:
+                    throw new ArgumentException("A TOML node has an unexpected part: " + part.Kind + ".", nameof(row));
+            }
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// A TOML scalar's value: a string as a JSON string is shown (no quotes, <c>""</c> when empty), an integer and a float as numbers, a
+    /// boolean as a boolean, and a date-time as a number, as its text is written.
+    /// </summary>
+    private static void TomlScalarItems(List<Item> items, TomlValueKind? kind, string value, int part, int width)
+    {
+        switch (kind)
+        {
+            case TomlValueKind.String when value.Length == 0:
+                items.Add(Fixed("\"\"", StyleKind.Punctuation, part));
+                break;
+            case TomlValueKind.String:
+                AddText(items, value, StyleKind.String, part, width);
+                break;
+            case TomlValueKind.Boolean:
+                AddText(items, value, StyleKind.Bool, part, width);
+                break;
+            case TomlValueKind.Integer or TomlValueKind.Float or TomlValueKind.OffsetDateTime or TomlValueKind.LocalDateTime
+                or TomlValueKind.LocalDate or TomlValueKind.LocalTime:
+                AddText(items, value, StyleKind.Number, part, width);
+                break;
+            default:
+                AddText(items, value, StyleKind.ReadOnly, part, width);
+                break;
+        }
     }
 
     private static void JsonScalarItems(List<Item> items, JsonValueKind? kind, string value, int part, int width)

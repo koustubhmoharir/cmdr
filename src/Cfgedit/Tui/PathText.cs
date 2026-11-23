@@ -7,7 +7,8 @@ namespace Cfgedit.Tui;
 /// <summary>
 /// The detail line's path and kind of a focused part. JSON paths are <c>$.a[2]</c>, with <c>["key"]</c> for keys that are not
 /// identifiers. XML paths are XPath-like: <c>/configuration/add[2]/@value</c>. .env paths are the full key, with <c>__</c> between
-/// its segments (<c>Logging__LogLevel__Default</c>), and <c>$</c> for the root.
+/// its segments (<c>Logging__LogLevel__Default</c>), and <c>$</c> for the root. TOML paths are <c>servers[1].port</c> and
+/// <c>tool."my.key"</c>, with <c>$</c> for the root table and no prefix before a top-level key.
 /// </summary>
 public static class PathText
 {
@@ -25,6 +26,11 @@ public static class PathText
         if (document.Format is EnvFormat)
         {
             return EnvPath(node);
+        }
+
+        if (document.Format is TomlFormat)
+        {
+            return TomlPath(node);
         }
 
         if (document.Format is not XmlFormat)
@@ -85,10 +91,16 @@ public static class PathText
             PartKind.Root => "root",
             PartKind.Key => "key",
             PartKind.Index => "index",
-            PartKind.Value => node.Kind == NodeKind.EnvEntry ? "string" : ScalarName(node.JsonKind),
+            PartKind.Value => node.Kind switch
+            {
+                NodeKind.EnvEntry => "string",
+                NodeKind.TomlScalar => TomlKindName(node.TomlKind),
+                _ => ScalarName(node.JsonKind),
+            },
             PartKind.Summary => node.Kind switch
             {
-                NodeKind.JsonArray => "array",
+                NodeKind.JsonArray or NodeKind.TomlArray => "array",
+                NodeKind.TomlTable => "table",
                 NodeKind.XmlElement => "element",
                 NodeKind.EnvGroup => EnvKindName(node),
                 _ => "object",
@@ -119,7 +131,31 @@ public static class PathText
             NodeKind.XmlDeclaration => "declaration",
             NodeKind.XmlDoctype => "doctype",
             NodeKind.EnvGroup or NodeKind.EnvEntry or NodeKind.EnvComment => EnvKindName(node),
+            NodeKind.TomlTable => "table",
+            NodeKind.TomlArray => "array",
+            NodeKind.TomlScalar => TomlKindName(node.TomlKind),
+            NodeKind.TomlComment => "comment",
             _ => throw new ArgumentOutOfRangeException(nameof(node), node.Kind, "Unknown node kind."),
+        };
+    }
+
+    /// <summary>
+    /// The TOML kind of a scalar, by its name in the TOML spec: <c>string</c>, <c>integer</c>, <c>float</c>, <c>boolean</c>, and the four
+    /// date-time forms. An array of tables is shown as <c>array</c>: the tree does not tell it from a static array.
+    /// </summary>
+    private static string TomlKindName(TomlValueKind? kind)
+    {
+        return kind switch
+        {
+            TomlValueKind.String => "string",
+            TomlValueKind.Integer => "integer",
+            TomlValueKind.Float => "float",
+            TomlValueKind.Boolean => "boolean",
+            TomlValueKind.OffsetDateTime => "offset date-time",
+            TomlValueKind.LocalDateTime => "local date-time",
+            TomlValueKind.LocalDate => "local date",
+            TomlValueKind.LocalTime => "local time",
+            _ => "value",
         };
     }
 
@@ -277,6 +313,67 @@ public static class PathText
         }
 
         return segments.Count == 0 ? Root : string.Join("__", segments);
+    }
+
+    // ----- TOML -----
+
+    /// <summary>
+    /// The path of a TOML node: <c>$</c> for the root table, then each key as <c>.key</c> (a top-level key has no dot, and a key that is
+    /// not bare is quoted), and each array item as <c>[n]</c>. A comment is its parent's path and <c>/#comment[n]</c>, as in JSON. Quoted
+    /// keys use JSON's escapes, which are TOML basic-string escapes too.
+    /// </summary>
+    private static string TomlPath(DocNode node)
+    {
+        if (node.Path.Steps[^1] is CommentStep comment)
+        {
+            DocNode parent = node.Parent ?? throw new InvalidOperationException("A comment has no parent.");
+            return TomlPath(parent) + "/#comment[" + (comment.Index + 1).ToString(CultureInfo.InvariantCulture) + "]";
+        }
+
+        var builder = new StringBuilder();
+        foreach (DocNode current in Chain(node))
+        {
+            switch (current.Path.Steps[^1])
+            {
+                case ItemStep when current.Parent?.Kind == NodeKind.Document:
+                    // The root table: the path starts at "$".
+                    break;
+                case MemberStep member:
+                    if (builder.Length > 0)
+                    {
+                        builder.Append('.');
+                    }
+
+                    builder.Append(IsBareKey(member.Key) ? member.Key : JsonQuote(member.Key));
+                    break;
+                case ItemStep item:
+                    builder.Append('[').Append(item.Index.ToString(CultureInfo.InvariantCulture)).Append(']');
+                    break;
+                default:
+                    throw new InvalidOperationException("Unexpected TOML path step " + current.Path.Steps[^1] + ".");
+            }
+        }
+
+        return builder.Length == 0 ? Root : builder.ToString();
+    }
+
+    /// <summary>A TOML bare key: one or more ASCII letters, digits, <c>_</c> or <c>-</c>.</summary>
+    private static bool IsBareKey(string key)
+    {
+        if (key.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (char c in key)
+        {
+            if (!(char.IsAsciiLetterOrDigit(c) || c is '_' or '-'))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     // ----- XML -----

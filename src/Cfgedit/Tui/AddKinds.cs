@@ -47,6 +47,30 @@ internal enum AddKind
 
     /// <summary>A .env comment line with the text the dialog gives.</summary>
     EnvComment,
+
+    /// <summary>A TOML string, with an empty value.</summary>
+    TomlString,
+
+    /// <summary>A TOML integer, with the value 0.</summary>
+    TomlInteger,
+
+    /// <summary>A TOML float, with the value 0.0.</summary>
+    TomlFloat,
+
+    /// <summary>A TOML boolean, with the value false.</summary>
+    TomlBoolean,
+
+    /// <summary>A TOML date-time, with the text the dialog gives.</summary>
+    TomlDateTime,
+
+    /// <summary>An empty TOML table, <c>{}</c> inline or a table in a header, with the key the dialog gives.</summary>
+    TomlTable,
+
+    /// <summary>An empty TOML array, <c>[]</c>, with the key the dialog gives.</summary>
+    TomlArray,
+
+    /// <summary>A TOML comment line with the text the dialog gives.</summary>
+    TomlComment,
 }
 
 /// <summary>What the Add dialog asked for: the kind, and the key or name and the text when the kind takes them (the others are ignored).</summary>
@@ -85,6 +109,11 @@ internal static class AddKinds
                 return [AddKind.XmlElement, AddKind.XmlText, AddKind.XmlComment];
             case NodeKind.EnvGroup:
                 return [AddKind.EnvEntry, AddKind.EnvComment];
+            case NodeKind.TomlArray when TomlFormat.IsArrayOfTables(document, parent):
+                // An array of tables ([[x]]) holds tables only.
+                return [AddKind.TomlTable];
+            case NodeKind.TomlTable or NodeKind.TomlArray:
+                return [AddKind.TomlString, AddKind.TomlInteger, AddKind.TomlFloat, AddKind.TomlBoolean, AddKind.TomlDateTime, AddKind.TomlTable, AddKind.TomlArray, AddKind.TomlComment];
             case NodeKind.Document when document.Format is XmlFormat:
                 return [AddKind.XmlComment];
             case NodeKind.Document when CommentsAllowed(document):
@@ -111,8 +140,19 @@ internal static class AddKinds
         AddKind.XmlComment => "comment",
         AddKind.EnvEntry => "entry",
         AddKind.EnvComment => "comment",
+        AddKind.TomlString => "string",
+        AddKind.TomlInteger => "integer",
+        AddKind.TomlFloat => "float",
+        AddKind.TomlBoolean => "boolean",
+        AddKind.TomlDateTime => "date-time",
+        AddKind.TomlTable => "table",
+        AddKind.TomlArray => "array",
+        AddKind.TomlComment => "comment",
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown kind."),
     };
+
+    /// <summary>The label of the text field for a kind that takes text: "Value" for a TOML date-time, else "Text".</summary>
+    public static string TextLabel(AddKind kind) => kind == AddKind.TomlDateTime ? "Value" : "Text";
 
     /// <summary>
     /// The label of the name field for a kind in a parent: "Key" for a JSON member or a .env entry, "Name" for an XML element, and null when
@@ -130,11 +170,17 @@ internal static class AddKinds
             return "Key";
         }
 
+        if (parent.Kind == NodeKind.TomlTable && IsTomlValue(kind))
+        {
+            return "Key";
+        }
+
         return parent.Kind == NodeKind.JsonObject && IsJsonValue(kind) ? "Key" : null;
     }
 
-    /// <summary>True when the kind is a comment, so that the dialog asks for its text.</summary>
-    public static bool TakesText(AddKind kind) => kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment or AddKind.EnvComment;
+    /// <summary>True when the kind takes text: a comment, or a TOML date-time, whose text is its value.</summary>
+    public static bool TakesText(AddKind kind) =>
+        kind is AddKind.LineComment or AddKind.BlockComment or AddKind.XmlComment or AddKind.EnvComment or AddKind.TomlComment or AddKind.TomlDateTime;
 
     /// <summary>
     /// The insert that adds the node at <paramref name="index"/> among the parent's children. A JSON member's key is the request's name
@@ -174,6 +220,22 @@ internal static class AddKinds
                 return new InsertNode(parent.Path, index, new NewEnvEntry(request.Name, string.Empty));
             case AddKind.EnvComment:
                 return new InsertNode(parent.Path, index, new NewEnvComment(request.Text));
+            case AddKind.TomlString:
+                return TomlMember(parent, index, request, TomlNewKind.String, string.Empty);
+            case AddKind.TomlInteger:
+                return TomlMember(parent, index, request, TomlNewKind.Integer, "0");
+            case AddKind.TomlFloat:
+                return TomlMember(parent, index, request, TomlNewKind.Float, "0.0");
+            case AddKind.TomlBoolean:
+                return TomlMember(parent, index, request, TomlNewKind.Boolean, "false");
+            case AddKind.TomlDateTime:
+                return TomlMember(parent, index, request, TomlNewKind.DateTime, request.Text);
+            case AddKind.TomlTable:
+                return TomlMember(parent, index, request, TomlNewKind.Table, null);
+            case AddKind.TomlArray:
+                return TomlMember(parent, index, request, TomlNewKind.Array, null);
+            case AddKind.TomlComment:
+                return new InsertNode(parent.Path, index, new NewTomlComment(request.Text));
             default:
                 throw new ArgumentOutOfRangeException(nameof(request), request.Kind, "Unknown kind.");
         }
@@ -191,4 +253,14 @@ internal static class AddKinds
         string? key = parent.Kind == NodeKind.JsonObject ? request.Name : null;
         return new InsertNode(parent.Path, index, new NewJsonValue(key, kind, value));
     }
+
+    /// <summary>A TOML value. The key is the request's name in a table (a header table, an inline table or the root), and null in an array.</summary>
+    private static EditOp TomlMember(DocNode parent, int index, AddRequest request, TomlNewKind kind, string? value)
+    {
+        string? key = parent.Kind == NodeKind.TomlTable ? request.Name : null;
+        return new InsertNode(parent.Path, index, new NewTomlValue(key, kind, value));
+    }
+
+    private static bool IsTomlValue(AddKind kind) => kind is AddKind.TomlString or AddKind.TomlInteger or AddKind.TomlFloat or AddKind.TomlBoolean
+        or AddKind.TomlDateTime or AddKind.TomlTable or AddKind.TomlArray;
 }

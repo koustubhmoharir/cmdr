@@ -170,6 +170,7 @@ internal sealed class AddDialog : Dialog<bool>
         _nameLabel.Visible = nameLabel is not null;
         _name.Visible = nameLabel is not null;
         bool takesText = AddKinds.TakesText(_kind.Kind);
+        _textLabel.Text = AddKinds.TextLabel(_kind.Kind) + ":";
         _textLabel.Visible = takesText;
         _text.Visible = takesText;
         _error.Text = string.Empty;

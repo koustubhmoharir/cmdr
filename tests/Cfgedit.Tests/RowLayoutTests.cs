@@ -1338,6 +1338,158 @@ public sealed class RowLayoutTests
         Assert.Equal("  # note", TextOf(lines.Lines[0]));
     }
 
+    // ----- TOML -----
+
+    [Fact]
+    public void Toml_root_shows_the_marker_and_its_count_like_the_json_root()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a = 1\n[b]\nc = 2\n", "toml");
+        DocNode root = TreeFixtures.Find(doc, new ItemStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(root, 0), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("$", StyleKind.ReadOnly, 0), new Segment(" ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("2", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_table_member_shows_key_colon_and_count_like_a_json_member()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a = 1\n[b]\nc = 2\n", "toml");
+        DocNode table = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("b", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(table, 1), false, 80);
+
+        Assert.Equal(2, lines.Lines[0].Indent);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("b", StyleKind.Key, 0), new Segment(": ", StyleKind.Punctuation, -1),
+                new Segment("{", StyleKind.Punctuation, 1), new Segment("1", StyleKind.Summary, 1), new Segment("}", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_scalar_member_shows_key_equals_sign_and_a_string_value_without_quotes()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a = \"x\"\n", "toml");
+        DocNode scalar = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("a", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(scalar, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("a", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("x", StyleKind.String, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_array_member_shows_square_brackets_and_each_item_by_its_index()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("items = [5, \"s\"]\n", "toml");
+        DocNode array = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("items", 0));
+        DocNode first = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("items", 0), new ItemStep(0));
+        DocNode second = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("items", 0), new ItemStep(1));
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("\x25BE ", StyleKind.Fold, -1), new Segment("items", StyleKind.Key, 0), new Segment(": ", StyleKind.Punctuation, -1),
+                new Segment("[", StyleKind.Punctuation, 1), new Segment("2", StyleKind.Summary, 1), new Segment("]", StyleKind.Punctuation, 1),
+            },
+            RowLayout.Layout(TreeFixtures.RowOf(array, 1), false, 80).Lines[0].Segments);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("0", StyleKind.Index, 0), new Segment(": ", StyleKind.Punctuation, -1),
+                new Segment("5", StyleKind.Number, 1),
+            },
+            RowLayout.Layout(TreeFixtures.RowOf(first, 2), false, 80).Lines[0].Segments);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("1", StyleKind.Index, 0), new Segment(": ", StyleKind.Punctuation, -1),
+                new Segment("s", StyleKind.String, 1),
+            },
+            RowLayout.Layout(TreeFixtures.RowOf(second, 2), false, 80).Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_empty_string_shows_a_pair_of_quotes_in_punctuation_style()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("a = \"\"\n", "toml");
+        DocNode scalar = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("a", 0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(scalar, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("a", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("\"\"", StyleKind.Punctuation, 1),
+            },
+            lines.Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_boolean_is_styled_as_a_boolean_and_date_time_as_a_number()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("b = true\nd = 1979-05-27\n", "toml");
+        DocNode boolean = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("b", 0));
+        DocNode date = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("d", 0));
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("b", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("true", StyleKind.Bool, 1),
+            },
+            RowLayout.Layout(TreeFixtures.RowOf(boolean, 1), false, 80).Lines[0].Segments);
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("d", StyleKind.Key, 0), new Segment(" = ", StyleKind.Punctuation, -1),
+                new Segment("1979-05-27", StyleKind.Number, 1),
+            },
+            RowLayout.Layout(TreeFixtures.RowOf(date, 1), false, 80).Lines[0].Segments);
+    }
+
+    [Fact]
+    public void Toml_quoted_key_shows_the_decoded_key_without_quotes_and_an_empty_key_as_quotes()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("\"my key\" = 1\n\"\" = 2\n", "toml");
+        DocNode spaced = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep("my key", 0));
+        DocNode empty = TreeFixtures.Find(doc, new ItemStep(0), new MemberStep(string.Empty, 0));
+
+        Assert.Equal("  my key = 1", TextOf(RowLayout.Layout(TreeFixtures.RowOf(spaced, 1), false, 80).Lines[0]));
+        Assert.Equal("  \"\" = 2", TextOf(RowLayout.Layout(TreeFixtures.RowOf(empty, 1), false, 80).Lines[0]));
+    }
+
+    [Fact]
+    public void Toml_comment_shows_a_hash_and_its_text_as_the_file_has_it()
+    {
+        ConfigDocument doc = TreeFixtures.Parse("# note\na = 1\n", "toml");
+        DocNode comment = TreeFixtures.Find(doc, new ItemStep(0), new CommentStep(0));
+
+        RowLines lines = RowLayout.Layout(TreeFixtures.RowOf(comment, 1), false, 80);
+
+        Assert.Equal(
+            new[]
+            {
+                new Segment("  ", StyleKind.Fold, -1), new Segment("#", StyleKind.Punctuation, -1), new Segment(" note", StyleKind.Comment, 0),
+            },
+            lines.Lines[0].Segments);
+    }
+
     private static string TextOf(DisplayLine line) => string.Concat(line.Segments.Select(segment => segment.Text));
 
     [Fact]

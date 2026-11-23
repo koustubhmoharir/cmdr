@@ -747,6 +747,46 @@ Syntax in `Cfgedit.Core.Env`, the tree and edits in `Cfgedit.Core.Model`. `EnvFo
   `FirstValue` (an entry's value opens after an add), and `MainWindow` (the loader note after a value is written, and the
   refusals of `t` and `T`).
 
+### TOML format (M10)
+
+Syntax in `Cfgedit.Core.Toml`, the merged model, tree and edits in `Cfgedit.Core.Model`. `TomlFormat` is chosen by name (`toml`)
+or by `Formats.ForPath` for `.toml`.
+
+- **Syntax.** `TomlDocument.Parse` builds a lossless CST, as the JSON family does: `TomlItem`s (key/value, `TomlTableItem` and
+  `TomlArrayTableItem` headers, comments, blank lines), `TomlKey` with its `TomlKeyPart`s, and `TomlValue`s (`TomlString`,
+  `TomlInteger`, `TomlFloat`, `TomlBoolean`, `TomlDateTime`, `TomlArray`, `TomlInlineTable`). `TomlParser` reports the line and
+  column of a syntax error. `TomlEncoder` writes keys, strings (keeping a string's form when it can hold the value) and numbers;
+  `TomlStrings`, `TomlScalars` and `TomlValues` hold the grammar helpers and the canonical values.
+- **Merged model.** `TomlMerger` (`TomlMerge.cs`) merges the items into `MergedTable`, `MergedArray`, `MergedScalar` and
+  `MergedMember`. Each table keeps every piece of text that defines it, and its `TomlTableState`. The TOML rules about tables and
+  keys are checked here, during parse, and so are the two constructs Tomlyn misreads (a `[x.sub]` header, or a `[[x]]` item,
+  after another table follows an array of tables): both are refused with a `CfgeditException`, and the file opens in text mode.
+- **Tree.** `TomlModelBuilder.Build` makes the document tree: `TomlTable` rows (the root, header, implicit, dotted and inline
+  tables, and items of arrays of tables), `TomlArray` rows (static arrays and arrays of tables), `TomlScalar` rows (with
+  `DocNode.TomlKind`) and `TomlComment` rows. Steps are `MemberStep`, `ItemStep` and `CommentStep`. `TomlModel` keeps the syntax,
+  the merged model, the tree, and the pieces of each node. Its `ShapeOf` gives a node's `TomlContainer` shape (root, header,
+  implicit, dotted, inline, array of tables, array), which the planner and `SiblingShape` use to decide what can be added where.
+- **Logical tree.** `TomlModel.DataLogical` is the data (tables as objects, arrays as arrays, scalars with kind and canonical
+  value). `ToLogical` adds the `#comments` array, every comment in file order. Check 1 of `Verification` compares the logical
+  edit with the tree after the edit. `TomlCrossCheck` (Tomlyn, used only as a verifier) compares the data with Tomlyn's parse of
+  the new text, after cfgedit's own reparse. A Tomlyn error on text cfgedit accepts is an internal parse mismatch.
+- **Edits.** `TomlEditPlanner` plans every operation as text edits: set part (values, keys, comments), insert (`NewTomlValue`,
+  `NewTomlComment`, with the placements of each container shape), delete, move, duplicate and `ChangeTomlType`. `SiblingShape`
+  builds the shaped inserts (`ConfigDocument.ShapeLike`). `TomlLogicalEdit` applies each operation to the logical tree. `TomlLayout`
+  groups the pieces of text that move, copy or delete together (a key/value with its comments, a header section, the pieces of a
+  table), as `TomlUnit`s. `TomlLogicalEdit.FocusAfter` is the hook `ConfigDocument` calls for TOML, because a renamed table can
+  change place.
+- **TUI.** The format-specific code is by node kind and TOML kind: `RowLayout.TomlItems` (rows as JSON's rows are, with the
+  scalar styles), `PathText.TomlPath` and `TomlKindName` (dotted keys, quoted when not bare, `[n]` for items, and the TOML kind
+  names), `AddKinds` (the TOML kinds, with `Key` for a table's member and `Value` for a date-time), `EditRules` (a TOML key is
+  edited only in the single-line field), `MainWindow.ChangeTomlTypeOf` (the type menu, with its date-time text, and the planner's
+  refusals shown as information), and `CfgeditHost` (the format choice and `.toml`). `T` on TOML says the table editor is not
+  available yet.
+- **Tests.** Core, in `tests/Cfgedit.Core.Tests/Toml`: `TomlConformanceTests` (the toml-test cases: valid ones parse and match
+  Tomlyn, invalid ones are refused), `TomlParserTests`, `TomlEncoderTests`, `TomlSemanticTests`, `TomlCrossCheckTests` and
+  `TomlPropertyTests` (randomised values through the encoder). The TUI is tested in `EditingWindowTests.Toml.cs`,
+  `RowLayoutTests`, `PathTextTests`, `EditRulesTests` and `ProgramTests`.
+
 ## Read-only TUI (M4)
 
 Projects `src/Cfgedit` (namespace `Cfgedit.Tui`) and `tests/Cfgedit.Tests`. Follow logvu's structure (`LogvuHost`,
@@ -756,7 +796,7 @@ whole into `tests/Cfgedit.Tests`, changing only the namespace.
 
 ### Program and host
 
-- **Arguments.** `cfgedit <file> [--format xml|json|jsonc|json5|env]` and `cfgedit` (picker). Options may come before or
+- **Arguments.** `cfgedit <file> [--format xml|json|jsonc|json5|env|toml]` and `cfgedit` (picker). Options may come before or
   after the file. `--check` and new files come later (M5b, M5). Until then, a missing file is an error.
 - **Format resolution.**
   1. `--format`, else `Formats.ForPath`.

@@ -143,7 +143,8 @@ internal sealed class DetailLine : View
             return string.Empty;
         }
 
-        bool stringValue = node.JsonKind == JsonValueKind.String || node.Kind == NodeKind.EnvEntry;
+        bool stringValue = node.JsonKind == JsonValueKind.String || node.Kind == NodeKind.EnvEntry
+            || (node.Kind == NodeKind.TomlScalar && node.TomlKind == TomlValueKind.String);
         if (part.Kind == PartKind.Value && stringValue && part.Value.Length == 0)
         {
             return "\"\"";

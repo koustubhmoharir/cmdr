@@ -1004,7 +1004,7 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray)
+        if (node.Kind is NodeKind.XmlElement or NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.TomlTable or NodeKind.TomlArray)
         {
             AddInto(node, part, first);
             return;
@@ -1037,14 +1037,16 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// True when a new node copies the shape of <paramref name="node"/>: an XML element inside an element, or a JSON scalar, object or
-    /// array inside an array. A JSON member has a key, so it asks for one.
+    /// True when a new node copies the shape of <paramref name="node"/>: an XML element inside an element, a JSON scalar, object or
+    /// array inside an array, or a TOML table, scalar or array inside a TOML array (an array of tables' item, or an item of an inline
+    /// array). A JSON or TOML member has a key, so it asks for one.
     /// </summary>
     private static bool IsShapeSource(DocNode node, DocNode parent)
     {
         bool xmlElement = node.Kind == NodeKind.XmlElement && parent.Kind == NodeKind.XmlElement;
         bool jsonItem = (node.Kind is NodeKind.JsonScalar or NodeKind.JsonObject or NodeKind.JsonArray) && parent.Kind == NodeKind.JsonArray;
-        return xmlElement || jsonItem;
+        bool tomlItem = (node.Kind is NodeKind.TomlTable or NodeKind.TomlScalar or NodeKind.TomlArray) && parent.Kind == NodeKind.TomlArray;
+        return xmlElement || jsonItem || tomlItem;
     }
 
     /// <summary>Adds a node shaped like the sibling, and opens the editor on its first value.</summary>
@@ -1238,6 +1240,12 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        if (doc.Format is TomlFormat)
+        {
+            ChangeTomlTypeOf(node);
+            return;
+        }
+
         if (node.JsonKind is not { } current)
         {
             ShowMessage("types apply to JSON only", error: false);
@@ -1264,6 +1272,118 @@ internal sealed class MainWindow : Window, ISearchHost
             _ => null,
         };
         ApplyAndShow(new ChangeJsonType(node.Path, kind, value), node.Path);
+    }
+
+    private static readonly TomlNewKind[] TomlTypeKinds =
+    [
+        TomlNewKind.String,
+        TomlNewKind.Integer,
+        TomlNewKind.Float,
+        TomlNewKind.Boolean,
+        TomlNewKind.DateTime,
+        TomlNewKind.Table,
+        TomlNewKind.Array,
+    ];
+
+    private static readonly string[] TomlTypeNames = ["string", "integer", "float", "boolean", "date-time", "table", "array"];
+
+    /// <summary>
+    /// The TOML type menu of a value, a table or an array, with the current type chosen. A date-time asks for its text, which starts as
+    /// the current text. A table or array with children asks before they are dropped. A refusal of the planner (a header table, say) is
+    /// shown as information, as the .env note is.
+    /// </summary>
+    private void ChangeTomlTypeOf(DocNode node)
+    {
+        if (node.Kind is not (NodeKind.TomlScalar or NodeKind.TomlTable or NodeKind.TomlArray))
+        {
+            ShowMessage("types apply to values only", error: false);
+            return;
+        }
+
+        ConfigDocument doc = _controller.Document;
+        TomlNewKind current = CurrentTomlKind(node);
+        string target = PathText.Format(doc, node, null);
+        int? choice = ChoiceDialog.Ask(Ui, "Type of " + target, TomlTypeNames, Array.IndexOf(TomlTypeKinds, current));
+        if (choice is not { } picked)
+        {
+            return;
+        }
+
+        TomlNewKind kind = TomlTypeKinds[picked];
+        if (kind == current && kind != TomlNewKind.DateTime)
+        {
+            return;
+        }
+
+        string? value = null;
+        if (kind == TomlNewKind.DateTime)
+        {
+            string text = ScalarText(node) ?? string.Empty;
+            if (!TextPromptDialog.Ask(Ui, "Date-time of " + target, "Value", text, entered =>
+                {
+                    value = entered;
+                    return null;
+                }))
+            {
+                return;
+            }
+        }
+        else if (kind == TomlNewKind.String)
+        {
+            value = ScalarText(node) ?? string.Empty;
+        }
+
+        // The change is checked before anything is asked, so a refused change (a header table, say) says why and does not
+        // ask to discard children it would not discard. Apply leaves the document as it is.
+        var op = new ChangeTomlType(node.Path, kind, value);
+        try
+        {
+            _ = doc.Apply(op);
+        }
+        catch (CfgeditException ex)
+        {
+            ShowMessage(EditController.Describe(ex), error: false);
+            return;
+        }
+
+        bool container = node.Kind is NodeKind.TomlTable or NodeKind.TomlArray;
+        if (container && node.Children.Count > 0
+            && Confirm.Choose(Ui, "Type", $"Discard the {node.Children.Count} children of {target}?", "Change", "Cancel") != 0)
+        {
+            return;
+        }
+
+        EditResult? result = _controller.Apply(op, out string? error);
+        if (result is null)
+        {
+            ShowMessage(error ?? "the type cannot be changed", error: false);
+            return;
+        }
+
+        Refresh(result.Focus ?? node.Path);
+    }
+
+    /// <summary>The TOML type a node has now: its table or array, or the kind of its scalar (a date-time of any form is a date-time).</summary>
+    private static TomlNewKind CurrentTomlKind(DocNode node)
+    {
+        if (node.Kind == NodeKind.TomlTable)
+        {
+            return TomlNewKind.Table;
+        }
+
+        if (node.Kind == NodeKind.TomlArray)
+        {
+            return TomlNewKind.Array;
+        }
+
+        return node.TomlKind switch
+        {
+            TomlValueKind.String => TomlNewKind.String,
+            TomlValueKind.Integer => TomlNewKind.Integer,
+            TomlValueKind.Float => TomlNewKind.Float,
+            TomlValueKind.Boolean => TomlNewKind.Boolean,
+            _ => TomlNewKind.DateTime,
+        };
     }
 
     /// <summary>
@@ -1328,6 +1448,13 @@ internal sealed class MainWindow : Window, ISearchHost
         if (_controller.Document.Format is EnvFormat)
         {
             ShowMessage("the table editor is not available for .env files", error: false);
+            return;
+        }
+
+        if (_controller.Document.Format is TomlFormat)
+        {
+            // Until the TOML table editor lands, a TOML table, array or array of tables is edited in the tree.
+            ShowMessage("the table editor is not available for TOML yet", error: false);
             return;
         }
 

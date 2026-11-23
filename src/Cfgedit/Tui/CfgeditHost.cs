@@ -77,10 +77,15 @@ internal static class CfgeditHost
     }
 
     /// <summary>The formats the choice dialog offers when a new file's extension names none, in the order shown.</summary>
-    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml", "env"];
+    internal static readonly IReadOnlyList<string> FormatNames = ["json", "jsonc", "json5", "xml", "env", "toml"];
 
-    /// <summary>The labels the format choice shows, in the order of <see cref="FormatNames"/>: .env is labelled by its extension.</summary>
-    internal static IReadOnlyList<string> FormatLabels { get; } = FormatNames.Select(name => name == "env" ? ".env" : name).ToList();
+    /// <summary>The labels the format choice shows, in the order of <see cref="FormatNames"/>: .env and .toml are labelled by their extensions.</summary>
+    internal static IReadOnlyList<string> FormatLabels { get; } = FormatNames.Select(name => name switch
+    {
+        "env" => ".env",
+        "toml" => ".toml",
+        _ => name,
+    }).ToList();
 
     /// <summary>
     /// The new-file flow for a path that does not exist. Asks "Create &lt;name&gt;?" (Cancel creates nothing), then the format when neither
@@ -135,7 +140,7 @@ internal static class CfgeditHost
 
     /// <summary>
     /// The questions of a new file: "Create &lt;name&gt;?" with Cancel and Create (Create is the default), then the format when neither
-    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5, xml and .env), then the root element's name for
+    /// <paramref name="format"/> nor the extension gives one (a choice of json, jsonc, json5, xml, .env and .toml), then the root element's name for
     /// XML (validated with <see cref="XmlSyntax.IsValidQName"/>). Returns null when any question is cancelled.
     /// </summary>
     /// <param name="app">The running application.</param>
@@ -157,13 +162,6 @@ internal static class CfgeditHost
             }
 
             resolved = Formats.FromName(FormatNames[picked])!;
-        }
-
-        if (resolved is TomlFormat)
-        {
-            // See RefuseUnfinished: the tree cannot show TOML yet.
-            Confirm.Choose(app, "New file", "TOML editing is not finished yet", "OK");
-            return null;
         }
 
         if (resolved is not XmlFormat)
@@ -252,7 +250,6 @@ internal static class CfgeditHost
         // opened with DocumentFile, which keeps the snapshot the save check needs.
         byte[] bytes = ReadBytes(path);
         IConfigFormat resolved = format ?? Formats.ForPath(path) ?? Sniff(bytes, path);
-        RefuseUnfinished(resolved, path);
         try
         {
             return new OpenedFile(path, DocumentFile.Open(path, resolved));
@@ -260,19 +257,6 @@ internal static class CfgeditHost
         catch (CfgeditException ex) when (ex.Path is null)
         {
             throw new CfgeditException(ex.Message) { Path = path, Line = ex.Line, Column = ex.Column };
-        }
-    }
-
-    /// <summary>
-    /// Refuses a format whose TUI support is not finished (TOML, until milestone M10's TUI item): Core parses and checks it, but the
-    /// tree cannot show its rows yet. Remove this when the TUI handles TOML.
-    /// </summary>
-    /// <exception cref="CfgeditException">The format is not supported by the TUI yet.</exception>
-    private static void RefuseUnfinished(IConfigFormat format, string path)
-    {
-        if (format is TomlFormat)
-        {
-            throw new CfgeditException("TOML editing is not finished yet") { Path = path };
         }
     }
 
