@@ -497,6 +497,11 @@ public sealed class ConfigDocument
             return TomlLogicalEdit.FocusAfter(this, after, op);
         }
 
+        if (Format is YamlFormat)
+        {
+            return YamlLogicalEdit.FocusAfter(this, after, op);
+        }
+
         switch (op)
         {
             case SetPart { Part: PartKind.AttributeName or PartKind.AttributeValue } attribute:

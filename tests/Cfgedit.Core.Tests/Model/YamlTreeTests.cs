@@ -311,7 +311,7 @@ public sealed class YamlTreeTests
 
         DocNode[] rows = document.Root.Children.Where(child => child.Kind == NodeKind.YamlDocument).ToArray();
         Assert.Equal(2, rows.Length);
-        Assert.All(rows, row => Assert.Single(row.Children.Where(child => child.Kind != NodeKind.YamlComment)));
+        Assert.All(rows, row => Assert.Single(row.Children, child => child.Kind != NodeKind.YamlComment));
     }
 
     [Fact]

@@ -5,7 +5,7 @@ namespace Cfgedit.Core.Model;
 
 /// <summary>
 /// The YAML format: the config subset of YAML 1.2 (see docs/cfgedit-design.md, YAML). Parsing checks the syntax, builds the document tree,
-/// and then checks the data again with YamlDotNet. Editing is not supported yet: the planner is the next step.
+/// and then checks the data again with YamlDotNet. Editing plans scalar values, keys, comments, type changes and deletes.
 /// </summary>
 public sealed class YamlFormat : IConfigFormat
 {
@@ -25,12 +25,12 @@ public sealed class YamlFormat : IConfigFormat
     }
 
     /// <inheritdoc/>
-    /// <exception cref="Cfgedit.Core.CfgeditException">Always: YAML editing is not supported yet.</exception>
+    /// <exception cref="Cfgedit.Core.CfgeditException">The operation is invalid or not supported for YAML (see <see cref="YamlEditPlanner"/>).</exception>
     public IReadOnlyList<TextEdit> Plan(ConfigDocument document, EditOp op)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(op);
-        throw new CfgeditException("editing YAML files is not supported yet");
+        return new YamlEditPlanner(document).Plan(op);
     }
 
     /// <inheritdoc/>

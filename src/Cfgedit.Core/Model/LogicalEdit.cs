@@ -98,7 +98,10 @@ internal static class EditLayout
         }
 
         int last = index;
-        int anchor = Extent(parent, index, text);
+        // A YAML block scalar's span ends with its line break, which is not part of the entry's last line.
+        int anchor = parent.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence
+            ? TrimBreaks(text, children[index].Start, children[index].End)
+            : Extent(parent, index, text);
         for (int k = index + 1; k < children.Count && IsComment(children[k]); k++)
         {
             if (HasLineBreak(text, anchor, children[k].Start))
@@ -150,6 +153,17 @@ internal static class EditLayout
         }
 
         return true;
+    }
+
+    /// <summary>The end of a span with any line breaks at its end removed, but not before <paramref name="start"/>.</summary>
+    public static int TrimBreaks(string text, int start, int end)
+    {
+        while (end > start && text[end - 1] is '\r' or '\n')
+        {
+            end--;
+        }
+
+        return end;
     }
 
     /// <summary>The offset of the first character of the line that holds the offset.</summary>
@@ -342,6 +356,11 @@ internal static class LogicalEdit
         if (before.Format is TomlFormat)
         {
             return TomlLogicalEdit.Apply(before, root, op);
+        }
+
+        if (before.Format is YamlFormat)
+        {
+            return YamlLogicalEdit.Apply(before, root, op);
         }
 
         return op switch

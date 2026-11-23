@@ -60,6 +60,36 @@ public sealed record ChangeJsonType(NodePath Node, JsonValueKind Kind, string? V
 public sealed record ChangeTomlType(NodePath Node, TomlNewKind Kind, string? Value) : EditOp;
 
 /// <summary>
+/// Changes the YAML type of a value: a scalar, or a block or flow mapping or sequence. <see cref="Value"/> is the new scalar's text: the
+/// string for String (null means empty), the number text for Number (null means <c>0</c>), <c>true</c> or <c>false</c> for Boolean (null
+/// means <c>false</c>); it is ignored for Null, Mapping and Sequence. Null is written <c>null</c>, Mapping <c>{}</c> and Sequence <c>[]</c>.
+/// A container's contents are dropped. An anchor stays; a tag stays only when it still fits the new type. An alias cannot change type.
+/// </summary>
+public sealed record ChangeYamlType(NodePath Node, YamlNewKind Kind, string? Value) : EditOp;
+
+/// <summary>The YAML types that a value can change to.</summary>
+public enum YamlNewKind
+{
+    /// <summary>A string.</summary>
+    String,
+
+    /// <summary>An integer or a float, by the text given.</summary>
+    Number,
+
+    /// <summary>A boolean.</summary>
+    Boolean,
+
+    /// <summary>null.</summary>
+    Null,
+
+    /// <summary>A mapping, written <c>{}</c>.</summary>
+    Mapping,
+
+    /// <summary>A sequence, written <c>[]</c>.</summary>
+    Sequence,
+}
+
+/// <summary>
 /// Inserts a copy of a node right after the node and its attached comments. A JSON member's copy is renamed
 /// <c>&lt;key&gt;-copy</c>, or <c>&lt;key&gt;-copy2</c>, <c>-copy3</c> and so on, until its key is unique among its siblings.
 /// </summary>

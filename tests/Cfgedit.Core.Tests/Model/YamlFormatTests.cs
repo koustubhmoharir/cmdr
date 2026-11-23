@@ -20,13 +20,20 @@ public sealed class YamlFormatTests
     }
 
     [Fact]
-    public void Editing_is_not_supported_yet_and_the_planner_says_so()
+    public void Adding_duplicating_and_moving_are_refused_for_now()
     {
         ConfigDocument document = Format.Parse(SourceText.Create("a: 1\n", Encoding.UTF8, false));
+        NodePath root = NodePath.Empty.Append(new ItemStep(0));
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => Format.Plan(document, new DeleteNode(NodePath.Empty.Append(new ItemStep(0)))));
-
-        Assert.Equal("editing YAML files is not supported yet", ex.Message);
+        Assert.Equal(
+            "adding is not supported in YAML yet",
+            Assert.Throws<CfgeditException>(() => Format.Plan(document, new InsertNode(root, 0, new NewJsonValue("b", JsonValueKind.String, "x")))).Message);
+        Assert.Equal(
+            "duplicating a node is not supported in YAML yet",
+            Assert.Throws<CfgeditException>(() => Format.Plan(document, new DuplicateNode(root.Append(new MemberStep("a", 0))))).Message);
+        Assert.Equal(
+            "moving a node is not supported in YAML yet",
+            Assert.Throws<CfgeditException>(() => Format.Plan(document, new MoveNode(root.Append(new MemberStep("a", 0)), 0))).Message);
     }
 
     [Theory]
