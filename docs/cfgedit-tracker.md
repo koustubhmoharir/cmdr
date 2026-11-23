@@ -173,4 +173,7 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
 - [x] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, new file, `--format yaml`; user
       guide. Checked in a real terminal at 80x24: a shaped compact item added to a compose `services` list next to an
       anchor and a merge key, save. (70ce4f7) *(Windows)*: not run on Windows.
-- [ ] Table editor for sequences of mappings or scalars (`T` says "not available for YAML yet").
+- [x] Table editor for sequences of mappings or scalars. Checked in a real terminal on a compose `services` list: the
+      `<<` merge-key column refuses new cells. (d1fbc64)
+- [ ] A refused missing cell (alias or merge-key column) is refused when the field is committed, not when Enter opens
+      it; refuse before opening the field.
