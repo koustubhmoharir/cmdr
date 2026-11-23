@@ -76,6 +76,9 @@ internal static class YamlLogicalEdit
             case DuplicateNode duplicate:
                 return DuplicateAt(before, root, data, comments, duplicate.Node);
 
+            case MoveNode move:
+                return MoveAt(before, root, data, comments, move);
+
             default:
                 throw new InvalidOperationException("The operation " + op.GetType().Name + " is not supported for YAML.");
         }
@@ -160,9 +163,131 @@ internal static class YamlLogicalEdit
                 return after.Resolve(path) is null ? null : path;
             }
 
+            case MoveNode move:
+            {
+                var model = (YamlModel)before.Syntax;
+                MovePlan plan = PlanMove(before, move);
+                if (plan.Node.Kind == NodeKind.YamlComment)
+                {
+                    return CommentPathAt(after, plan.RankLo + plan.RankOrder.IndexOf(RankOf(model, plan.Node)));
+                }
+
+                NodePath path = plan.Parent.Kind == NodeKind.YamlMapping
+                    ? plan.Parent.Path.Append(new MemberStep(((MemberStep)plan.Node.Path.Steps[^1]).Key, 0))
+                    : plan.Parent.Path.Append(new ItemStep(plan.EntryOrder.IndexOf(CountEntries(plan.Parent.Children, plan.Node))));
+                return after.Resolve(path) is null ? null : path;
+            }
+
             default:
                 return null;
         }
+    }
+
+    // ----- Move -----
+
+    /// <summary>
+    /// Where a move puts things. The entries of the parent are in <see cref="EntryOrder"/> (old entry indices, in their new order). The
+    /// comments of the parent's units are one run of ranks from <see cref="RankLo"/>, and <see cref="RankOrder"/> is that run in its new
+    /// order: the comments move with their units, and nothing outside the run moves.
+    /// </summary>
+    private sealed record MovePlan(DocNode Parent, DocNode Node, List<int> EntryOrder, int RankLo, List<int> RankOrder);
+
+    /// <summary>
+    /// The units of the moved node's parent (see <see cref="YamlMoves.Units"/>) and the order they take. The units come from the tree and its
+    /// text, as the planner's do, and the logical order is derived from them without the planner's edits.
+    /// </summary>
+    private static MovePlan PlanMove(ConfigDocument before, MoveNode move)
+    {
+        var model = (YamlModel)before.Syntax;
+        DocNode node = Locate(before, move.Node);
+        DocNode parent = node.Parent ?? throw new InvalidOperationException("The document node cannot be moved.");
+        IReadOnlyList<DocNode> children = parent.Children;
+        int index = IndexOf(parent, node);
+        List<YamlUnit> units = YamlMoves.Units(model, parent, before.Source.Text, node.Kind == NodeKind.YamlComment ? index : -1);
+        int moved = YamlMoves.UnitOf(units, index);
+        int destination = YamlMoves.Destination(units, moved, move.NewIndex, children.Count);
+        if (destination < 0)
+        {
+            throw new InvalidOperationException("The move would split a unit.");
+        }
+
+        List<int> order = YamlMoves.Order(units.Count, moved, destination);
+
+        var entryIndex = new int[children.Count];
+        int entries = 0;
+        for (int k = 0; k < children.Count; k++)
+        {
+            if (!EditLayout.IsComment(children[k]))
+            {
+                entryIndex[k] = entries++;
+            }
+        }
+
+        var entryOrder = new List<int>();
+        foreach (int u in order)
+        {
+            for (int k = units[u].First; k <= units[u].Last; k++)
+            {
+                if (!EditLayout.IsComment(children[k]))
+                {
+                    entryOrder.Add(entryIndex[k]);
+                }
+            }
+        }
+
+        List<YamlComment> all = AllComments(model);
+        var unitRanks = units.Select(unit => RanksIn(all, children[unit.First].Start, children[unit.Last].End)).ToList();
+        List<int> oldRanks = unitRanks.SelectMany(ranks => ranks).ToList();
+        int rankLo = oldRanks.Count > 0 ? oldRanks[0] : 0;
+        for (int i = 0; i < oldRanks.Count; i++)
+        {
+            if (oldRanks[i] != rankLo + i)
+            {
+                throw new InvalidOperationException("The comments of a move are not one run.");
+            }
+        }
+
+        List<int> rankOrder = order.SelectMany(u => unitRanks[u]).ToList();
+        return new MovePlan(parent, node, entryOrder, rankLo, rankOrder);
+    }
+
+    /// <summary>The ranks of the comments that start in [from, to), in file order.</summary>
+    private static List<int> RanksIn(List<YamlComment> all, int from, int to)
+    {
+        var ranks = new List<int>();
+        for (int r = 0; r < all.Count; r++)
+        {
+            if (all[r].Start >= from && all[r].Start < to)
+            {
+                ranks.Add(r);
+            }
+        }
+
+        return ranks;
+    }
+
+    /// <summary>
+    /// A moved entry or item is reordered among its siblings in the data; a moved comment changes only the order of the comments. The comments
+    /// of the moved units keep their text and move with them in the #comments order.
+    /// </summary>
+    private static LogicalNode MoveAt(ConfigDocument before, LogicalNode root, LogicalNode data, IReadOnlyList<LogicalNode> comments, MoveNode move)
+    {
+        MovePlan plan = PlanMove(before, move);
+        if (plan.Node.Kind != NodeKind.YamlComment)
+        {
+            IReadOnlyList<LogicalNode> Reorder(IReadOnlyList<LogicalNode> entries) => plan.EntryOrder.Select(k => entries[k]).ToList();
+            data = plan.Parent.Kind == NodeKind.Document
+                ? WithChildren(data, Reorder(data.Children))
+                : Modify(data, IndicesOf(plan.Parent), 0, n => WithChildren(n, Reorder(n.Children))) ?? data;
+        }
+
+        var permuted = comments.ToList();
+        for (int i = 0; i < plan.RankOrder.Count; i++)
+        {
+            permuted[plan.RankLo + i] = comments[plan.RankOrder[i]];
+        }
+
+        return Rebuild(root, data, permuted);
     }
 
     // ----- Insert and duplicate -----

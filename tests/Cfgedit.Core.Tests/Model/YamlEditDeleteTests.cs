@@ -270,6 +270,7 @@ public sealed class YamlEditDeleteTests
     [InlineData("a: 1\n\n\n# gap\n\nb: 2\n")]
     [InlineData("{a: 1, b: 2}\n")]
     [InlineData("- &i !!str x\n- !t\n  y: 1\n")]
+    [InlineData("- - a\n  - b\n- k: |+\n    keep\n\n- {p: q}\n")]
     public void Every_edit_of_every_node_is_applied_or_refused_and_never_an_internal_error(string text)
     {
         ConfigDocument doc = ModelTestSupport.Parse(text, Yaml);
@@ -292,6 +293,22 @@ public sealed class YamlEditDeleteTests
             }
 
             ops.Add(new DuplicateNode(node.Path));
+            if (node.Parent is not null)
+            {
+                foreach (int delta in new[] { -1, 1 })
+                {
+                    if (doc.MoveBy(node.Path, delta) is { } move)
+                    {
+                        ops.Add(move);
+                    }
+                }
+
+                for (int index = 0; index <= node.Parent.Children.Count; index++)
+                {
+                    ops.Add(new MoveNode(node.Path, index));
+                }
+            }
+
             if (node.Kind is NodeKind.YamlMapping or NodeKind.YamlSequence)
             {
                 for (int index = 0; index <= node.Children.Count; index++)

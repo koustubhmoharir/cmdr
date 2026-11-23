@@ -510,8 +510,9 @@ the edit applied to the logical tree before, by a YAML logical edit; (2) YamlDot
 opens it in text mode with a message. cfgedit's parser is tested against the yaml-test-suite
 (github.com/yaml/yaml-test-suite, MIT): for every case, cfgedit either refuses it or produces the expected data;
 every case marked as an error is refused. Valid inputs that YamlDotNet misreads are refused with a message ("cfgedit
-cannot verify …; YamlDotNet reads it differently"): a tab-only line between block entries, and block scalars whose
-content ends in spaces or blank lines without a final line break. A core tag on a scalar that does not read as that
+cannot verify …; YamlDotNet reads it differently"): a tab-only line between block entries, block scalars whose
+content ends in spaces or blank lines without a final line break, and any block scalar without `-` chomping that ends
+the file with no final line break (the message says to add one). A core tag on a scalar that does not read as that
 type (`!!int foo`) is refused. A stream whose only content is a bare `...` has no document.
 
 **Dependency.** `YamlDotNet` 18.1.0, referenced by `Cfgedit.Core` only and used only for verification.

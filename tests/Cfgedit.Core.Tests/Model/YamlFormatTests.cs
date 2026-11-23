@@ -20,14 +20,15 @@ public sealed class YamlFormatTests
     }
 
     [Fact]
-    public void Moving_is_refused_for_now()
+    public void A_block_entry_moves_through_the_format_plan()
     {
-        ConfigDocument document = Format.Parse(SourceText.Create("a: 1\n", Encoding.UTF8, false));
+        ConfigDocument document = Format.Parse(SourceText.Create("a: 1\nb: 2\n", Encoding.UTF8, false));
         NodePath root = NodePath.Empty.Append(new ItemStep(0));
 
-        Assert.Equal(
-            "moving a node is not supported in YAML yet",
-            Assert.Throws<CfgeditException>(() => Format.Plan(document, new MoveNode(root.Append(new MemberStep("a", 0)), 0))).Message);
+        IReadOnlyList<TextEdit> edits = Format.Plan(document, new MoveNode(root.Append(new MemberStep("a", 0)), 2));
+
+        Assert.Equal("b: 2\na: 1\n", document.Apply(new MoveNode(root.Append(new MemberStep("a", 0)), 2)).Document.Source.Text);
+        Assert.NotEmpty(edits);
     }
 
     [Theory]

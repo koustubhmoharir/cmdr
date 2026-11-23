@@ -21,6 +21,27 @@ public sealed class YamlCrossCheckTests
         return new LogicalNode(LogicalKind.Scalar, name, null, value, [], [], yamlKind: YamlValueKind.Integer, yamlPlain: true);
     }
 
+    [Theory]
+    [InlineData("|")]
+    [InlineData("|+")]
+    [InlineData("|-")]
+    [InlineData(">")]
+    [InlineData(">+")]
+    [InlineData(">-")]
+    public void A_block_scalar_at_the_end_without_a_line_break_parses_or_is_refused_plainly_never_as_a_mismatch(string header)
+    {
+        string text = "a: 1\nb: " + header + "\n  x";
+        try
+        {
+            new YamlFormat().Parse(Cfgedit.Core.Text.SourceText.Create(text, new System.Text.UTF8Encoding(false), hasBom: false));
+        }
+        catch (CfgeditException ex)
+        {
+            Assert.DoesNotContain("internal parse mismatch", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("YamlDotNet reads it differently", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void Equal_trees_have_no_difference()
     {

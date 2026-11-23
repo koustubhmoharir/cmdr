@@ -82,6 +82,16 @@ internal static class YamlLimits
                     block.Start,
                     "cfgedit cannot verify a block scalar that ends in spaces with no line break; YamlDotNet reads it differently");
             }
+
+            // The end of the text counts as a line break for clip and keep (as yaml-test-suite has it), while YamlDotNet adds none.
+            string header = block.Parts.OfType<YamlToken>().First(token => token.Kind == YamlTokenKind.BlockHeader).Text;
+            if (!header.Contains('-', StringComparison.Ordinal))
+            {
+                throw Refuse(
+                    syntax,
+                    block.Start,
+                    "cfgedit cannot verify a block scalar that ends the file with no line break (add one at the end of the file); YamlDotNet reads it differently");
+            }
         }
     }
 

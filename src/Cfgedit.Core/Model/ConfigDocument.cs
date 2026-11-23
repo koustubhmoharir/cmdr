@@ -350,8 +350,9 @@ public sealed class ConfigDocument
     /// <summary>The nodes that cannot move: a child of the document node other than a comment or a processing instruction.</summary>
     private static bool IsFixed(DocNode node)
     {
+        // The rows of a YAML file with several documents are documents, which move among themselves.
         return node.Parent?.Kind == NodeKind.Document
-            && node.Kind is not (NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction);
+            && node.Kind is not (NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.XmlProcessingInstruction or NodeKind.YamlDocument);
     }
 
     /// <summary>

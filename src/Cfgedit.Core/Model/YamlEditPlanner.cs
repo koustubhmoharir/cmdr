@@ -91,8 +91,9 @@ internal sealed class YamlEditPlanner
             case DuplicateNode duplicate:
                 PlanDuplicate(duplicate);
                 break;
-            case MoveNode:
-                throw new CfgeditException("moving a node is not supported in YAML yet");
+            case MoveNode move:
+                PlanMove(move);
+                break;
             case ChangeJsonType or ChangeTomlType:
                 throw new CfgeditException("use the YAML type change");
             case InsertAttribute or DeleteAttribute or MoveAttribute:
@@ -691,6 +692,278 @@ internal sealed class YamlEditPlanner
         }
     }
 
+    // ----- MoveNode -----
+
+    /// <summary>
+    /// Moves a unit among its siblings (see <see cref="YamlMoves.Units"/>): an entry or item with its attached comments, its nested lines and
+    /// its trailing comment; a comment on a line of its own; a flow entry with its comma; or a document with its markers. The units from the
+    /// moved one to its destination are written back as one span. Each unit keeps its text, and the text between the units (blank lines, or
+    /// the spaces and line breaks of a flow collection) stays where it is.
+    /// </summary>
+    private void PlanMove(MoveNode op)
+    {
+        DocNode node = Node(op.Node);
+        DocNode parent = Parent(node);
+        if (parent.Kind == NodeKind.Document && node.Kind != NodeKind.YamlDocument)
+        {
+            throw new CfgeditException("the root value cannot be moved");
+        }
+
+        int index = IndexOf(parent, node);
+        List<YamlUnit> units = YamlMoves.Units(_model, parent, _text, node.Kind == NodeKind.YamlComment ? index : -1);
+        int moved = YamlMoves.UnitOf(units, index);
+        if (units[moved].Refusal is { } refusal)
+        {
+            throw new CfgeditException(refusal);
+        }
+
+        int destination = YamlMoves.Destination(units, moved, op.NewIndex, parent.Children.Count);
+        if (destination < 0)
+        {
+            throw new CfgeditException(YamlMoves.SplitRefusal);
+        }
+
+        List<int> order = YamlMoves.Order(units.Count, moved, destination);
+        (int lo, int hi) = YamlMoves.Span(order);
+        if (lo < 0)
+        {
+            return;
+        }
+
+        for (int k = lo; k <= hi; k++)
+        {
+            if (units[k].Refusal is { } neighbour)
+            {
+                throw new CfgeditException(neighbour);
+            }
+        }
+
+        YamlValueNode? container = parent.Kind == NodeKind.Document ? null : ValueOf(Piece(parent));
+        List<string> texts = container is YamlFlowMapping or YamlFlowSequence
+            ? TokenTexts(container, units, order, lo, hi)
+            : LineTexts(units, order, lo, hi);
+        string span = string.Concat(texts.Select((text, p) => p + lo < hi ? text + GapAfter(units, p + lo) : text));
+        if (parent.Kind != NodeKind.Document)
+        {
+            RequireAliasOrder(units, order, lo, hi, texts, span.Length);
+        }
+
+        int start = units[lo].Start;
+        int end = units[hi].End;
+        if (span != _text[start..end])
+        {
+            Replace(start, end, span);
+        }
+    }
+
+    /// <summary>
+    /// The text of the units in their new order, in lines. A unit that is not the last one gets a line break when it had none (it was the
+    /// file's last line), and the span's last unit loses its break when the file must end without one. Either change would alter a block
+    /// scalar that keeps its line breaks, so that is refused.
+    /// </summary>
+    private List<string> LineTexts(List<YamlUnit> units, List<int> order, int lo, int hi)
+    {
+        bool atEnd = hi == units.Count - 1 && units[hi].End == _text.Length && !EndsWithBreak(_text);
+        var texts = new List<string>();
+        for (int p = lo; p <= hi; p++)
+        {
+            YamlUnit unit = units[order[p]];
+            string text = _text[unit.Start..unit.End];
+            if (p < hi && !EndsWithBreak(text))
+            {
+                RequireNoKeptBreak(unit);
+                text += _newline;
+            }
+
+            if (p == hi && atEnd && EndsWithBreak(text))
+            {
+                RequireNoKeptBreak(unit);
+                text = WithoutBreak(text);
+            }
+
+            texts.Add(text);
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// The text of the units of a flow collection in their new order. An entry takes a comma unless it is the last entry of the collection,
+    /// which keeps the trailing comma the collection had. A comment (alone, or ending an entry's line) must still be followed by a line break
+    /// where it lands, or the next entry would be commented out.
+    /// </summary>
+    private List<string> TokenTexts(YamlValueNode container, List<YamlUnit> units, List<int> order, int lo, int hi)
+    {
+        int lastEntry = units.FindLastIndex(unit => !unit.IsComment);
+        bool hadTrailing = lastEntry >= 0 && units[lastEntry].Comma is not null;
+        int newLast = -1;
+        if (lastEntry >= lo && lastEntry <= hi)
+        {
+            for (int p = lo; p <= hi; p++)
+            {
+                if (!units[order[p]].IsComment)
+                {
+                    newLast = p;
+                }
+            }
+        }
+
+        int close = BracketsOf(container).Close;
+        var texts = new List<string>();
+        for (int p = lo; p <= hi; p++)
+        {
+            YamlUnit unit = units[order[p]];
+            string gap = p + 1 < units.Count ? GapAfter(units, p) : _text[units[p].End..close];
+            if ((unit.IsComment || unit.EndsInComment) && gap.IndexOfAny(['\r', '\n']) < 0)
+            {
+                throw new CfgeditException(YamlMoves.CommentRunRefusal);
+            }
+
+            string text = _text[unit.Start..unit.End];
+            if (!unit.IsComment)
+            {
+                bool needComma = p != newLast || hadTrailing;
+                if (needComma && unit.Comma is null)
+                {
+                    text = text.Insert(unit.ValueEnd - unit.Start, ",");
+                }
+                else if (!needComma && unit.Comma is { } comma)
+                {
+                    text = text[..(unit.ValueEnd - unit.Start)] + text[(comma.End - unit.Start)..];
+                }
+            }
+
+            texts.Add(text);
+        }
+
+        return texts;
+    }
+
+    /// <summary>The text between a unit and the one after it. It must be blank: anything else is not a run of units.</summary>
+    private string GapAfter(List<YamlUnit> units, int k)
+    {
+        int from = units[k].End;
+        int to = units[k + 1].Start;
+        string gap = to >= from ? _text[from..to] : throw new CfgeditException(YamlMoves.NotContiguousRefusal);
+        if (gap.Any(c => c is not (' ' or '\t' or '\r' or '\n')))
+        {
+            throw new CfgeditException(YamlMoves.NotContiguousRefusal);
+        }
+
+        return gap;
+    }
+
+    private void RequireNoKeptBreak(YamlUnit unit)
+    {
+        if (unit.KeepsBreak)
+        {
+            throw new CfgeditException(YamlMoves.KeptBreakRefusal);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a move that would change which anchor an alias names, or put an alias before its anchor. Each alias names the nearest anchor
+    /// of its name before it. The offsets of the document's anchors and aliases are mapped into the text after the move, and the nearest
+    /// anchor of each alias must be the same one.
+    /// </summary>
+    private void RequireAliasOrder(List<YamlUnit> units, List<int> order, int lo, int hi, List<string> texts, int spanLength)
+    {
+        int spanStart = units[lo].Start;
+        int spanEnd = units[hi].End;
+        foreach (YamlDocumentNode document in _model.Syntax.Documents.Where(d => d.Start < spanEnd && spanStart < d.End))
+        {
+            var anchors = new List<(string Name, int At)>();
+            var aliases = new List<(string Name, int At)>();
+            foreach (YamlNode part in Walk(document))
+            {
+                if (part is YamlValueNode { Anchor: { } anchor })
+                {
+                    anchors.Add((anchor.Text[1..], anchor.Start));
+                }
+
+                if (part is YamlAlias alias)
+                {
+                    aliases.Add((alias.Name, alias.Start));
+                }
+            }
+
+            if (aliases.Count == 0 || anchors.Count == 0)
+            {
+                continue;
+            }
+
+            var newStart = new int[units.Count];
+            int at = spanStart;
+            for (int p = lo; p <= hi; p++)
+            {
+                newStart[order[p]] = at;
+                at += texts[p - lo].Length + (p < hi ? GapAfter(units, p).Length : 0);
+            }
+
+            int delta = spanLength - (spanEnd - spanStart);
+            int Map(int x)
+            {
+                if (x < spanStart)
+                {
+                    return x;
+                }
+
+                if (x >= spanEnd)
+                {
+                    return x + delta;
+                }
+
+                for (int u = lo; u <= hi; u++)
+                {
+                    if (units[u].Start <= x && x < units[u].End)
+                    {
+                        return newStart[u] + (x - units[u].Start);
+                    }
+                }
+
+                throw Internal("an alias or anchor is not in a unit");
+            }
+
+            foreach ((string name, int aliasAt) in aliases)
+            {
+                if (!anchors.Any(a => a.Name == name && a.At < aliasAt))
+                {
+                    continue;
+                }
+
+                int target = anchors.Where(a => a.Name == name && a.At < aliasAt).Max(a => a.At);
+                int newAlias = Map(aliasAt);
+                int nearest = -1;
+                foreach ((string anchorName, int anchorAt) in anchors)
+                {
+                    if (anchorName == name && Map(anchorAt) < newAlias)
+                    {
+                        nearest = Math.Max(nearest, Map(anchorAt));
+                    }
+                }
+
+                if (nearest != Map(target))
+                {
+                    throw new CfgeditException(Map(target) > newAlias
+                        ? $"*{name} would come before &{name}"
+                        : $"*{name} would refer to another &{name}");
+                }
+            }
+        }
+    }
+
+    private static bool EndsWithBreak(string text) => text.Length > 0 && text[^1] is '\r' or '\n';
+
+    private static string WithoutBreak(string text)
+    {
+        if (text.EndsWith("\r\n", StringComparison.Ordinal))
+        {
+            return text[..^2];
+        }
+
+        return EndsWithBreak(text) ? text[..^1] : text;
+    }
+
     // ----- DeleteNode -----
 
     private void PlanDelete(DeleteNode op)
@@ -882,7 +1155,7 @@ internal sealed class YamlEditPlanner
         }
     }
 
-    private static IEnumerable<YamlNode> Walk(YamlNode node)
+    internal static IEnumerable<YamlNode> Walk(YamlNode node)
     {
         yield return node;
         foreach (YamlNode part in node.Parts)
@@ -920,7 +1193,7 @@ internal sealed class YamlEditPlanner
     }
 
     /// <summary>The comma that follows an entry of a flow collection, or null when it has none.</summary>
-    private static YamlToken? CommaAfter(YamlValueNode container, YamlNode entry)
+    internal static YamlToken? CommaAfter(YamlValueNode container, YamlNode entry)
     {
         IReadOnlyList<YamlNode> parts = container.Parts;
         int at = -1;
@@ -1634,5 +1907,332 @@ internal sealed class YamlEditPlanner
     private static CfgeditException Internal(string detail)
     {
         return new CfgeditException("internal edit error: " + detail + " (please report this)");
+    }
+}
+
+/// <summary>
+/// A unit of a YAML move: what moves as a whole. [<paramref name="First"/>, <paramref name="Last"/>] are the child indices of the unit, and
+/// [<paramref name="Start"/>, <paramref name="End"/>) is its span of text. <paramref name="IsComment"/>: a comment alone. <paramref name="ValueEnd"/>
+/// and <paramref name="Comma"/>: a flow entry's value end and its comma (null when it has none). <paramref name="EndsInComment"/>: the unit's last
+/// child is a comment. <paramref name="KeepsBreak"/>: a block scalar that keeps its line breaks ends the span. <paramref name="Refusal"/>: the
+/// message when the unit cannot move.
+/// </summary>
+internal sealed record YamlUnit(
+    int First,
+    int Last,
+    int Start,
+    int End,
+    bool IsComment,
+    int ValueEnd,
+    YamlToken? Comma,
+    bool EndsInComment,
+    bool KeepsBreak,
+    string? Refusal);
+
+/// <summary>
+/// The units that a YAML move carries, and the arithmetic of a move over them. The planner and the logical edit both use them, so that they
+/// agree on what moves together. A block unit is whole lines: its indentation, its entry or item with the nested lines, and its attached and
+/// trailing comments. A flow unit runs from its first token to its last, with the comma of its entry. A comment that is moved alone is split
+/// out of its group. A document unit is its lines, with its markers.
+/// </summary>
+internal static class YamlMoves
+{
+    /// <summary>The refusal for the first key of a mapping that is the value of a dash, which shares the dash's line.</summary>
+    public const string FirstKeyRefusal = "the first key of a '- key:' item cannot move; move the item";
+
+    /// <summary>The refusal for the first item of a sequence that is the value of a dash, which shares the dash's line.</summary>
+    public const string FirstItemRefusal = "the first item of a '- -' item cannot move; move the item";
+
+    /// <summary>The refusal for a comment that ends a line with a value: it moves with that entry.</summary>
+    public const string TrailingRefusal = "a trailing comment moves with its entry";
+
+    /// <summary>The refusal for a flow entry with a comment between its value and its comma.</summary>
+    public const string CommentCommaRefusal = "a comment between an item and its comma cannot move";
+
+    /// <summary>The refusal for a document that moves without its own marker, which would merge with its neighbour.</summary>
+    public const string DocumentMarkerRefusal = "only documents with a '---' marker can move";
+
+    /// <summary>The refusal for a document with directives, which must stay before its own marker.</summary>
+    public const string DocumentDirectiveRefusal = "a document with directives cannot move";
+
+    /// <summary>The refusal for a move into the middle of a unit (between a comment and the entry it is attached to, say).</summary>
+    public const string SplitRefusal = "this cannot move there: it would split an entry from its comments";
+
+    /// <summary>The refusal for units that are not one run of text, with other text between them.</summary>
+    public const string NotContiguousRefusal = "this cannot move: its units are not contiguous";
+
+    /// <summary>The refusal for a comment that would land where the next entry follows it on the same line.</summary>
+    public const string CommentRunRefusal = "this cannot move there: a comment would run into the next entry";
+
+    /// <summary>The refusal for a block scalar that keeps its line breaks when a break is added or removed at its end.</summary>
+    public const string KeptBreakRefusal = "this cannot move: a block scalar keeps the line breaks at the end of the file";
+
+    /// <summary>The units of a parent's children, in order. Together they cover every child once.</summary>
+    /// <param name="model">The document's model.</param>
+    /// <param name="parent">A collection, or the document node whose children are documents.</param>
+    /// <param name="text">The source text.</param>
+    /// <param name="split">The index of a comment child that moves alone, out of the unit it sits in; -1 for none.</param>
+    public static List<YamlUnit> Units(YamlModel model, DocNode parent, string text, int split)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        List<(int First, int Last)> groups = parent.Kind == NodeKind.Document
+            ? children.Select((_, k) => (k, k)).ToList()
+            : Groups(parent, text);
+        if (split >= 0)
+        {
+            groups = Split(groups, split);
+        }
+
+        YamlValueNode? container = parent.Kind == NodeKind.Document ? null : YamlEditPlanner.ValueOf(model.SyntaxOf(parent));
+        return groups.Select(group => Describe(model, parent, container, text, group.First, group.Last)).ToList();
+    }
+
+    /// <summary>The unit that holds a child index.</summary>
+    public static int UnitOf(IReadOnlyList<YamlUnit> units, int index)
+    {
+        for (int k = 0; k < units.Count; k++)
+        {
+            if (units[k].First <= index && index <= units[k].Last)
+            {
+                return k;
+            }
+        }
+
+        throw new InvalidOperationException("No unit holds the child.");
+    }
+
+    /// <summary>
+    /// The unit that a move puts the moved unit before, as an index into the units, or the number of units for the end of the list. It is -1
+    /// when the position is inside a unit. <paramref name="newIndex"/> counts the children that stay, as <see cref="MoveNode.NewIndex"/> does,
+    /// and is clamped to them.
+    /// </summary>
+    public static int Destination(IReadOnlyList<YamlUnit> units, int moved, int newIndex, int childCount)
+    {
+        YamlUnit unit = units[moved];
+        int size = unit.Last - unit.First + 1;
+        int restCount = childCount - size;
+        int target = Math.Clamp(newIndex, 0, restCount);
+        if (target == unit.First)
+        {
+            return moved;
+        }
+
+        if (target == restCount)
+        {
+            return units.Count;
+        }
+
+        int childDestination = target < unit.First ? target : target + size;
+        for (int k = 0; k < units.Count; k++)
+        {
+            if (units[k].First == childDestination)
+            {
+                return k;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>The units in their order after the moved unit goes before the unit at <paramref name="destination"/>.</summary>
+    public static List<int> Order(int count, int moved, int destination)
+    {
+        int position = destination > moved ? destination - 1 : destination;
+        var order = Enumerable.Range(0, count).Where(k => k != moved).ToList();
+        order.Insert(position, moved);
+        return order;
+    }
+
+    /// <summary>The first and last positions that an order changes, or (-1, -1) when it changes nothing.</summary>
+    public static (int First, int Last) Span(IReadOnlyList<int> order)
+    {
+        int first = 0;
+        while (first < order.Count && order[first] == first)
+        {
+            first++;
+        }
+
+        if (first == order.Count)
+        {
+            return (-1, -1);
+        }
+
+        int last = order.Count - 1;
+        while (order[last] == last)
+        {
+            last--;
+        }
+
+        return (first, last);
+    }
+
+    /// <summary>The child groups of a collection: each entry with its attached comments, and each other comment alone.</summary>
+    private static List<(int First, int Last)> Groups(DocNode parent, string text)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        var groups = new List<(int First, int Last)>();
+        int count = children.Count;
+        int k = 0;
+        while (k < count)
+        {
+            int entry = k;
+            while (entry < count && EditLayout.IsComment(children[entry]))
+            {
+                entry++;
+            }
+
+            if (entry == count)
+            {
+                for (; k < count; k++)
+                {
+                    groups.Add((k, k));
+                }
+
+                break;
+            }
+
+            (int first, int last) = EditLayout.Group(parent, entry, text);
+            first = Math.Max(first, k);
+            for (; k < first; k++)
+            {
+                groups.Add((k, k));
+            }
+
+            groups.Add((first, last));
+            k = last + 1;
+        }
+
+        return groups;
+    }
+
+    /// <summary>A comment that moves alone: its group is cut so that it is a group of its own.</summary>
+    private static List<(int First, int Last)> Split(List<(int First, int Last)> groups, int split)
+    {
+        var result = new List<(int First, int Last)>();
+        foreach ((int first, int last) in groups)
+        {
+            if (split < first || split > last || first == last)
+            {
+                result.Add((first, last));
+                continue;
+            }
+
+            if (first < split)
+            {
+                result.Add((first, split - 1));
+            }
+
+            result.Add((split, split));
+            if (split < last)
+            {
+                result.Add((split + 1, last));
+            }
+        }
+
+        return result;
+    }
+
+    private static YamlUnit Describe(YamlModel model, DocNode parent, YamlValueNode? container, string text, int first, int last)
+    {
+        IReadOnlyList<DocNode> children = parent.Children;
+        if (parent.Kind == NodeKind.Document)
+        {
+            var document = model.SyntaxOf(children[first]) as YamlDocumentNode ?? throw new InvalidOperationException("The document has no syntax.");
+            string? refusal = document.StartMarker is null
+                ? DocumentMarkerRefusal
+                : document.Directives.Count > 0 ? DocumentDirectiveRefusal : null;
+            int start = EditLayout.LineStart(text, children[first].Start);
+            int end = LineEnd(text, children[last].End);
+            return new YamlUnit(first, last, start, end, false, -1, null, false, KeepsBreak(model, children, first, last, end), refusal);
+        }
+
+        int main = first;
+        while (main <= last && EditLayout.IsComment(children[main]))
+        {
+            main++;
+        }
+
+        if (main > last)
+        {
+            // A comment alone. A comment that shares its line with a value moves with that value.
+            if (!EditLayout.StartsLine(text, children[first].Start))
+            {
+                return new YamlUnit(first, last, children[first].Start, children[last].End, true, -1, null, true, false, TrailingRefusal);
+            }
+
+            bool flowComment = container is YamlFlowMapping or YamlFlowSequence;
+            int start = flowComment ? children[first].Start : EditLayout.LineStart(text, children[first].Start);
+            int end = flowComment ? children[last].End : LineEnd(text, children[last].End);
+            return new YamlUnit(first, last, start, end, true, -1, null, true, false, null);
+        }
+
+        DocNode child = children[main];
+        YamlNode piece = model.SyntaxOf(child) ?? throw new InvalidOperationException("The entry has no syntax.");
+        if (container is null or YamlBlockMapping or YamlBlockSequence)
+        {
+            // An entry that does not start its line shares the dash line of its item.
+            string? refusal = EditLayout.StartsLine(text, child.Start)
+                ? null
+                : parent.Kind == NodeKind.YamlMapping ? FirstKeyRefusal : FirstItemRefusal;
+            int start = EditLayout.LineStart(text, children[first].Start);
+            int end = LineEnd(text, children[last].End);
+            bool keeps = KeepsBreak(model, children, first, last, end);
+            return new YamlUnit(first, last, start, end, false, -1, null, EditLayout.IsComment(children[last]), keeps, refusal);
+        }
+
+        YamlToken? comma = YamlEditPlanner.CommaAfter(container, piece);
+        int valueEnd = piece.End;
+        string? flowRefusal = null;
+        if (comma is { } at)
+        {
+            for (int k = first; k <= last; k++)
+            {
+                if (EditLayout.IsComment(children[k]) && children[k].Start >= valueEnd && children[k].End <= at.Start)
+                {
+                    flowRefusal = CommentCommaRefusal;
+                }
+            }
+        }
+
+        int unitEnd = children[first].End;
+        for (int k = first; k <= last; k++)
+        {
+            unitEnd = Math.Max(unitEnd, children[k].End);
+        }
+
+        if (comma is { } tail)
+        {
+            unitEnd = Math.Max(unitEnd, tail.End);
+        }
+
+        bool endsInComment = EditLayout.IsComment(children[last]);
+        return new YamlUnit(first, last, children[first].Start, unitEnd, false, valueEnd, comma, endsInComment, false, flowRefusal);
+    }
+
+    /// <summary>The end of a span that ends with its line: a span that already ends after a line break keeps it.</summary>
+    private static int LineEnd(string text, int end)
+    {
+        return end > 0 && text[end - 1] is ('\r' or '\n') ? end : EditLayout.AfterLineBreak(text, end);
+    }
+
+    /// <summary>True when a block scalar that keeps its line breaks ends exactly at the end of the span.</summary>
+    private static bool KeepsBreak(YamlModel model, IReadOnlyList<DocNode> children, int first, int last, int end)
+    {
+        for (int k = first; k <= last; k++)
+        {
+            if (model.SyntaxOf(children[k]) is { } piece
+                && YamlEditPlanner.Walk(piece).Any(part => part is YamlScalar scalar && scalar.End == end && HasKeep(scalar)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool HasKeep(YamlScalar scalar)
+    {
+        return scalar.Parts.Any(part =>
+            part is YamlToken { Kind: YamlTokenKind.BlockHeader } header && header.Text.Contains('+', StringComparison.Ordinal));
     }
 }
