@@ -17,7 +17,8 @@ public sealed class DocNode
         int start,
         int end,
         JsonValueKind? jsonKind,
-        TomlValueKind? tomlKind = null)
+        TomlValueKind? tomlKind = null,
+        YamlValueKind? yamlKind = null)
     {
         Kind = kind;
         Path = path;
@@ -28,6 +29,7 @@ public sealed class DocNode
         End = end;
         JsonKind = jsonKind;
         TomlKind = tomlKind;
+        YamlKind = yamlKind;
     }
 
     /// <summary>The kind of node.</summary>
@@ -59,6 +61,9 @@ public sealed class DocNode
 
     /// <summary>The TOML kind of a TOML scalar. Null for every other node.</summary>
     public TomlValueKind? TomlKind { get; }
+
+    /// <summary>The YAML kind of a YAML scalar, by the core schema and the tag. Null for every other node.</summary>
+    public YamlValueKind? YamlKind { get; }
 
     internal void AddChild(DocNode child)
     {

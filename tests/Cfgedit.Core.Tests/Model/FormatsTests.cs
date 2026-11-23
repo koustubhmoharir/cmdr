@@ -35,6 +35,9 @@ public sealed class FormatsTests
     [InlineData(".toml", "toml")]
     [InlineData(".TOML", "toml")]
     [InlineData(".Toml", "toml")]
+    [InlineData(".yaml", "yaml")]
+    [InlineData(".YML", "yaml")]
+    [InlineData(".Yaml", "yaml")]
     public void Every_listed_extension_gives_its_format_in_any_case(string extension, string expectedName)
     {
         IConfigFormat? format = Formats.ForPath("some/dir/file" + extension);
@@ -45,7 +48,7 @@ public sealed class FormatsTests
 
     [Theory]
     [InlineData("settings.txt")]
-    [InlineData("settings.yaml")]
+    [InlineData("settings.yamlx")]
     [InlineData("settings.ini")]
     [InlineData("settings")]
     [InlineData("")]
@@ -90,7 +93,7 @@ public sealed class FormatsTests
     }
 
     [Theory]
-    [InlineData("yaml")]
+    [InlineData("yml")]
     [InlineData("xml5")]
     [InlineData("")]
     [InlineData(".json")]
@@ -100,13 +103,31 @@ public sealed class FormatsTests
     }
 
     [Fact]
-    public void Format_names_are_the_four_listed_ones()
+    public void Format_names_are_the_listed_ones()
     {
         Assert.Equal("json", new JsonFormat(JsonDialect.Json).Name);
         Assert.Equal("jsonc", new JsonFormat(JsonDialect.Jsonc).Name);
         Assert.Equal("json5", new JsonFormat(JsonDialect.Json5).Name);
         Assert.Equal("xml", new XmlFormat().Name);
         Assert.Equal("toml", new TomlFormat().Name);
+        Assert.Equal("yaml", new YamlFormat().Name);
+    }
+
+    [Theory]
+    [InlineData("yaml")]
+    [InlineData("YAML")]
+    [InlineData("Yaml")]
+    public void The_yaml_format_name_gives_the_yaml_format(string name)
+    {
+        Assert.IsType<YamlFormat>(Formats.FromName(name));
+    }
+
+    [Theory]
+    [InlineData(".yaml")]
+    [InlineData(".yml")]
+    public void The_yaml_extensions_are_known_extensions_for_the_open_dialog(string extension)
+    {
+        Assert.Contains(extension, Formats.KnownExtensions);
     }
 
     [Theory]
@@ -142,6 +163,7 @@ public sealed class FormatsTests
     [InlineData(".env.json5", "json5")]
     [InlineData(".env.xml", "xml")]
     [InlineData(".env.toml", "toml")]
+    [InlineData(".env.yaml", "yaml")]
     [InlineData("x.env.csproj", "xml")]
     public void A_known_extension_wins_over_the_env_name_rule(string path, string expectedName)
     {

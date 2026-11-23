@@ -37,6 +37,9 @@ public enum LogicalKind
 
     /// <summary>The XML document type declaration. Its name is the root name and its value is the internal subset.</summary>
     Doctype,
+
+    /// <summary>A YAML alias. Its value is the anchor name it refers to; it is not expanded.</summary>
+    Alias,
 }
 
 /// <summary>An attribute of a logical node: a name and its decoded value.</summary>
@@ -61,6 +64,10 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
     /// <param name="children">The children in document order.</param>
     /// <param name="anyValue">True when the value is a wildcard in an expectation. See <see cref="AnyValue"/>.</param>
     /// <param name="tomlKind">For a TOML scalar, its kind. Null otherwise.</param>
+    /// <param name="yamlKind">For a YAML scalar, its kind. Null otherwise.</param>
+    /// <param name="yamlPlain">For a YAML scalar, true when it is written plain (without quotes or a block indicator).</param>
+    /// <param name="yamlAnchor">For a YAML node with an anchor, the anchor name (without the <c>&amp;</c>). Null otherwise.</param>
+    /// <param name="yamlTag">For a YAML node with a tag, the tag resolved to its full name, such as <c>tag:yaml.org,2002:str</c>. Null otherwise.</param>
     public LogicalNode(
         LogicalKind kind,
         string? name,
@@ -69,7 +76,11 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         IReadOnlyList<LogicalAttribute> attributes,
         IReadOnlyList<LogicalNode> children,
         bool anyValue = false,
-        TomlValueKind? tomlKind = null)
+        TomlValueKind? tomlKind = null,
+        YamlValueKind? yamlKind = null,
+        bool yamlPlain = false,
+        string? yamlAnchor = null,
+        string? yamlTag = null)
     {
         ArgumentNullException.ThrowIfNull(attributes);
         ArgumentNullException.ThrowIfNull(children);
@@ -81,10 +92,26 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         Children = children;
         AnyValue = anyValue;
         TomlKind = tomlKind;
+        YamlKind = yamlKind;
+        YamlPlain = yamlPlain;
+        YamlAnchor = yamlAnchor;
+        YamlTag = yamlTag;
     }
 
     /// <summary>For a TOML scalar, its kind. Null otherwise.</summary>
     public TomlValueKind? TomlKind { get; }
+
+    /// <summary>For a YAML scalar, its kind. Null otherwise.</summary>
+    public YamlValueKind? YamlKind { get; }
+
+    /// <summary>For a YAML scalar, true when it is written plain. False otherwise.</summary>
+    public bool YamlPlain { get; }
+
+    /// <summary>For a YAML node with an anchor, the anchor name. Null otherwise.</summary>
+    public string? YamlAnchor { get; }
+
+    /// <summary>For a YAML node with a tag, the resolved tag name. Null otherwise.</summary>
+    public string? YamlTag { get; }
 
     /// <summary>
     /// True when the value is a wildcard: an expectation for a value that is not known in advance, such as raw source text
@@ -106,6 +133,10 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
             || expected.Name != actual.Name
             || expected.ScalarKind != actual.ScalarKind
             || expected.TomlKind != actual.TomlKind
+            || expected.YamlKind != actual.YamlKind
+            || expected.YamlPlain != actual.YamlPlain
+            || expected.YamlAnchor != actual.YamlAnchor
+            || expected.YamlTag != actual.YamlTag
             || (!expected.AnyValue && expected.Value != actual.Value)
             || expected.Attributes.Count != actual.Attributes.Count
             || expected.Children.Count != actual.Children.Count)
@@ -169,6 +200,10 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
             && Name == other.Name
             && ScalarKind == other.ScalarKind
             && TomlKind == other.TomlKind
+            && YamlKind == other.YamlKind
+            && YamlPlain == other.YamlPlain
+            && YamlAnchor == other.YamlAnchor
+            && YamlTag == other.YamlTag
             && Value == other.Value
             && Attributes.SequenceEqual(other.Attributes)
             && Children.SequenceEqual(other.Children);
@@ -188,6 +223,10 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         hash.Add(Name);
         hash.Add(ScalarKind);
         hash.Add(TomlKind);
+        hash.Add(YamlKind);
+        hash.Add(YamlPlain);
+        hash.Add(YamlAnchor);
+        hash.Add(YamlTag);
         hash.Add(Value);
         foreach (LogicalAttribute attribute in Attributes)
         {
@@ -226,6 +265,26 @@ public sealed class LogicalNode : IEquatable<LogicalNode>
         if (TomlKind is { } tomlKind)
         {
             builder.Append(" toml=").Append(tomlKind);
+        }
+
+        if (YamlKind is { } yamlKind)
+        {
+            builder.Append(" yaml=").Append(yamlKind);
+        }
+
+        if (YamlPlain)
+        {
+            builder.Append(" plain");
+        }
+
+        if (YamlAnchor is not null)
+        {
+            builder.Append(" &").Append(YamlAnchor);
+        }
+
+        if (YamlTag is not null)
+        {
+            builder.Append(" tag=").Append(DisplayText.Quote(YamlTag));
         }
 
         if (AnyValue)

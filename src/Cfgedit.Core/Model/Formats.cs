@@ -11,6 +11,7 @@ public static class Formats
     private static readonly IConfigFormat Xml = new XmlFormat();
     private static readonly IConfigFormat Env = new EnvFormat();
     private static readonly IConfigFormat Toml = new TomlFormat();
+    private static readonly IConfigFormat Yaml = new YamlFormat();
 
     private static readonly HashSet<string> XmlExtensions = new(StringComparer.Ordinal)
     {
@@ -19,15 +20,15 @@ public static class Formats
 
     /// <summary>
     /// The file extensions that <see cref="ForPath"/> recognises, lowercase with the dot: the JSON family first, then <c>.env</c>, then
-    /// <c>.toml</c>, then the XML extensions. A file named <c>.env.local</c> or <c>prod.env</c> is a .env file too, but its extension is
-    /// not in this list.
+    /// <c>.toml</c>, then <c>.yaml</c> and <c>.yml</c>, then the XML extensions. A file named <c>.env.local</c> or <c>prod.env</c> is a .env
+    /// file too, but its extension is not in this list.
     /// </summary>
     public static IReadOnlyList<string> KnownExtensions { get; } =
-        [".json", ".jsonc", ".json5", ".env", ".toml", .. XmlExtensions.Order(StringComparer.Ordinal)];
+        [".json", ".jsonc", ".json5", ".env", ".toml", ".yaml", ".yml", .. XmlExtensions.Order(StringComparer.Ordinal)];
 
     /// <summary>
-    /// The format named by a format name: <c>json</c> (strict), <c>jsonc</c>, <c>json5</c>, <c>xml</c>, <c>env</c> or <c>toml</c>. The name
-    /// is not case-sensitive. Returns null for any other name.
+    /// The format named by a format name: <c>json</c> (strict), <c>jsonc</c>, <c>json5</c>, <c>xml</c>, <c>env</c>, <c>toml</c> or <c>yaml</c>.
+    /// The name is not case-sensitive. Returns null for any other name.
     /// </summary>
     public static IConfigFormat? FromName(string name)
     {
@@ -40,16 +41,18 @@ public static class Formats
             "xml" => Xml,
             "env" => Env,
             "toml" => Toml,
+            "yaml" => Yaml,
             _ => null,
         };
     }
 
     /// <summary>
     /// The format for a file's name, which is not case-sensitive. The extension rules come first: <c>.json5</c> is JSON5,
-    /// <c>.json</c> and <c>.jsonc</c> are JSONC, <c>.toml</c> is TOML, and the XML extensions are <c>.xml .config .csproj .props
-    /// .targets .xaml .resx .nuspec .xsd .xslt .svg</c>. Only when no extension rule applies is the name checked for .env: <c>.env</c>,
-    /// a name that starts with <c>.env.</c> (such as <c>.env.local</c>), or a name that ends with <c>.env</c> (such as <c>prod.env</c>).
-    /// So <c>.env.json</c> is JSONC, <c>.env.xml</c> is XML and <c>.env.toml</c> is TOML. Returns null for any other name.
+    /// <c>.json</c> and <c>.jsonc</c> are JSONC, <c>.toml</c> is TOML, <c>.yaml</c> and <c>.yml</c> are YAML, and the XML extensions are
+    /// <c>.xml .config .csproj .props .targets .xaml .resx .nuspec .xsd .xslt .svg</c>. Only when no extension rule applies is the name checked
+    /// for .env: <c>.env</c>, a name that starts with <c>.env.</c> (such as <c>.env.local</c>), or a name that ends with <c>.env</c> (such as
+    /// <c>prod.env</c>). So <c>.env.json</c> is JSONC, <c>.env.xml</c> is XML, <c>.env.toml</c> is TOML and <c>.env.yaml</c> is YAML. Returns
+    /// null for any other name.
     /// </summary>
     public static IConfigFormat? ForPath(string path)
     {
@@ -68,6 +71,11 @@ public static class Formats
         if (extension == ".toml")
         {
             return Toml;
+        }
+
+        if (extension is ".yaml" or ".yml")
+        {
+            return Yaml;
         }
 
         if (XmlExtensions.Contains(extension))

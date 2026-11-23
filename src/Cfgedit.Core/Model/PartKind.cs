@@ -47,4 +47,13 @@ public enum PartKind
 
     /// <summary>A part that is shown but cannot be edited, such as a declaration or a container's summary.</summary>
     ReadOnly,
+
+    /// <summary>A YAML anchor, shown as <c>&amp;name</c>. Not editable.</summary>
+    Anchor,
+
+    /// <summary>A YAML tag, shown as written, such as <c>!!str</c>. Not editable.</summary>
+    Tag,
+
+    /// <summary>A YAML alias, shown as <c>*name</c>. Not editable.</summary>
+    Alias,
 }

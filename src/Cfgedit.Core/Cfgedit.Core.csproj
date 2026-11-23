@@ -7,6 +7,7 @@
   <!-- Verification only: the TOML cross-check parses the same text independently (see docs/cfgedit-design.md, TOML). -->
   <ItemGroup>
     <PackageReference Include="Tomlyn" Version="2.11.1" />
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
   <ItemGroup>

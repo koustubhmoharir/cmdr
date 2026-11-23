@@ -8,12 +8,12 @@ internal static class EditLayout
 {
     /// <summary>True for a JSON or XML comment node.</summary>
     public static bool IsComment(DocNode node) =>
-        node.Kind is NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.EnvComment or NodeKind.TomlComment;
+        node.Kind is NodeKind.JsonComment or NodeKind.XmlComment or NodeKind.EnvComment or NodeKind.TomlComment or NodeKind.YamlComment;
 
     /// <summary>True for a node whose children are entries that can carry attached comments.</summary>
     public static bool HasEntries(DocNode node) =>
         node.Kind is NodeKind.JsonObject or NodeKind.JsonArray or NodeKind.XmlElement or NodeKind.EnvGroup or NodeKind.TomlTable
-            or NodeKind.TomlArray;
+            or NodeKind.TomlArray or NodeKind.YamlMapping or NodeKind.YamlSequence;
 
     /// <summary>True for a JSON object or array.</summary>
     public static bool IsJsonContainer(DocNode node) => node.Kind is NodeKind.JsonObject or NodeKind.JsonArray;

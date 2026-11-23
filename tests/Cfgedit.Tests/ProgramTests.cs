@@ -99,10 +99,10 @@ public sealed class ProgramTests : IDisposable
     {
         string path = TempFile("data.json", "{}");
 
-        Outcome outcome = Run(path, "--format", "yaml");
+        Outcome outcome = Run(path, "--format", "ini");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
         Assert.Empty(outcome.Ran);
     }
 
@@ -296,10 +296,10 @@ public sealed class ProgramTests : IDisposable
     {
         string path = TempFile("good.json", "{}");
 
-        Outcome outcome = Run("--check", path, "--format", "yaml");
+        Outcome outcome = Run("--check", path, "--format", "ini");
 
         Assert.Equal(2, outcome.Code);
-        Assert.Equal("cfgedit: unknown format 'yaml'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
+        Assert.Equal("cfgedit: unknown format 'ini'; use xml, json, jsonc, json5, env or toml" + Environment.NewLine, outcome.Stderr);
     }
 
     [Fact]

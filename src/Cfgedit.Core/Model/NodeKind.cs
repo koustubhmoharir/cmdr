@@ -65,4 +65,28 @@ public enum NodeKind
 
     /// <summary>A TOML comment.</summary>
     TomlComment,
+
+    /// <summary>
+    /// A YAML document, a row under the root only when the file has several documents. Its child is that document's root node. It has
+    /// one part, its index.
+    /// </summary>
+    YamlDocument,
+
+    /// <summary>A YAML block or flow mapping, as a member or as a root value. Its children are its members and comments.</summary>
+    YamlMapping,
+
+    /// <summary>A YAML block or flow sequence, as a member or as an item. Its children are its items and comments.</summary>
+    YamlSequence,
+
+    /// <summary>
+    /// A YAML scalar, as a member, an item or a root value. Its kind is <see cref="DocNode.YamlKind"/>. A missing value (<c>key:</c>) is a
+    /// null scalar with an empty value part.
+    /// </summary>
+    YamlScalar,
+
+    /// <summary>A YAML alias, <c>*name</c>. It is shown as written, not expanded, and has no children.</summary>
+    YamlAlias,
+
+    /// <summary>A YAML comment.</summary>
+    YamlComment,
 }
