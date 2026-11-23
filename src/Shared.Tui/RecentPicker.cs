@@ -1,4 +1,3 @@
-using System.Collections.ObjectModel;
 using Shared.Core;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
@@ -34,6 +33,7 @@ public sealed class RecentPicker<T> : Window
     private readonly bool _openFile;
     private readonly Action<string> _showError;
     private readonly Func<string?> _pickFile;
+    private readonly Func<string, string?> _repoRootOf;
     private readonly string? _home;
     private readonly NumberTyping _typing = new();
     private readonly FrameView _frame;
@@ -89,6 +89,10 @@ public sealed class RecentPicker<T> : Window
     /// <param name="showError">Shows an error message. Null shows it in an error dialog.</param>
     /// <param name="pickFile">Returns the path chosen in the file dialog, or null when cancelled. Null shows the file dialog.</param>
     /// <param name="alternate">The alternate way to open the selected row, or null for none. See the public constructor.</param>
+    /// <param name="repoRootOf">
+    /// The outermost git repository of a directory, or null for none. Null checks the file system. Tests pass their own, so that the
+    /// colours do not depend on the folders above the test's files.
+    /// </param>
     internal RecentPicker(
         IApplication app,
         RecentFiles? recent,
@@ -99,7 +103,8 @@ public sealed class RecentPicker<T> : Window
         Action<string>? showError,
         Func<string?>? pickFile,
         PickerOpen<T>? alternate = null,
-        IReadOnlyList<IAllowedType>? fileTypes = null)
+        IReadOnlyList<IAllowedType>? fileTypes = null,
+        Func<string, string?>? repoRootOf = null)
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(tryOpen);
@@ -113,6 +118,7 @@ public sealed class RecentPicker<T> : Window
         _openFile = openFile;
         _showError = showError ?? (message => MessageBox.ErrorQuery(app, "Configuration", message, "_OK"));
         _pickFile = pickFile ?? (() => ShowOpenDialog(app, fileTypes ?? [new AllowedType("Config files", ".json")]));
+        _repoRootOf = repoRootOf ?? RepoOf;
         _home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         // No outer frame: the list has its own border, as the panes of the main window do.
@@ -297,14 +303,17 @@ public sealed class RecentPicker<T> : Window
     // Rebuilds the rows from the recent list and selects the row at the index. An empty list has no row to select.
     private void Rebuild(int selected)
     {
-        IReadOnlyList<string> rows = RecentRows.Build(Entries, File.Exists, _home);
-        _list.Source = new ListWrapper<string>(new ObservableCollection<string>(rows));
+        IReadOnlyList<RecentRow> rows = RecentRows.Build(Entries, File.Exists, _home, _repoRootOf);
+        _list.Source = new RecentRowsSource(rows);
         _empty.Visible = rows.Count == 0;
         if (rows.Count > 0)
         {
             SelectRow(selected);
         }
     }
+
+    // The outermost git repository of a directory, or null. The check is guarded inside RepoRoot.HasGitEntry.
+    private static string? RepoOf(string directory) => RepoRoot.Outermost(directory, RepoRoot.HasGitEntry);
 
     private void SelectRow(int row)
     {

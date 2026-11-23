@@ -92,7 +92,8 @@ Every config opened is added to a list of recently used files (the last 20), kep
 `%LOCALAPPDATA%\cmdr\recent.json` on Windows and `~/.local/share/cmdr/recent.json` on Linux
 (`$XDG_DATA_HOME/cmdr/recent.json` when set). `cmdr` with no arguments shows that list, numbered: type a
 number to select an entry, Enter to open it in run mode, F2 to open it in edit mode, Del to remove it from the
-list, Esc or Ctrl+Q to quit. Files that no longer exist are marked `(not found)`. Enter on one asks whether to
+list, Esc or Ctrl+Q to quit. The selected row has a `>` in front and is bold; the directory is grey, and the name of the git
+repository the file is in is blue. Files that no longer exist are marked `(not found)`. Enter on one asks whether to
 create it, as above; F2 opens it in edit mode with an empty list. With no recent files, `cmdr` prints the usage.
 Commands and groups can be added and edited in the UI (in edit mode) or in the file.
 Changes made in the UI are saved only on Ctrl+S; unsaved changes are marked with `*` in the title.

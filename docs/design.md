@@ -51,7 +51,10 @@ after the other on the same `IApplication` (`TuiHost.RunPicker`). Enter loads th
 mode, through the picker's alternate open (`PickerOpen`). Enter on a missing file asks whether to create it (No stays in the
 picker, Yes loads it in edit mode); F2 opens it without asking. A load error is shown there and the picker stays, and a load
 the user cancels shows nothing. The picker records the file it opens and stops, and the main window runs next. The list's
-type-to-search (`KeystrokeNavigator`) is off so digits reach the picker.
+type-to-search (`KeystrokeNavigator`) is off so digits reach the picker. Rows are data (`RecentRow`, from `RecentRows.Build`,
+which takes the outermost repository of a directory from `RepoRoot.Outermost`). `RecentRowsSource` draws them: a two-column
+gutter (`> ` on the selected row, which is bold), no focus background on any row, the number faint, the directory grey, and
+only the name of the repository's own folder in the directory blue (`PickerColors`).
 
 `RecentFiles` (Shared.Core) is the store: `<LocalApplicationData>/cmdr/recent.json`, `{ "files": [...] }`, most
 recent first, at most 20, full paths compared like base-file paths. Every successful load is recorded
