@@ -165,11 +165,12 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       refused. (e674ae1) 402 cases: 94 errors refused; of 308 others, 233 accepted (values match for the 213
       single-document ones), 75 refused with named reasons. Folded scalars are rewritten as literal when edited.
 - [x] Core model: `YamlFormat` (`yaml`), tree, logical tree, YamlDotNet cross-check on open and after every edit.
-      (9de7ebd) Until the TUI item, `CfgeditHost.RefuseUnfinished` refuses YAML files, and `DocumentFile.InitialText`
-      still returns `{}` for YAML: fix both then.
+      (9de7ebd)
 - [x] Core planner: values (style kept, kind-safe plain), keys, add (block and flow, empty flow to block), delete,
       move, duplicate, change type; anchors/aliases rules; YAML logical edit. (3e895ac, 3051fba, 2c31467)
 - [ ] MoveBy can offer a move the planner then refuses (first key of a `- key:` item, a trailing comment); the TUI
       shows the refusal. Consider having MoveBy skip those.
-- [ ] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, table editor, new file,
-      `--format yaml`; user guide.
+- [x] TUI: rows (anchors, tags, aliases), path text, add dialog kinds, type menu, new file, `--format yaml`; user
+      guide. Checked in a real terminal at 80x24: a shaped compact item added to a compose `services` list next to an
+      anchor and a merge key, save. (70ce4f7) *(Windows)*: not run on Windows.
+- [ ] Table editor for sequences of mappings or scalars (`T` says "not available for YAML yet").
