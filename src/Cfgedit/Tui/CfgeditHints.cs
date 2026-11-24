@@ -9,9 +9,8 @@ namespace Cfgedit.Tui;
 /// </summary>
 internal static class CfgeditHints
 {
-    // The Open file hint of both pickers: o and Ctrl+O open a file through a file dialog. Declared first, as the pickers use it.
-    private static Hint OpenFile { get; } = KeyHints.Concat(
-        KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file"));
+    // The Open file hint of both pickers: Ctrl+O opens a file through a file dialog. Declared first, as the pickers use it.
+    private static Hint OpenFile { get; } = KeyHints.Bound(Key.O.WithCtrl, "^O Open file");
 
     /// <summary>
     /// The key hints of the main window, with no editor open. The quit key is the right part (see <see cref="Quit"/>), so it stays on

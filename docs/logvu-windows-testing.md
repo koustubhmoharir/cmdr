@@ -37,7 +37,7 @@ result of each step. A failure is most useful with the exact status-line text an
 
 - [ ] Rename `SheetKraft1.log` to `sheetkraft1.LOG` (writer stopped): it is still a member (names compare case-insensitively).
 - [ ] A file `SheetKraft6.log.gz` and `SheetKraftWeb.log` in the directory are not shown.
-- [ ] `logvu.exe` with no arguments lists `C:\temp\logvu.json`; `o` opens the file dialog, which navigates Windows paths
+- [ ] `logvu.exe` with no arguments lists `C:\temp\logvu.json`; Ctrl+O opens the file dialog, which navigates Windows paths
       (drive letters, UNC if available) and opens a config.
 - [ ] After opening, `%LOCALAPPDATA%\logvu\recent.json` exists and lists the config. If `recent.json` is made read-only, opening
       a config still works (saving the list fails silently). (This exercises the shared atomic-save code — copied from cmdr —

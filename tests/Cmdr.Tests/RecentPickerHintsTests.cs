@@ -32,10 +32,18 @@ public sealed class RecentPickerHintsTests
 
         f.Run((app, picker) =>
         {
-            Assert.Equal("Enter Open  F2 Edit  Del Remove  0-9 Select by number  Esc/^Q Quit", Hints(picker).Shown.Text);
+            Assert.Equal("Enter Open  F2 Edit  Del Remove  ^O Open file  0-9 Select  Esc/^Q Quit", Hints(picker).Shown.Text);
             Assert.Equal(string.Empty, Hints(picker).ShownRight.Text);
             app.RequestStop(picker);
         });
+    }
+
+    [Fact]
+    public void The_open_file_label_is_a_click_target_for_Ctrl_O_and_o_is_not_a_target()
+    {
+        // The label opens a file dialog, which the picker shows for real here, so the target is checked rather than clicked.
+        Assert.Contains(TuiHost.PickerHints.Targets, target => target.Key == Key.O.WithCtrl && target.Length == "^O Open file".Length);
+        Assert.DoesNotContain(TuiHost.PickerHints.Targets, target => target.Key == (Key)'o');
     }
 
     [Fact]

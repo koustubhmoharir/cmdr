@@ -8,7 +8,7 @@ generator rotating every 40 events, and a 253 MB set of six files (2.06 million 
 
 | Acceptance item | Evidence | Result |
 |---|---|---|
-| Open a config directly, reopen it from the picker, open the first config from an empty history | pty: `logvu <config>`; `logvu` with an empty store → empty state → `o` → file dialog → main window; relaunch lists it and Enter opens it. Tests: `RecentPickerTests`, `ProgramTests` | Pass |
+| Open a config directly, reopen it from the picker, open the first config from an empty history | pty: `logvu <config>`; `logvu` with an empty store → empty state → Ctrl+O → file dialog → main window; relaunch lists it and Enter opens it. Tests: `RecentPickerTests`, `ProgramTests` | Pass |
 | A similarly prefixed unrelated log and a compressed roll are excluded | pty: `SheetKraftWeb.log`, `SheetKraft6.log.gz` never shown. Tests: `FileSetTests` | Pass |
 | Representative fixtures for all schemes, both directions | Tests: `EventFramerTests` (all six fixtures × LF/CRLF × BOM × block sizes × live/closed, backward == reverse(forward)), property tests | Pass |
 | A multiline exception larger than a read block, an empty active file, a rotation boundary with equal timestamps; no skipped or repeated rows | Tests: `EventFramerTests` (300 KB event), `HistoryReaderTests` (5 MiB event, pending member, equal-time rotation, pages of 1/3/7), `ReconcilerTests` (empty active file), `FilterPipelineEquivalenceTests`. pty: paging back across both file boundaries to the first event | Pass |

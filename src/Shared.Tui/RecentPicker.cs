@@ -19,8 +19,8 @@ public sealed record PickerOpen<T>(Key Key, Func<string, (T? Value, string? Erro
 /// <summary>
 /// The screen shown by an application with no arguments: the recently opened config files, numbered. Enter opens the selected
 /// one (<see cref="Opened"/> is then set and the window stops); Esc or Ctrl+Q quits with nothing opened. With
-/// <paramref name="openFile"/>, <c>o</c> and Ctrl+O open a file chosen in a file dialog, and the picker shows even when the
-/// recent list is empty.
+/// <paramref name="openFile"/>, Ctrl+O opens a file chosen in a file dialog, and the picker shows even when the recent list is
+/// empty.
 /// </summary>
 /// <typeparam name="T">The loaded config. <see cref="Opened"/> holds the value <c>tryOpen</c> returned for the config opened.</typeparam>
 public sealed class RecentPicker<T> : Window
@@ -55,11 +55,11 @@ public sealed class RecentPicker<T> : Window
     /// </param>
     /// <param name="title">The title of the frame around the list.</param>
     /// <param name="hint">
-    /// The key hints on the bottom row. A click on a key's label performs the key, as typing it does. Lists the Open file keys when
+    /// The key hints on the bottom row. A click on a key's label performs the key, as typing it does. Lists the Open file key when
     /// <paramref name="openFile"/> is set.
     /// </param>
     /// <param name="openFile">
-    /// Whether the Open file action is enabled: <c>o</c> and Ctrl+O show a file dialog, filtered by <paramref name="fileTypes"/>.
+    /// Whether the Open file action is enabled: Ctrl+O shows a file dialog, filtered by <paramref name="fileTypes"/>.
     /// </param>
     /// <param name="alternate">
     /// An alternate way to open the selected row, or null for none. Its key opens the row with its loader, as Enter opens it with
@@ -145,7 +145,7 @@ public sealed class RecentPicker<T> : Window
             Y = 0,
             Width = Dim.Fill(),
             Height = 1,
-            Text = openFile ? "No recent configs. Press o to open one." : "No recent configs.",
+            Text = openFile ? "No recent configs. Press Ctrl+O to open one." : "No recent configs.",
             Visible = false,
         };
 
@@ -195,7 +195,7 @@ public sealed class RecentPicker<T> : Window
     // The recent list's entries, or none without a store.
     private IReadOnlyList<string> Entries => _recent?.Files ?? Array.Empty<string>();
 
-    // Digits select a row; Del removes it; o and Ctrl+O open a file. Any other key ends a number being typed.
+    // Digits select a row; Del removes it; Ctrl+O opens a file. Any other key ends a number being typed.
     private bool OnListKey(Key key)
     {
         if (DigitOf(key) is char digit)
@@ -222,7 +222,7 @@ public sealed class RecentPicker<T> : Window
             return true;
         }
 
-        if (_openFile && IsOpenKey(key))
+        if (_openFile && key == Key.O.WithCtrl)
         {
             // The dialog runs after this key is handled, so it is not nested in the key dispatch that asked for it.
             _app.Invoke(() => OpenFile());
@@ -347,17 +347,6 @@ public sealed class RecentPicker<T> : Window
 
         System.Text.Rune rune = key.AsRune;
         return rune.Value is >= '0' and <= '9' ? (char)rune.Value : null;
-    }
-
-    // o, or Ctrl+O. A key with Alt is not.
-    private static bool IsOpenKey(Key key)
-    {
-        if (key == Key.O.WithCtrl)
-        {
-            return true;
-        }
-
-        return !key.IsCtrl && !key.IsAlt && key.AsRune.Value == 'o';
     }
 
     /// <summary>The list. Key handling is delegated to the picker, which sees the keys before the list's own handling.</summary>

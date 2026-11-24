@@ -49,7 +49,8 @@ internal static class TuiHost
         KeyHints.Bound(Key.Enter, "Enter Open"),
         KeyHints.Bound(Key.F2, "F2 Edit"),
         KeyHints.Bound(Key.Delete, "Del Remove"),
-        KeyHints.Plain("0-9 Select by number"),
+        KeyHints.Bound(Key.O.WithCtrl, "^O Open file"),
+        KeyHints.Plain("0-9 Select"),
         KeyHints.Concat(
             KeyHints.Bound(Key.Esc, "Esc"),
             KeyHints.Plain("/"),
@@ -59,14 +60,14 @@ internal static class TuiHost
     /// <summary>
     /// The recent-configs picker as cmdr shows it. Enter opens the selected config in run mode; a file that does not exist is first
     /// offered for creation (No stays in the picker, Yes opens it in edit mode). F2 opens the selected config in edit mode, without
-    /// asking for a missing file, which opens with an empty list. The picker records the file it opens in the recent list.
+    /// asking for a missing file, which opens with an empty list. Ctrl+O opens a config chosen in a file dialog in run mode (the
+    /// dialog only offers existing files) and records it. The picker records the file it opens in the recent list.
     /// </summary>
     /// <param name="app">The running application, for the creation question and the error dialog.</param>
-    /// <param name="recent">The recent list. Opened files and removals are saved to its store.</param>
-    internal static RecentPicker<Session> CreatePicker(IApplication app, RecentFiles recent)
+    /// <param name="recent">The recent list, or null when there is no store. Opened files and removals are saved to its store.</param>
+    internal static RecentPicker<Session> CreatePicker(IApplication app, RecentFiles? recent)
     {
         ArgumentNullException.ThrowIfNull(app);
-        ArgumentNullException.ThrowIfNull(recent);
 
         return new RecentPicker<Session>(
             app,
@@ -74,25 +75,23 @@ internal static class TuiHost
             path => OpenInRunMode(app, path),
             "Recent configs",
             PickerHints,
-            openFile: false,
+            openFile: true,
             new PickerOpen<Session>(Key.F2, path => TryLoad(path, SessionMode.Edit)));
     }
 
     /// <summary>
-    /// Shows the recent-configs picker. The config chosen there is shown in the main window, in the mode the picker opened it in.
-    /// Returns without showing the main window when the user quits the picker.
+    /// Shows the recent-configs picker, which shows even when the list is empty or null (no store). The config chosen there is
+    /// shown in the main window, in the mode the picker opened it in. Returns without showing the main window when the user quits
+    /// the picker.
     /// </summary>
-    public static void RunPicker(RecentFiles recent)
+    public static void RunPicker(RecentFiles? recent)
     {
-        ArgumentNullException.ThrowIfNull(recent);
-
         WithApp(app => ShowPicker(app, recent));
     }
 
     /// <summary>
     /// The run-mode start for a config file that does not exist. Asks whether to create it (Yes is the default). Yes shows the
-    /// main window in edit mode, with an empty list, and records the file. No shows the picker when <paramref name="recent"/>
-    /// has files, and otherwise returns without showing anything.
+    /// main window in edit mode, with an empty list, and records the file. No shows the picker.
     /// </summary>
     public static void RunMissingConfig(string path, RecentFiles? recent)
     {
@@ -102,11 +101,7 @@ internal static class TuiHost
         {
             if (!AskCreate(app, path))
             {
-                if (recent is { Files.Count: > 0 })
-                {
-                    ShowPicker(app, recent);
-                }
-
+                ShowPicker(app, recent);
                 return;
             }
 
@@ -148,7 +143,7 @@ internal static class TuiHost
     }
 
     // The picker, then the main window for the config the user opened there. The session is disposed when the window closes.
-    private static void ShowPicker(IApplication app, RecentFiles recent)
+    private static void ShowPicker(IApplication app, RecentFiles? recent)
     {
         Session? session;
         using (var picker = CreatePicker(app, recent))

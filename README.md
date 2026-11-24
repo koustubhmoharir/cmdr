@@ -85,16 +85,18 @@ processes, while a sequence runs, while a restart is pending, or while environme
 them (Ctrl+C) and try again.
 
 If the config file does not exist, `cmdr <config.json>` asks whether to create it. Yes opens an empty list in edit
-mode, and the first save (Ctrl+S) creates the file. No returns to the list of recent files when it has any, and
-otherwise cmdr exits. `cmdr --edit` with a missing file starts with an empty list, without asking.
+mode, and the first save (Ctrl+S) creates the file. No shows the list of recent files. `cmdr --edit` with a missing
+file starts with an empty list, without asking.
 
 Every config opened is added to a list of recently used files (the last 20), kept in
 `%LOCALAPPDATA%\cmdr\recent.json` on Windows and `~/.local/share/cmdr/recent.json` on Linux
 (`$XDG_DATA_HOME/cmdr/recent.json` when set). `cmdr` with no arguments shows that list, numbered: type a
 number to select an entry, Enter to open it in run mode, F2 to open it in edit mode, Del to remove it from the
-list, Esc or Ctrl+Q to quit. The selected row has a `>` in front and is bold; the directory is grey, and the name of the git
+list, Ctrl+O to open a config through a file dialog (it opens in run mode and is added to the list), Esc or
+Ctrl+Q to quit. The selected row has a `>` in front and is bold; the directory is grey, and the name of the git
 repository the file is in is blue. Files that no longer exist are marked `(not found)`. Enter on one asks whether to
-create it, as above; F2 opens it in edit mode with an empty list. With no recent files, `cmdr` prints the usage.
+create it, as above; F2 opens it in edit mode with an empty list. With no recent files, `cmdr` shows the empty picker,
+which says that Ctrl+O opens a config.
 Commands and groups can be added and edited in the UI (in edit mode) or in the file.
 Changes made in the UI are saved only on Ctrl+S; unsaved changes are marked with `*` in the title.
 In the edit dialogs, arguments are one per line and environment variables `KEY=VALUE` lines; when an

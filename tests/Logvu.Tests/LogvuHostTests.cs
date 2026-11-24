@@ -61,36 +61,34 @@ public sealed class LogvuHostTests : IDisposable
     public void The_picker_hints_of_the_ctrl_O_flow_offer_back_and_quit()
     {
         Assert.Equal(
-            "Enter Open  Del Remove  o/^O Open file  0-9 Select by number  Esc back  ^Q quit",
+            "Enter Open  Del Remove  ^O Open file  0-9 Select by number  Esc back  ^Q quit",
             LogvuHost.SetPickerHints.Text);
     }
 
     [Fact]
     public void The_picker_hints_are_the_texts_they_have_always_shown_and_their_labels_perform_the_keys()
     {
-        Assert.Equal("Enter Open  Del Remove  o/^O Open file  0-9 Select by number  Esc/^Q Quit", LogvuHost.PickerHints.Text);
+        Assert.Equal("Enter Open  Del Remove  ^O Open file  0-9 Select by number  Esc/^Q Quit", LogvuHost.PickerHints.Text);
         Assert.Equal(
             new[]
             {
                 new HintTarget(0, 10, Key.Enter),
                 new HintTarget(12, 10, Key.Delete),
-                new HintTarget(24, 1, (Key)'o'),
-                new HintTarget(26, 2, Key.O.WithCtrl),
-                new HintTarget(62, 3, Key.Esc),
-                new HintTarget(66, 2, Key.Q.WithCtrl),
+                new HintTarget(24, 12, Key.O.WithCtrl),
+                new HintTarget(60, 3, Key.Esc),
+                new HintTarget(64, 2, Key.Q.WithCtrl),
             },
             LogvuHost.PickerHints.Targets);
 
-        Assert.Equal("Enter Open  Del Remove  o/^O Open file  0-9 Select by number  Esc back  ^Q quit", LogvuHost.SetPickerHints.Text);
+        Assert.Equal("Enter Open  Del Remove  ^O Open file  0-9 Select by number  Esc back  ^Q quit", LogvuHost.SetPickerHints.Text);
         Assert.Equal(
             new[]
             {
                 new HintTarget(0, 10, Key.Enter),
                 new HintTarget(12, 10, Key.Delete),
-                new HintTarget(24, 1, (Key)'o'),
-                new HintTarget(26, 2, Key.O.WithCtrl),
-                new HintTarget(62, 8, Key.Esc),
-                new HintTarget(72, 7, Key.Q.WithCtrl),
+                new HintTarget(24, 12, Key.O.WithCtrl),
+                new HintTarget(60, 8, Key.Esc),
+                new HintTarget(70, 7, Key.Q.WithCtrl),
             },
             LogvuHost.SetPickerHints.Targets);
     }

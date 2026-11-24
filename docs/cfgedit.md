@@ -40,7 +40,7 @@ on the first save.
 
 Every file opened is remembered in `%LOCALAPPDATA%\cfgedit\recent.json` on Windows and `~/.local/share/cfgedit/recent.json`
 on Linux (`$XDG_DATA_HOME/cfgedit/recent.json` when set). `cfgedit` without arguments shows that list: Enter opens the
-selected file, a number selects by position, Del removes an entry, `o` or Ctrl+O opens a file through a file dialog, Esc
+selected file, a number selects by position, Del removes an entry, Ctrl+O opens a file through a file dialog, Esc
 or Ctrl+Q quits.
 
 ## Screen

@@ -17,7 +17,7 @@ public sealed class RecentPickerTests
     private static readonly Hint PickerHint = KeyHints.Join(
         KeyHints.Bound(Key.Enter, "Enter Open"),
         KeyHints.Bound(Key.Delete, "Del Remove"),
-        KeyHints.Concat(KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file")),
+        KeyHints.Bound(Key.O.WithCtrl, "^O Open file"),
         KeyHints.Plain("0-9 Select by number"),
         KeyHints.Concat(KeyHints.Bound(Key.Esc, "Esc"), KeyHints.Plain("/"), KeyHints.Bound(Key.Q.WithCtrl, "^Q"), KeyHints.Plain(" Quit")));
 
@@ -108,7 +108,7 @@ public sealed class RecentPickerTests
         using var f = new Fixture(openFile: true);
 
         Assert.True(f.Picker.EmptyLine.Visible);
-        Assert.Equal("No recent configs. Press o to open one.", f.Picker.EmptyLine.Text);
+        Assert.Equal("No recent configs. Press Ctrl+O to open one.", f.Picker.EmptyLine.Text);
         Assert.Null(f.Picker.Rows.SelectedItem);
     }
 
@@ -143,7 +143,7 @@ public sealed class RecentPickerTests
         using var f = new Fixture(openFile: true, "a.json");
         f.NextDialogAnswer = f.Path("chosen.json");
 
-        Assert.True(Press(f, 'o'));
+        Assert.True(Press(f, Key.O.WithCtrl));
 
         Assert.Equal(1, f.Dialogs);
         Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
@@ -168,7 +168,7 @@ public sealed class RecentPickerTests
         using var f = new Fixture(openFile: true, "a.json");
         f.NextDialogAnswer = null;
 
-        Assert.False(Press(f, 'o'));
+        Assert.False(Press(f, Key.O.WithCtrl));
 
         Assert.Equal(1, f.Dialogs);
         Assert.Null(f.Picker.Opened);
@@ -183,7 +183,7 @@ public sealed class RecentPickerTests
         f.NextDialogAnswer = f.Path("bad.json");
         f.Invalid.Add(f.Path("bad.json"));
 
-        Assert.False(Press(f, 'o'));
+        Assert.False(Press(f, Key.O.WithCtrl));
 
         Assert.Equal(new[] { "bad bad.json" }, f.Errors);
         Assert.Null(f.Picker.Opened);
@@ -197,7 +197,7 @@ public sealed class RecentPickerTests
         f.NextDialogAnswer = f.Path("chosen.json");
 
         // Press returns true only when the picker stopped itself, so the run loop returned because of the pick.
-        bool stoppedItself = Press(f, 'o');
+        bool stoppedItself = Press(f, Key.O.WithCtrl);
 
         Assert.True(stoppedItself);
         Assert.False(f.Picker.IsRunning);
@@ -216,7 +216,7 @@ public sealed class RecentPickerTests
         {
             if (iteration == 1)
             {
-                f.Picker.NewKeyDownEvent('o');
+                f.Picker.NewKeyDownEvent(Key.O.WithCtrl);
             }
 
             // The dialog is the top runnable once it is shown: type the path into it and press Enter.
@@ -296,15 +296,26 @@ public sealed class RecentPickerTests
     }
 
     [Fact]
-    public void The_open_keys_do_nothing_without_the_open_file_action()
+    public void The_open_key_does_nothing_without_the_open_file_action()
     {
         using var f = new Fixture(openFile: false, "a.json");
 
-        f.Picker.NewKeyDownEvent('o');
         f.Picker.NewKeyDownEvent(Key.O.WithCtrl);
 
         Assert.Equal(0, f.Dialogs);
         Assert.Null(f.Picker.Opened);
+    }
+
+    [Fact]
+    public void A_plain_o_does_not_open_the_file_dialog_with_the_open_file_action()
+    {
+        using var f = new Fixture(openFile: true, "a.json");
+
+        f.Picker.NewKeyDownEvent('o');
+
+        Assert.Equal(0, f.Dialogs);
+        Assert.Null(f.Picker.Opened);
+        Assert.Equal(new[] { f.Path("a.json") }, f.Saved());
     }
 
     [Fact]
@@ -313,7 +324,7 @@ public sealed class RecentPickerTests
         using var f = new Fixture(openFile: true, store: false);
         f.NextDialogAnswer = f.Path("chosen.json");
 
-        Assert.True(Press(f, 'o'));
+        Assert.True(Press(f, Key.O.WithCtrl));
 
         Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
         Assert.False(File.Exists(f.StorePath));
@@ -468,11 +479,11 @@ public sealed class RecentPickerTests
     }
 
     [Fact]
-    public void Clicking_o_opens_the_file_dialog_and_opens_the_chosen_config()
+    public void Clicking_Open_file_opens_the_file_dialog_and_opens_the_chosen_config()
     {
         using var f = new Fixture(openFile: true, "a.json");
         f.NextDialogAnswer = f.Path("chosen.json");
-        int column = ColumnOf(f, "o/^O");
+        int column = ColumnOf(f, "^O Open file");
 
         bool stoppedItself = RunPickerLoop(f, iteration =>
         {
@@ -486,26 +497,6 @@ public sealed class RecentPickerTests
         Assert.Equal(1, f.Dialogs);
         Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
         Assert.Equal(new[] { f.Path("chosen.json"), f.Path("a.json") }, f.Saved());
-    }
-
-    [Fact]
-    public void Clicking_Ctrl_O_opens_the_file_dialog_too()
-    {
-        using var f = new Fixture(openFile: true);
-        f.NextDialogAnswer = f.Path("chosen.json");
-        int column = ColumnOf(f, "^O");
-
-        bool stoppedItself = RunPickerLoop(f, iteration =>
-        {
-            if (iteration == 1)
-            {
-                ClickAt(f, column);
-            }
-        });
-
-        Assert.True(stoppedItself);
-        Assert.Equal(1, f.Dialogs);
-        Assert.Equal(f.Path("chosen.json"), f.Picker.OpenedPath);
     }
 
     [Fact]

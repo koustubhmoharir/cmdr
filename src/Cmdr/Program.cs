@@ -41,16 +41,8 @@ static int Run(string[] args)
             return 0;
 
         case CommandLineAction.Picker:
-        {
-            RecentFiles? recent = LoadRecent();
-            if (recent is null || recent.Files.Count == 0)
-            {
-                return Usage();
-            }
-
-            TuiHost.RunPicker(recent);
+            TuiHost.RunPicker(LoadRecent());
             return 0;
-        }
 
         case CommandLineAction.Open:
             return OpenConfig(request.Path!, request.Mode);
@@ -89,7 +81,7 @@ static int OpenConfig(string configPath, SessionMode mode)
 static int Usage()
 {
     Console.Error.WriteLine("usage: cmdr [--edit] <config.json>");
-    Console.Error.WriteLine("       cmdr               pick a recently used config");
+    Console.Error.WriteLine("       cmdr               pick a recent config or open one");
     Console.Error.WriteLine("       cmdr --version");
     return 2;
 }

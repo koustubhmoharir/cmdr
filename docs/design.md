@@ -39,14 +39,15 @@ without the source-revision suffix).
 `cmdr [--edit] <config.json>`, `cmdr --version` (parsed by `CommandLine`, pure). `cmdr --send-ctrl-c <pid>` is an
 internal helper mode (Windows only, see Process supervision). A config opens in run mode, or in edit mode with `--edit`.
 A missing file in run mode is not loaded before the TUI starts: `TuiHost.RunMissingConfig` asks whether to create it
-(Yes loads it in edit mode, No shows the picker when there are recent files). `TuiHost` owns the session on every path
+(Yes loads it in edit mode, No always shows the picker). `TuiHost` owns the session on every path
 and disposes it when the main window closes. In the main window Ctrl+E switches modes (`MainController.SwitchMode`);
 `ApplyLayout` is the one place that lays the window out for the mode (edit mode hides the output header and output, and
 the top row fills the window), the maximize state and the search bar. The hint bar (`HintsLine` in Shared.Tui) is built per mode
 and is drawn in `BarColors`, the one bar style that cmdr and logvu share.
 
-`cmdr` with no arguments shows the recent-configs picker (`RecentPicker<Session>` in Shared.Tui, built by
-`TuiHost.CreatePicker`; rows from `RecentRows`, digit selection in `NumberTyping`). The picker and the main window run one
+`cmdr` with no arguments shows the recent-configs picker, even when the list is empty (`RecentPicker<Session>` in Shared.Tui,
+built by `TuiHost.CreatePicker` with `openFile: true`; rows from `RecentRows`, digit selection in `NumberTyping`). Ctrl+O shows
+a file dialog for a config (run mode, recorded in the list). The picker and the main window run one
 after the other on the same `IApplication` (`TuiHost.RunPicker`). Enter loads the selected config in run mode and F2 in edit
 mode, through the picker's alternate open (`PickerOpen`). Enter on a missing file asks whether to create it (No stays in the
 picker, Yes loads it in edit mode); F2 opens it without asking. A load error is shown there and the picker stays, and a load

@@ -14,9 +14,8 @@ namespace Logvu.Tui;
 /// </summary>
 internal static class LogvuHost
 {
-    // The Open file hint of both pickers: o and Ctrl+O open a config through a file dialog.
-    private static readonly Hint OpenFileHint = KeyHints.Concat(
-        KeyHints.Bound('o', "o"), KeyHints.Plain("/"), KeyHints.Bound(Key.O.WithCtrl, "^O"), KeyHints.Plain(" Open file"));
+    // The Open file hint of both pickers: Ctrl+O opens a config through a file dialog.
+    private static readonly Hint OpenFileHint = KeyHints.Bound(Key.O.WithCtrl, "^O Open file");
 
     // The key hints of the picker. Open file is listed because it is enabled.
     internal static readonly Hint PickerHints = KeyHints.Join(
