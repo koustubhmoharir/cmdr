@@ -466,6 +466,15 @@ acting, or captures a snapshot and acts only on that.
   Release build packs and pushes into `~/.nuget/packages`. Instance API: `Application.Create()`, `app.Init()`, `app.Run(win)`.
   Default quit key is Esc; adding Ctrl+Q does not remove it — the Esc binding must be removed
   (or Esc intercepted in `OnKeyDown`) since Esc must not quit here. The main window swallows unhandled Esc.
+- NuGet sources: the root `nuget.config` is self-contained (`<clear />`, one feed keyed `nuget`, every package mapped to
+  it), so restore ignores user and machine configs. The key must stay `nuget`, the name the submodule's `nuget.config`
+  gives the same nuget.org feed. Package source mapping matches feeds by key, not by URL. Without a root config, a
+  restore of `Cmdr.slnx` (or `./publish.ps1`) picked up the user config's feed named `nuget.org`, the submodule's
+  mapping found no feed named `nuget`, and restore failed with `NU1100: Unable to resolve 'Microsoft.SourceLink.GitHub
+  ...' PackageSourceMapping is enabled, the following source(s) were not considered`. Restoring `Terminal.Gui.csproj`
+  on its own worked, because then only the submodule's config applied. cmdr does not need the submodule's
+  `LocalPackages` feed, since Terminal.Gui is a `ProjectReference`. The fork is left unchanged to keep upstream merges
+  clean; if upstream renames its feed, rename the root key to match.
 - Ctrl+C arrives as a normal key (ISIG disabled), so it can be bound.
 - Never write to `Console.Out` while the TUI runs.
 - Custom view: `OnDrawingContent`, `Move/AddStr/SetAttribute`; `Attribute`/`Color` support 24-bit RGB
