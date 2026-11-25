@@ -92,8 +92,9 @@ Every config opened is added to a list of recently used files (the last 20), kep
 `%LOCALAPPDATA%\cmdr\recent.json` on Windows and `~/.local/share/cmdr/recent.json` on Linux
 (`$XDG_DATA_HOME/cmdr/recent.json` when set). `cmdr` with no arguments shows that list, numbered: type a
 number to select an entry, Enter to open it in run mode, F2 to open it in edit mode, Del to remove it from the
-list, Ctrl+O to open a config through a file dialog (it opens in run mode and is added to the list), Esc or
-Ctrl+Q to quit. The selected row has a `>` in front and is bold; the directory is grey, and the name of the git
+list, Ctrl+O to open a config through a file dialog (it opens in run mode and is added to the list; its last row lists
+Alt+←/→ back/forward, Ctrl+N new folder, Ctrl+R rename and Del delete), Esc or Ctrl+Q to quit. The selected row
+has a `>` in front and is bold; the directory is grey, and the name of the git
 repository the file is in is blue. Files that no longer exist are marked `(not found)`. Enter on one asks whether to
 create it, as above; F2 opens it in edit mode with an empty list. With no recent files, `cmdr` shows the empty picker,
 which says that Ctrl+O opens a config.

@@ -461,7 +461,8 @@ acting, or captures a snapshot and acts only on that.
 
 - Terminal.Gui **2.x**, built from the fork in the `Terminal.Gui` submodule (`develop` plus the `cmdr-perf` fixes, and file-dialog
   navigation keys in the file list: Left / Alt+Up parent, Right enters a folder, Alt+Left / Alt+Right back / forward; Up now
-  records the folder it leaves, so Back returns to it). cmdr builds it with
+  records the folder it leaves, so Back returns to it; FileDialogStyle.KeyHints shows an optional hint line above
+  the buttons, which the shared picker's Open file dialog uses). cmdr builds it with
   `TerminalGuiBuildProperties` (root `Directory.Build.props`): GitVersion off with an explicit version, no package. To run
   the fork's own tests, pass the same: `dotnet test --project Tests/UnitTestsParallelizable -c Release
   -p:DisableGitVersionTask=true -p:Version=2.6.0 -p:GeneratePackageOnBuild=false`. Without the version the assembly is

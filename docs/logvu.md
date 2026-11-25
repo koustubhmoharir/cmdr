@@ -26,7 +26,8 @@ A config that fails to load is reported with the offending field and logvu exits
 successfully is remembered (the last 20) in `%LOCALAPPDATA%\logvu\recent.json` on Windows and `~/.local/share/logvu/recent.json`
 on Linux (`$XDG_DATA_HOME/logvu/recent.json` when set). `logvu` without arguments shows that list — also on first use, when it
 is empty: Enter opens the selected config, a number selects by position, Del removes an entry, Ctrl+O opens a config
-file through a file dialog, Esc or Ctrl+Q quits. The picker's last row lists these keys, and a click on a key's label performs it.
+file through a file dialog (its last row lists Alt+←/→ back/forward, Ctrl+N new folder, Ctrl+R rename and Del delete),
+Esc or Ctrl+Q quits. The picker's last row lists these keys, and a click on a key's label performs it.
 
 ## Configuration
 

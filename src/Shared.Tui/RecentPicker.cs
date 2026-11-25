@@ -26,6 +26,9 @@ public sealed record PickerOpen<T>(Key Key, Func<string, (T? Value, string? Erro
 public sealed class RecentPicker<T> : Window
     where T : class
 {
+    // The key hint row of the Open file dialog: the dialog's file-list keys (see TableView_KeyDown in the fork's FileDialog).
+    internal const string OpenDialogHints = "Alt+←/→ Back/Forward  ^N New folder  ^R Rename  Del Delete";
+
     private readonly IApplication _app;
     private readonly RecentFiles? _recent;
     private readonly Func<string, (T? Value, string? Error)> _tryOpen;
@@ -331,6 +334,7 @@ public sealed class RecentPicker<T> : Window
             AllowsMultipleSelection = false,
             MustExist = true,
         };
+        dialog.Style.KeyHints = OpenDialogHints;
         app.Run(dialog);
 
         string? path = dialog.FilePaths.FirstOrDefault();
