@@ -58,14 +58,7 @@ internal static class CfgeditHost
         {
             app.Init();
 
-            OpenedFile? file;
-            using (var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Recent files", CfgeditHints.Picker, openFile: true, fileTypes: FileTypes))
-            {
-                app.Run(picker);
-                file = picker.Opened;
-            }
-
-            if (file is not null)
+            if (StartPicker(app, recent) is { } file)
             {
                 RunDocuments(file, next => RunDocument(app, next, recent));
             }
@@ -329,12 +322,28 @@ internal static class CfgeditHost
         throw new CfgeditException($"cannot tell the format of {path}; use --format");
     }
 
-    // Shows the document's window, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null.
+    // Shows the document's window, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null. When the
+    // file was deleted and the window closed (see MainWindow.ReturnToPicker), the recent-files picker is shown as at startup instead.
     private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent, Action? onFirstSave = null)
     {
-        using var window = new MainWindow(file, () => ShowPicker(app, recent), onFirstSave: onFirstSave);
-        app.Run(window);
-        return window.SwitchTo;
+        bool returnToPicker;
+        OpenedFile? next;
+        using (var window = new MainWindow(file, () => ShowPicker(app, recent), onFirstSave: onFirstSave))
+        {
+            app.Run(window);
+            returnToPicker = window.ReturnToPicker;
+            next = window.SwitchTo;
+        }
+
+        return returnToPicker ? StartPicker(app, recent) : next;
+    }
+
+    // The recent-files picker, as the application starts with it. Returns the file chosen, or null when the user quits it.
+    private static OpenedFile? StartPicker(IApplication app, RecentFiles? recent)
+    {
+        using var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Recent files", CfgeditHints.Picker, openFile: true, fileTypes: FileTypes);
+        app.Run(picker);
+        return picker.Opened;
     }
 
     // The picker shown over a running document. Esc returns to the document; Ctrl+Q quits the application.

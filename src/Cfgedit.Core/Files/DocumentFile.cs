@@ -7,6 +7,19 @@ using Shared.Core;
 
 namespace Cfgedit.Core.Files;
 
+/// <summary>What <see cref="DocumentFile.PollDisk"/> found on disk.</summary>
+public enum DiskChange
+{
+    /// <summary>The content is the one the document has, or the stat changed but the content did not (a touch, or the same bytes written again).</summary>
+    Unchanged,
+
+    /// <summary>The content differs from the snapshot, or the file appeared where the document had none.</summary>
+    Changed,
+
+    /// <summary>The file was there when the document last saw it, and it is missing now.</summary>
+    Deleted,
+}
+
 /// <summary>
 /// A config file and the document that belongs to it. It knows what the file looked like when the document was loaded or last
 /// saved, so that <see cref="ChangedOnDisk"/> can tell whether someone else changed it since. Every expected failure is a
@@ -18,8 +31,18 @@ public sealed class DocumentFile
 {
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
+    // The stat of a file that is missing, as Stat reports it.
+    private static readonly FileStat MissingStat = new(null, default, -1);
+
     // Null after CreateNew until the first save: there is then no file state to compare with.
     private Snapshot? _snapshot;
+
+    // The stat last seen by PollDisk, or taken by an open, a save, a reload or an accepted state. PollDisk compares it with the
+    // file's stat to decide whether to read the content.
+    private FileStat _seen;
+
+    // True while the stat cannot be read (the path is a folder, say), so that the error is reported once, not on every poll.
+    private bool _statUnreadable;
 
     private DocumentFile(
         string path, IConfigFormat format, bool exists, ConfigDocument? document, SourceText text, CfgeditException? parseError, Snapshot? snapshot)
@@ -31,6 +54,7 @@ public sealed class DocumentFile
         Text = text;
         ParseError = parseError;
         _snapshot = snapshot;
+        _seen = snapshot?.Stat ?? MissingStat;
     }
 
     /// <summary>The full path of the file.</summary>
@@ -125,6 +149,84 @@ public sealed class DocumentFile
     }
 
     /// <summary>
+    /// Checks the file for a change since it was last seen, cheaply. The file's stat (identity, length and last write time) is compared
+    /// with the stat last seen; only when it differs is the content read and compared with the snapshot, so a touch or a rewrite of the
+    /// same bytes is <see cref="DiskChange.Unchanged"/>. A file that was present and is now missing is <see cref="DiskChange.Deleted"/>.
+    /// A file that appears where the document had none is <see cref="DiskChange.Changed"/>.
+    /// </summary>
+    /// <remarks>
+    /// Each change is reported once: the stat last seen becomes the one just taken, so the next poll with the same stat reports
+    /// <see cref="DiskChange.Unchanged"/>. The stat is taken before the content is read, so a change made in between is seen later.
+    /// A file whose stat cannot be read is reported once, and then <see cref="DiskChange.Unchanged"/> until the stat can be read again.
+    /// </remarks>
+    /// <exception cref="CfgeditException">The file exists but cannot be read, or its stat cannot be read (it is a folder, say).</exception>
+    public DiskChange PollDisk()
+    {
+        FileStat now;
+        try
+        {
+            now = Stat(Path);
+        }
+        catch (CfgeditException)
+        {
+            if (_statUnreadable)
+            {
+                return DiskChange.Unchanged;
+            }
+
+            _statUnreadable = true;
+            throw;
+        }
+
+        _statUnreadable = false;
+        if (now == _seen)
+        {
+            return DiskChange.Unchanged;
+        }
+
+        _seen = now;
+        if (now.Length < 0)
+        {
+            return _snapshot is null ? DiskChange.Unchanged : DiskChange.Deleted;
+        }
+
+        byte[] bytes = ReadBytes(Path);
+        bool same = _snapshot is not null && SHA256.HashData(bytes).AsSpan().SequenceEqual(_snapshot.Sha256);
+        return same ? DiskChange.Unchanged : DiskChange.Changed;
+    }
+
+    /// <summary>
+    /// Accepts the file's content on disk as the one the document is kept over (Keep mine). The snapshot becomes the disk's current state,
+    /// so <see cref="ChangedOnDisk"/> is false while the disk keeps that content, and true after the next change. <see cref="Text"/>,
+    /// <see cref="Document"/> and <see cref="ParseError"/> become the disk's too, because they are what the file holds: an editor that
+    /// compares its document with <see cref="Text"/> then calls it unsaved even after every edit is undone, since the disk has other content.
+    /// </summary>
+    /// <exception cref="CfgeditException">
+    /// The file cannot be read or decoded, or it is missing (use <see cref="MarkMissing"/> then). On failure nothing changes.
+    /// </exception>
+    public void AcceptDiskState()
+    {
+        Loaded loaded = Load(Path, Format);
+        SetSnapshot(loaded.Snapshot);
+        Exists = true;
+        Document = loaded.Document;
+        Text = loaded.Text;
+        ParseError = loaded.ParseError;
+    }
+
+    /// <summary>
+    /// Records that the file was deleted or moved away, and the document is kept (Keep after the deletion). The document becomes an unsaved
+    /// new file, as <see cref="CreateNew"/> makes one: <see cref="Exists"/> is false and there is no snapshot, so the next save creates the
+    /// file, and <see cref="ChangedOnDisk"/> is false while the file stays missing. Nothing is read or written.
+    /// </summary>
+    public void MarkMissing()
+    {
+        Exists = false;
+        _snapshot = null;
+        _seen = MissingStat;
+    }
+
+    /// <summary>
     /// Writes the document's text to the file, atomically where the file system allows it (see <see cref="AtomicFile"/>). The
     /// parent folder must exist: cfgedit never creates folders. The written bytes are read back and must equal what was written.
     /// On success the snapshot, <see cref="Text"/> and <see cref="Document"/> are those of the saved text.
@@ -190,7 +292,7 @@ public sealed class DocumentFile
     public ConfigDocument? Reload()
     {
         Loaded loaded = Load(Path, Format);
-        _snapshot = loaded.Snapshot;
+        SetSnapshot(loaded.Snapshot);
         Exists = true;
         Document = loaded.Document;
         Text = loaded.Text;
@@ -221,8 +323,15 @@ public sealed class DocumentFile
             throw new CfgeditException($"the saved file does not match what was written: '{Path}'") { Path = Path };
         }
 
-        _snapshot = snapshot;
+        SetSnapshot(snapshot);
         Exists = true;
+    }
+
+    /// <summary>Records what the file is now as the snapshot, and as the stat last seen by <see cref="PollDisk"/>.</summary>
+    private void SetSnapshot(Snapshot snapshot)
+    {
+        _snapshot = snapshot;
+        _seen = snapshot.Stat;
     }
 
     private byte[] EncodeFor(SourceText text)

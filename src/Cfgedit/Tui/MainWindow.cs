@@ -39,11 +39,19 @@ internal enum PickOutcome
 /// <b>Quit and switch.</b> Ctrl+Q stops the window. Ctrl+O shows the picker over the document, and a file chosen there replaces the
 /// document when the window stops (see <see cref="SwitchTo"/>). Both ask about unsaved changes first, through the controller's flows.
 /// </para>
+/// <para>
+/// <b>External changes.</b> A timer checks the file once a second while the window runs (see <see cref="CheckExternalChange"/>). The check
+/// is skipped, and tried again on the next tick, while an inline editor is open, another runnable is on top, or a save or close flow runs.
+/// A deleted file that the user closes stops the window with <see cref="ReturnToPicker"/> set.
+/// </para>
 /// </remarks>
 internal sealed class MainWindow : Window, ISearchHost
 {
     /// <summary>How long a message stays on the detail line when no key clears it.</summary>
     internal static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(4);
+
+    /// <summary>How often the window checks its file for a change on disk while it runs (see <see cref="CheckExternalChange"/>).</summary>
+    internal static readonly TimeSpan ExternalCheckInterval = TimeSpan.FromSeconds(1);
 
     /// <summary>The message of a copy, when the value is the logical value or the path.</summary>
     internal const string CopiedValue = "Copied value";
@@ -68,6 +76,12 @@ internal sealed class MainWindow : Window, ISearchHost
     private readonly Action? _onFirstSave;
     private Action? _cancelExpiry;
     private string? _shownHints;
+
+    // The timer that calls CheckExternalChange. It runs from the window's start to its stop.
+    private object? _externalTimer;
+
+    // True while a save or close flow runs (see InFlow). The external check waits for it.
+    private bool _flowing;
 
     // True while the window sets the view's text itself, so that the change is not read back as an edit.
     private bool _showingText;
@@ -187,6 +201,12 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>The file chosen with Ctrl+O before the window stopped, or null. The host opens it next.</summary>
     public OpenedFile? SwitchTo { get; private set; }
+
+    /// <summary>
+    /// True when the window stopped because its file was deleted on disk and the user chose Close. The host then shows the recent-files
+    /// picker, as at startup, and the file chosen there is the next document.
+    /// </summary>
+    public bool ReturnToPicker { get; private set; }
 
     /// <summary>True once the window has stopped because of a quit or a switch that the flows allowed.</summary>
     internal bool Stopped { get; private set; }
@@ -561,7 +581,7 @@ internal sealed class MainWindow : Window, ISearchHost
     private void SaveFromText()
     {
         bool wasNew = !_controller.File.Exists;
-        SaveResult result = _controller.TextSaveFlow(AskExternalChange, ConfirmReload, AskUnparsedSave);
+        SaveResult result = InFlow(() => _controller.TextSaveFlow(AskExternalChange, ConfirmReload, AskUnparsedSave));
         ShowSaveResult(result, wasNew);
         SyncMode();
     }
@@ -2242,7 +2262,7 @@ internal sealed class MainWindow : Window, ISearchHost
     private void Save()
     {
         bool wasNew = !_controller.File.Exists;
-        ShowSaveResult(_controller.SaveFlow(AskExternalChange, ConfirmReload), wasNew);
+        ShowSaveResult(InFlow(() => _controller.SaveFlow(AskExternalChange, ConfirmReload)), wasNew);
     }
 
     /// <summary>
@@ -2276,6 +2296,133 @@ internal sealed class MainWindow : Window, ISearchHost
                 UpdateTitle();
                 ShowMessage(result.Error ?? "the file cannot be saved", error: true);
                 break;
+        }
+    }
+
+    // ----- External changes -----
+
+    /// <summary>
+    /// Checks the file for a change on disk, as the timer does, and shows what the controller did. A check that is not idle is skipped
+    /// without calling the controller, so the change is seen by a later check and is not lost: the stat is only consumed by a check that runs.
+    /// </summary>
+    internal void CheckExternalChange()
+    {
+        if (Stopped || !IsIdle)
+        {
+            return;
+        }
+
+        NodePath? focus = _controller.Mode == EditMode.Tree && !InTable ? _tree.CursorNode?.Path : null;
+        ExternalResult result = _controller.CheckExternal(focus, AskReloadOverMine, AskKeepDeleted);
+        switch (result.Outcome)
+        {
+            case ExternalOutcome.Reloaded:
+                ShowMode(result.Focus);
+                if (!result.Quiet && _controller.Message is { } reloaded)
+                {
+                    ShowMessage(reloaded, error: false);
+                }
+
+                break;
+            case ExternalOutcome.KeptMine:
+                UpdateTitle();
+                ShowMessage("Kept your changes; Ctrl+S overwrites the file", error: false);
+                break;
+            case ExternalOutcome.KeptDeleted:
+                UpdateTitle();
+                ShowMessage(_controller.Message ?? "The file was deleted on disk", error: false);
+                break;
+            case ExternalOutcome.Close:
+                ReturnToPicker = true;
+                Stop();
+                break;
+            case ExternalOutcome.Failed:
+                UpdateTitle();
+                ShowMessage(result.Error ?? "the file cannot be read", error: true);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// True when no inline editor is open, no save or close flow runs, and this window is the application's top runnable. A dialog, the
+    /// multi-line editor, the add dialog and the picker are each a runnable on top of it, so none of them is interrupted by a reload.
+    /// </summary>
+    private bool IsIdle => !_flowing && !_tree.IsEditing && !_tableView.IsEditing && App?.TopRunnableView == this;
+
+    /// <summary>Runs a save or close flow, with the external check held off while it runs.</summary>
+    private T InFlow<T>(Func<T> flow)
+    {
+        _flowing = true;
+        try
+        {
+            return flow();
+        }
+        finally
+        {
+            _flowing = false;
+        }
+    }
+
+    /// <summary>The question for a changed file. Keep mine is the default, and Esc keeps the document.</summary>
+    private bool AskReloadOverMine(bool discardsText)
+    {
+        string message = $"{FileName} changed on disk. Reload it or keep your changes?";
+        if (discardsText)
+        {
+            message += " Reloading discards the text you typed.";
+        }
+
+        return Confirm.Choose(Ui, "Changed on disk", message, "Keep mine", "Reload") == 1;
+    }
+
+    /// <summary>The question for a deleted file. Keep is the default, and Esc keeps the document. True for Keep.</summary>
+    private bool AskKeepDeleted()
+    {
+        string message = $"{FileName} was deleted or moved on disk.";
+        if (_controller.IsDirty)
+        {
+            message += " Close discards your unsaved changes.";
+        }
+
+        return Confirm.Choose(Ui, "Deleted on disk", message, "Keep", "Close") != 1;
+    }
+
+    // The timer runs while the window runs: it starts when the window starts running and stops when it stops.
+    protected override void OnIsRunningChanged(bool newIsRunning)
+    {
+        base.OnIsRunningChanged(newIsRunning);
+        if (newIsRunning)
+        {
+            _externalTimer = App?.AddTimeout(ExternalCheckInterval, OnExternalTick);
+            return;
+        }
+
+        StopExternalTimer();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        StopExternalTimer();
+        base.Dispose(disposing);
+    }
+
+    private bool OnExternalTick()
+    {
+        if (Stopped)
+        {
+            return false;
+        }
+
+        CheckExternalChange();
+        return true;
+    }
+
+    private void StopExternalTimer()
+    {
+        if (_externalTimer is not null)
+        {
+            App?.RemoveTimeout(_externalTimer);
+            _externalTimer = null;
         }
     }
 
@@ -2314,7 +2461,7 @@ internal sealed class MainWindow : Window, ISearchHost
     /// </summary>
     private CloseOutcome CloseOrKeep(string action)
     {
-        CloseResult result = _controller.CloseFlow(() => AskUnsaved(action), AskExternalChange, ConfirmReload, AskUnparsedSave);
+        CloseResult result = InFlow(() => _controller.CloseFlow(() => AskUnsaved(action), AskExternalChange, ConfirmReload, AskUnparsedSave));
         switch (result.Outcome)
         {
             case CloseOutcome.Reloaded:

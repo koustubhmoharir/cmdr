@@ -299,8 +299,22 @@ Undo, save, search and copy work as in the tree.
 - Saving goes through `AtomicFile.Write`, which keeps symlinks, ownership, permissions and ACLs.
 - Before saving, cfgedit compares FileIdentity and the content hash taken at load time. If the file changed on disk,
   Confirm offers Overwrite / Reload / Cancel. Reload drops the undo history after a second Confirm.
-- In phase 1, cfgedit does not watch the file while it is open. A later phase adds watching: reload silently when there
-  are no unsaved changes, and offer Reload / Keep mine when there are.
+- While the file is open, `MainWindow` checks it once a second on the UI thread (a repeating `App` timer, started when
+  the window runs). `DocumentFile.PollDisk` compares the file's stat with the one last seen, and reads and hashes the
+  content only when the stat differs. The content decides: a touch or a rewrite of the same bytes is not a change.
+- A check is deferred, not queued, while an inline editor is open in the tree or the table, while another runnable is on
+  top of the window (a dialog, the multi-line editor, the add dialog, the picker, a Confirm), and while a save or close
+  flow runs. A deferred check does not call the controller, so the next tick sees the same change.
+- A changed file with no unsaved edits reloads without asking. The reload is an undo step, so Ctrl+Z goes back to the
+  old content. A message says it was reloaded, unless the undo history was empty, when the reload is quiet.
+- A changed file with unsaved edits asks Reload / Keep mine, Keep mine as the default. Reload is the undo step above;
+  in text mode, where there is no undo, the question says it discards the text typed. Keep mine accepts the disk's
+  content (`DocumentFile.AcceptDiskState`) as the text it compares with: the next save does not ask, and the document is
+  unsaved whenever it differs from the disk, even after every edit is undone.
+- A deleted file asks Keep / Close, Keep as the default. Keep makes the document an unsaved new file
+  (`DocumentFile.MarkMissing`), so Ctrl+S creates it. Close stops the window, and cfgedit returns to the recent-files
+  picker as at startup; a file chosen there is the next document.
+- A failed check shows its error once for each state of the file, such as a path that became a folder.
 
 ## Phase 2
 

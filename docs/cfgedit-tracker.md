@@ -92,6 +92,9 @@ Items marked *(Windows)* can only be verified by the user on Windows. Every item
       EditController save/reload/quit flows, MoveBy over comment groups. (202b5c3)
 - [x] Save/quit UI wiring (179696f) and new files: Create confirmation, format choice, XML root name, recorded in recent
       files after the first save. (c1b23a8)
+- [x] External changes while open: a 1 s check (`PollDisk`, content decides), a clean file reloads as an undo step, a dirty
+      one asks Reload / Keep mine, a deleted one asks Keep / Close (Close returns to the recent picker). The check waits for
+      an open editor, a dialog or a flow. Checked in a real terminal at 100x30.
 - [ ] The picker's New file action needs a RecentPicker extension. Deferred.
 - [x] JSON planner: moving a node that shares a line with its neighbour keeps the line breaks where they were (only a
       line comment forces one). (33e1425)

@@ -987,6 +987,10 @@ the encoded bytes.
 - **External changes.** `bool ChangedOnDisk()` compares the current file with the snapshot. Missing vs present counts,
   as do identity, length and hash. The hash is computed only when the cheap checks pass, so the common case doesn't read
   the file.
+- **Polling.** `DiskChange PollDisk()` is the timer's check. It compares the file's stat with the stat last seen
+  (`Unchanged`, `Changed` or `Deleted`), and reads the content only when the stat differs. A change is reported once.
+  `AcceptDiskState()` takes the disk's content as the snapshot and the text (Keep mine). `MarkMissing()` makes a
+  deleted file an unsaved new one (Keep after a deletion).
 - **Saving.** `Save(ConfigDocument doc)`:
   1. Fails with `CfgeditException("the folder … does not exist")` if the parent directory is missing. cfgedit never
      creates folders.
@@ -1019,6 +1023,11 @@ The UI-independent state of an open file: the `DocumentFile`, an `EditHistory`, 
   started a save). Reload discards the undo history and asks a second confirmation first, with Reload as the default.
 - **Quit and switch flow** (Ctrl+Q, Ctrl+O). When the file is dirty, ask Save / Discard / Cancel, with Save as the
   default. A failed save keeps the window open and shows the error.
+- **External check.** `ExternalResult CheckExternal(NodePath? focus, Func<bool, bool> askReloadOverMine, Func<bool> askKeepDeleted)`
+  runs `PollDisk`, then: a clean document reloads (`Reloaded`, one undo step, quiet when there was no history); a dirty one
+  asks Reload or Keep mine (`KeptMine` accepts the disk's content); a deleted file asks Keep or Close (`KeptDeleted`, or
+  `Close`). A failure is `Failed` with the message. `MainWindow.CheckExternalChange` calls it from the timer, only when the
+  window is idle, and shows the result.
 
 ### Editing in the tree (Cfgedit)
 

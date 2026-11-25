@@ -110,6 +110,17 @@ until Ctrl+S.
 since it was opened, cfgedit asks whether to overwrite it, reload it, or cancel. Quitting or opening another file with
 unsaved changes asks whether to save, discard or cancel; the default is Save.
 
+**Changes on disk while it is open.** cfgedit checks the file once a second, so a change made by another program shows
+up without a save. A change to a file with no unsaved edits reloads it. The reload is an undo step: Ctrl+Z goes back to
+the text before it, and a message says the file was reloaded (there is no message when there was nothing to undo). A
+change to a file with unsaved edits asks whether to reload it or keep your changes; the default is Keep mine. Reloading
+keeps your edits as an undo step, except in text mode, where it discards the text you typed. Keep mine leaves your
+document as it is, and Ctrl+S then overwrites the file without asking again; it stays marked unsaved while it differs
+from the file on disk, even if you undo all your edits. If the file is deleted or moved, cfgedit asks whether to keep
+the document, which then becomes an unsaved new file that Ctrl+S creates again, or to close it.
+Close discards unsaved changes and returns to the recent-files list. The check waits while an inline editor, a dialog or
+the picker is open, and is done as soon as they close.
+
 ## Table editor
 
 `T` on a list shows it as a table: a JSON array whose items are all objects (one column per key) or all plain values, a TOML

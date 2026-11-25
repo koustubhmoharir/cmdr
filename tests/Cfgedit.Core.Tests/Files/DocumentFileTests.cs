@@ -521,6 +521,250 @@ public sealed class DocumentFileTests
         }
     }
 
+    // ----- PollDisk -----
+
+    [Fact]
+    public void PollDisk_IsUnchangedRightAfterOpen()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_ReportsAContentChangeOnceThenIsUnchanged()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.WriteAllText(path, "{\"a\": 1, \"b\": 2}\n");
+
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        Assert.True(file.ChangedOnDisk());
+    }
+
+    [Fact]
+    public void PollDisk_IsUnchangedAfterATouchWithTheSameBytes()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DateTime written = File.GetLastWriteTimeUtc(path);
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        File.SetLastWriteTimeUtc(path, written.AddMinutes(1));
+
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_IsUnchangedAfterAReplacementWithIdenticalBytes()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DateTime written = File.GetLastWriteTimeUtc(path);
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        string replacement = dir.File("replacement.tmp");
+        File.WriteAllText(replacement, "{\"a\": 1}\n");
+        File.SetLastWriteTimeUtc(replacement, written.AddMinutes(1));
+
+        File.Move(replacement, path, overwrite: true);
+
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_ReportsADeletionOnceThenIsUnchanged()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.Delete(path);
+
+        Assert.Equal(DiskChange.Deleted, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        Assert.True(file.Exists);
+    }
+
+    [Fact]
+    public void PollDisk_ReportsAFileThatAppearsWhereNoneWasOnceAsChanged()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("new.json");
+        DocumentFile file = DocumentFile.CreateNew(path, Strict, xmlRootName: null);
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+
+        File.WriteAllText(path, "{\"x\": 1}\n");
+
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_AfterOwnSaveIsUnchanged()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+
+        file.SaveText(file.Text.WithText("{\"a\": 1, \"b\": 2}\n"));
+
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_AfterAReload_IsUnchangedUntilTheFileChangesAgain()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.WriteAllText(path, "{\"b\": 2}\n");
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+
+        file.Reload();
+
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        File.WriteAllText(path, "{\"c\": 3, \"d\": 4}\n");
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_AFileThatBecomesAFolder_ThrowsOnceWithThePath()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.Delete(path);
+        Directory.CreateDirectory(path);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(() => file.PollDisk());
+        Assert.Equal(path, ex.Path);
+        Assert.Contains("is a folder", ex.Message);
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
+    [Fact]
+    public void PollDisk_AFileThatCannotBeRead_ThrowsOnceForTheStatThenIsUnchanged()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return; // no POSIX mode to remove on Windows
+        }
+
+        using var dir = new Scratch();
+        string path = dir.File("locked.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.WriteAllText(path, "{\"a\": 1, \"b\": 2}\n"); // a new length, so the stat changes
+        File.SetUnixFileMode(path, UnixFileMode.None);
+        try
+        {
+            if (CanReadWithoutPermission(path))
+            {
+                return; // running as root, which reads any file, so there is no denial to expect
+            }
+
+            CfgeditException ex = Assert.Throws<CfgeditException>(() => file.PollDisk());
+            Assert.Equal(path, ex.Path);
+            Assert.Contains("access is denied", ex.Message);
+            Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        }
+        finally
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    // ----- AcceptDiskState and MarkMissing -----
+
+    [Fact]
+    public void AcceptDiskState_MakesChangedOnDiskFalseForTheDiskContentAndTrueAfterAFurtherChange()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.WriteAllText(path, "{\"a\": 2, \"b\": 2}\n");
+        Assert.True(file.ChangedOnDisk());
+
+        file.AcceptDiskState();
+
+        Assert.False(file.ChangedOnDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        // The text is the disk's, so an editor comparing with it sees its old content as unsaved.
+        Assert.Equal("{\"a\": 2, \"b\": 2}\n", file.Text.Text);
+        Assert.NotNull(file.Document);
+
+        File.WriteAllText(path, "{\"a\": 3, \"b\": 3, \"c\": 3}\n");
+        Assert.True(file.ChangedOnDisk());
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+    }
+
+    [Fact]
+    public void AcceptDiskState_OfAMissingFile_ThrowsAndChangesNothing()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.Delete(path);
+
+        CfgeditException ex = Assert.Throws<CfgeditException>(file.AcceptDiskState);
+
+        Assert.Equal(path, ex.Path);
+        Assert.True(file.ChangedOnDisk());
+        Assert.Equal(DiskChange.Deleted, file.PollDisk());
+    }
+
+    [Fact]
+    public void MarkMissing_MakesTheFileANewUnsavedFileThatIsNotChangedWhileMissing()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.Delete(path);
+        Assert.Equal(DiskChange.Deleted, file.PollDisk());
+
+        file.MarkMissing();
+
+        Assert.False(file.Exists);
+        Assert.False(file.ChangedOnDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+        Assert.Equal("{\"a\": 1}\n", file.Text.Text);
+        Assert.NotNull(file.Document);
+    }
+
+    [Fact]
+    public void MarkMissing_ThenTheFileAppears_IsChangedOnDiskOnce()
+    {
+        using var dir = new Scratch();
+        string path = dir.File("config.json");
+        File.WriteAllText(path, "{\"a\": 1}\n");
+        DocumentFile file = DocumentFile.Open(path, Strict);
+        File.Delete(path);
+        file.PollDisk();
+        file.MarkMissing();
+
+        File.WriteAllText(path, "{\"b\": 2}\n");
+
+        Assert.True(file.ChangedOnDisk());
+        Assert.Equal(DiskChange.Changed, file.PollDisk());
+        Assert.Equal(DiskChange.Unchanged, file.PollDisk());
+    }
+
     // ----- Reload -----
 
     [Fact]

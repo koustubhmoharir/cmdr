@@ -73,6 +73,39 @@ public enum CloseOutcome
 /// <param name="Error">The error when the save failed, otherwise null.</param>
 public sealed record CloseResult(CloseOutcome Outcome, string? Error);
 
+/// <summary>How a check for a change on disk ended.</summary>
+public enum ExternalOutcome
+{
+    /// <summary>Nothing changed on disk since the last check.</summary>
+    None,
+
+    /// <summary>The file changed and the document was reloaded from it. The reload is an undo step.</summary>
+    Reloaded,
+
+    /// <summary>The file changed and the user kept the document. The file's content on disk is accepted, so the next save does not ask.</summary>
+    KeptMine,
+
+    /// <summary>The file was deleted and the user kept the document, which is now an unsaved new file.</summary>
+    KeptDeleted,
+
+    /// <summary>The file was deleted and the user chose to close it. Nothing else changed.</summary>
+    Close,
+
+    /// <summary>The check or the reload failed; the error says why. Reported once for each state of the file.</summary>
+    Failed,
+}
+
+/// <summary>The result of a check for a change on disk.</summary>
+/// <param name="Outcome">How the check ended.</param>
+/// <param name="Quiet">
+/// For <see cref="ExternalOutcome.Reloaded"/>: true when the undo history was empty before the reload, so there is nothing to say; otherwise
+/// the UI shows <see cref="EditController.Message"/>.
+/// </param>
+/// <param name="DiscardedText">True when the reload replaced text the user typed in text mode, which has no undo.</param>
+/// <param name="Focus">For <see cref="ExternalOutcome.Reloaded"/>: the path to focus, which is the path given when it still resolves, otherwise null.</param>
+/// <param name="Error">The error when the check failed, otherwise null.</param>
+public sealed record ExternalResult(ExternalOutcome Outcome, bool Quiet, bool DiscardedText, NodePath? Focus, string? Error);
+
 /// <summary>
 /// The state of one open file, with no UI types: its <see cref="DocumentFile"/>, its edit history, the text mode, and the last message.
 /// The file is in tree mode, where edits go through the history, or in text mode, where the text is the view's text and edits are
@@ -396,6 +429,125 @@ public sealed class EditController
             Message = ex.Message;
             return ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Checks the file for a change on disk, as the UI's timer does. A change to a document with no unsaved edits reloads without asking.
+    /// A change to a dirty document asks <paramref name="askReloadOverMine"/>: Reload replaces the document with the file (as an undo step, so
+    /// the edits are one Ctrl+Z away), and Keep mine leaves the document as it is and accepts the disk's content, so the next save does not
+    /// ask again for it. A deleted file asks <paramref name="askKeepDeleted"/>: Keep makes the document an unsaved new file, and Close
+    /// changes nothing. A failed read is reported once for each state of the file.
+    /// </summary>
+    /// <param name="focus">The path the UI has focused, which is focused again after a reload when it still resolves.</param>
+    /// <param name="askReloadOverMine">
+    /// Asks Reload (true) or Keep mine (false). Its argument says whether the reload would discard text typed in text mode. Its default
+    /// button is Keep mine, and the UI sets it.
+    /// </param>
+    /// <param name="askKeepDeleted">Asks Keep (true) or Close (false), when the file was deleted. Its default button is Keep.</param>
+    public ExternalResult CheckExternal(NodePath? focus, Func<bool, bool> askReloadOverMine, Func<bool> askKeepDeleted)
+    {
+        ArgumentNullException.ThrowIfNull(askReloadOverMine);
+        ArgumentNullException.ThrowIfNull(askKeepDeleted);
+
+        DiskChange change;
+        try
+        {
+            change = File.PollDisk();
+        }
+        catch (CfgeditException ex)
+        {
+            Message = ex.Message;
+            return new ExternalResult(ExternalOutcome.Failed, Quiet: false, DiscardedText: false, Focus: null, ex.Message);
+        }
+
+        switch (change)
+        {
+            case DiskChange.Deleted:
+                return askKeepDeleted() ? KeepDeleted() : new ExternalResult(ExternalOutcome.Close, Quiet: false, DiscardedText: false, null, null);
+
+            case DiskChange.Changed:
+                bool dirty = IsDirty;
+                bool discardsText = dirty && Mode == EditMode.Text;
+                if (dirty && !askReloadOverMine(discardsText))
+                {
+                    return KeepMine();
+                }
+
+                return ReloadFromDisk(focus, discardsText);
+
+            default:
+                return new ExternalResult(ExternalOutcome.None, Quiet: false, DiscardedText: false, Focus: null, Error: null);
+        }
+    }
+
+    /// <summary>
+    /// Replaces the document with the file's new text, after a change on disk. In tree mode the reload is recorded as one undo step, so
+    /// Undo goes back to the edited document, which is then dirty. In text mode a text that parses goes to tree mode, and one that does
+    /// not stays in text mode with the new text; the history is kept either way.
+    /// </summary>
+    private ExternalResult ReloadFromDisk(NodePath? focus, bool discardsText)
+    {
+        bool hadHistory = _history?.CanUndo ?? false;
+        ConfigDocument? document;
+        try
+        {
+            document = File.Reload();
+        }
+        catch (CfgeditException ex)
+        {
+            Message = ex.Message;
+            return new ExternalResult(ExternalOutcome.Failed, Quiet: false, DiscardedText: false, Focus: null, ex.Message);
+        }
+
+        NodePath? restored = null;
+        if (document is null)
+        {
+            _text = File.Text;
+            _newline = _text.Newline;
+            _cursorOffset = 0;
+        }
+        else
+        {
+            restored = focus is not null && document.Resolve(focus) is not null ? focus : null;
+            if (_history is null)
+            {
+                _history = new EditHistory(document);
+            }
+            else
+            {
+                _history.RecordExternal(document, focusBefore: focus, focusAfter: restored);
+            }
+
+            _text = null;
+            _cursorOffset = 0;
+        }
+
+        Message = hadHistory ? "Reloaded: the file changed on disk" : null;
+        return new ExternalResult(ExternalOutcome.Reloaded, Quiet: !hadHistory, discardsText, restored, Error: null);
+    }
+
+    /// <summary>Keeps the document over a changed file. The file's content on disk is accepted, and the document is left as it is.</summary>
+    private ExternalResult KeepMine()
+    {
+        try
+        {
+            File.AcceptDiskState();
+        }
+        catch (CfgeditException ex)
+        {
+            Message = ex.Message;
+            return new ExternalResult(ExternalOutcome.Failed, Quiet: false, DiscardedText: false, Focus: null, ex.Message);
+        }
+
+        return new ExternalResult(ExternalOutcome.KeptMine, Quiet: false, DiscardedText: false, Focus: null, Error: null);
+    }
+
+    /// <summary>Keeps the document after its file was deleted. The document becomes an unsaved new file, so the next save creates the file.</summary>
+    private ExternalResult KeepDeleted()
+    {
+        File.MarkMissing();
+        Message = "The file was deleted on disk";
+        return new ExternalResult(ExternalOutcome.KeptDeleted, Quiet: false, DiscardedText: false, Focus: null, Error: null);
     }
 
     /// <summary>
