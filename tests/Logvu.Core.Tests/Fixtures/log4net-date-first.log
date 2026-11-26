@@ -1,0 +1,9 @@
+2026-11-18 10:20:30,123 [1] INFO AxisBankBalance.Program - Fetched 12 rows
+2026-11-18 10:20:30,980 [1] INFO AxisBankBalance.Program - Posting 12 balances
+2026-11-18 10:20:31,402 [2] WARN AxisBankBalance.Client - Retrying after 429
+2026-11-18 10:20:32,000 [1] ERROR AxisBankBalance.Program - Posting failed
+Newtonsoft.Json.JsonReaderException: Unexpected character encountered while parsing value: <.
+   at Newtonsoft.Json.JsonTextReader.ParseValue()
+   at AxisBankBalance.Client.Post(Balance b) in C:\src\Client.cs:line 77
+2026-11-18 10:20:33,500 [1] INFO AxisBankBalance.Program - Done
+2026-11-18 10:20:34,010 [3] DEBUG AxisBankBalance.Cache - Evicted 0 entries

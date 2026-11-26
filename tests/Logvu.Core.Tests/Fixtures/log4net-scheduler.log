@@ -1,0 +1,9 @@
+[2026-11-18 10:20:30] INFO  Task Daily-Import started
+[2026-11-18 10:20:31] INFO  Task Daily-Import read 1204 rows
+[2026-11-18 10:20:44] WARN  Task Daily-Import skipped 3 malformed rows
+[2026-11-18 10:21:02] ERROR Task Nightly-Sync failed
+System.IO.IOException: The process cannot access the file 'C:\data\sync.csv'.
+   at SheetKraft.Scheduler.SyncJob.Execute() in C:\src\Scheduler\SyncJob.cs:line 41
+[2026-11-18 10:21:02] INFO  Task Nightly-Sync scheduled for retry
+[2026-11-18 10:30:00] DEBUG Task Heartbeat ok
+[2026-11-18 10:45:00] FATAL Scheduler stopping
