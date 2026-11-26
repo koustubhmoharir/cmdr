@@ -91,7 +91,7 @@ public sealed class DocumentLayout
             {
                 // The separator is anchored at the end of the block before it, relative to that block's start.
                 ImmutableArray<Cell> separator = LinePrefix.Separator(block, doc.Blocks[index + 1]);
-                lines.Add(new DisplayLine(separator, block.End - block.Start, false));
+                lines.Add(new DisplayLine(separator, block.End - block.Start, false, separator.Length));
                 columns.Add(BlockLayout.ColumnsOf(separator));
             }
         }
@@ -148,15 +148,7 @@ public sealed class DocumentLayout
         ImmutableArray<int> columns = _columns[line];
         int target = Math.Max(0, column);
 
-        int index = -1;
-        for (int cell = 0; cell < cells.Length; cell++)
-        {
-            if (cells[cell].Width > 0 && columns[cell] <= target && target < columns[cell] + cells[cell].Width)
-            {
-                index = cell;
-                break;
-            }
-        }
+        int index = CellCovering(cells, columns, target);
 
         if (index >= 0)
         {
@@ -207,6 +199,42 @@ public sealed class DocumentLayout
 
         int lastLine = _lines.Length - 1;
         return (lastLine, _lines[lastLine].Cells.Sum(cell => cell.Width));
+    }
+
+    /// <summary>
+    /// The index of the cell that covers a screen column, or -1 when none does. The columns never decrease along a line, so a
+    /// binary search finds the last cell that starts at or before the column; the cells with no width that share its column
+    /// are skipped to reach the cell that has one.
+    /// </summary>
+    /// <param name="cells">The cells of the line.</param>
+    /// <param name="columns">The screen column of each cell (see <see cref="BlockLayout.ColumnsOf"/>).</param>
+    /// <param name="target">The screen column, at least 0.</param>
+    private static int CellCovering(ImmutableArray<Cell> cells, ImmutableArray<int> columns, int target)
+    {
+        int low = 0;
+        int high = columns.Length;
+        while (low < high)
+        {
+            int middle = (low + high) / 2;
+            if (columns[middle] <= target)
+            {
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle;
+            }
+        }
+
+        for (int cell = low - 1; cell >= 0; cell--)
+        {
+            if (cells[cell].Width > 0)
+            {
+                return target < columns[cell] + cells[cell].Width ? cell : -1;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>The block that owns a line: the last block whose first line is at or before it.</summary>

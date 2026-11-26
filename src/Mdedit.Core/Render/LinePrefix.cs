@@ -13,22 +13,36 @@ internal static class LinePrefix
     private const string Bullets = "•◦▪";
 
     /// <summary>
-    /// The prefix of a content line of a block.
+    /// The prefix of a content line of a block: its containers (see <see cref="Containers"/>), then for a heading the fold glyph
+    /// on its first content line and blanks of its width on the others.
     /// </summary>
     /// <param name="block">The block.</param>
     /// <param name="showMarker">Whether this is the block's first line, which gets the list markers of its first-leaf items.</param>
     /// <param name="fold">Whether this is the first content line of a heading, which gets the fold glyph instead of blanks.</param>
     public static ImmutableArray<Cell> Content(RenderBlock block, bool showMarker, bool fold)
     {
+        ImmutableArray<Cell> containers = Containers(block, showMarker);
+        if (block.Kind != BlockKind.Heading)
+        {
+            return containers;
+        }
+
+        ImmutableArray<Cell> glyph = fold ? SyntheticCell.Text("▾ ", StyleRole.FoldGlyph) : SyntheticCell.Text("  ", StyleRole.Body);
+        return containers.Concat(glyph).ToImmutableArray();
+    }
+
+    /// <summary>
+    /// The container part of the prefix of a content line: a bar per quote or alert, and the marker or the blanks of each list
+    /// item. These cells are the prefix that a horizontal scroll keeps in place; the fold glyph of a heading is not among them.
+    /// </summary>
+    /// <param name="block">The block.</param>
+    /// <param name="showMarker">Whether this is the block's first line, which gets the list markers of its first-leaf items.</param>
+    public static ImmutableArray<Cell> Containers(RenderBlock block, bool showMarker)
+    {
         var cells = ImmutableArray.CreateBuilder<Cell>();
         foreach (Container entry in block.Containers)
         {
             AddContainer(cells, entry, showMarker && entry.IsFirstLeaf);
-        }
-
-        if (block.Kind == BlockKind.Heading)
-        {
-            cells.AddRange(fold ? SyntheticCell.Text("▾ ", StyleRole.FoldGlyph) : SyntheticCell.Text("  ", StyleRole.Body));
         }
 
         return cells.ToImmutable();

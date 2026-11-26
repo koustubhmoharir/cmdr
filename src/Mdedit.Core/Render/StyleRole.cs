@@ -40,7 +40,7 @@ public enum StyleRole
     /// <summary>The synthetic title line of an alert (its kind).</summary>
     AlertTitle,
 
-    /// <summary>The synthetic borders of a table grid. Not produced yet; tables are lowered as source lines for now.</summary>
+    /// <summary>The synthetic borders of a table grid: its rules, corners and the bars between cells.</summary>
     TableBorder,
 
     /// <summary>The synthetic dim arrow that starts a continuation row of a wrapped code line.</summary>

@@ -2,7 +2,7 @@ using Mdedit.Core.Render;
 
 namespace Mdedit.Core.Tests.Render;
 
-/// <summary>Block kinds, spans, containers, first-leaf flags, tightness and the lines of code, HTML and table blocks.</summary>
+/// <summary>Block kinds, spans, containers, first-leaf flags, tightness and the lines of code and HTML blocks, and the cells of tables.</summary>
 public sealed class BlockLoweringTests
 {
     private static RenderDocument Parse(string text) => RenderDocument.Parse(text);
@@ -106,14 +106,14 @@ public sealed class BlockLoweringTests
     }
 
     [Fact]
-    public void Pipe_table_is_lowered_as_its_source_lines_in_the_body_role()
+    public void Pipe_table_is_one_table_block_whose_runs_are_its_cells_in_row_order()
     {
         const string text = "| a | b |\n|---|---|\n| 1 | 2 |\n";
         RenderBlock block = Parse(text).Blocks[0];
 
         Assert.Equal("Table 0..29 level=0 lang=- tight=no first=no containers=[-]", RenderDump.Shape(block));
-        Assert.Equal("| a | b |/|---|---|/| 1 | 2 |", RenderDump.Texts(block));
-        Assert.Equal(10, block.Runs[1].Start);
+        Assert.NotNull(block.Table);
+        Assert.Equal("a/b/1/2", RenderDump.Texts(block));
         Assert.Equal(20, block.Runs[2].Start);
     }
 

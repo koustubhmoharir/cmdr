@@ -14,34 +14,61 @@ internal static class BlockLayouter
     public static ImmutableArray<DisplayLine> Layout(RenderBlock block, int width)
     {
         ImmutableArray<int> titles = TitleAlerts(block.Containers);
-        int contentWidth = Math.Max(1, width - LinePrefix.Width(LinePrefix.Content(block, showMarker: false, fold: false)));
-        ImmutableArray<Cell> flat = block.Runs.SelectMany(run => run.Cells).ToImmutableArray();
-        int length = block.End - block.Start;
+        int contentWidth = ContentWidth(block, width);
         var lines = ImmutableArray.CreateBuilder<DisplayLine>();
 
         for (int index = 0; index < titles.Length; index++)
         {
             ImmutableArray<Cell> title = SyntheticCell.Text(TitleText(block.Containers[titles[index]].Alert), StyleRole.AlertTitle);
-            lines.Add(new DisplayLine(LinePrefix.Title(block, titles, index).Concat(title).ToImmutableArray(), 0, false));
+            lines.Add(Line(LinePrefix.Title(block, titles, index), title, 0, false));
         }
 
         bool first = true;
-        foreach ((WrappedLine content, int fallback) in ContentLines(block, flat, contentWidth))
+        foreach ((ImmutableArray<Cell> content, int anchor, bool continuation) in ContentLines(block, contentWidth))
         {
-            ImmutableArray<Cell> prefix = LinePrefix.Content(block, showMarker: first && titles.IsEmpty, fold: first);
-            ImmutableArray<Cell> cells = prefix.Concat(content.Cells).ToImmutableArray();
-            lines.Add(new DisplayLine(cells, AnchorOf(content, fallback, flat, length), content.IsContinuation));
+            bool showMarker = first && titles.IsEmpty;
+            ImmutableArray<Cell> prefix = LinePrefix.Content(block, showMarker, fold: first);
+            int containers = LinePrefix.Containers(block, showMarker).Length;
+            lines.Add(new DisplayLine(prefix.Concat(content).ToImmutableArray(), anchor, continuation, containers));
             first = false;
         }
 
         return lines.ToImmutable();
     }
 
+    /// <summary>The width left for content after the prefix of a block's lines, at least 1.</summary>
+    /// <param name="block">The block.</param>
+    /// <param name="width">The full screen width.</param>
+    public static int ContentWidth(RenderBlock block, int width) =>
+        Math.Max(1, width - LinePrefix.Width(LinePrefix.Content(block, showMarker: false, fold: false)));
+
     /// <summary>
-    /// The content lines of a block, each with the anchor it falls back to when it shows no mapped cell (the start of its run,
-    /// or 0 for a synthetic line).
+    /// The content lines of a block, without their prefix, each with its anchor and whether it continues the line before it. A
+    /// table is drawn as a grid; the other kinds are wrapped runs.
     /// </summary>
-    private static List<(WrappedLine Line, int Fallback)> ContentLines(RenderBlock block, ImmutableArray<Cell> flat, int width)
+    private static List<(ImmutableArray<Cell> Content, int Anchor, bool IsContinuation)> ContentLines(RenderBlock block, int width)
+    {
+        if (block.Kind == BlockKind.Table)
+        {
+            return TableLayouter.Lines(block, width);
+        }
+
+        ImmutableArray<Cell> flat = block.Runs.SelectMany(run => run.Cells).ToImmutableArray();
+        int length = block.End - block.Start;
+        var lines = new List<(ImmutableArray<Cell>, int, bool)>();
+        foreach ((WrappedLine line, int fallback) in WrappedContent(block, width))
+        {
+            lines.Add((line.Cells, AnchorOf(line, fallback, flat, length), line.IsContinuation));
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// The wrapped content lines of a paragraph, heading, code, thematic break, HTML or raw block, each with the anchor it falls
+    /// back to when it shows no mapped cell (the start of its run, or 0 for a synthetic line).
+    /// </summary>
+    private static List<(WrappedLine Line, int Fallback)> WrappedContent(RenderBlock block, int width)
     {
         var lines = new List<(WrappedLine, int)>();
         int index = 0;
@@ -72,7 +99,7 @@ internal static class BlockLayouter
                 break;
 
             default:
-                // Table, HTML and raw blocks: their source lines, wrapped at cell boundaries with no marker.
+                // HTML and raw blocks: their source lines, wrapped at cell boundaries with no marker.
                 foreach (Run run in block.Runs)
                 {
                     AddRun(lines, TextWrap.Cells(run.Cells, index, width, marked: false), run.Start);
@@ -84,6 +111,9 @@ internal static class BlockLayouter
 
         return lines;
     }
+
+    private static DisplayLine Line(ImmutableArray<Cell> prefix, ImmutableArray<Cell> content, int anchor, bool continuation) =>
+        new(prefix.Concat(content).ToImmutableArray(), anchor, continuation, prefix.Length);
 
     private static void AddRun(List<(WrappedLine, int)> lines, List<WrappedLine> wrapped, int fallback)
     {

@@ -12,4 +12,8 @@ namespace Mdedit.Core.Render;
 /// the offset of the first mapped cell after the row in the block, or the block's length when there is none.
 /// </param>
 /// <param name="IsContinuation">Whether the row is a line produced by wrapping, which continues the row before it.</param>
-public sealed record DisplayLine(ImmutableArray<Cell> Cells, int Anchor, bool IsContinuation);
+/// <param name="PrefixCells">
+/// The number of leading cells that are the container prefix of the line: quote bars, list markers and their indentation. The
+/// cells after them are content, which is what a horizontal scroll moves. Heading fold glyphs and code wrap markers are content.
+/// </param>
+public sealed record DisplayLine(ImmutableArray<Cell> Cells, int Anchor, bool IsContinuation, int PrefixCells);

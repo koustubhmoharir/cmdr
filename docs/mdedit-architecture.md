@@ -147,6 +147,106 @@ only when `[x]: url` exists. A resize computes each block once; an edit changes 
 block's layout is reused (its offsets are relative, so they are still right after shifting by the block's new `Start`).
 The cache is bounded (least recently used, 4,096 entries).
 
+### Tables (M2a part 2)
+
+**Lowering.** A pipe table becomes a `Table` block with a `TableModel`: the column alignments (from the delimiter row:
+left, center, right, or none = left) and the rows in source order, each with `IsHeader`, its source line start (relative)
+and its cells. A cell is a run lowered from the cell's inlines with the usual mapping (Markdig parses pipe-table cells in
+the document, so their spans are document offsets; a cell's span includes its padding spaces, which the alignment skips).
+A row with fewer cells than columns gets empty cells; cells past the column count are dropped by the layout (Markdig keeps
+them). The delimiter row has no cells. The block's `Runs` are its cells in row order, so the property tests and the source
+map cover them. Link ids are unique across the table's cells.
+
+**Column widths.** Per column: *natural* = the widest cell's display width (a cell's runs joined, as one line); *minimum* =
+its longest word, capped at 24, and at least 1. Borders and padding take `3 × columns + 1` columns (`│ a │ b │`).
+
+1. If the natural widths plus borders fit the content width, use them.
+2. Else narrow one column at a time by one, always the widest column still above its minimum (the leftmost on a tie),
+   until the table fits or every column is at its minimum.
+3. If the table still does not fit, it keeps the minimum widths and is wider than the content width: it overflows.
+
+**Drawing.** Box-drawing borders, synthetic, role `TableBorder`:
+
+```
+┌─────┬──────┐
+│ a   │ b    │
+├─────┼──────┤
+│ 1   │ 2    │
+└─────┴──────┘
+```
+
+A column's natural width is at least its minimum (an all-empty column is 1 wide). Each cell is word-wrapped
+to its column width with the paragraph rules, and padded by one space each side; a row is as
+tall as its tallest cell; a cell's lines are aligned left, centred (half the free space on the left, rounded down, the rest on the right) or right. Header cells keep
+their inline styles and add `Strong`. The header separator `├─┼─┤` follows the header row; there is no separator between
+body rows. Anchors: a row's lines anchor at the row's source line start; the top border and the header separator at the
+next row's start (the block's end when there is none); the bottom border at the block's end. A row's second and later
+lines are continuation lines; borders are not.
+
+**Overflow.** `DisplayLine` gets `PrefixCells`: the number of cells at the start of the line that belong to the container
+prefix (for every line, not only tables). `BlockLayout` gets `ScrollWidth`: the width of its widest line minus the prefix,
+when that is more than the content width, else 0. The view scrolls a block with a non-zero `ScrollWidth` by shifting only
+the cells after the prefix; the layout itself never cuts a line.
+
+### Code colouring (M2a part 2)
+
+- `CodeToken` gains: `Keyword`, `String`, `Number`, `Comment`, `Type`, `Function`, `Operator`, `Punctuation`,
+  `Preprocessor`, `Constant`, `Attribute`, `Tag`, `Identifier`.
+- `ICodeColorizer` (Mdedit.Core, no Terminal.Gui): `IReadOnlyList<CodeSpan>? Colorize(string code, string language)`,
+  where `CodeSpan(int Start, int Length, CodeToken Token)` covers UTF-16 ranges of `code` (the block's lines joined with
+  `\n`), and null means "no colouring for this language". Uncovered characters are `None`.
+- `CodeLanguages.Normalize(string? info)` maps the first word of the info string, case-insensitively, to a canonical id:
+  `cs`, `c#`, `csharp` → `csharp`; `go`, `golang` → `go`; `py`, `python` → `python`; `ts`, `tsx`, `typescript` →
+  `typescript`; `js`, `jsx`, `mjs`, `cjs`, `javascript` → `javascript`; `html`, `htm` → `html`; `css` → `css`; `xml`,
+  `xaml`, `csproj`, `svg` → `xml`; `json`, `jsonc`, `json5` → `json`; `sh`, `bash`, `shell`, `zsh` → `shell`; `ps1`,
+  `powershell`, `pwsh` → `powershell`; `yaml`, `yml` → `yaml`; `sql`; `md`, `markdown` → `markdown`. Anything else is
+  returned lower-cased as written; empty or missing gives null.
+- `RenderDocument.Lower(text, ast, colorizer)` takes an optional colorizer and sets `CellStyle.Token` on code cells. The
+  colorizer is fixed for the life of the app, so the layout cache key does not include it.
+
+### Folding (M2a part 2)
+
+- **Fold units** (`FoldUnit`): a *section* is a heading block with no containers and the blocks after it up to (not
+  including) the next container-free heading of the same or a higher level (a smaller or equal level number), or the end;
+  a *code unit* is one code block. `RenderDocument.FoldUnits` lists them in document order with `Kind`, `Start` (the head
+  block's absolute start: the unit's key), `HeadBlock` and `EndBlock` (block indexes, end exclusive) and `HiddenLines`
+  (source lines hidden when folded: from the line after the head block's last line to the unit's last block's last line,
+  for a section; the code lines, for a code unit).
+- **Fold state** is a set of unit keys (`IReadOnlySet<int>` of absolute starts) passed to `DocumentLayout.Build`.
+  Folding a unit hides blocks `HeadBlock + 1 .. EndBlock - 1` and, for a code unit, its code lines. Units inside a folded
+  unit are hidden with it, whatever their own state.
+- A folded head shows `▸` instead of `▾`, and ` … n lines` (role `FoldSummary`, synthetic; `1 line` for one) after its
+  last word, wrapped with the heading's words. A folded code block is its header line plus the summary. The cache key
+  includes whether the head is folded.
+- `DocumentLayout.FoldUnitAt(line)` gives the unit whose head line(s) contain the line, for the view's Space and clicks;
+  `PositionOf` an offset inside a hidden block gives the head's first line (the view unfolds first when it needs the exact
+  place).
+
+### Copy, search and outline (M2a part 2)
+
+All work on the `RenderDocument` and source offsets, not on a layout, so wrapping and folding do not change them; folded
+content is included.
+
+- `TextExtraction.PlainText(doc, start, end)`: the rendered text of the mapped cells whose offsets are in `[start, end)`.
+  Within a block, cells in order (a soft-break space stays a space; a hard break is `\n`); between blocks `\n\n`, or `\n`
+  between two tight blocks; a bullet item's first leaf starts with `- `, an ordered one with its marker and a space (only
+  when the selection covers the leaf's first character); quote bars are dropped; a task box stays `[ ]`/`[x]`; table
+  cells are joined with `\t` and rows with `\n`; code lines are joined with `\n`, without wrap markers. Lines end in
+  `\n` regardless of the source's line endings.
+- `TextExtraction.Markdown(doc, start, end)`: `text[start..end]` made valid on its own. The lowering records each inline
+  container (emphasis, strong, strikethrough, link, image, code span) as an `InlineSpan` on its block: outer and inner
+  ranges, opener and closer text (`**`, `` ` ``, `[` … `](url)`). A container cut by `start` (start inside it, after its
+  opener) gets its opener prepended; one cut by `end` gets its closer appended; nested ones in the right order. When
+  `start` is not at the start of its source line and the block has containers, the source text from that line's start to
+  the block content's start on that line (`> - `) is prepended. A range inside a table becomes whole rows: the header row,
+  the delimiter row, and the rows the range touches, as written in the source.
+- `RenderSearch.Find(doc, SearchPattern)`: the matches in rendered text, as source ranges. Each block's text is its cells'
+  text in order (code: per line; table: per cell; prefixes excluded), searched with `SearchPattern.Matches`; a match maps
+  to `[offset of its first cell, offset of its last cell + that cell's source length)`, where a cell's source length is the
+  distance to the next mapped offset in the block, capped by the block's end. Matches never span blocks. `TimedOut` is
+  carried over from the pattern.
+- `Outline.Of(doc)`: the headings in order: level, plain text, block start, and whether it has containers.
+
 ### Tests
 
 Exact expected display lines (`TextOf`) and exact offsets for every row of the inline table and every block kind; the

@@ -15,13 +15,14 @@ public sealed class BlockLayout
     private readonly ImmutableArray<MappedCell> _index;
     private readonly ImmutableArray<int> _firstAfter;
 
-    private BlockLayout(ImmutableArray<DisplayLine> lines)
+    private BlockLayout(ImmutableArray<DisplayLine> lines, int contentWidth)
     {
         Lines = lines;
         Columns = lines.Select(line => ColumnsOf(line.Cells)).ToImmutableArray();
         _index = BuildIndex(lines, Columns);
         _firstAfter = BuildFirstAfter(_index);
         MinOffset = _index.Length == 0 ? 0 : _index[0].Offset;
+        ScrollWidth = ScrollWidthOf(lines, contentWidth);
     }
 
     /// <summary>The display lines of the block, in order: the title lines of its alerts, then its content.</summary>
@@ -36,6 +37,12 @@ public sealed class BlockLayout
     /// <summary>The screen columns of each line: the column of every cell, a zero-width cell taking the column of the one before.</summary>
     internal ImmutableArray<ImmutableArray<int>> Columns { get; }
 
+    /// <summary>
+    /// The width of the widest line of the block without its container prefix, when that is more than the content width; 0 when
+    /// no line is wider than the content. A block with a non-zero value is wider than the screen, so the view scrolls it.
+    /// </summary>
+    public int ScrollWidth { get; }
+
     /// <summary>Lays out one block for a screen width.</summary>
     /// <param name="block">The block, from a <see cref="RenderDocument"/>.</param>
     /// <param name="width">The full screen width in columns, at least 1. Content wraps in the width left after the prefix.</param>
@@ -44,7 +51,7 @@ public sealed class BlockLayout
         ArgumentNullException.ThrowIfNull(block);
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
 
-        return new BlockLayout(BlockLayouter.Layout(block, width));
+        return new BlockLayout(BlockLayouter.Layout(block, width), BlockLayouter.ContentWidth(block, width));
     }
 
     /// <summary>
@@ -105,6 +112,24 @@ public sealed class BlockLayout
         }
 
         return columns.MoveToImmutable();
+    }
+
+    /// <summary>The widest line's width without its prefix, or 0 when that does not exceed the content width.</summary>
+    private static int ScrollWidthOf(ImmutableArray<DisplayLine> lines, int contentWidth)
+    {
+        int widest = 0;
+        foreach (DisplayLine line in lines)
+        {
+            int width = 0;
+            for (int cell = line.PrefixCells; cell < line.Cells.Length; cell++)
+            {
+                width += line.Cells[cell].Width;
+            }
+
+            widest = Math.Max(widest, width);
+        }
+
+        return widest > contentWidth ? widest : 0;
     }
 
     /// <summary>The index of the first entry whose offset is at least <paramref name="offset"/>, or the count when none is.</summary>

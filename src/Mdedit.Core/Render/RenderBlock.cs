@@ -18,6 +18,10 @@ namespace Mdedit.Core.Render;
 /// </param>
 /// <param name="Tight">Whether the block sits in a tight list item. The layout puts no blank line between blocks of a tight list.</param>
 /// <param name="IsFirstInItem">Whether the block is the first leaf of its innermost list item, which gets the item's marker.</param>
+/// <param name="Table">
+/// The structure of a table block: its column alignments and rows. Null for every other kind. The cells of its rows are also
+/// <paramref name="Runs"/>, in row order, so that the source map and the lowering checks see them like any other content.
+/// </param>
 public sealed record RenderBlock(
     BlockKind Kind,
     int Start,
@@ -27,4 +31,5 @@ public sealed record RenderBlock(
     int HeadingLevel = 0,
     string? Language = null,
     bool Tight = false,
-    bool IsFirstInItem = false);
+    bool IsFirstInItem = false,
+    TableModel? Table = null);

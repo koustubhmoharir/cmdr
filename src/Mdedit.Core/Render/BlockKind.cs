@@ -12,7 +12,7 @@ public enum BlockKind
     /// <summary>A fenced or indented code block: one run per source line.</summary>
     Code,
 
-    /// <summary>A table. Lowered as its source lines, like an HTML block, until tables are drawn as grids.</summary>
+    /// <summary>A pipe table. Its <see cref="RenderBlock.Table"/> holds the alignments and rows; the layout draws the grid.</summary>
     Table,
 
     /// <summary>A thematic break. It has no runs: the layout draws the rule.</summary>

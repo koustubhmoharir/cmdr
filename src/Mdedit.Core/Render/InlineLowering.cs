@@ -16,7 +16,8 @@ namespace Mdedit.Core.Render;
 internal sealed class InlineLowering
 {
     private readonly string _text;
-    private readonly RunBuilder _builder;
+    private readonly int _blockStart;
+    private RunBuilder _builder;
     private int _nextLinkId;
 
     /// <summary>Starts lowering a block.</summary>
@@ -25,18 +26,24 @@ internal sealed class InlineLowering
     public InlineLowering(string text, int blockStart)
     {
         _text = text;
+        _blockStart = blockStart;
         _builder = new RunBuilder(blockStart);
     }
 
-    /// <summary>Lowers <paramref name="inlines"/> to runs of the given role. An empty or missing container gives one empty run.</summary>
-    /// <param name="inlines">The inline content of a paragraph or heading; null when there is none.</param>
+    /// <summary>
+    /// Lowers <paramref name="inlines"/> to runs of the given role. An empty or missing container gives one empty run. Link ids
+    /// keep counting across calls, so a block lowered in several calls (the cells of a table) has unique ids.
+    /// </summary>
+    /// <param name="inlines">The inline content of a paragraph, heading or table cell; null when there is none.</param>
     /// <param name="role">The role of the text cells: <see cref="StyleRole.Body"/> or <see cref="StyleRole.Heading"/>.</param>
     /// <param name="headingLevel">The heading level for heading cells; 0 otherwise.</param>
-    public ImmutableArray<Run> Lower(ContainerInline? inlines, StyleRole role, int headingLevel)
+    /// <param name="flags">The inline styles every cell starts with, such as <see cref="InlineStyle.Strong"/> for a table's header cells.</param>
+    public ImmutableArray<Run> Lower(ContainerInline? inlines, StyleRole role, int headingLevel, InlineStyle flags = InlineStyle.None)
     {
+        _builder = new RunBuilder(_blockStart);
         if (inlines is not null)
         {
-            Children(inlines, new State(role, InlineStyle.None, headingLevel, -1));
+            Children(inlines, new State(role, flags, headingLevel, -1));
         }
 
         return _builder.Finish();

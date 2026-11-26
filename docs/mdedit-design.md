@@ -263,7 +263,7 @@ The selection is held as a source range. Copy works the same with the keyboard (
 - **Markdown** is the source slice of the selection, made valid on its own: an inline container (emphasis, link, code
   span) cut by either end gets its delimiters (and a link its target) around the part copied; a selection that starts
   inside a list item or a quote gets that line's prefix; a selection inside a table gives the selected rows with the
-  header and delimiter rows, and only the selected columns.
+  header and delimiter rows (all columns: a selection is a source range, so it has no column shape).
 - In edit mode the editor's own copy copies the source.
 
 ## Source buffer and undo
