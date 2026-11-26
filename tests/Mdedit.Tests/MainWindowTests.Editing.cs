@@ -227,8 +227,8 @@ public sealed partial class MainWindowTests
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl),
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl));
 
-        Assert.Equal(Status("^T View  Alt+Z Wrap", "^Q Quit"), session.Screens[1].Text(11));
-        Assert.Equal(Status("^T Edit  / Find  y Copy  Space F…", "^Q Quit"), session.Screens[^1].Text(11));
+        Assert.Equal(Status("^T View  ^S Save  Alt+Z Wrap", "^Q Quit"), session.Screens[1].Text(11));
+        Assert.Equal(Status("^T Edit  ^S Save  / Find  y Copy…", "^Q Quit"), session.Screens[^1].Text(11));
     }
 
     [Fact]
@@ -479,6 +479,9 @@ public sealed partial class MainWindowTests
         private readonly string _waitingFor;
         private bool _opened;
         private System.Runtime.ExceptionServices.ExceptionDispatchInfo? _failure;
+
+        /// <summary>True once the dialog matched and opened.</summary>
+        public bool Opened => _opened;
 
         public DialogWatch(IApplication app, string waitingFor, Func<View, bool> matches, Action<View>? whileOpen, string? button)
         {

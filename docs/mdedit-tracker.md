@@ -54,14 +54,14 @@ The first version is M0–M3.
 
 ## M3. Editor
 
-- [ ] Shared source buffer (`TextDocument`) and one undo history across modes.
-- [ ] Edit mode: `TextArea` with Markdown highlighting, word wrap (Alt+Z), Tab inserts, the file's line ending.
-- [ ] Ctrl+T both ways keeping the cursor; Esc in edit mode.
+- [x] Shared source buffer (`TextDocument`) and one undo history across modes. (7d5da4e)
+- [x] Edit mode: `TextArea` with Markdown highlighting, word wrap (Alt+Z), Tab inserts, the file's line ending. (7d5da4e)
+- [x] Ctrl+T both ways keeping the cursor; Esc in edit mode. (7d5da4e)
 - [ ] Search in the source.
 - [ ] Editor folds sharing the view's fold state.
 - [ ] Save, unsaved-changes flow (quit, Ctrl+O), new-file flow (a path that does not exist), external-change check
       (reload, Keep mine, deleted).
-- [ ] Large files (over 2 MB) open in edit mode.
+- [x] Large files (over 2 MB) open in edit mode. (7d5da4e)
 - [ ] Windows acceptance pass. *(Windows)*
 
 ## Later

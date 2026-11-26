@@ -25,7 +25,7 @@ public sealed class ProgramTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        int code = Program.Run(["--version"], stdout, stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
+        int code = Program.Run(["--version"], stdout, stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
 
         Assert.Equal(0, code);
         Assert.StartsWith("mdedit ", stdout.ToString());
@@ -40,7 +40,7 @@ public sealed class ProgramTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        int code = Program.Run([], stdout, stderr, recent => { pickers++; shown = recent; }, (_, _) => throw new InvalidOperationException(), () => RecentFiles.Load(_store));
+        int code = Program.Run([], stdout, stderr, recent => { pickers++; shown = recent; }, (_, _) => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => RecentFiles.Load(_store));
 
         Assert.Equal(0, code);
         Assert.Equal(1, pickers);
@@ -61,7 +61,7 @@ public sealed class ProgramTests : IDisposable
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
-        int code = Program.Run(args, stdout, stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
+        int code = Program.Run(args, stdout, stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
 
         Assert.Equal(2, code);
         Assert.Equal(string.Empty, stdout.ToString());
@@ -69,15 +69,42 @@ public sealed class ProgramTests : IDisposable
     }
 
     [Fact]
-    public void A_missing_file_prints_its_full_path_and_returns_1_without_a_window()
+    public void A_missing_path_runs_the_new_file_flow_with_the_path_and_the_recent_loader_and_no_window()
     {
         string missing = Path.Combine(_dir, "missing.md");
+        string? created = null;
+        Func<RecentFiles?>? loader = null;
+        int windows = 0;
+
+        int code = Program.Run(
+            [missing],
+            new StringWriter(),
+            new StringWriter(),
+            _ => throw new InvalidOperationException(),
+            (_, _) => windows++,
+            (path, recent) =>
+            {
+                created = path;
+                loader = recent;
+            },
+            () => null);
+
+        Assert.Equal(0, code);
+        Assert.Equal(missing, created);
+        Assert.NotNull(loader);
+        Assert.Equal(0, windows);
+    }
+
+    [Fact]
+    public void A_folder_path_is_not_a_new_file_and_prints_that_it_is_a_directory()
+    {
+        Directory.CreateDirectory(_dir);
         var stderr = new StringWriter();
 
-        int code = Program.Run([missing], new StringWriter(), stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
+        int code = Program.Run([_dir], new StringWriter(), stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
 
         Assert.Equal(1, code);
-        Assert.Equal($"mdedit: {missing}: the file does not exist\n", stderr.ToString().Replace("\r\n", "\n"));
+        Assert.Equal($"mdedit: {Path.GetFullPath(_dir)}: is a directory\n", stderr.ToString().Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -86,7 +113,7 @@ public sealed class ProgramTests : IDisposable
         string path = TempFile("broken.md", [(byte)'a', (byte)'\n', (byte)'b', 0xFF, (byte)'\n']);
         var stderr = new StringWriter();
 
-        int code = Program.Run([path], new StringWriter(), stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
+        int code = Program.Run([path], new StringWriter(), stderr, _ => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), (_, _) => throw new InvalidOperationException(), () => null);
 
         Assert.Equal(1, code);
         Assert.Equal($"mdedit: {path}:2:1: not valid UTF-8 at byte 3\n", stderr.ToString().Replace("\r\n", "\n"));
@@ -109,6 +136,7 @@ public sealed class ProgramTests : IDisposable
                 opened.Add(file);
                 recorded = recent;
             },
+            (_, _) => throw new InvalidOperationException(),
             () => RecentFiles.Load(_store));
 
         Assert.Equal(0, code);
@@ -126,7 +154,7 @@ public sealed class ProgramTests : IDisposable
         RecentFiles? recorded = RecentFiles.Load(_store);
         int windows = 0;
 
-        int code = Program.Run([path], new StringWriter(), new StringWriter(), _ => throw new InvalidOperationException(), (_, recent) => { windows++; recorded = recent; }, () => null);
+        int code = Program.Run([path], new StringWriter(), new StringWriter(), _ => throw new InvalidOperationException(), (_, recent) => { windows++; recorded = recent; }, (_, _) => throw new InvalidOperationException(), () => null);
 
         Assert.Equal(0, code);
         Assert.Equal(1, windows);

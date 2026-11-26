@@ -13,22 +13,24 @@ internal static class MdeditHints
     private static Hint OpenFile { get; } = KeyHints.Bound(Key.O.WithCtrl, "^O Open file");
 
     /// <summary>
-    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Edit, Find, Copy, Fold, Open. The
+    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Edit, Save, Find, Copy, Fold, Open. The
     /// quit key is the right part (see <see cref="Quit"/>), so it stays on the row when the left part is cut.
     /// </summary>
     public static Hint View { get; } = KeyHints.Join(
         KeyHints.Bound(Key.T.WithCtrl, "^T Edit"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
         KeyHints.Bound('/', "/ Find"),
         KeyHints.Bound('y', "y Copy"),
         KeyHints.Bound(Key.Space, "Space Fold"),
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
 
     /// <summary>
-    /// The key hints of edit mode: the view and the word wrap, then the quit key at the right. Save and Find are not bound yet, so they are
-    /// not shown.
+    /// The key hints of edit mode: the view, the save and the word wrap, then the quit key at the right. Find is not bound in edit mode yet, so
+    /// it is not shown.
     /// </summary>
     public static Hint Edit { get; } = KeyHints.Join(
         KeyHints.Bound(Key.T.WithCtrl, "^T View"),
+        KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
         KeyHints.Bound(SourceEditor.WrapKey, "Alt+Z Wrap"));
 
     /// <summary>The quit key, shown at the right edge of the viewer's hints.</summary>

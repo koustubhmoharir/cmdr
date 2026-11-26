@@ -3,6 +3,7 @@ using Mdedit.Core.Render;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Editor.Document;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
@@ -17,18 +18,29 @@ namespace Mdedit.Tui;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Quit and switch.</b> Ctrl+Q stops the window. Ctrl+O shows the picker over the document, and a file chosen there replaces the
-/// document when the window stops (see <see cref="SwitchTo"/>). Esc is swallowed in view mode: the window has nothing to go back to.
+/// <b>Quit and switch.</b> Ctrl+Q stops the window, and Ctrl+O shows the picker over the document; a file chosen there replaces the
+/// document when the window stops (see <see cref="SwitchTo"/>). Both ask about unsaved changes first (see <b>Saving</b>). Esc is swallowed in
+/// view mode: the window has nothing to go back to.
 /// </para>
 /// <para>
-/// <b>Modes.</b> The window opens in view mode, except for a large file (over <see cref="LargeFileBytes"/> on disk), which opens in edit
-/// mode with <see cref="LargeFileOpened"/>. Ctrl+T switches between the modes, and Esc goes from edit mode to view mode. The view is
+/// <b>Modes.</b> The window opens in view mode, except for a new file (one that does not exist yet), which opens in edit mode, and a large file
+/// (over <see cref="LargeFileBytes"/> on disk), which opens in edit mode with <see cref="LargeFileOpened"/>. Ctrl+T switches between the modes, and Esc goes from edit mode to view mode. The view is
 /// rendered from the buffer when the buffer's version moved since its last render (see <see cref="RenderBuffer"/>). Ctrl+Z and Ctrl+Y undo
 /// and redo the buffer in view mode; in edit mode the editor's own keys do it.
 /// </para>
 /// <para>
 /// <b>Messages.</b> A message stays for <see cref="MessageDuration"/> or until the next key, whichever is first. The delay runs through
 /// the scheduler, so tests drive the expiry.
+/// </para>
+/// <para>
+/// <b>Saving.</b> Ctrl+S in either mode writes the buffer's text to the file (see <see cref="DocumentController.SaveFlow"/>). A file that
+/// changed on disk asks Overwrite, Reload or Cancel first. Quitting and Ctrl+O ask Save, Discard or Cancel when the document is dirty, and a
+/// failed save keeps the window open. A new file is dirty until its first save, and its first successful save calls the first-save action.
+/// </para>
+/// <para>
+/// <b>External changes.</b> A timer checks the file once a second while the window runs (see <see cref="CheckExternalChange"/>). The check waits
+/// while a dialog, the context menu, the picker or a save or close flow is up, and is then done as soon as they close. A deleted file that the
+/// user closes stops the window with <see cref="ReturnToPicker"/> set.
 /// </para>
 /// </remarks>
 internal sealed class MainWindow : Window, ISearchHost
@@ -54,12 +66,32 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The message after a large file opened in edit mode.</summary>
     internal const string LargeFileOpened = "Large file: opened as text";
 
+    /// <summary>How often the window checks its file for a change on disk while it runs (see <see cref="CheckExternalChange"/>).</summary>
+    internal static readonly TimeSpan ExternalCheckInterval = TimeSpan.FromSeconds(1);
+
+    /// <summary>The message after a save.</summary>
+    internal const string Saved = "Saved";
+
+    /// <summary>The message after the text was replaced by the file's text, by a reload from a save or from a change on disk.</summary>
+    internal const string Reloaded = "Reloaded";
+
+    /// <summary>The message after the user kept the text over a changed file: the next save overwrites the file.</summary>
+    internal const string KeptMine = "Kept your changes; Ctrl+S overwrites the file";
+
+    /// <summary>The message after the user kept the text over a deleted file: the next save creates the file.</summary>
+    internal const string KeptDeleted = "The file was deleted on disk";
+
+    /// <summary>The message after a file changed on disk was reloaded, when there was undo history to go back to.</summary>
+    internal const string ReloadedFromDisk = "Reloaded: the file changed on disk";
+
     // The title of the question that a large file's view render asks first.
     private const string LargeFileTitle = "Large file";
 
     private readonly Func<(PickOutcome Outcome, OpenedFile? File)> _pickFile;
     private readonly Func<TimeSpan, Action, Action> _schedule;
     private readonly OpenedFile _opened;
+    private readonly DocumentController _controller;
+    private readonly Action? _onFirstSave;
     private readonly long _largeFileBytes;
     private readonly FrameView _frame;
     private readonly RenderedView _view;
@@ -71,14 +103,20 @@ internal sealed class MainWindow : Window, ISearchHost
     private PopoverMenu? _menu;
     private Action? _cancelExpiry;
 
+    // The timer that calls CheckExternalChange. It runs from the window's start to its stop.
+    private object? _externalTimer;
+
     // True in edit mode, when the editor is shown instead of the view.
     private bool _editing;
 
     // The buffer's version that the view was rendered from, or -1 before the first render of a large file.
     private int _renderedVersion;
 
-    // True while the buffer's text differs from the text the file was read with.
+    // True while the document is dirty (see DocumentController.IsDirty), kept up to date by RefreshDirty.
     private bool _dirty;
+
+    // True while a save or close flow runs (see InFlow). The external check waits for it.
+    private bool _flowing;
 
     /// <summary>
     /// Creates the window over a file, with the view at the document's start.
@@ -92,17 +130,23 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <param name="largeFileBytes">
     /// The size above which the file opens in edit mode. Tests lower it; the application uses <see cref="LargeFileBytes"/>.
     /// </param>
+    /// <param name="onFirstSave">
+    /// Runs after the first successful save of a new file, when the host records the file in the recent list. Null for none.
+    /// </param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
     public MainWindow(
         OpenedFile file,
         Func<(PickOutcome Outcome, OpenedFile? File)> pickFile,
         Func<TimeSpan, Action, Action>? schedule = null,
-        long largeFileBytes = LargeFileBytes)
+        long largeFileBytes = LargeFileBytes,
+        Action? onFirstSave = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(pickFile);
 
         _opened = file;
+        _controller = new DocumentController(file.File);
+        _onFirstSave = onFirstSave;
         _pickFile = pickFile;
         _schedule = schedule ?? ScheduleOnApp;
         _largeFileBytes = largeFileBytes;
@@ -155,20 +199,26 @@ internal sealed class MainWindow : Window, ISearchHost
         };
         _editor.KeyPressed += ClearMessage;
 
+        // A new file (one that does not exist yet) opens in edit mode, as does a large file, which says so.
+        bool editing = large || !file.File.Exists;
         _renderedVersion = large ? -1 : _editor.Version;
-        if (large)
+        if (editing)
         {
             _editing = true;
             _view.Visible = false;
             _editor.Visible = true;
             _editor.SetFocus();
-            ShowMessage(LargeFileOpened, error: false);
+            if (large)
+            {
+                ShowMessage(LargeFileOpened, error: false);
+            }
         }
         else
         {
             _view.SetFocus();
         }
 
+        _dirty = _controller.IsDirty(_editor.Buffer.Text);
         UpdateTitle();
         ShowHints();
         ShowStatus();
@@ -207,6 +257,12 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>True once the window has stopped because of a quit or a switch.</summary>
     internal bool Stopped { get; private set; }
 
+    /// <summary>
+    /// True when the window stopped because the file it showed was deleted and the user closed it: the host then shows the recent-files
+    /// picker, as at startup, instead of a document.
+    /// </summary>
+    internal bool ReturnToPicker { get; private set; }
+
     /// <summary>The name of the file, as the frame's title shows it.</summary>
     private string FileName => Path.GetFileName(_opened.Path);
 
@@ -236,6 +292,12 @@ internal sealed class MainWindow : Window, ISearchHost
         if (key == Key.T.WithCtrl)
         {
             ToggleMode();
+            return true;
+        }
+
+        if (key == Key.S.WithCtrl)
+        {
+            Save();
             return true;
         }
 
@@ -391,9 +453,12 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>Called after each change of the buffer: the dirty state and the title follow the text.</summary>
-    private void OnBufferChanged()
+    private void OnBufferChanged() => RefreshDirty();
+
+    /// <summary>Recomputes the dirty state from the buffer and the file, and updates the title.</summary>
+    private void RefreshDirty()
     {
-        _dirty = _editor.Buffer.Text != _opened.File.Text.Text;
+        _dirty = _controller.IsDirty(_editor.Buffer.Text);
         UpdateTitle();
     }
 
@@ -528,6 +593,7 @@ internal sealed class MainWindow : Window, ISearchHost
     {
         if (disposing)
         {
+            StopExternalTimer();
             DisposeMenu();
         }
 
@@ -638,20 +704,313 @@ internal sealed class MainWindow : Window, ISearchHost
         _message.ClearMessage();
     }
 
-    private void Quit() => Stop();
+    // ----- Quit and switch -----
 
+    /// <summary>Ctrl+Q: the document closes when the unsaved-changes flow lets it, and the window stops.</summary>
+    private void Quit()
+    {
+        if (CloseOrKeep("Quit") == CloseOutcome.Closed)
+        {
+            Stop();
+        }
+    }
+
+    /// <summary>
+    /// Ctrl+O: the picker is shown, and a file chosen there replaces the document once the unsaved-changes flow lets the document close. A
+    /// quit in the picker quits the application.
+    /// </summary>
     private void OpenPicker()
     {
         (PickOutcome outcome, OpenedFile? file) = _pickFile();
         switch (outcome)
         {
             case PickOutcome.Chosen when file is not null:
-                SwitchTo = file;
-                Stop();
+                if (CloseOrKeep("Open") == CloseOutcome.Closed)
+                {
+                    SwitchTo = file;
+                    Stop();
+                }
+
                 break;
             case PickOutcome.Quit:
                 Quit();
                 break;
+        }
+    }
+
+    /// <summary>
+    /// The unsaved-changes flow of a quit or a switch: Closed means the document may be left. Otherwise the window stays, and a reload or a
+    /// failed save is shown. A new file that the flow saves is recorded in the recent list, as a save from the window is.
+    /// </summary>
+    /// <param name="action">The title of the question: what the user started.</param>
+    private CloseOutcome CloseOrKeep(string action)
+    {
+        bool wasNew = !_opened.File.Exists;
+        CloseResult result = InFlow(() => _controller.CloseFlow(_editor.Buffer.Text, () => AskUnsaved(action), AskExternalChange));
+        RefreshDirty();
+        switch (result.Outcome)
+        {
+            case CloseOutcome.Closed when wasNew && _opened.File.Exists:
+                _onFirstSave?.Invoke();
+                break;
+            case CloseOutcome.Reloaded:
+                ReplaceBufferWithFile();
+                ShowMessage(Reloaded, error: false);
+                break;
+            case CloseOutcome.Failed:
+                ShowMessage(result.Error ?? "the file cannot be saved", error: true);
+                break;
+        }
+
+        return result.Outcome;
+    }
+
+    /// <summary>The question of the unsaved-changes flow. Save is the default, and Esc cancels.</summary>
+    private UnsavedChoice AskUnsaved(string action)
+    {
+        int? choice = Confirm.Choose(Ui, action, $"Save changes to {FileName}?", "Save", "Discard", "Cancel");
+        return choice switch
+        {
+            0 => UnsavedChoice.Save,
+            1 => UnsavedChoice.Discard,
+            _ => UnsavedChoice.Cancel,
+        };
+    }
+
+    // ----- Save -----
+
+    /// <summary>
+    /// Ctrl+S: writes the text to the file, after the question about a change on disk. The result is shown; a first save of a new file calls
+    /// the first-save action.
+    /// </summary>
+    private void Save()
+    {
+        bool wasNew = !_opened.File.Exists;
+        SaveResult result = InFlow(() => _controller.SaveFlow(_editor.Buffer.Text, AskExternalChange));
+        RefreshDirty();
+        switch (result.Outcome)
+        {
+            case SaveOutcome.Saved:
+                if (wasNew)
+                {
+                    _onFirstSave?.Invoke();
+                }
+
+                ShowMessage(Saved, error: false);
+                break;
+            case SaveOutcome.Reloaded:
+                ReplaceBufferWithFile();
+                ShowMessage(Reloaded, error: false);
+                break;
+            case SaveOutcome.Failed:
+                ShowMessage(result.Error ?? "the file cannot be saved", error: true);
+                break;
+        }
+    }
+
+    /// <summary>The question for a file that changed on disk before a save. Overwrite is the default, and Esc cancels.</summary>
+    private ExternalChangeChoice AskExternalChange()
+    {
+        int? choice = Confirm.Choose(
+            Ui,
+            "Save",
+            $"{FileName} changed on disk since it was opened. Overwrite it, reload it, or cancel?",
+            "Overwrite",
+            "Reload",
+            "Cancel");
+        return choice switch
+        {
+            0 => ExternalChangeChoice.Overwrite,
+            1 => ExternalChangeChoice.Reload,
+            _ => ExternalChangeChoice.Cancel,
+        };
+    }
+
+    // ----- Text and file -----
+
+    /// <summary>
+    /// Replaces the buffer's text with the file's text, as one undo step: only the part that differs is replaced, so the caret, the selection
+    /// and the folds (which are anchors in the buffer) keep their offsets where the text around them did not change. In view mode the view is
+    /// rendered from the new text now; in edit mode it is rendered when the view is shown again. Returns true when the undo history had steps.
+    /// </summary>
+    private bool ReplaceBufferWithFile()
+    {
+        TextDocument buffer = _editor.Buffer;
+        bool hadHistory = buffer.UndoStack.CanUndo;
+        string current = buffer.Text;
+        string target = _opened.File.Text.Text;
+        (int start, int removed, string inserted) = DiffMiddle(current, target);
+
+        buffer.UndoStack.StartUndoGroup();
+        try
+        {
+            if (removed > 0 || inserted.Length > 0)
+            {
+                buffer.Replace(start, removed, inserted);
+            }
+        }
+        finally
+        {
+            buffer.UndoStack.EndUndoGroup();
+        }
+
+        if (!_editing)
+        {
+            RenderBuffer();
+        }
+
+        RefreshDirty();
+        ShowStatus();
+        return hadHistory;
+    }
+
+    /// <summary>
+    /// The one replacement that turns <paramref name="current"/> into <paramref name="target"/>: the text before and after the first and last
+    /// difference is kept, so the rest of the text does not move. A surrogate pair is never split.
+    /// </summary>
+    /// <returns>The offset of the replacement, how many characters it removes, and the text it inserts.</returns>
+    internal static (int Start, int Removed, string Inserted) DiffMiddle(string current, string target)
+    {
+        int shorter = Math.Min(current.Length, target.Length);
+        int prefix = 0;
+        while (prefix < shorter && current[prefix] == target[prefix])
+        {
+            prefix++;
+        }
+
+        if (prefix > 0 && prefix < current.Length && char.IsHighSurrogate(current[prefix - 1]))
+        {
+            prefix--;
+        }
+
+        int suffix = 0;
+        while (suffix < shorter - prefix && current[^(suffix + 1)] == target[^(suffix + 1)])
+        {
+            suffix++;
+        }
+
+        if (suffix > 0 && char.IsLowSurrogate(current[^suffix]))
+        {
+            suffix--;
+        }
+
+        int removed = current.Length - prefix - suffix;
+        string inserted = target.Substring(prefix, target.Length - prefix - suffix);
+        return (prefix, removed, inserted);
+    }
+
+    // ----- External changes -----
+
+    /// <summary>
+    /// Checks the file for a change on disk, as the timer does, and shows what the controller did. A check that is not idle is skipped
+    /// without reading the file, so the change is seen by a later check.
+    /// </summary>
+    internal void CheckExternalChange()
+    {
+        if (Stopped || !IsIdle)
+        {
+            return;
+        }
+
+        ExternalResult result = _controller.CheckExternal(() => _dirty, AskReloadOverMine, AskKeepDeleted);
+        switch (result.Outcome)
+        {
+            case ExternalOutcome.Reloaded:
+                bool hadHistory = ReplaceBufferWithFile();
+                if (hadHistory)
+                {
+                    ShowMessage(ReloadedFromDisk, error: false);
+                }
+
+                break;
+            case ExternalOutcome.KeptMine:
+                RefreshDirty();
+                ShowMessage(KeptMine, error: false);
+                break;
+            case ExternalOutcome.KeptDeleted:
+                RefreshDirty();
+                ShowMessage(KeptDeleted, error: false);
+                break;
+            case ExternalOutcome.Close:
+                ReturnToPicker = true;
+                Stop();
+                break;
+            case ExternalOutcome.Failed:
+                RefreshDirty();
+                ShowMessage(result.Error ?? "the file cannot be read", error: true);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// True when no save or close flow runs, no dialog, picker or context menu is open, and this window is the application's top runnable.
+    /// A dialog or the picker is a runnable on top of it, so none of them is interrupted by a reload.
+    /// </summary>
+    private bool IsIdle => !_flowing && _menu is not { Visible: true } && App?.TopRunnableView == this;
+
+    /// <summary>Runs a save or close flow, with the external check held off while it runs.</summary>
+    private T InFlow<T>(Func<T> flow)
+    {
+        _flowing = true;
+        try
+        {
+            return flow();
+        }
+        finally
+        {
+            _flowing = false;
+        }
+    }
+
+    /// <summary>The question for a file changed on disk while the document is dirty. Keep mine is the default; true means Reload.</summary>
+    private bool AskReloadOverMine()
+    {
+        int? choice = Confirm.Choose(Ui, "Changed on disk", $"{FileName} changed on disk. Reload it or keep your changes?", "Keep mine", "Reload");
+        return choice == 1;
+    }
+
+    /// <summary>The question for a deleted or moved file. Keep is the default; true means Keep.</summary>
+    private bool AskKeepDeleted()
+    {
+        string message = $"{FileName} was deleted or moved on disk.";
+        if (_dirty)
+        {
+            message += " Close discards your unsaved changes.";
+        }
+
+        return Confirm.Choose(Ui, "Deleted on disk", message, "Keep", "Close") != 1;
+    }
+
+    // The timer runs while the window runs: it starts when the window starts running and stops when it stops.
+    protected override void OnIsRunningChanged(bool newIsRunning)
+    {
+        base.OnIsRunningChanged(newIsRunning);
+        if (newIsRunning)
+        {
+            _externalTimer = App?.AddTimeout(ExternalCheckInterval, OnExternalTick);
+            return;
+        }
+
+        StopExternalTimer();
+    }
+
+    private bool OnExternalTick()
+    {
+        if (Stopped)
+        {
+            return false;
+        }
+
+        CheckExternalChange();
+        return true;
+    }
+
+    private void StopExternalTimer()
+    {
+        if (_externalTimer is not null)
+        {
+            App?.RemoveTimeout(_externalTimer);
+            _externalTimer = null;
         }
     }
 

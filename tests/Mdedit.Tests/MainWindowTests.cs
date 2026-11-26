@@ -53,8 +53,8 @@ public sealed partial class MainWindowTests : IDisposable
 
         TerminalScreen screen = Run(file, 40, 12).Screens[0];
 
-        // At 40 columns the row is cut after Space F; the cut hint keeps its first characters and the quit key stays at the right.
-        Assert.Equal(Status("^T Edit  / Find  y Copy  Space F…", "^Q Quit"), screen.Text(11));
+        // At 40 columns the row is cut after Copy; the cut hint keeps its first characters and the quit key stays at the right.
+        Assert.Equal(Status("^T Edit  ^S Save  / Find  y Copy…", "^Q Quit"), screen.Text(11));
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed partial class MainWindowTests : IDisposable
 
         TerminalScreen screen = Run(file, 80, 12).Screens[0];
 
-        string left = "^T Edit  / Find  y Copy  Space Fold  ^O Open";
+        string left = "^T Edit  ^S Save  / Find  y Copy  Space Fold  ^O Open";
         Assert.Equal(left + new string(' ', 80 - left.Length - "^Q Quit".Length) + "^Q Quit", screen.Text(11));
     }
 

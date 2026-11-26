@@ -2,8 +2,8 @@
 
 A terminal viewer and editor for Markdown files. It shows the file rendered: headings, lists, quotes, tables, code blocks
 and links look as they will read, and the source is one key away (Ctrl+T), in the same window with the same undo history.
-You move a cursor through the rendered text, select, search and copy, and you edit the source. Saving to disk is not
-built yet: edits stay in memory until the file is saved.
+You move a cursor through the rendered text, select, search and copy, and you edit the source. Ctrl+S saves the file, and
+Ctrl+Q and Ctrl+O ask before they leave unsaved changes (see Saving).
 
 Runs on Linux and Windows. Built from this repository alongside cmdr; see the main [README](../README.md#install) for the .NET 10
 SDK and the Terminal.Gui submodule.
@@ -23,9 +23,10 @@ mdedit
 mdedit --version
 ```
 
-`mdedit <file>` opens the file. `mdedit` alone shows the recently used files: Enter opens the selected one, a number
-selects by position, Ctrl+O opens a file through a file dialog, and Ctrl+Q quits. A file that cannot be read is reported
-as `mdedit: <path>: <message>` and mdedit exits with status 1; a usage error exits with status 2.
+`mdedit <file>` opens the file. A path that does not exist asks to create it (see New files). `mdedit` alone shows the
+recently used files: Enter opens the selected one, a number selects by position, Ctrl+O opens a file through a file dialog,
+and Ctrl+Q quits. A file that cannot be read is reported as `mdedit: <path>: <message>` and mdedit exits with status 1; a
+usage error exits with status 2.
 
 Every file opened is remembered in `%LOCALAPPDATA%\mdedit\recent.json` on Windows and `~/.local/share/mdedit/recent.json`
 on Linux (`$XDG_DATA_HOME/mdedit/recent.json` when set).
@@ -69,6 +70,7 @@ or until the next key. The last line lists the main keys.
 | `<` / `>` | In a table, scroll the table by eight columns to the left / right (see Tables) |
 | Shift+F10 | Open the menu at the cursor |
 | Ctrl+T | Edit mode, with the caret on the source character under the view's caret (see Edit mode) |
+| Ctrl+S | Save the file (see Saving) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the source, in either mode (see Edit mode) |
 | Esc | Close the search bar |
 | Ctrl+O | Open another file |
@@ -145,12 +147,13 @@ own line ending (a CRLF file gets CRLF).
 | `/` | Types a slash (in view mode it opens the search) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the editor's history |
 | Ctrl+F | Nothing yet: search in the source comes later |
+| Ctrl+S | Save the file (see Saving) |
 | Ctrl+Q, Ctrl+O | As in view mode |
 
 - **One history.** Undo and redo in view mode (Ctrl+Z / Ctrl+Y) undo the same history, and the view is rendered again. The
   caret goes to where the change was: where the removed text was, or after the restored text.
 - **Title.** The file name, then ` *` while the text differs from the file as it was read, then ` [edit]` in edit mode.
-- **Hints.** View mode shows `^T Edit` first. Edit mode shows `^T View`, `Alt+Z Wrap` and `^Q Quit`.
+- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `Alt+Z Wrap` and `^Q Quit`.
 - **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
   above it, and a table keeps its scroll.
 - **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
@@ -158,6 +161,46 @@ own line ending (a CRLF file gets CRLF).
 - **Large files.** A file over 2 MB on disk opens in edit mode, with `Large file: opened as text`. Ctrl+T to view mode asks
   `Render <n> MB?` (Render is the default) when the view has to be rendered: rendering the whole text takes time. Cancel
   stays in edit mode.
+
+## Saving
+
+Ctrl+S, in view mode or in edit mode, writes the text to the file in place, keeping its permissions and owner. Only the text
+changes on disk: a CRLF file is written with CRLF, and a file that began with a byte order mark keeps it.
+
+The title shows ` *` while the text differs from the file as it was read or last saved. A new file is marked until its first
+save.
+
+If the file was changed by someone else since it was read or last saved, Ctrl+S asks whether to overwrite it, reload it, or
+cancel. Overwrite is the default. Reload replaces the text with the file's text as one undo step, so Ctrl+Z goes back to the
+text before the reload, and it writes nothing. Cancel saves nothing.
+
+Ctrl+Q, and Ctrl+O once a file is chosen from the picker, ask "Save changes to <name>?" with Save, Discard and Cancel when the
+document has unsaved changes. Save is the default. A save that fails keeps the window open, with the error on the message
+line; Cancel keeps it open too, and Discard leaves it without saving.
+
+## New files
+
+`mdedit <path>` for a path that does not exist asks "Create <name>?" with Create and Cancel. Create opens an empty document in
+edit mode. Nothing is written until the first Ctrl+S, which creates the file. The folder must exist; a save into a folder that
+does not exist shows the error and writes nothing. The file is added to the recent list after its first successful save.
+Cancel exits without creating anything.
+
+## Changes on disk while it is open
+
+mdedit checks the file once a second, so a change made by another program shows up without a save. A change to a file with
+no unsaved edits reloads it. The reload is an undo step: Ctrl+Z goes back to the text before it, and a message says the file
+was reloaded (there is no message when there was nothing to undo). The caret, the selection and the folds stay where the text
+around them did not change.
+
+A change to a file with unsaved edits asks whether to reload it or keep your changes; the default is Keep mine. Reloading
+keeps your edits as an undo step. Keep mine leaves your document as it is, and Ctrl+S then overwrites the file without
+asking again. The document stays marked unsaved while it differs from the file on disk, even if you undo all your edits.
+
+If the file is deleted or moved, mdedit asks whether to keep the document, which then becomes an unsaved new file that Ctrl+S
+creates again, or to close it. Close discards unsaved changes and returns to the recent-files picker.
+
+The check waits while a dialog, the context menu or the picker is open, and is done as soon as they close. A file that cannot
+be read is reported once on the message line, and not again until the file changes state.
 
 ## Folding
 

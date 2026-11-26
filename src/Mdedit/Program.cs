@@ -7,18 +7,27 @@ namespace Mdedit;
 internal static class Program
 {
     private static int Main(string[] args) =>
-        Run(args, Console.Out, Console.Error, MdeditHost.RunPicker, (file, recent) => MdeditHost.Run(file, recent), LoadRecent);
+        Run(
+            args,
+            Console.Out,
+            Console.Error,
+            MdeditHost.RunPicker,
+            (file, recent) => MdeditHost.Run(file, recent),
+            (path, loadRecent) => MdeditHost.RunNew(path, loadRecent),
+            LoadRecent);
 
     /// <summary>
     /// Runs the command line. With no arguments, <paramref name="showPicker"/> is given the recent list (null when there is no store)
-    /// and shows the picker. With a file, the file is loaded, recorded in the recent list, and <paramref name="runDocument"/> runs its
-    /// window. A file that does not load is reported on <paramref name="stderr"/> and the window is not run. Returns the process exit code.
+    /// and shows the picker. With a path that does not exist, <paramref name="runNew"/> runs the new-file flow for it. With a file, the file
+    /// is loaded, recorded in the recent list, and <paramref name="runDocument"/> runs its window. A file that does not load is reported on
+    /// <paramref name="stderr"/> and the window is not run. Returns the process exit code.
     /// </summary>
     /// <param name="args">The arguments.</param>
     /// <param name="stdout">Receives the version.</param>
     /// <param name="stderr">Receives the usage and the load errors.</param>
     /// <param name="showPicker">Shows the picker over the given recent list.</param>
     /// <param name="runDocument">Runs the window of a loaded file, with the recent list that Ctrl+O picks from.</param>
+    /// <param name="runNew">Runs the new-file flow for a path that does not exist, with the loader of the recent list.</param>
     /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
     internal static int Run(
         string[] args,
@@ -26,6 +35,7 @@ internal static class Program
         TextWriter stderr,
         Action<RecentFiles?> showPicker,
         Action<OpenedFile, RecentFiles?> runDocument,
+        Action<string, Func<RecentFiles?>> runNew,
         Func<RecentFiles?> loadRecent)
     {
         if (args is ["--version"])
@@ -43,6 +53,12 @@ internal static class Program
         if (!TryParseArguments(args, out string? path))
         {
             return Usage(stderr);
+        }
+
+        if (MdeditHost.Missing(path!))
+        {
+            runNew(path!, loadRecent);
+            return 0;
         }
 
         OpenedFile file;

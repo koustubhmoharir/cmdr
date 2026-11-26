@@ -1,3 +1,4 @@
+using System.Text;
 using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
@@ -6,9 +7,9 @@ using Terminal.Gui.Views;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// Opens files and runs the Terminal.Gui application: the viewer of a document, or the recent-files picker first. Ctrl+O in the viewer
-/// shows the picker over the document, and a file chosen there replaces it in the same application. The terminal is released on every
-/// exit path.
+/// Opens files and runs the Terminal.Gui application: the viewer of a document, the new-file flow for a path that does not exist, or the
+/// recent-files picker first. Ctrl+O in the viewer shows the picker over the document, and a file chosen there replaces it in the same
+/// application. The terminal is released on every exit path.
 /// </summary>
 internal static class MdeditHost
 {
@@ -63,6 +64,76 @@ internal static class MdeditHost
             app.Dispose();
         }
     }
+
+    /// <summary>
+    /// The new-file flow for a path that does not exist: asks "Create &lt;name&gt;?" (Cancel creates nothing), then opens the window on an
+    /// unsaved empty document in edit mode. The path is recorded in the recent list after the window's first successful save.
+    /// </summary>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
+    public static void RunNew(string path, Func<RecentFiles?> loadRecent)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(loadRecent);
+
+        IApplication app = Application.Create();
+        try
+        {
+            app.Init();
+            NewFileFlow(app, path, loadRecent);
+        }
+        finally
+        {
+            app.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The new-file flow in a running application: the question of <see cref="AskNewFile"/>, then the window of the unsaved document. Nothing is
+    /// created until the window's first save.
+    /// </summary>
+    /// <param name="app">The initialised application.</param>
+    /// <param name="path">The path of the file to create.</param>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    internal static void NewFileFlow(IApplication app, string path, Func<RecentFiles?> loadRecent)
+    {
+        if (!AskNewFile(app, path))
+        {
+            return;
+        }
+
+        var file = new OpenedFile(path, TextFile.CreateNew(path, SourceText.Create(string.Empty, Utf8WithoutBom, hasBom: false)));
+        OpenedFile? next = RunDocument(app, file, loadRecent(), RecordOnFirstSave(path, loadRecent));
+        if (next is not null)
+        {
+            RunDocuments(next, following => RunDocument(app, following, loadRecent(), onFirstSave: null));
+        }
+    }
+
+    /// <summary>The question for a path that does not exist: "Create &lt;name&gt;?" with Create as the default. True for Create.</summary>
+    /// <param name="app">The running application.</param>
+    /// <param name="path">The path of the file to create.</param>
+    internal static bool AskNewFile(IApplication app, string path) =>
+        Confirm.Choose(app, "New file", $"Create {System.IO.Path.GetFileName(path)}?", "Create", "Cancel") == 0;
+
+    /// <summary>
+    /// True when the path names neither a file nor a folder. The command line starts the new-file flow for it instead of the viewer.
+    /// </summary>
+    /// <param name="path">The path given on the command line.</param>
+    internal static bool Missing(string path)
+    {
+        string full = System.IO.Path.GetFullPath(path);
+        return !File.Exists(full) && !Directory.Exists(full);
+    }
+
+    /// <summary>The action that records a new file in the recent list, for the window's first successful save.</summary>
+    /// <param name="path">The file to record.</param>
+    /// <param name="loadRecent">Loads the recent list, or returns null when there is no store.</param>
+    internal static Action RecordOnFirstSave(string path, Func<RecentFiles?> loadRecent) => () => RecordRecent(loadRecent, path);
+
+    // UTF-8 without a byte order mark: the encoding of a new file.
+    private static Encoding Utf8WithoutBom { get; } = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>
     /// Runs documents one after another: <paramref name="runDocument"/> runs the viewer of a document and returns the file chosen
@@ -158,17 +229,20 @@ internal static class MdeditHost
         return recent;
     }
 
-    // Shows the document's viewer, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null.
-    private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent)
+    // Shows the document's viewer, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null. When the file
+    // was deleted and the window closed (see MainWindow.ReturnToPicker), the recent-files picker is shown as at startup instead.
+    private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent, Action? onFirstSave = null)
     {
+        bool returnToPicker;
         OpenedFile? next;
-        using (var window = new MainWindow(file, () => ShowPicker(app, recent)))
+        using (var window = new MainWindow(file, () => ShowPicker(app, recent), onFirstSave: onFirstSave))
         {
             app.Run(window);
+            returnToPicker = window.ReturnToPicker;
             next = window.SwitchTo;
         }
 
-        return next;
+        return returnToPicker ? StartPicker(app, recent) : next;
     }
 
     // The recent-files picker, as the application starts with it. Returns the file chosen, or null when the user quits it.
