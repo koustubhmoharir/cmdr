@@ -69,7 +69,7 @@ The first version is M0–M3.
 - [x] The recent-files picker says "files" (and its load-error box "Open file"). (bb5263a)
 - [x] A folded code block is a caret stop, so the keyboard can unfold it. (bb5263a)
 - [x] A two-column fold gutter in the view, so fold glyphs never line up with text. (ea9f36b)
-- [x] Folding in edit mode: the editor's fold gutter, the `… n lines` summary, Alt+F. (this commit)
+- [x] Folding in edit mode: the editor's fold gutter, the `… n lines` summary, Alt+F. (591fd7f)
 
 ## Later
 
