@@ -59,8 +59,8 @@ The first version is M0–M3.
 - [x] Ctrl+T both ways keeping the cursor; Esc in edit mode. (7d5da4e)
 - [ ] Search in the source.
 - [ ] Editor folds sharing the view's fold state.
-- [ ] Save, unsaved-changes flow (quit, Ctrl+O), new-file flow (a path that does not exist), external-change check
-      (reload, Keep mine, deleted).
+- [x] Save, unsaved-changes flow (quit, Ctrl+O), new-file flow (a path that does not exist), external-change check
+      (reload, Keep mine, deleted). (3e1d609)
 - [x] Large files (over 2 MB) open in edit mode. (7d5da4e)
 - [ ] Windows acceptance pass. *(Windows)*
 

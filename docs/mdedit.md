@@ -142,18 +142,21 @@ own line ending (a CRLF file gets CRLF).
 
 | Key | |
 |---|---|
-| Ctrl+T, Esc | Back to view mode. The view is rendered again when the text changed. The caret goes to the rendered character of the source caret; when the caret is on markup that is not shown (`**`, `# `), the next visible character |
+| Ctrl+T, Esc | Back to view mode. The view is rendered again when the text changed. The caret goes to the rendered character of the source caret; when the caret is on markup that is not shown (`**`, `# `), the next visible character. Esc closes an open search first |
 | Alt+Z | Word wrap on / off (on at the start) |
 | `/` | Types a slash (in view mode it opens the search) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the editor's history |
-| Ctrl+F | Nothing yet: search in the source comes later |
+| Ctrl+F | Find in the source (the search bar, as in view mode). F3 / Shift+F3 go to the next / previous match, with the same wrap and no-match messages as view mode. Enter goes to the first match after the caret; the match is selected, with the caret at its start. Esc closes the bar, and the focus goes back to the editor |
 | Ctrl+S | Save the file (see Saving) |
 | Ctrl+Q, Ctrl+O | As in view mode |
 
 - **One history.** Undo and redo in view mode (Ctrl+Z / Ctrl+Y) undo the same history, and the view is rendered again. The
   caret goes to where the change was: where the removed text was, or after the restored text.
 - **Title.** The file name, then ` *` while the text differs from the file as it was read, then ` [edit]` in edit mode.
-- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `Alt+Z Wrap` and `^Q Quit`.
+- **Search.** The matches are the source text, markup included: `**b` finds the start of bold text. They follow the edits while
+  the bar is open. The search text carries over when the mode changes, and the active match does not: the bar closes when the
+  mode changes, and Ctrl+F, F3 or Shift+F3 in the other mode searches again with the same text.
+- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap` and `^Q Quit`.
 - **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
   above it, and a table keeps its scroll.
 - **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
@@ -218,6 +221,12 @@ number of its code lines. Unfolded headings show `▾`.
 
 Folding keeps the caret's row on the screen when the fold is above it. Search unfolds what hides a match before it selects
 the match, and the search still finds text in folded content. Folds stay when the window is resized.
+
+**Edit mode.** The editor shows the same folds: a folded section shows only its heading line, and a folded code block shows
+its fence line. Edit mode has no fold keys and no fold gutter (Space types a space), so folds are changed in view mode, and
+the editor shows them when it is entered. Typing keeps a fold while its heading or fence line keeps its start, as in view
+mode. The editor's folds are brought up to date a moment after a change that is not only letters (a space, a marker, a
+line break), and before the view is shown again.
 
 With the mouse, a click on a `▾` or `▸` glyph, or on a `… n lines` summary, folds or unfolds that unit, and the right-click
 menu has Fold or Unfold for the unit at the mouse.

@@ -109,6 +109,37 @@ internal sealed partial class RenderedView
         _shiftHandles = TrackKeys(_shift.Keys, _shiftHandles);
     }
 
+    /// <summary>
+    /// The start offsets of the folded units, in the text the view holds. The editor reads them when it is entered, and they are the keys of
+    /// <see cref="SetFoldedStarts"/>.
+    /// </summary>
+    internal IReadOnlyCollection<int> FoldedStarts => _folded;
+
+    /// <summary>
+    /// Replaces the fold state with the given units, by their start offsets in the current text (the editor's text, which the view may not
+    /// show yet). The tracked positions are reused where they are still at a start, so that the state follows the text as
+    /// <see cref="SetDocument"/> does. No layout is rebuilt here: the next <see cref="SetDocument"/> does it.
+    /// </summary>
+    /// <param name="starts">The start offsets of the folded units.</param>
+    internal void SetFoldedStarts(IEnumerable<int> starts)
+    {
+        ArgumentNullException.ThrowIfNull(starts);
+
+        var folded = starts.ToHashSet();
+        var live = new Dictionary<int, ITrackedOffset>();
+        foreach (ITrackedOffset handle in _foldHandles.Values)
+        {
+            if (!handle.IsDeleted)
+            {
+                live.TryAdd(handle.Offset, handle);
+            }
+        }
+
+        _folded.Clear();
+        _folded.UnionWith(folded);
+        _foldHandles = folded.ToDictionary(start => start, start => live.TryGetValue(start, out ITrackedOffset? handle) ? handle : _tracker.Track(start));
+    }
+
     /// <summary>Returns the positions for a set of keys: the existing position of each key that has one, else a new one at the key.</summary>
     /// <param name="keys">The keys, which are offsets of the current document.</param>
     /// <param name="existing">The positions so far, by key.</param>

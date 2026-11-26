@@ -121,10 +121,8 @@ public sealed class SourceEditorTests
     }
 
     [Fact]
-    public void PlaceCaret_with_the_caret_before_the_anchor_selects_the_range_with_the_caret_at_its_end()
+    public void PlaceCaret_with_the_caret_before_the_anchor_selects_the_range_with_the_caret_at_its_start()
     {
-        // The editor sets its caret to the end of a selected range and clears a selection when its caret is set, so a backward
-        // selection keeps the caret at the end (see PlaceCaret).
         var editor = new SourceEditor { Text = "0123456789" };
 
         editor.PlaceCaret(3, 7);
@@ -132,8 +130,8 @@ public sealed class SourceEditorTests
         Assert.True(editor.HasSelection);
         Assert.Equal(3, editor.SelectionStart);
         Assert.Equal(7, editor.SelectionEnd);
-        Assert.Equal(7, editor.CaretOffset);
-        Assert.Equal(3, editor.SelectionAnchor);
+        Assert.Equal(3, editor.CaretOffset);
+        Assert.Equal(7, editor.SelectionAnchor);
     }
 
     [Fact]

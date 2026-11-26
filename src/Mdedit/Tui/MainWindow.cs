@@ -81,6 +81,12 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The message after the user kept the text over a deleted file: the next save creates the file.</summary>
     internal const string KeptDeleted = "The file was deleted on disk";
 
+    /// <summary>
+    /// How long the editor's foldings wait after a change that may affect them: one update runs for a batch of changes (see
+    /// <see cref="ScheduleFoldUpdate"/>).
+    /// </summary>
+    internal static readonly TimeSpan FoldUpdateDelay = TimeSpan.FromMilliseconds(250);
+
     /// <summary>The message after a file changed on disk was reloaded, when there was undo history to go back to.</summary>
     internal const string ReloadedFromDisk = "Reloaded: the file changed on disk";
 
@@ -98,10 +104,14 @@ internal sealed class MainWindow : Window, ISearchHost
     private readonly SourceEditor _editor;
     private readonly MessageLine _message;
     private readonly HintsLine _hints;
-    private readonly ViewSearch _search;
+    private readonly EditorFolds _folds;
+    private readonly DocumentSearch _search;
     private ImmutableArray<OutlineEntry> _outline;
     private PopoverMenu? _menu;
     private Action? _cancelExpiry;
+
+    // The timer of the folds' update that is pending, or null (see ScheduleFoldUpdate).
+    private object? _foldTimer;
 
     // The timer that calls CheckExternalChange. It runs from the window's start to its stop.
     private object? _externalTimer;
@@ -175,7 +185,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
         _message = new MessageLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        _search = new ViewSearch(this, _view);
+        _folds = new EditorFolds(_editor, _view);
+        _folds.UpdateRequested += ScheduleFoldUpdate;
+        _search = new DocumentSearch(this, new ModeSearchTarget(_view, _editor, _folds, () => _editing));
 
         // The search bar sits above the message line. It is shown with the frame one row shorter (see ShowSearchBar).
         _search.Bar.X = 0;
@@ -208,6 +220,7 @@ internal sealed class MainWindow : Window, ISearchHost
             _view.Visible = false;
             _editor.Visible = true;
             _editor.SetFocus();
+            EnterEditFolds();
             if (large)
             {
                 ShowMessage(LargeFileOpened, error: false);
@@ -239,8 +252,8 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The message line, for the tests.</summary>
     internal MessageLine Message => _message;
 
-    /// <summary>The view search, for the tests.</summary>
-    internal ViewSearch Search => _search;
+    /// <summary>The search of the window, in both modes, for the tests.</summary>
+    internal DocumentSearch Search => _search;
 
     /// <summary>
     /// Writes a raw control sequence to the terminal: the OSC 52 of a copy. The application's driver by default; a test replaces it to
@@ -271,8 +284,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
-    /// both modes. In edit mode Esc returns to view mode and Ctrl+F does nothing yet. In view mode Esc is swallowed (or closes an open
-    /// search), Ctrl+Z and Ctrl+Y undo and redo, and the view's search and copy keys apply.
+    /// both modes. In edit mode Esc closes an open search or else returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see
+    /// <see cref="HandleEditKey"/>). In view mode Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and redo, and the view's
+    /// search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
@@ -336,18 +350,38 @@ internal sealed class MainWindow : Window, ISearchHost
     // ----- Modes -----
 
     /// <summary>
-    /// The keys of edit mode that the editor does not take: Esc returns to view mode, and Ctrl+F does nothing until the search in edit
-    /// mode is built, so that it does not open the view's search over the editor.
+    /// The keys of edit mode that the editor does not take. Esc closes an open search, and otherwise returns to view mode. Ctrl+F opens the
+    /// search with the focus in its field; F3 and Shift+F3 go to the next and previous match. <c>/</c>, <c>n</c> and <c>N</c> are text here.
     /// </summary>
     private bool HandleEditKey(Key key)
     {
         if (key == Key.Esc)
         {
-            ShowView();
+            if (_search.IsOpen)
+            {
+                _search.Close();
+            }
+            else
+            {
+                ShowView();
+            }
+
             return true;
         }
 
-        return key == Key.F.WithCtrl;
+        if (key == Key.F.WithCtrl)
+        {
+            _search.Open(focusBar: true);
+            return true;
+        }
+
+        if (key == Key.F3 || key == Key.F3.WithShift)
+        {
+            _search.Find(next: key == Key.F3);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Ctrl+T: edit mode from view mode, and view mode from edit mode.</summary>
@@ -374,6 +408,11 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        if (_renderedVersion != _editor.Version)
+        {
+            RenderBuffer();
+        }
+
         int offset = _view.CursorOffset;
         int? anchor = _view.SelectionAnchor;
         _search.Close();
@@ -381,6 +420,7 @@ internal sealed class MainWindow : Window, ISearchHost
         _view.Visible = false;
         _editor.Visible = true;
         _editor.SetFocus();
+        EnterEditFolds();
         _editor.PlaceCaret(offset, anchor);
         UpdateTitle();
         ShowHints();
@@ -389,8 +429,9 @@ internal sealed class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// Shows the view, rendered from the buffer when its text moved since the last render, with the cursor at the editor's caret and the
-    /// selection carried over. A large file that needs a render asks first, and stays in edit mode when the answer is no. The view keeps
-    /// the caret visible; it does not keep the caret's screen row, which the editor does not report.
+    /// selection carried over. The editor's folds are given to the view first, so the view shows the folds the editor has. A large file that
+    /// needs a render asks first, and stays in edit mode when the answer is no. The view keeps the caret visible; it does not keep the
+    /// caret's screen row, which the editor does not report.
     /// </summary>
     private void ShowView()
     {
@@ -405,11 +446,19 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
+        _search.Close();
         int offset = _editor.CaretOffset;
         int? anchor = _editor.SelectionAnchor;
+        CancelFoldTimer();
+        _folds.Update();
+        _folds.GiveViewState();
         if (rendering)
         {
             RenderBuffer();
+        }
+        else
+        {
+            _view.SetDocument(_view.Document);
         }
 
         _editing = false;
@@ -431,8 +480,64 @@ internal sealed class MainWindow : Window, ISearchHost
         RenderDocument document = RenderDocument.Parse(_editor.Buffer.Text, TextMateColorizer.Shared);
         _outline = Outline.Of(document);
         _view.SetDocument(document);
-        _search.OnDocumentChanged(document);
+        _search.Refresh();
         _renderedVersion = _editor.Version;
+    }
+
+    /// <summary>
+    /// Makes the editor's foldings those of the buffer's current text, with the view's folded units folded (see <see cref="EditorFolds"/>).
+    /// Any update that was pending is done now, since the view's state is taken from the foldings' starts.
+    /// </summary>
+    private void EnterEditFolds()
+    {
+        CancelFoldTimer();
+        _folds.Update();
+        _folds.TakeViewState();
+    }
+
+    /// <summary>
+    /// Asks for the folds' update after <see cref="FoldUpdateDelay"/>: the timer of a batch of changes is started by its first change, and later
+    /// changes of the batch join it. Without a running application (the window's construction) the update runs now.
+    /// </summary>
+    private void ScheduleFoldUpdate()
+    {
+        if (_foldTimer is not null)
+        {
+            return;
+        }
+
+        if (App is null)
+        {
+            FlushFolds();
+            return;
+        }
+
+        _foldTimer = App.AddTimeout(FoldUpdateDelay, () =>
+        {
+            _foldTimer = null;
+            FlushFolds();
+            return false;
+        });
+    }
+
+    /// <summary>Updates the folds from the buffer, and in edit mode gives the view the result.</summary>
+    private void FlushFolds()
+    {
+        _folds.Update();
+        if (_editing)
+        {
+            _folds.GiveViewState();
+        }
+    }
+
+    /// <summary>Stops the pending folds' update, if there is one, since the caller updates the folds itself.</summary>
+    private void CancelFoldTimer()
+    {
+        if (_foldTimer is { } timer)
+        {
+            App?.RemoveTimeout(timer);
+            _foldTimer = null;
+        }
     }
 
     /// <summary>
@@ -452,8 +557,17 @@ internal sealed class MainWindow : Window, ISearchHost
         ShowStatus();
     }
 
-    /// <summary>Called after each change of the buffer: the dirty state and the title follow the text.</summary>
-    private void OnBufferChanged() => RefreshDirty();
+    /// <summary>
+    /// Called after each change of the buffer: the dirty state and the title follow the text, and in edit mode an open search searches again.
+    /// </summary>
+    private void OnBufferChanged()
+    {
+        RefreshDirty();
+        if (_editing)
+        {
+            _search.Refresh();
+        }
+    }
 
     /// <summary>Recomputes the dirty state from the buffer and the file, and updates the title.</summary>
     private void RefreshDirty()
@@ -583,7 +697,17 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <inheritdoc/>
-    void ISearchHost.FocusView() => _view.SetFocus();
+    void ISearchHost.FocusDocument()
+    {
+        if (_editing)
+        {
+            _editor.SetFocus();
+        }
+        else
+        {
+            _view.SetFocus();
+        }
+    }
 
     /// <inheritdoc/>
     void ISearchHost.ShowMessage(string text, bool error) => ShowMessage(text, error);
@@ -594,6 +718,7 @@ internal sealed class MainWindow : Window, ISearchHost
         if (disposing)
         {
             StopExternalTimer();
+            CancelFoldTimer();
             DisposeMenu();
         }
 

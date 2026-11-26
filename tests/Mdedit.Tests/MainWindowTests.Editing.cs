@@ -227,7 +227,7 @@ public sealed partial class MainWindowTests
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl),
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl));
 
-        Assert.Equal(Status("^T View  ^S Save  Alt+Z Wrap", "^Q Quit"), session.Screens[1].Text(11));
+        Assert.Equal(Status("^T View  ^S Save  ^F Find  Alt+Z\u2026", "^Q Quit"), session.Screens[1].Text(11));
         Assert.Equal(Status("^T Edit  ^S Save  / Find  y Copy…", "^Q Quit"), session.Screens[^1].Text(11));
     }
 
@@ -252,21 +252,21 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void A_slash_types_in_edit_mode_and_Ctrl_F_opens_nothing()
+    public void A_slash_types_in_edit_mode_and_Ctrl_F_opens_the_search_bar()
     {
         OpenedFile file = Opened("notes.md", "Body.\n");
 
-        Session session = Run(
+        (string Text, bool Open, bool Field) state = default;
+        Run(
             file,
             40,
             12,
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl),
             (_, window) => window.NewKeyDownEvent(new Key('/')),
-            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl));
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
+            (_, window) => state = (window.Editor.Buffer.Text, window.Search.IsOpen, window.Search.Bar.HasFieldFocus));
 
-        Assert.Equal("/Body.\n", session.Window.Editor.Buffer.Text);
-        Assert.False(session.Window.Search.IsOpen);
-        Assert.False(session.Window.Search.Bar.Visible);
+        Assert.Equal(("/Body.\n", true, true), state);
     }
 
     [Fact]

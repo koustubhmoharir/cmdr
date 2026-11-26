@@ -25,12 +25,12 @@ internal static class MdeditHints
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
 
     /// <summary>
-    /// The key hints of edit mode: the view, the save and the word wrap, then the quit key at the right. Find is not bound in edit mode yet, so
-    /// it is not shown.
+    /// The key hints of edit mode: the view, the save, the find and the word wrap, then the quit key at the right.
     /// </summary>
     public static Hint Edit { get; } = KeyHints.Join(
         KeyHints.Bound(Key.T.WithCtrl, "^T View"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
+        KeyHints.Bound(Key.F.WithCtrl, "^F Find"),
         KeyHints.Bound(SourceEditor.WrapKey, "Alt+Z Wrap"));
 
     /// <summary>The quit key, shown at the right edge of the viewer's hints.</summary>

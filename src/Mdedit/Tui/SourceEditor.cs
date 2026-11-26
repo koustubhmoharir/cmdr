@@ -72,8 +72,8 @@ internal sealed class SourceEditor : TextArea
     /// <summary>
     /// Places the caret at an offset, with the selection from an anchor to it when the anchor is another offset (else no selection).
     /// Offsets are clamped to the text. The editor's caret setter clears a selection and its selection API sets the caret at the end of a
-    /// range, so a selection that runs backward (the caret before the anchor) is placed with the caret at its end, which is the editor's
-    /// only way to select a range; the anchor is then the selection's start.
+    /// range, so a selection that runs backward (the caret before the anchor) is placed with the caret at its end. <see cref="SelectMatch"/>
+    /// places the caret at the start of a range instead.
     /// </summary>
     /// <param name="offset">The caret's offset.</param>
     /// <param name="anchor">The offset the selection starts from, or null for none.</param>
@@ -83,12 +83,47 @@ internal sealed class SourceEditor : TextArea
         int caret = Math.Clamp(offset, 0, length);
         if (anchor is { } from && Math.Clamp(from, 0, length) is int start && start != caret)
         {
-            SelectRange(Math.Min(start, caret), Math.Abs(start - caret));
+            // SelectRange leaves the caret at the range's end, which is right for a forward selection; a backward one (the anchor after
+            // the caret) is extended backward from the anchor so that the caret ends where it was.
+            if (start < caret)
+            {
+                SelectRange(start, caret - start);
+            }
+            else
+            {
+                SelectMatch(caret, start);
+            }
+
             return;
         }
 
         ClearSelection();
         CaretOffset = caret;
+    }
+
+    /// <summary>
+    /// Selects a source range with the caret at its start, which is how a search match is shown. <c>SelectRange</c> puts the caret at the end,
+    /// and the editor has no public way to start a selection from its end, so the caret goes to the end and the selection is extended backward
+    /// with the editor's own Shift+Left, one grapheme at a time, until the caret is at the start. Offsets are clamped to the text.
+    /// </summary>
+    /// <param name="start">The first offset of the range.</param>
+    /// <param name="end">The offset after the range's last character; an end before the start selects nothing.</param>
+    public void SelectMatch(int start, int end)
+    {
+        int length = Buffer.TextLength;
+        int from = Math.Clamp(start, 0, length);
+        int to = Math.Clamp(end, from, length);
+        ClearSelection();
+        CaretOffset = to;
+        while (CaretOffset > from)
+        {
+            int before = CaretOffset;
+            NewKeyDownEvent(Key.CursorLeft.WithShift);
+            if (CaretOffset >= before)
+            {
+                break;
+            }
+        }
     }
 
     /// <summary>

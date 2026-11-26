@@ -369,6 +369,12 @@ offsets are kept the same way. Edit mode shows the same units as editor folds (`
 `RenderDocument.FoldUnits` on entering edit mode with the folded ones collapsed; folding or unfolding in the editor updates
 the anchors, so the state is shared both ways.
 
+Decisions (2026-11-26): `MarkdownFoldingStrategy` makes the editor's foldings (a section from the end of its heading's
+first line to the end of its last block, a code unit from the end of its fence line); they are brought up to date 250 ms
+after a batch of changes that is not only letters, and always before Ctrl+T shows the view. The fold gutter is off: with
+it, the editor's text sits two columns right of the view's. So folds are made in view mode and shown in the editor, and a
+change in the editor's foldings (none without the gutter, but the sync is in place) flows back to the view.
+
 ### Saving and closing
 
 - **Ctrl+S** in either mode: if `TextFile.ChangedOnDisk()`, Confirm "Changed on disk" Overwrite / Reload / Cancel (Overwrite

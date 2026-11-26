@@ -109,8 +109,8 @@ public sealed partial class MainWindowTests
         Assert.Equal(first, session.Window.View.SelectionRange!.Value.Start);
         Assert.Equal(new[] { second, first, second, first, second, first }, starts);
         // Screen k is the one after step k: the second n (5) and the first Shift+F3 (6) wrap, the others do not.
-        Assert.Equal(ViewSearch.Wrapped, session.Screens[5].Text(10));
-        Assert.Equal(ViewSearch.Wrapped, session.Screens[6].Text(10));
+        Assert.Equal(DocumentSearch.Wrapped, session.Screens[5].Text(10));
+        Assert.Equal(DocumentSearch.Wrapped, session.Screens[6].Text(10));
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed partial class MainWindowTests
             (_, window) => Type(window, "zzz"),
             (_, window) => window.NewKeyDownEvent(Key.Enter));
 
-        Assert.Equal(ViewSearch.NoMatches, session.Screens[^1].Text(10));
+        Assert.Equal(DocumentSearch.NoMatches, session.Screens[^1].Text(10));
         Assert.Empty(Highlighted(session.Screens[^1]));
     }
 
@@ -163,7 +163,7 @@ public sealed partial class MainWindowTests
             (_, window) => Type(window, "("));
 
         TerminalScreen screen = session.Screens[^1];
-        Assert.Contains(ViewSearch.InvalidPattern, screen.Text(BarRow), StringComparison.Ordinal);
+        Assert.Contains(DocumentSearch.InvalidPattern, screen.Text(BarRow), StringComparison.Ordinal);
         Assert.Empty(Highlighted(screen));
     }
 
