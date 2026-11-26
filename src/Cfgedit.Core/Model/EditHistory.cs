@@ -1,4 +1,4 @@
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Model;
 
@@ -22,7 +22,7 @@ public sealed class EditHistory
     {
         ArgumentNullException.ThrowIfNull(initial);
         Current = initial;
-        _saved = initial.Source.Encode();
+        _saved = CfgeditText.Encode(initial.Source);
     }
 
     /// <summary>The current document.</summary>
@@ -38,7 +38,7 @@ public sealed class EditHistory
     /// True when the current text differs from the text at the last <see cref="MarkSaved"/> (or the loaded text, or the reload).
     /// It compares the encoded bytes, so undoing back to the saved text is clean.
     /// </summary>
-    public bool IsDirty => !Current.Source.Encode().AsSpan().SequenceEqual(_saved);
+    public bool IsDirty => !CfgeditText.Encode(Current.Source).AsSpan().SequenceEqual(_saved);
 
     /// <summary>Applies an edit to the current document and records it as one undo step.</summary>
     /// <exception cref="CfgeditException">The edit is invalid or cannot be applied. The history is unchanged.</exception>
@@ -94,13 +94,13 @@ public sealed class EditHistory
         Current = document;
         _undo.Clear();
         _redo.Clear();
-        _saved = document.Source.Encode();
+        _saved = CfgeditText.Encode(document.Source);
     }
 
     /// <summary>Marks the current text as saved, so that <see cref="IsDirty"/> is false until the text changes again.</summary>
     public void MarkSaved()
     {
-        _saved = Current.Source.Encode();
+        _saved = CfgeditText.Encode(Current.Source);
     }
 
     /// <summary>
@@ -113,7 +113,7 @@ public sealed class EditHistory
     public void RecordExternal(ConfigDocument after, NodePath? focusBefore, NodePath? focusAfter)
     {
         ArgumentNullException.ThrowIfNull(after);
-        if (Current.Source.Encode().AsSpan().SequenceEqual(after.Source.Encode()))
+        if (CfgeditText.Encode(Current.Source).AsSpan().SequenceEqual(CfgeditText.Encode(after.Source)))
         {
             return;
         }

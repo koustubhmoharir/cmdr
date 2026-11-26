@@ -1,6 +1,6 @@
 using System.Globalization;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Yaml;
+using Shared.Core;
 
 namespace Cfgedit.Core.Model;
 

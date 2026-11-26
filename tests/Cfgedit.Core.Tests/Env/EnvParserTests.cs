@@ -1,6 +1,6 @@
 using System.Text;
 using Cfgedit.Core.Env;
-using Cfgedit.Core.Text;
+using Shared.Core;
 using static Cfgedit.Core.Tests.Env.EnvTestSupport;
 
 namespace Cfgedit.Core.Tests.Env;

@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Xml;
 

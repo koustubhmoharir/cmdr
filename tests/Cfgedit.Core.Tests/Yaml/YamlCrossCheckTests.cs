@@ -33,7 +33,7 @@ public sealed class YamlCrossCheckTests
         string text = "a: 1\nb: " + header + "\n  x";
         try
         {
-            new YamlFormat().Parse(Cfgedit.Core.Text.SourceText.Create(text, new System.Text.UTF8Encoding(false), hasBom: false));
+            new YamlFormat().Parse(Shared.Core.SourceText.Create(text, new System.Text.UTF8Encoding(false), hasBom: false));
         }
         catch (CfgeditException ex)
         {

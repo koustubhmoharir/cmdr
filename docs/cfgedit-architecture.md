@@ -5,7 +5,9 @@ design's "Engineering rules" apply throughout.
 
 ## Source text (M1)
 
-`Cfgedit.Core.Text.SourceText` is immutable. It is the single source of truth: every CST is computed from it, and every
+`SourceText` (in Shared.Core since 2026-11-26, so that mdedit can use it; it was `Cfgedit.Core.Text.SourceText`) is
+immutable. Its errors are `Shared.Core.TextFileException`s, which cfgedit turns into `CfgeditException`s with the same
+message, path and position through `Cfgedit.Core.CfgeditText`. It is the single source of truth: every CST is computed from it, and every
 edit produces a new SourceText.
 
 ```csharp
@@ -976,6 +978,10 @@ the encoded bytes.
 ### DocumentFile (Cfgedit.Core)
 
 `DocumentFile` connects a ConfigDocument to its file on disk.
+
+Since 2026-11-26 the disk half (snapshot, polling, accepting the disk's state, exact saving, reloading) is
+`Shared.Core.TextFile`, which knows nothing about formats; `DocumentFile` holds one, adds the format, the parse and the
+initial text of new files, and converts its errors with `CfgeditText`. The behaviour below is unchanged.
 
 - **Opening.** `DocumentFile.Open(string path, IConfigFormat format)` reads the bytes once and loads the document. It
   records a snapshot of what was read: the bytes' SHA-256, the length, `FileIdentity`, and the last write time.

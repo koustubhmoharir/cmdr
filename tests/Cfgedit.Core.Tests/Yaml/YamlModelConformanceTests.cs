@@ -3,8 +3,8 @@ using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Yaml;
+using Shared.Core;
 using Xunit.Abstractions;
 
 namespace Cfgedit.Core.Tests.Yaml;

@@ -1,7 +1,7 @@
 using System.Text;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
-namespace Cfgedit.Core.Tests.Text;
+namespace Shared.Core.Tests.Text;
 
 public sealed class SourceTextTests
 {
@@ -182,7 +182,7 @@ public sealed class SourceTextTests
     {
         SourceText text = SourceText.Create("ab\uD800", Encoding.UTF8, hasBom: false);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+        TextFileException ex = Assert.Throws<TextFileException>(() => text.Encode());
 
         Assert.Equal(1, ex.Line);
         Assert.Equal(3, ex.Column);
@@ -195,7 +195,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = [0x80];
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-8 at byte 0", ex.Message);
         Assert.Null(ex.Line);
@@ -207,7 +207,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = [0x61, 0x80];
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes, "app.json"));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes, "app.json"));
 
         Assert.Equal("not valid UTF-8 at byte 1", ex.Message);
         Assert.Equal("app.json", ex.Path);
@@ -220,7 +220,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = [0x61, 0xC0, 0x80];
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-8 at byte 1", ex.Message);
     }
@@ -230,7 +230,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = Concat(Utf8Bom, [0x61, 0x62, 0xED, 0xA0, 0x80]);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-8 at byte 5", ex.Message);
         Assert.Equal(1, ex.Line);
@@ -242,7 +242,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = Concat(Utf16LeBom, [0x61]);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-16 LE at byte 2: odd number of bytes", ex.Message);
     }
@@ -252,7 +252,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = Concat(Utf16LeBom, [0x00, 0xD8]);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-16 LE at byte 2: unpaired surrogate", ex.Message);
     }
@@ -262,7 +262,7 @@ public sealed class SourceTextTests
     {
         byte[] bytes = Concat(Utf16BeBom, [0x00, 0x61, 0xDC, 0x00]);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => SourceText.Decode(bytes));
+        TextFileException ex = Assert.Throws<TextFileException>(() => SourceText.Decode(bytes));
 
         Assert.Equal("not valid UTF-16 BE at byte 4: unpaired surrogate", ex.Message);
         Assert.Equal(1, ex.Line);
@@ -423,7 +423,7 @@ public sealed class SourceTextTests
         Encoding windows1252 = Encoding.GetEncoding(1252, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
         SourceText text = SourceText.CreateStrict("ab\nc" + (char)0x4E2D, windows1252, hasBom: false);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+        TextFileException ex = Assert.Throws<TextFileException>(() => text.Encode());
 
         Assert.Equal("text cannot be saved as Western European (Windows): U+4E2D cannot be encoded at line 2, column 2", ex.Message);
         Assert.Equal(2, ex.Line);
@@ -437,7 +437,7 @@ public sealed class SourceTextTests
         Encoding windows1252 = Encoding.GetEncoding(1252, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
         SourceText text = SourceText.CreateStrict("a" + (char)0xD83D + (char)0xDE00, windows1252, hasBom: false);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+        TextFileException ex = Assert.Throws<TextFileException>(() => text.Encode());
 
         Assert.Equal("text cannot be saved as Western European (Windows): U+1F600 cannot be encoded at line 1, column 2", ex.Message);
         Assert.Equal(1, ex.Line);
@@ -449,7 +449,7 @@ public sealed class SourceTextTests
     {
         SourceText text = SourceText.Create("ab" + (char)0xD800, Encoding.UTF8, false);
 
-        CfgeditException ex = Assert.Throws<CfgeditException>(() => text.Encode());
+        TextFileException ex = Assert.Throws<TextFileException>(() => text.Encode());
 
         Assert.Equal("text cannot be saved as Unicode (UTF-8): a lone surrogate at line 1, column 3", ex.Message);
     }

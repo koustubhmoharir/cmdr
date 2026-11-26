@@ -2,7 +2,7 @@ using Cfgedit.Core;
 using Cfgedit.Core.Env;
 using Cfgedit.Core.Json;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
+using Shared.Core;
 using Shared.Tui;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;

@@ -2,8 +2,8 @@ using System.Text;
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Tui;
+using Shared.Core;
 
 namespace Cfgedit.Tests;
 

@@ -1,6 +1,6 @@
 using System.Text;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Tests.Model;
 

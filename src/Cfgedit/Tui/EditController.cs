@@ -1,7 +1,7 @@
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Tui;
 
@@ -190,7 +190,7 @@ public sealed class EditController
 
             try
             {
-                return !CurrentSource.Encode().AsSpan().SequenceEqual(File.Text.Encode());
+                return !CfgeditText.Encode(CurrentSource).AsSpan().SequenceEqual(CfgeditText.Encode(File.Text));
             }
             catch (CfgeditException)
             {

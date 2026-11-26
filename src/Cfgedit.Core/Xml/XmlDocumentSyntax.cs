@@ -1,5 +1,5 @@
 using System.Runtime.ExceptionServices;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Xml;
 

@@ -1,5 +1,5 @@
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Toml;
+using Shared.Core;
 using static Cfgedit.Core.Tests.Toml.TomlTestSupport;
 
 namespace Cfgedit.Core.Tests.Toml;

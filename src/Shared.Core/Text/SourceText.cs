@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace Cfgedit.Core.Text;
+namespace Shared.Core;
 
 /// <summary>
 /// The text of a file as read, with its encoding and byte order mark. It is immutable and is the single source of truth:
@@ -43,12 +43,12 @@ public sealed class SourceText
     public bool EndsWithNewline { get; }
 
     /// <summary>
-    /// Decodes the bytes of a JSON-family file. A UTF-8 (EF BB BF), UTF-16 LE (FF FE) or UTF-16 BE (FE FF) byte order mark
+    /// Decodes the bytes of a text file that is UTF-8 or UTF-16 (a JSON-family or Markdown file, say). A UTF-8 (EF BB BF), UTF-16 LE (FF FE) or UTF-16 BE (FE FF) byte order mark
     /// selects the encoding and is removed; without one the bytes are UTF-8. Decoding is strict.
     /// </summary>
     /// <param name="bytes">The file's bytes.</param>
     /// <param name="path">The file's path, carried by any error. Null when unknown.</param>
-    /// <exception cref="CfgeditException">The bytes are not valid in the encoding.</exception>
+    /// <exception cref="TextFileException">The bytes are not valid in the encoding.</exception>
     public static SourceText Decode(ReadOnlySpan<byte> bytes, string? path = null)
     {
         Encoding encoding;
@@ -106,14 +106,15 @@ public sealed class SourceText
     }
 
     /// <summary>
-    /// Creates a source text in any encoding that throws on invalid bytes and unencodable characters, for XML documents
-    /// declaring a code page. UTF-8 and UTF-16 are mapped to their strict forms. A byte order mark is allowed only for
-    /// UTF-8 and UTF-16.
+    /// Creates a source text in any encoding that throws on invalid bytes and unencodable characters, for a decoder that has
+    /// chosen the encoding itself: XML documents declaring a code page, for example. UTF-8 and UTF-16 are mapped to their
+    /// strict forms. A byte order mark is allowed only for UTF-8 and UTF-16. Use <see cref="Create"/> for UTF-8 and UTF-16 text
+    /// whose encoding needs no such check.
     /// </summary>
     /// <exception cref="ArgumentException">
     /// The encoding does not use exception fallbacks, or a byte order mark is requested for another encoding.
     /// </exception>
-    internal static SourceText CreateStrict(string text, Encoding encoding, bool hasBom)
+    public static SourceText CreateStrict(string text, Encoding encoding, bool hasBom)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(encoding);
@@ -148,7 +149,7 @@ public sealed class SourceText
     /// The bytes of this text: the byte order mark when <see cref="HasBom"/> holds, then <see cref="Text"/> in
     /// <see cref="Encoding"/>.
     /// </summary>
-    /// <exception cref="CfgeditException">The text holds a lone surrogate, which the encoding cannot represent.</exception>
+    /// <exception cref="TextFileException">The text holds a lone surrogate, which the encoding cannot represent.</exception>
     public byte[] Encode()
     {
         byte[] body;
@@ -165,7 +166,7 @@ public sealed class SourceText
             string what = char.IsSurrogate(c) && !isPair
                 ? "a lone surrogate"
                 : $"U+{(isPair ? char.ConvertToUtf32(c, Text[index + 1]) : c):X4} cannot be encoded";
-            throw new CfgeditException(
+            throw new TextFileException(
                 $"text cannot be saved as {Encoding.EncodingName}: {what} at line {at.Line}, column {at.Column}",
                 ex)
             {
@@ -322,7 +323,7 @@ public sealed class SourceText
         return (bigEndian ? Utf16BeStrict : Utf16LeStrict).GetString(body);
     }
 
-    private static CfgeditException UnpairedSurrogate(
+    private static TextFileException UnpairedSurrogate(
         ReadOnlySpan<byte> body, int unit, int bomLength, bool bigEndian, string encodingName, string? path)
     {
         int byteOffset = bomLength + unit * 2;
@@ -350,9 +351,9 @@ public sealed class SourceText
             : (char)((body[b + 1] << 8) | body[b]);
     }
 
-    private static CfgeditException InvalidBytes(string message, string? path, LinePosition? at)
+    private static TextFileException InvalidBytes(string message, string? path, LinePosition? at)
     {
-        return new CfgeditException(message)
+        return new TextFileException(message)
         {
             Path = path,
             Line = at?.Line,

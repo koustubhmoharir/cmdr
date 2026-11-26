@@ -1,6 +1,6 @@
 using System.Text;
 using Cfgedit.Core.Json;
-using Cfgedit.Core.Text;
+using Shared.Core;
 using static Cfgedit.Core.Tests.Json.JsonTestSupport;
 
 namespace Cfgedit.Core.Tests.Json;

@@ -2,7 +2,7 @@ using System.Text;
 using Cfgedit.Core;
 using Cfgedit.Core.Json;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
+using Shared.Core;
 using static Cfgedit.Core.Tests.Model.EditTestSupport;
 
 namespace Cfgedit.Core.Tests.Model;

@@ -2,7 +2,6 @@ using System.Text;
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Tests.Model;
 using Shared.Core;
 using static Cfgedit.Core.Tests.Model.EditTestSupport;

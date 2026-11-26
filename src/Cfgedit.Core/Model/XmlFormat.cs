@@ -1,5 +1,5 @@
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Xml;
+using Shared.Core;
 
 namespace Cfgedit.Core.Model;
 

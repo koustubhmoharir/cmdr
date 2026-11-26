@@ -1,6 +1,6 @@
 using System.Text;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Yaml;
+using Shared.Core;
 using Xunit.Abstractions;
 
 namespace Cfgedit.Core.Tests.Yaml;

@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Toml;
+using Shared.Core;
 using JsonValueKind = System.Text.Json.JsonValueKind;
 
 namespace Cfgedit.Core.Tests.Toml;
@@ -103,7 +103,7 @@ public sealed class TomlConformanceTests
 
     private static SourceText Decode(string relative)
     {
-        return SourceText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative);
+        return CfgeditText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative);
     }
 
     /// <summary>
@@ -236,7 +236,7 @@ public sealed class TomlConformanceTests
     {
         try
         {
-            return TomlDocument.Parse(SourceText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative));
+            return TomlDocument.Parse(CfgeditText.Decode(File.ReadAllBytes(Path.Combine(FixtureRoot, relative)), relative));
         }
         catch (CfgeditException)
         {

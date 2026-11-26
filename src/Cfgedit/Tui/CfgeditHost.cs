@@ -1,7 +1,6 @@
 using Cfgedit.Core;
 using Cfgedit.Core.Files;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Xml;
 using Shared.Core;
 using Shared.Tui;
@@ -300,7 +299,7 @@ internal static class CfgeditHost
     // error names the file in its message and has no path, so the command line prints it as it is.
     private static IConfigFormat Sniff(byte[] bytes, string path)
     {
-        string text = SourceText.Decode(bytes, path).Text;
+        string text = CfgeditText.Decode(bytes, path).Text;
         foreach (char c in text)
         {
             if (char.IsWhiteSpace(c))

@@ -1,6 +1,6 @@
 using Cfgedit.Core;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Yaml;
+using Shared.Core;
 using static Cfgedit.Core.Tests.Yaml.YamlTestSupport;
 
 namespace Cfgedit.Core.Tests.Yaml;

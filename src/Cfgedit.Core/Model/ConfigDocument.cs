@@ -1,5 +1,5 @@
 using System.Text;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Model;
 
@@ -45,7 +45,7 @@ public sealed class ConfigDocument
             return xml.ParseBytes(bytes, path);
         }
 
-        return format.Parse(SourceText.Decode(bytes, path));
+        return format.Parse(CfgeditText.Decode(bytes, path));
     }
 
     /// <summary>Parses text that is already decoded.</summary>

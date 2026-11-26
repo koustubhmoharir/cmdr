@@ -1,27 +1,13 @@
-using System.Security.Cryptography;
 using System.Text;
 using Cfgedit.Core.Model;
-using Cfgedit.Core.Text;
 using Cfgedit.Core.Xml;
 using Shared.Core;
 
 namespace Cfgedit.Core.Files;
 
-/// <summary>What <see cref="DocumentFile.PollDisk"/> found on disk.</summary>
-public enum DiskChange
-{
-    /// <summary>The content is the one the document has, or the stat changed but the content did not (a touch, or the same bytes written again).</summary>
-    Unchanged,
-
-    /// <summary>The content differs from the snapshot, or the file appeared where the document had none.</summary>
-    Changed,
-
-    /// <summary>The file was there when the document last saw it, and it is missing now.</summary>
-    Deleted,
-}
-
 /// <summary>
-/// A config file and the document that belongs to it. It knows what the file looked like when the document was loaded or last
+/// A config file and the document that belongs to it. The file's bytes, its snapshot and its disk checks are a <see cref="TextFile"/>;
+/// this class adds the format, the parse and the document. It knows what the file looked like when the document was loaded or last
 /// saved, so that <see cref="ChangedOnDisk"/> can tell whether someone else changed it since. Every expected failure is a
 /// <see cref="CfgeditException"/> with <see cref="Path"/> set, except a parse error, which is kept in <see cref="ParseError"/>
 /// so that the text can still be shown and fixed. Documents are immutable: a save writes the text of the document it is given,
@@ -31,34 +17,18 @@ public sealed class DocumentFile
 {
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    // The stat of a file that is missing, as Stat reports it.
-    private static readonly FileStat MissingStat = new(null, default, -1);
+    private readonly TextFile _file;
 
-    // Null after CreateNew until the first save: there is then no file state to compare with.
-    private Snapshot? _snapshot;
-
-    // The stat last seen by PollDisk, or taken by an open, a save, a reload or an accepted state. PollDisk compares it with the
-    // file's stat to decide whether to read the content.
-    private FileStat _seen;
-
-    // True while the stat cannot be read (the path is a folder, say), so that the error is reported once, not on every poll.
-    private bool _statUnreadable;
-
-    private DocumentFile(
-        string path, IConfigFormat format, bool exists, ConfigDocument? document, SourceText text, CfgeditException? parseError, Snapshot? snapshot)
+    private DocumentFile(IConfigFormat format, TextFile file, ConfigDocument? document, CfgeditException? parseError)
     {
-        Path = path;
         Format = format;
-        Exists = exists;
+        _file = file;
         Document = document;
-        Text = text;
         ParseError = parseError;
-        _snapshot = snapshot;
-        _seen = snapshot?.Stat ?? MissingStat;
     }
 
     /// <summary>The full path of the file.</summary>
-    public string Path { get; }
+    public string Path => _file.Path;
 
     /// <summary>The format the file is read and written as.</summary>
     public IConfigFormat Format { get; }
@@ -67,7 +37,7 @@ public sealed class DocumentFile
     /// True when the file exists as far as this object knows: it was opened, or it has been saved. False for a new file until
     /// its first save.
     /// </summary>
-    public bool Exists { get; private set; }
+    public bool Exists => _file.Exists;
 
     /// <summary>
     /// The document as loaded, reloaded or last saved. Null when the text does not parse, in which case <see cref="ParseError"/>
@@ -76,7 +46,7 @@ public sealed class DocumentFile
     public ConfigDocument? Document { get; private set; }
 
     /// <summary>The text as loaded, reloaded or last saved: the decoded source, which is the file's text whether or not it parses.</summary>
-    public SourceText Text { get; private set; }
+    public SourceText Text => _file.Text;
 
     /// <summary>The parse error of <see cref="Text"/> as loaded, reloaded or last saved, or null when it parses.</summary>
     public CfgeditException? ParseError { get; private set; }
@@ -94,9 +64,9 @@ public sealed class DocumentFile
     public static DocumentFile Open(string path, IConfigFormat format)
     {
         ArgumentNullException.ThrowIfNull(format);
-        string full = FullPathOf(path);
-        Loaded loaded = Load(full, format);
-        return new DocumentFile(full, format, exists: true, loaded.Document, loaded.Text, loaded.ParseError, loaded.Snapshot);
+        TextFile file = CfgeditText.Run(() => TextFile.Open(path, (bytes, full) => DecodeText(bytes, full, format)));
+        (ConfigDocument? document, CfgeditException? parseError) = ParseFile(file, format);
+        return new DocumentFile(format, file, document, parseError);
     }
 
     /// <summary>
@@ -114,39 +84,17 @@ public sealed class DocumentFile
         string full = FullPathOf(path);
         string text = InitialText(format, xmlRootName, full);
         ConfigDocument document = ConfigDocument.Parse(SourceText.Create(text, Utf8NoBom, hasBom: false), format);
-        return new DocumentFile(full, format, exists: false, document, document.Source, parseError: null, snapshot: null);
+        TextFile file = CfgeditText.Run(() => TextFile.CreateNew(full, document.Source, (bytes, p) => DecodeText(bytes, p, format)));
+        return new DocumentFile(format, file, document, parseError: null);
     }
 
     /// <summary>
     /// True when the file on disk is not the file this object last loaded or saved. A file that is missing when it was present,
-    /// or present when it was missing (a new file, created by someone else), counts. For a file that was present, the identity,
-    /// the length and the last write time are compared first. When they all match, the content hash is compared too.
+    /// or present when it was missing (a new file, created by someone else), counts. For a file that was present, the length
+    /// is compared first. When it matches, the content hash is compared too.
     /// </summary>
     /// <exception cref="CfgeditException">The file exists but cannot be read.</exception>
-    public bool ChangedOnDisk()
-    {
-        if (!File.Exists(Path))
-        {
-            return _snapshot is not null;
-        }
-
-        if (_snapshot is null)
-        {
-            return true; // a new file, and someone created it meanwhile
-        }
-
-        // Only the content decides. A different length is a change for certain; otherwise the hash tells. Neither the write
-        // time nor the file identity is compared: a touch, or an editor that saves by replacing the file with the same
-        // bytes, leaves the content as it was. Config files are small, so hashing them on each check is cheap.
-        FileStat now = Stat(Path);
-        if (now.Length != _snapshot.Stat.Length)
-        {
-            return true;
-        }
-
-        byte[] bytes = ReadBytes(Path);
-        return !SHA256.HashData(bytes).AsSpan().SequenceEqual(_snapshot.Sha256);
-    }
+    public bool ChangedOnDisk() => CfgeditText.Run(() => _file.ChangedOnDisk());
 
     /// <summary>
     /// Checks the file for a change since it was last seen, cheaply. The file's stat (identity, length and last write time) is compared
@@ -160,40 +108,7 @@ public sealed class DocumentFile
     /// A file whose stat cannot be read is reported once, and then <see cref="DiskChange.Unchanged"/> until the stat can be read again.
     /// </remarks>
     /// <exception cref="CfgeditException">The file exists but cannot be read, or its stat cannot be read (it is a folder, say).</exception>
-    public DiskChange PollDisk()
-    {
-        FileStat now;
-        try
-        {
-            now = Stat(Path);
-        }
-        catch (CfgeditException)
-        {
-            if (_statUnreadable)
-            {
-                return DiskChange.Unchanged;
-            }
-
-            _statUnreadable = true;
-            throw;
-        }
-
-        _statUnreadable = false;
-        if (now == _seen)
-        {
-            return DiskChange.Unchanged;
-        }
-
-        _seen = now;
-        if (now.Length < 0)
-        {
-            return _snapshot is null ? DiskChange.Unchanged : DiskChange.Deleted;
-        }
-
-        byte[] bytes = ReadBytes(Path);
-        bool same = _snapshot is not null && SHA256.HashData(bytes).AsSpan().SequenceEqual(_snapshot.Sha256);
-        return same ? DiskChange.Unchanged : DiskChange.Changed;
-    }
+    public DiskChange PollDisk() => CfgeditText.Run(() => _file.PollDisk());
 
     /// <summary>
     /// Accepts the file's content on disk as the one the document is kept over (Keep mine). The snapshot becomes the disk's current state,
@@ -206,12 +121,8 @@ public sealed class DocumentFile
     /// </exception>
     public void AcceptDiskState()
     {
-        Loaded loaded = Load(Path, Format);
-        SetSnapshot(loaded.Snapshot);
-        Exists = true;
-        Document = loaded.Document;
-        Text = loaded.Text;
-        ParseError = loaded.ParseError;
+        CfgeditText.Run(() => _file.AcceptDiskState());
+        (Document, ParseError) = ParseFile(_file, Format);
     }
 
     /// <summary>
@@ -219,12 +130,7 @@ public sealed class DocumentFile
     /// new file, as <see cref="CreateNew"/> makes one: <see cref="Exists"/> is false and there is no snapshot, so the next save creates the
     /// file, and <see cref="ChangedOnDisk"/> is false while the file stays missing. Nothing is read or written.
     /// </summary>
-    public void MarkMissing()
-    {
-        Exists = false;
-        _snapshot = null;
-        _seen = MissingStat;
-    }
+    public void MarkMissing() => _file.MarkMissing();
 
     /// <summary>
     /// Writes the document's text to the file, atomically where the file system allows it (see <see cref="AtomicFile"/>). The
@@ -239,10 +145,8 @@ public sealed class DocumentFile
     public void Save(ConfigDocument document)
     {
         ArgumentNullException.ThrowIfNull(document);
-        byte[] bytes = EncodeFor(document.Source);
-        WriteExact(bytes);
+        CfgeditText.Run(() => _file.Save(document.Source));
         Document = document;
-        Text = document.Source;
         ParseError = null;
     }
 
@@ -255,19 +159,8 @@ public sealed class DocumentFile
     public void SaveText(SourceText text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        byte[] bytes = EncodeFor(text);
-        WriteExact(bytes);
-        Text = text;
-        try
-        {
-            Document = ParseBytes(bytes, Path, Format);
-            ParseError = null;
-        }
-        catch (CfgeditException ex)
-        {
-            Document = null;
-            ParseError = ex;
-        }
+        CfgeditText.Run(() => _file.Save(text));
+        (Document, ParseError) = ParseFile(_file, Format);
     }
 
     /// <summary>
@@ -291,82 +184,27 @@ public sealed class DocumentFile
     /// <exception cref="CfgeditException">As for <see cref="Open"/> apart from parse errors. On failure the file object is unchanged.</exception>
     public ConfigDocument? Reload()
     {
-        Loaded loaded = Load(Path, Format);
-        SetSnapshot(loaded.Snapshot);
-        Exists = true;
-        Document = loaded.Document;
-        Text = loaded.Text;
-        ParseError = loaded.ParseError;
-        return loaded.Document;
+        CfgeditText.Run(() => _file.Reload());
+        (Document, ParseError) = ParseFile(_file, Format);
+        return Document;
     }
-
-    private void WriteExact(byte[] bytes)
-    {
-        string? folder = System.IO.Path.GetDirectoryName(Path);
-        if (folder is null || !Directory.Exists(folder))
-        {
-            throw new CfgeditException($"the folder '{folder}' does not exist") { Path = Path };
-        }
-
-        try
-        {
-            AtomicFile.WriteExact(Path, bytes);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw new CfgeditException($"the file '{Path}' cannot be saved: {ex.Message}", ex) { Path = Path };
-        }
-
-        (Snapshot snapshot, byte[] written) = Observe(Path);
-        if (!written.AsSpan().SequenceEqual(bytes))
-        {
-            throw new CfgeditException($"the saved file does not match what was written: '{Path}'") { Path = Path };
-        }
-
-        SetSnapshot(snapshot);
-        Exists = true;
-    }
-
-    /// <summary>Records what the file is now as the snapshot, and as the stat last seen by <see cref="PollDisk"/>.</summary>
-    private void SetSnapshot(Snapshot snapshot)
-    {
-        _snapshot = snapshot;
-        _seen = snapshot.Stat;
-    }
-
-    private byte[] EncodeFor(SourceText text)
-    {
-        try
-        {
-            return text.Encode();
-        }
-        catch (CfgeditException ex)
-        {
-            throw new CfgeditException(ex.Message, ex) { Path = Path, Line = ex.Line, Column = ex.Column };
-        }
-    }
-
-    private sealed record Loaded(Snapshot Snapshot, SourceText Text, ConfigDocument? Document, CfgeditException? ParseError);
 
     /// <summary>
-    /// Reads and decodes a file. A decoding error throws. A text that does not decode is no text to keep, so it throws too; a text
-    /// that decodes but does not parse is kept with its error.
+    /// Parses the file's bytes. A parse error is returned, not thrown, so that the text can be kept and fixed.
     /// </summary>
-    private static Loaded Load(string full, IConfigFormat format)
+    private static (ConfigDocument? Document, CfgeditException? ParseError) ParseFile(TextFile file, IConfigFormat format)
     {
-        (Snapshot snapshot, byte[] bytes) = Observe(full);
-        SourceText text = DecodeText(bytes, full, format);
         try
         {
-            return new Loaded(snapshot, text, ConfigDocument.Load(bytes, full, format), ParseError: null);
+            return (ParseBytes(file.Bytes.Span, file.Path, format), null);
         }
         catch (CfgeditException ex)
         {
-            return new Loaded(snapshot, text, null, Located(ex, full));
+            return (null, ex);
         }
     }
 
-    private static ConfigDocument ParseBytes(byte[] bytes, string full, IConfigFormat format)
+    private static ConfigDocument ParseBytes(ReadOnlySpan<byte> bytes, string full, IConfigFormat format)
     {
         try
         {
@@ -375,6 +213,18 @@ public sealed class DocumentFile
         catch (CfgeditException ex)
         {
             throw Located(ex, full);
+        }
+    }
+
+    private byte[] EncodeFor(SourceText text)
+    {
+        try
+        {
+            return text.Encode();
+        }
+        catch (TextFileException ex)
+        {
+            throw new CfgeditException(ex.Message, ex) { Path = Path, Line = ex.Line, Column = ex.Column };
         }
     }
 
@@ -390,58 +240,6 @@ public sealed class DocumentFile
         return ex.Path is null
             ? new CfgeditException(ex.Message, ex) { Path = full, Line = ex.Line, Column = ex.Column }
             : ex;
-    }
-
-    /// <summary>
-    /// Reads a file and records what it is. The state is taken before the bytes are read, so a change made in between is seen as
-    /// a change later, never missed.
-    /// </summary>
-    private static (Snapshot Snapshot, byte[] Bytes) Observe(string full)
-    {
-        FileStat stat = Stat(full);
-        byte[] bytes = ReadBytes(full);
-        return (new Snapshot(stat, SHA256.HashData(bytes)), bytes);
-    }
-
-    private static FileStat Stat(string full)
-    {
-        if (Directory.Exists(full))
-        {
-            throw new CfgeditException($"'{full}' is a folder, not a file") { Path = full };
-        }
-
-        try
-        {
-            string physical = PhysicalPath.Resolve(full);
-            var info = new FileInfo(physical);
-            return new FileStat(FileIdentity.TryGet(physical), info.LastWriteTimeUtc, info.Exists ? info.Length : -1);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw ReadFailure(full, ex);
-        }
-    }
-
-    private static byte[] ReadBytes(string full)
-    {
-        try
-        {
-            return File.ReadAllBytes(full);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            throw ReadFailure(full, ex);
-        }
-    }
-
-    private static CfgeditException ReadFailure(string full, Exception ex)
-    {
-        return ex switch
-        {
-            FileNotFoundException or DirectoryNotFoundException => new CfgeditException($"the file '{full}' does not exist") { Path = full },
-            UnauthorizedAccessException => new CfgeditException($"the file '{full}' cannot be read: access is denied", ex) { Path = full },
-            _ => new CfgeditException($"the file '{full}' cannot be read: {ex.Message}", ex) { Path = full },
-        };
     }
 
     private static string FullPathOf(string path)
@@ -478,13 +276,4 @@ public sealed class DocumentFile
 
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>" + newline + "<" + xmlRootName + " />" + newline;
     }
-
-    /// <summary>The file's state as the cheap checks see it.</summary>
-    /// <param name="Identity">The file's identity, or null when it cannot be read.</param>
-    /// <param name="LastWriteUtc">The last write time.</param>
-    /// <param name="Length">The length in bytes, or -1 when the file is missing.</param>
-    private sealed record FileStat(string? Identity, DateTime LastWriteUtc, long Length);
-
-    /// <summary>What a loaded or saved file was: its state and the SHA-256 of its bytes.</summary>
-    private sealed record Snapshot(FileStat Stat, byte[] Sha256);
 }

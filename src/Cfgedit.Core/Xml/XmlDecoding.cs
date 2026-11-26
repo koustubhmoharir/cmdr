@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
-using Cfgedit.Core.Text;
+using Shared.Core;
 
 namespace Cfgedit.Core.Xml;
 
@@ -333,7 +333,7 @@ public static class XmlDecoding
         {
             encoded = result.Encode();
         }
-        catch (CfgeditException)
+        catch (TextFileException)
         {
             // An unencodable character can only come from a non-bijective mapping, so it is a round-trip failure too.
         }
