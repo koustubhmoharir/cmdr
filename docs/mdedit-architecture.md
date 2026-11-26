@@ -515,6 +515,14 @@ table it is Back, M4.)
     intended number of rows and columns, the alignments, and every cell's plain text equal to the intended one (the
     others unchanged). Otherwise the result is a refusal "Could not edit the table safely", and nothing changes.
 
+Decisions (2026-11-26): the code is in `Mdedit.Core.Tables` (source model and scanner, the edit grid, an aligned and a
+minimal writer, the verifier). Extra refusals: "The header row cannot be duplicated", "The last column cannot be deleted".
+`SetAlignment` takes null for none (`---`). A new row continues the prefix of the row above, with list markers turned into
+spaces; blank cells are two spaces; a new column's delimiter is ` --- `. A row without outer pipes whose first or last
+cell becomes empty gets that pipe (GFM would otherwise drop or merge the cell); in an aligned rewrite every line gets it.
+Cells beyond the header's column count (GFM ignores them) are dropped from the rows an edit rewrites. A cell text that ends
+in a backslash before a typed `|` (`a\|b`) is refused by the verification, since its meaning is ambiguous.
+
 ### View and window (Mdedit)
 
 - `RenderedView.TableCellAtCaret()`: the table block and `(Row, Column)` of the caret's cell, from the cell's offset and the
