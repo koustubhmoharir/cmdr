@@ -17,6 +17,7 @@ internal sealed class InlineLowering
 {
     private readonly string _text;
     private readonly int _blockStart;
+    private readonly List<InlineSpan> _spans = [];
     private RunBuilder _builder;
     private int _nextLinkId;
 
@@ -48,6 +49,12 @@ internal sealed class InlineLowering
 
         return _builder.Finish();
     }
+
+    /// <summary>
+    /// The inline containers recorded so far, outermost first in document order, with offsets relative to the block. Lowering a
+    /// block in several calls (the cells of a table) adds to the same list.
+    /// </summary>
+    public ImmutableArray<InlineSpan> Spans => _spans.ToImmutableArray();
 
     /// <summary>The state carried down the inline tree.</summary>
     private readonly record struct State(StyleRole Role, InlineStyle Flags, int HeadingLevel, int LinkId)
@@ -101,15 +108,23 @@ internal sealed class InlineLowering
                 break;
 
             case EmphasisInline emphasis:
+                Delimited(emphasis.Span.Start, emphasis.Span.End, emphasis.DelimiterCount, EmphasisKind(emphasis));
                 Children(emphasis, state.With(EmphasisFlags(emphasis)));
                 break;
 
             case LinkInline link when link.IsImage:
+                Bracketed(link.Span.Start, link.Span.End, InlineSpanKind.Image, link.Span.Start + 1);
                 _builder.AddSynthetic("[image] ", new CellStyle(StyleRole.ImageMarker, state.Flags, state.HeadingLevel));
                 Children(link, state.With(InlineStyle.Image));
                 break;
 
+            case LinkInline link when link.IsAutoLink:
+                // A bare URL is an autolink: its text is the source, and it is not recorded.
+                Children(link, state with { Flags = state.Flags | InlineStyle.Link, LinkId = _nextLinkId++ });
+                break;
+
             case LinkInline link:
+                Bracketed(link.Span.Start, link.Span.End, InlineSpanKind.Link, link.Span.Start);
                 Children(link, state with { Flags = state.Flags | InlineStyle.Link, LinkId = _nextLinkId++ });
                 break;
 
@@ -175,6 +190,7 @@ internal sealed class InlineLowering
         // skips the padding that is left in the source.
         int start = code.Span.Start + code.DelimiterCount;
         int end = code.Span.End + 1 - code.DelimiterCount;
+        Delimited(code.Span.Start, code.Span.End, code.DelimiterCount, InlineSpanKind.Code);
         string content = code.Content;
         if (content.Length == 0)
         {
@@ -207,6 +223,141 @@ internal sealed class InlineLowering
         }
 
         _builder.AddText(_text[start..end], offsets, state.Style(role), state.LinkId);
+    }
+
+    /// <summary>
+    /// Records a container whose opener and closer are delimiters of <paramref name="count"/> characters each, as the span of the
+    /// whole construct gives them.
+    /// </summary>
+    /// <param name="spanStart">The offset of the construct's first character.</param>
+    /// <param name="spanEnd">The offset of its last character (inclusive).</param>
+    /// <param name="count">The number of delimiter characters on each side.</param>
+    /// <param name="kind">The kind of the container.</param>
+    private void Delimited(int spanStart, int spanEnd, int count, InlineSpanKind kind)
+    {
+        int outerStart = spanStart;
+        int outerEnd = spanEnd + 1;
+        RecordSpan(kind, outerStart, outerEnd, outerStart + count, outerEnd - count);
+    }
+
+    /// <summary>
+    /// Records a link or an image: the opener runs from the span's start to just after the <c>[</c> at
+    /// <paramref name="bracket"/>, and the closer from the <c>]</c> that matches it to the span's end, as written.
+    /// </summary>
+    /// <param name="spanStart">The offset of the construct's first character.</param>
+    /// <param name="spanEnd">The offset of its last character (inclusive).</param>
+    /// <param name="kind">Link or image.</param>
+    /// <param name="bracket">The index of the <c>[</c> that opens the text.</param>
+    private void Bracketed(int spanStart, int spanEnd, InlineSpanKind kind, int bracket)
+    {
+        int outerStart = spanStart;
+        int outerEnd = spanEnd + 1;
+        int innerStart = bracket + 1;
+        int close = MatchingClose(innerStart, outerEnd);
+        RecordSpan(kind, outerStart, outerEnd, innerStart, close < 0 ? outerEnd : close);
+    }
+
+    /// <summary>Adds a span to the list, with its opener and closer read from the source; the bounds are absolute.</summary>
+    private void RecordSpan(InlineSpanKind kind, int outerStart, int outerEnd, int innerStart, int innerEnd)
+    {
+        innerStart = Math.Clamp(innerStart, outerStart, outerEnd);
+        innerEnd = Math.Clamp(innerEnd, innerStart, outerEnd);
+        _spans.Add(new InlineSpan(
+            kind,
+            outerStart - _blockStart,
+            outerEnd - _blockStart,
+            innerStart - _blockStart,
+            innerEnd - _blockStart,
+            _text[outerStart..innerStart],
+            _text[innerEnd..outerEnd]));
+    }
+
+    /// <summary>
+    /// The index of the <c>]</c> that closes a link's text, from <paramref name="from"/> (just after its <c>[</c>) to
+    /// <paramref name="end"/>. Brackets inside nested brackets balance, and backslash escapes and code spans are skipped. Returns
+    /// -1 when there is none.
+    /// </summary>
+    private int MatchingClose(int from, int end)
+    {
+        int depth = 1;
+        int index = from;
+        while (index < end)
+        {
+            char c = _text[index];
+            if (c == '\\' && index + 1 < end)
+            {
+                index += 2;
+                continue;
+            }
+
+            if (c == '`')
+            {
+                int run = BacktickRun(index, end);
+                int close = FindBackticks(index + run, end, run);
+                index = close < 0 ? index + run : close + run;
+                continue;
+            }
+
+            if (c == '[')
+            {
+                depth++;
+            }
+            else if (c == ']' && --depth == 0)
+            {
+                return index;
+            }
+
+            index++;
+        }
+
+        return -1;
+    }
+
+    /// <summary>The index of the first backtick of a run of exactly <paramref name="count"/> backticks at or after <paramref name="from"/>, or -1.</summary>
+    private int FindBackticks(int from, int end, int count)
+    {
+        int index = from;
+        while (index < end)
+        {
+            if (_text[index] != '`')
+            {
+                index++;
+                continue;
+            }
+
+            int run = BacktickRun(index, end);
+            if (run == count)
+            {
+                return index;
+            }
+
+            index += run;
+        }
+
+        return -1;
+    }
+
+    /// <summary>The number of consecutive backticks starting at <paramref name="index"/>, not past <paramref name="end"/>.</summary>
+    private int BacktickRun(int index, int end)
+    {
+        int run = 0;
+        while (index + run < end && _text[index + run] == '`')
+        {
+            run++;
+        }
+
+        return run;
+    }
+
+    /// <summary>The span kind of an emphasis: strikethrough for <c>~</c>, strong for two delimiters, emphasis for one.</summary>
+    private static InlineSpanKind EmphasisKind(EmphasisInline emphasis)
+    {
+        if (emphasis.DelimiterChar == '~')
+        {
+            return InlineSpanKind.Strikethrough;
+        }
+
+        return emphasis.DelimiterCount >= 2 ? InlineSpanKind.Strong : InlineSpanKind.Emphasis;
     }
 
     private static InlineStyle EmphasisFlags(EmphasisInline emphasis)

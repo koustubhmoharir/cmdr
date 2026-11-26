@@ -23,20 +23,20 @@ The first version is M0–M3.
 
 ## M2a. Render core (Mdedit.Core)
 
-- [ ] Blocks and runs with source offsets, per the Renderer table (escapes, entities, soft and hard breaks, code spans,
-      autolinks, inline HTML, synthetic prefixes).
-- [ ] Per-block layout with wrapping by `DisplayWidth`, never splitting a grapheme; the layout cache by (block text, width).
-- [ ] Document layout (visible blocks, line index) and the source map (cell → offset, offset → cell or the next mapped one).
-- [ ] Table column sizing (natural, minimum capped at 24, shrink widest first, horizontal overflow) and cell wrapping.
-- [ ] Code blocks: `ICodeColorizer`, the info-string alias table, wrapping with `↪` markers.
-- [ ] Fold units (sections, code blocks) and folded layout (summary lines).
+- [x] Blocks and runs with source offsets, per the Renderer table (escapes, entities, soft and hard breaks, code spans,
+      autolinks, inline HTML; prefixes are built by the layout). (62a8036)
+- [x] Per-block layout with wrapping by `DisplayWidth`, never splitting a grapheme; the layout cache by (block text, width). (75a88aa)
+- [x] Document layout (visible blocks, line index) and the source map (cell → offset, offset → cell or the next mapped one). (75a88aa)
+- [x] Table column sizing (natural, minimum capped at 24, shrink widest first, horizontal overflow) and cell wrapping. (530724d)
+- [x] Code blocks: `ICodeColorizer`, the info-string alias table, wrapping with `↪` markers. (4d1b230)
+- [x] Fold units (sections, code blocks) and folded layout (summary lines). (4d1b230)
 - [ ] Copy: plain text and Markdown of a source range.
 - [ ] Search in the rendered text.
 - [ ] Heading outline.
 
 ## M2b. Viewer
 
-- [ ] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), new-file flow, load errors.
+- [ ] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), load errors.
 - [ ] Main window: rendered view, title, message line, hints line.
 - [ ] Cursor, selection, scrolling, reflow on resize keeping the cursor's screen row.
 - [ ] Search (SearchBar) in the rendered text.
@@ -57,7 +57,8 @@ The first version is M0–M3.
 - [ ] Ctrl+T both ways keeping the cursor; Esc in edit mode.
 - [ ] Search in the source.
 - [ ] Editor folds sharing the view's fold state.
-- [ ] Save, unsaved-changes flow (quit, Ctrl+O), new files, external-change check (reload, Keep mine, deleted).
+- [ ] Save, unsaved-changes flow (quit, Ctrl+O), new-file flow (a path that does not exist), external-change check
+      (reload, Keep mine, deleted).
 - [ ] Large files (over 2 MB) open in edit mode.
 - [ ] Windows acceptance pass. *(Windows)*
 

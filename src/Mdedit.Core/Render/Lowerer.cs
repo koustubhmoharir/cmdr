@@ -111,11 +111,11 @@ internal sealed class Lowerer
                 break;
 
             case ParagraphBlock paragraph:
-                Add(BlockKind.Paragraph, start, end, Inlines(paragraph.Inline, start, StyleRole.Body, 0));
+                AddInlines(BlockKind.Paragraph, paragraph.Inline, start, end, StyleRole.Body, 0);
                 break;
 
             case HeadingBlock heading:
-                Add(BlockKind.Heading, start, end, Inlines(heading.Inline, start, StyleRole.Heading, heading.Level), heading.Level);
+                AddInlines(BlockKind.Heading, heading.Inline, start, end, StyleRole.Heading, heading.Level);
                 break;
 
             case FencedCodeBlock fenced:
@@ -217,16 +217,25 @@ internal sealed class Lowerer
     /// </summary>
     private void AddTable(Table table, int start, int end)
     {
-        TableModel model = LowerTable(table, start, end);
-        Add(BlockKind.Table, start, end, model.Rows.SelectMany(row => row.Cells).ToImmutableArray(), table: model);
+        var inlines = new InlineLowering(_text, start);
+        TableModel model = LowerTable(table, start, end, inlines);
+        Add(BlockKind.Table, start, end, model.Rows.SelectMany(row => row.Cells).ToImmutableArray(), table: model, spans: inlines.Spans);
+    }
+
+    /// <summary>Adds a paragraph or heading: its inline content lowered to runs, and the inline containers recorded while doing so.</summary>
+    private void AddInlines(BlockKind kind, ContainerInline? content, int start, int end, StyleRole role, int headingLevel)
+    {
+        var inlines = new InlineLowering(_text, start);
+        ImmutableArray<Run> runs = inlines.Lower(content, role, headingLevel);
+        Add(kind, start, end, runs, headingLevel, spans: inlines.Spans);
     }
 
     /// <summary>
-    /// The model of a table. Markdig gives one row per source line after the delimiter row, so row <c>n</c> (n &gt; 0) is line
+    /// The model of a table, lowering its cells with <paramref name="inlines"/>, which records their inline containers. Markdig gives one row per source line after the delimiter row, so row <c>n</c> (n &gt; 0) is line
     /// <c>n + 1</c> of the block; the header is line 0. Each row has one run per column: the first cells of the row, then empty
     /// runs when it is short. Cells past the last column are not lowered.
     /// </summary>
-    private TableModel LowerTable(Table table, int start, int end)
+    private TableModel LowerTable(Table table, int start, int end, InlineLowering inlines)
     {
         ImmutableArray<ColumnAlignment> alignments = table.ColumnDefinitions
             .Select(column => column.Alignment switch
@@ -237,7 +246,6 @@ internal sealed class Lowerer
             })
             .ToImmutableArray();
         ImmutableArray<int> lineStarts = LineStarts(start, end);
-        var inlines = new InlineLowering(_text, start);
         var rows = ImmutableArray.CreateBuilder<TableRowModel>();
 
         int index = 0;
@@ -313,7 +321,16 @@ internal sealed class Lowerer
     }
 
     /// <summary>Adds a leaf block with the containers it sits in, and counts it as the next leaf.</summary>
-    private void Add(BlockKind kind, int start, int end, ImmutableArray<Run> runs, int headingLevel = 0, string? language = null, string? languageId = null, TableModel? table = null)
+    private void Add(
+        BlockKind kind,
+        int start,
+        int end,
+        ImmutableArray<Run> runs,
+        int headingLevel = 0,
+        string? language = null,
+        string? languageId = null,
+        TableModel? table = null,
+        ImmutableArray<InlineSpan> spans = default)
     {
         ImmutableArray<Container> chain = Chain(start);
 
@@ -330,7 +347,10 @@ internal sealed class Lowerer
             }
         }
 
-        _blocks.Add(new RenderBlock(kind, start, end, chain, runs, headingLevel, language, languageId, tight, firstInItem, table));
+        _blocks.Add(new RenderBlock(kind, start, end, chain, runs, headingLevel, language, languageId, tight, firstInItem, table)
+        {
+            InlineSpans = spans.IsDefault ? ImmutableArray<InlineSpan>.Empty : spans,
+        });
         _leafCount++;
     }
 
@@ -350,9 +370,6 @@ internal sealed class Lowerer
 
         return chain.ToImmutable();
     }
-
-    private ImmutableArray<Run> Inlines(ContainerInline? inlines, int start, StyleRole role, int headingLevel) =>
-        new InlineLowering(_text, start).Lower(inlines, role, headingLevel);
 
     private ImmutableArray<Run> CodeLines(CodeBlock code, int start) =>
         LineRuns(code, start, new CellStyle(StyleRole.CodeBlock));

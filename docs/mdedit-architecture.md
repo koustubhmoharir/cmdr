@@ -248,9 +248,16 @@ content is included.
 - `RenderSearch.Find(doc, SearchPattern)`: the matches in rendered text, as source ranges. Each block's text is its cells'
   text in order (code: per line; table: per cell; prefixes excluded), searched with `SearchPattern.Matches`; a match maps
   to `[offset of its first cell, offset of its last cell + that cell's source length)`, where a cell's source length is the
-  distance to the next mapped offset in the block, capped by the block's end. Matches never span blocks. `TimedOut` is
+  length of the grapheme at its offset, or the whole entity (`&amp;`) for an entity's cell. (The distance to the next mapped
+  offset would swallow closing delimiters: `*em*` would end after the `*`.) Matches never span blocks. `TimedOut` is
   carried over from the pattern.
 - `Outline.Of(doc)`: the headings in order: level, plain text, block start, and whether it has containers.
+
+Decisions (2026-11-26): in plain text, a list leaf gets, per enclosing list item, the item's marker when it starts the
+item and spaces as wide as the marker otherwise, so nesting and later paragraphs are indented as on screen; a Markdown
+range that starts mid-line gets the source from the line start to the line's first mapped character; table rows are copied
+as written from column 0 (a table in a quote keeps its `> `), without a final line break; the outline's `Start` is the
+heading block's start (the `#`).
 
 ### Tests
 
@@ -259,3 +266,66 @@ source map both ways, including each unmapped case; wrapping with CJK (width 2),
 than the line and a width smaller than the prefix; CRLF sources; a property test over the nasty-input corpus and the
 repository's own Markdown files: every mapped cell's offset holds that cell's first character in the source, or the `&` of
 an entity, and `PositionOf(OffsetAt(l, c))` returns a cell on line `l` for every mapped cell.
+
+## Viewer (M2b, Mdedit)
+
+The `mdedit` executable, built like cfgedit's (`src/Cfgedit/Program.cs`, `Tui/CfgeditHost.cs`, `Tui/MainWindow.cs`). UI logic
+that does not need a terminal stays in pure classes; views draw and route input.
+
+### Program and host
+
+- `Program`: `mdedit <file>`, `mdedit` (picker), `mdedit --version`; usage errors exit 2. A file that cannot be opened
+  prints `mdedit: <path>: <message>` (or `<path>:<line>:<col>: <message>` for a decoding error) and exits 1. A path that
+  does not exist is reported as such until M3 adds the new-file flow.
+- `OpenedFile(string Path, TextFile File)`: a file opened with `TextFile.Open(path, SourceText.Decode)`.
+- `MdeditHost`: `Run`, `RunPicker`, `TryLoad`, `Load`, `RecordRecent`, `RunDocuments`, the picker over a running document
+  (Ctrl+O) and at startup, as in `CfgeditHost`, without formats. Recent list: `RecentFiles.DefaultStorePathFor("mdedit")`.
+  The file dialog's types: `Markdown files` (`.md .markdown .mdown .mkd`), then any file.
+- `MdeditHints`: the hint sets (view mode, picker, picker over a document), in `CfgeditHints`' style.
+
+### Main window
+
+Like cfgedit's: no outer border; a rounded `FrameView` titled with the file name (`*` when unsaved, from M3) holding the
+`RenderedView`; the search bar above the message line while open; the message line; the hints line. Esc is swallowed.
+Ctrl+O shows the picker over the document; Ctrl+Q quits. Messages expire after the same delay as cfgedit's, through an
+injected scheduler so tests drive it.
+
+**Message line.** Without a message it shows, on the left, the path of headings above the top line (`Install › Linux`,
+from `Outline.Of`) and, on the right, the scroll position: `Top`, `Bot`, `All` or a percentage.
+
+### RenderedView
+
+A `View` over a `RenderDocument`, a `DocumentLayout` (rebuilt when the width or the document changes, through one
+`LayoutCache` kept for the window's life) and view state:
+
+- **Cursor**: a layout position (line, column), kept also as the source offset of its cell; plus a goal column for
+  Up/Down. The cursor rests on mapped cells only: Left/Right move to the previous/next mapped cell in document order
+  (crossing lines, skipping synthetic cells, so in a table they move from cell to cell), Home/End to the first/last mapped
+  cell of the display line, Up/Down to the mapped cell at or nearest the goal column on the previous/next line that has
+  one (lines without mapped cells are skipped), PgUp/PgDn by a page, g/G and Ctrl+Home/End to the first/last mapped cell.
+  The terminal cursor is shown at the cursor cell.
+- **Scrolling**: a top line; the cursor is kept visible (scroll by the least lines). The wheel scrolls 3 lines without
+  moving the cursor.
+- **Reflow**: on a width change, the anchor is the cursor's source offset when the cursor is visible, else the first
+  mapped cell of the top line; its screen row is recorded; after the new layout, the top line is set so the anchor's line
+  is on that row (clamped to the document).
+- **Selection** (M2b part 2): an anchor offset and the cursor offset; Shift+movement extends it; a drag extends it and
+  scrolls when the mouse is above or below the view; a double-click selects the word (the run of non-space mapped cells)
+  under the mouse; a click clears it and moves the cursor. Drawn reversed.
+- **Search highlighting** (part 2): every match's cells drawn in the search colours, the active one in the active colour.
+- **Colours**: `MdColors` maps a `CellStyle` to an attribute: headings bold, with a colour per level (1–2 strongest); emphasis
+  italic; strong bold; strikethrough; inline code and code blocks on a dark background; links underlined; quote bars, table
+  borders, fold glyphs, wrap markers, thematic breaks, HTML and raw blocks dim; list markers and task boxes in an accent
+  colour; alert titles bold in a colour per kind; code tokens through a token palette (M2c). The palette sits next to
+  `BarColors`/`SearchColors` in style.
+
+### Copy, search and menu (M2b part 2)
+
+- `y` and Ctrl+C copy the selection as plain text, `Y` as Markdown (`TextExtraction`); with no selection, the block under
+  the cursor (`[Start, End)` of its block). The text goes out through OSC 52 (`Osc52`, `WriteRaw`, as cfgedit's copy), with
+  the messages `Copied text`, `Copied Markdown` or `Too large to copy`.
+- Search: `RenderSearch` matches over the document, navigated as cfgedit's `TreeSearch` does (`/`, Ctrl+F, n/N, F3/Shift+F3,
+  Enter, Esc), with the shared `SearchBar` and `ISearchTarget`. The active match is selected, and its first cell gets the
+  cursor and is scrolled into view. The matches are recomputed when the document changes.
+- Right-click opens a menu at the mouse: Copy text, Copy Markdown (Fold / Unfold from M2c). The menu works with the mouse
+  and the keyboard.

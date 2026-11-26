@@ -37,4 +37,12 @@ public sealed record RenderBlock(
     string? LanguageId = null,
     bool Tight = false,
     bool IsFirstInItem = false,
-    TableModel? Table = null);
+    TableModel? Table = null)
+{
+    /// <summary>
+    /// The inline containers of the block (emphasis, strong, strikethrough, code spans, links and images), outermost first in
+    /// document order, with offsets relative to <see cref="Start"/>. For a table, the spans of all its cells, in row order. Empty for
+    /// blocks without inline content. Autolinks and task boxes are not recorded.
+    /// </summary>
+    public ImmutableArray<InlineSpan> InlineSpans { get; init; } = ImmutableArray<InlineSpan>.Empty;
+}
