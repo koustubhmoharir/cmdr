@@ -107,8 +107,8 @@ errors exit 2.
 |---|---|
 | PgUp/PgDn, g/G, Ctrl+Home/End | Page, first / last line |
 | Tab / Shift+Tab | Next / previous link; Enter follows it |
-| Enter on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Backspace / Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself |
-| `o` | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters |
+| Enter or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself |
+| `o` | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters. Alt+O in edit mode |
 | `/`, Ctrl+F; n/N, F3/Shift+F3 | Find in the rendered text (SearchBar); the match is selected and scrolled into view |
 | `y`, Ctrl+C / `Y` | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor |
 | Arrows, Home/End (with Shift to select) | Move the cursor in the rendered text (see Cursor). In a table, Left/Right at a cell's edge go to the next cell |
@@ -149,7 +149,7 @@ Every feature works with the mouse, as in the other applications:
 
 - View: the wheel scrolls; Shift+wheel or the horizontal wheel over a table scrolls the table; a click places the cursor; a
   drag selects (and scrolls past the edges); a double-click selects a word; a click on a fold glyph (`▾`/`▸`) or on a fold
-  summary toggles it; a click on a table's `◂`/`▸` edge marker scrolls it; a click on a link follows it (M4); a right-click
+  summary toggles it; a click on a table's `◂`/`▸` edge marker scrolls it; a Ctrl+click on a link follows it, and a plain click places the caret, also in a link (M4); a right-click
   opens a menu: Copy text, Copy Markdown, Fold/Unfold, and for tables the row and column operations (M5).
 - Edit: the editor's own click, drag and wheel.
 - The hints line is clickable (Shared.Tui `HintsLine`), the search bar takes clicks (`SearchBar`), and the picker, the
@@ -353,4 +353,4 @@ A tracker (`docs/mdedit-tracker.md`) is created at M1, in the same style as cfge
 
 ## Open questions
 
-- Whether the outline should also be available in edit mode (jump the caret to a heading).
+- (Decided 2026-11-26: the outline is also in edit mode, on Alt+O; Backspace is left for M6, so Alt+Left alone goes back.)

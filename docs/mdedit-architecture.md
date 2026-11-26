@@ -419,3 +419,57 @@ dialog, popover menu, picker or save/close flow; a deferred check is not queued)
 The same `SearchBar` and query as view mode. In edit mode the matches are `SearchPattern.Matches(buffer text)` (source
 text), recomputed when the buffer changes; the active match is selected in the editor and the caret goes to its start. The
 query carries over between the modes; the matches do not (view mode searches rendered text).
+
+## Navigation (M4)
+
+Links and the outline. The design's Keys and Mouse sections hold the user-facing rules; the user decided on 2026-11-26 that
+a plain click places the caret (also inside a link) and Ctrl+click follows a link, that Backspace is left for rendered-view
+editing (M6) so Alt+Left alone goes back, and that the outline is also in edit mode, on Alt+O (no F2: to most users F2
+means "edit").
+
+### Core (Mdedit.Core)
+
+- **`LinkInfo(int Id, string Url, int Start, int End, bool IsAutolink)`**: one per link of a block, in
+  `RenderBlock.Links`, indexed by the cells' `LinkId`. `Url` is Markdig's resolved destination (a reference link gives its
+  definition's URL; an autolink its address as written, with `mailto:` in front of an email address so that it is external);
+  `Start`/`End` the link's absolute source span. Images are not links.
+- **`LinkTarget`** and **`LinkTargets.Classify(string url)`** (pure): an `Anchor(fragment)` when the URL starts with `#`;
+  an `External(url)` when it has a URI scheme (`^[A-Za-z][A-Za-z0-9+.-]+:`, two characters or more, so that a Windows
+  drive `C:` is not a scheme) or starts with `//`; otherwise a `File(path, fragment)`: the part before `?`/`#`,
+  percent-decoded, with `/` as written (both separators are accepted on Windows), and the fragment after `#` or null. An
+  empty URL is `External("")`, reported as "Empty link".
+- **`HeadingAnchors.Of(doc)`**: the GitHub anchor of every heading, in document order: the heading's plain text (as the
+  outline has it) lower-cased; characters that are not letters, digits, spaces, `-` or `_` removed; each space replaced by
+  `-`; a repeated anchor gets `-1`, `-2`, … in document order. `Find(fragment)` percent-decodes the fragment and compares it
+  case-insensitively, giving the heading's start or null.
+- `RenderDocument` exposes `Links` through its blocks only; the view looks links up by the caret's cell (`LinkId` and the
+  block).
+
+### View and window (Mdedit)
+
+- **Caret on a link**: the message line's left part shows `→ <url>` instead of the heading path while the caret is on a
+  link cell.
+- **Tab / Shift+Tab**: the caret goes to the first cell of the next / previous link in document order, skipping links that
+  folds hide, wrapping around at the document's ends (message "Wrapped to the first link" / "… last link"); no links:
+  "No links". A link in a scrolled table scrolls it as any caret move does.
+- **Following** (Enter on a link cell, Ctrl+click on one): by `LinkTargets.Classify`.
+  - Anchor: `HeadingAnchors.Find`; the units hiding the heading are unfolded, the caret goes to the heading's first text
+    cell, and the heading's line becomes the top line (as far as the end of the document allows). Not found: "No heading
+    #<fragment>" (error style).
+  - File: resolved against the current file's directory. Not found or a directory: "Not found: <path>" (error style). Else
+    the unsaved-changes flow of Ctrl+O (Save / Discard / Cancel); then the window loads the file through the host's loader
+    (a load error is shown on the message line and the document stays), and closes with `SwitchTo` set and a `BackEntry`
+    for itself; the new window goes to the fragment's heading when there is one.
+  - External: copied with OSC 52, as Copy is; message "Copied link: <url>".
+- **Back** (Alt+Left in view mode): the host keeps a stack of `BackEntry(string Path, int CaretOffset, int TopOffset)`, one
+  pushed per followed file link. Alt+Left with an empty stack: "No previous file". Else the unsaved-changes flow, then the
+  previous file is loaded again (from disk) and its window opens with the caret and top line at the saved offsets (clamped).
+  A load error: the message line, and the entry is dropped. Ctrl+O and the picker clear the stack.
+- **Outline dialog** (Alt+O in both modes; also `o` in view mode until M6 moves the view's letter keys to modifiers): a dialog with a filter field over a list of `Outline.Of`
+  entries, two spaces of indent per level below 1. Typing filters (case-insensitive substring of the text; the indent is
+  kept); Up/Down/PgUp/PgDn move in the list while the field has the focus; Enter or a double-click goes to the selected
+  heading; Esc cancels. The initial selection is the heading of the section the caret is in. Going to a heading: in view
+  mode as an anchor link does; in edit mode the editor's caret goes to the heading's start and the foldings hiding it are
+  unfolded.
+- The window's navigation code lives in `MainWindow.Navigation.cs` (partial) and `OutlineDialog.cs`, to keep
+  `MainWindow.cs` from growing.

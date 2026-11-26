@@ -45,4 +45,10 @@ public sealed record RenderBlock(
     /// blocks without inline content. Autolinks and task boxes are not recorded.
     /// </summary>
     public ImmutableArray<InlineSpan> InlineSpans { get; init; } = ImmutableArray<InlineSpan>.Empty;
+
+    /// <summary>
+    /// The links of the block, in id order: the link at index <c>n</c> has id <c>n</c>, which is the <see cref="Cell.LinkId"/> of its
+    /// cells. For a table, the links of all its cells. Empty for blocks without links. Images are not links.
+    /// </summary>
+    public ImmutableArray<LinkInfo> Links { get; init; } = ImmutableArray<LinkInfo>.Empty;
 }

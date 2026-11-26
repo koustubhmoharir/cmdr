@@ -18,6 +18,7 @@ internal sealed class InlineLowering
     private readonly string _text;
     private readonly int _blockStart;
     private readonly List<InlineSpan> _spans = [];
+    private readonly List<LinkInfo> _links = [];
     private RunBuilder _builder;
     private int _nextLinkId;
 
@@ -55,6 +56,12 @@ internal sealed class InlineLowering
     /// block in several calls (the cells of a table) adds to the same list.
     /// </summary>
     public ImmutableArray<InlineSpan> Spans => _spans.ToImmutableArray();
+
+    /// <summary>
+    /// The links recorded so far, in id order: the link at index <c>n</c> has id <c>n</c>, which is the <see cref="Cell.LinkId"/> of
+    /// its cells. Ids are counted across calls of <see cref="Lower"/>, so this is the links of the whole block. Images are not links.
+    /// </summary>
+    public ImmutableArray<LinkInfo> Links => _links.ToImmutableArray();
 
     /// <summary>The state carried down the inline tree.</summary>
     private readonly record struct State(StyleRole Role, InlineStyle Flags, int HeadingLevel, int LinkId)
@@ -119,18 +126,27 @@ internal sealed class InlineLowering
                 break;
 
             case LinkInline link when link.IsAutoLink:
-                // A bare URL is an autolink: its text is the source, and it is not recorded.
-                Children(link, state with { Flags = state.Flags | InlineStyle.Link, LinkId = _nextLinkId++ });
+                // A bare URL: its text is the source; its destination is Markdig's resolved URL (a "www." address gets "http://").
+                Children(link, EnterLink(state, link.Span.Start, link.Span.End + 1, Destination(link), isAutolink: true));
                 break;
 
             case LinkInline link:
                 Bracketed(link.Span.Start, link.Span.End, InlineSpanKind.Link, link.Span.Start);
-                Children(link, state with { Flags = state.Flags | InlineStyle.Link, LinkId = _nextLinkId++ });
+                Children(link, EnterLink(state, link.Span.Start, link.Span.End + 1, Destination(link), isAutolink: false));
                 break;
 
             case AutolinkInline autolink:
-                // The address as written between the angle brackets; the source is the URL, which avoids Markdig's "mailto:" prefix.
-                Source(autolink.Span.Start + 1, autolink.Span.End, state with { Flags = state.Flags | InlineStyle.Link, LinkId = _nextLinkId++ }, StyleRole.Body);
+                // The cells are the address as written between the angle brackets. The destination is that address, with "mailto:" in
+                // front of an email address so that it classifies as external.
+                string address = _text[(autolink.Span.Start + 1)..autolink.Span.End];
+                string destination = autolink.IsEmail && !address.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase)
+                    ? "mailto:" + address
+                    : address;
+                Source(
+                    autolink.Span.Start + 1,
+                    autolink.Span.End,
+                    EnterLink(state, autolink.Span.Start, autolink.Span.End + 1, destination, isAutolink: true),
+                    StyleRole.Body);
                 break;
 
             case HtmlInline html:
@@ -151,6 +167,25 @@ internal sealed class InlineLowering
                 break;
         }
     }
+
+    /// <summary>
+    /// Records a link and returns the state its content is lowered in: the link style, and the link's id. The link is at index
+    /// <see cref="_nextLinkId"/> before the increment, so <see cref="Links"/> is indexed by id.
+    /// </summary>
+    /// <param name="state">The state the link sits in.</param>
+    /// <param name="start">The absolute offset of the link's first character.</param>
+    /// <param name="end">The absolute offset after the link's last character.</param>
+    /// <param name="url">The destination.</param>
+    /// <param name="isAutolink">Whether the link is an autolink.</param>
+    private State EnterLink(State state, int start, int end, string url, bool isAutolink)
+    {
+        int id = _nextLinkId++;
+        _links.Add(new LinkInfo(id, url, start, end, isAutolink));
+        return state with { Flags = state.Flags | InlineStyle.Link, LinkId = id };
+    }
+
+    /// <summary>The destination of a link: Markdig's dynamic URL when it has one (a reference link's definition), else its URL.</summary>
+    private static string Destination(LinkInline link) => link.GetDynamicUrl?.Invoke() ?? link.Url ?? string.Empty;
 
     private void Literal(LiteralInline literal, State state, bool skipLeadingSpace)
     {

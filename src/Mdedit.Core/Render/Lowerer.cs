@@ -219,7 +219,7 @@ internal sealed class Lowerer
     {
         var inlines = new InlineLowering(_text, start);
         TableModel model = LowerTable(table, start, end, inlines);
-        Add(BlockKind.Table, start, end, model.Rows.SelectMany(row => row.Cells).ToImmutableArray(), table: model, spans: inlines.Spans);
+        Add(BlockKind.Table, start, end, model.Rows.SelectMany(row => row.Cells).ToImmutableArray(), table: model, spans: inlines.Spans, links: inlines.Links);
     }
 
     /// <summary>Adds a paragraph or heading: its inline content lowered to runs, and the inline containers recorded while doing so.</summary>
@@ -227,7 +227,7 @@ internal sealed class Lowerer
     {
         var inlines = new InlineLowering(_text, start);
         ImmutableArray<Run> runs = inlines.Lower(content, role, headingLevel);
-        Add(kind, start, end, runs, headingLevel, spans: inlines.Spans);
+        Add(kind, start, end, runs, headingLevel, spans: inlines.Spans, links: inlines.Links);
     }
 
     /// <summary>
@@ -330,7 +330,8 @@ internal sealed class Lowerer
         string? language = null,
         string? languageId = null,
         TableModel? table = null,
-        ImmutableArray<InlineSpan> spans = default)
+        ImmutableArray<InlineSpan> spans = default,
+        ImmutableArray<LinkInfo> links = default)
     {
         ImmutableArray<Container> chain = Chain(start);
 
@@ -350,6 +351,7 @@ internal sealed class Lowerer
         _blocks.Add(new RenderBlock(kind, start, end, chain, runs, headingLevel, language, languageId, tight, firstInItem, table)
         {
             InlineSpans = spans.IsDefault ? ImmutableArray<InlineSpan>.Empty : spans,
+            Links = links.IsDefault ? ImmutableArray<LinkInfo>.Empty : links,
         });
         _leafCount++;
     }
