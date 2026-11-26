@@ -36,9 +36,10 @@ public sealed class LayoutCache
     /// <param name="doc">The document the block belongs to, for its source text.</param>
     /// <param name="block">The block.</param>
     /// <param name="width">The screen width.</param>
-    internal BlockLayout Get(RenderDocument doc, RenderBlock block, int width)
+    /// <param name="foldedLines">The hidden line count when the block is a folded head, or null (see <see cref="BlockLayout.Layout"/>).</param>
+    internal BlockLayout Get(RenderDocument doc, RenderBlock block, int width, int? foldedLines = null)
     {
-        var key = new LayoutKey(doc.Text.Substring(block.Start, block.End - block.Start), block, width, doc.ReferenceKey);
+        var key = new LayoutKey(doc.Text.Substring(block.Start, block.End - block.Start), block, width, doc.ReferenceKey, foldedLines);
         if (_entries.TryGetValue(key, out LinkedListNode<KeyValuePair<LayoutKey, BlockLayout>>? node))
         {
             _recent.Remove(node);
@@ -46,7 +47,7 @@ public sealed class LayoutCache
             return node.Value.Value;
         }
 
-        BlockLayout layout = BlockLayout.Layout(block, width);
+        BlockLayout layout = BlockLayout.Layout(block, width, foldedLines);
         _entries[key] = _recent.AddFirst(new KeyValuePair<LayoutKey, BlockLayout>(key, layout));
         while (_entries.Count > _capacity)
         {

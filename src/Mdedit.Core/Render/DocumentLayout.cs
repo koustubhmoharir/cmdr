@@ -17,16 +17,22 @@ public sealed class DocumentLayout
     private readonly ImmutableArray<DisplayLine> _lines;
     private readonly ImmutableArray<ImmutableArray<int>> _columns;
     private readonly ImmutableArray<int> _blockStarts;
+    private readonly ImmutableArray<int> _blockEnds;
     private readonly ImmutableArray<int> _searchStarts;
     private readonly ImmutableArray<int> _firstLines;
     private readonly ImmutableArray<int> _maxEnds;
     private readonly ImmutableArray<BlockLayout> _blocks;
+    private readonly ImmutableArray<FoldUnit> _units;
+    private readonly ImmutableArray<int> _unitOfBlock;
+    private readonly ImmutableArray<int> _redirect;
 
     private DocumentLayout(
         int width,
         ImmutableArray<DisplayLine> lines,
         ImmutableArray<ImmutableArray<int>> columns,
+        FoldLayout folds,
         ImmutableArray<int> blockStarts,
+        ImmutableArray<int> blockEnds,
         ImmutableArray<int> searchStarts,
         ImmutableArray<int> firstLines,
         ImmutableArray<int> maxEnds,
@@ -35,7 +41,11 @@ public sealed class DocumentLayout
         Width = width;
         _lines = lines;
         _columns = columns;
+        _units = folds.Units;
+        _unitOfBlock = folds.UnitOfBlock;
+        _redirect = folds.Redirect;
         _blockStarts = blockStarts;
+        _blockEnds = blockEnds;
         _searchStarts = searchStarts;
         _firstLines = firstLines;
         _maxEnds = maxEnds;
@@ -48,7 +58,7 @@ public sealed class DocumentLayout
     /// <summary>The number of display lines, separators included.</summary>
     public int LineCount => _lines.Length;
 
-    /// <summary>The layouts of the blocks, in order, as the cache returned them. Not counting the separators.</summary>
+    /// <summary>The layouts of the blocks, in order, as the cache returned them. Not counting the separators; a hidden block has an empty layout.</summary>
     internal ImmutableArray<BlockLayout> Blocks => _blocks;
 
     /// <summary>
@@ -58,15 +68,23 @@ public sealed class DocumentLayout
     /// <param name="doc">The document.</param>
     /// <param name="width">The full screen width in columns, at least 1.</param>
     /// <param name="cache">The cache of block layouts; the same cache can serve every build.</param>
-    public static DocumentLayout Build(RenderDocument doc, int width, LayoutCache cache)
+    /// <param name="folded">
+    /// The keys (absolute start offsets) of the folded fold units. A folded unit hides the blocks after its head, and for a code
+    /// unit its code lines; a key that is not the start of a unit is ignored. Null means nothing is folded.
+    /// </param>
+    public static DocumentLayout Build(RenderDocument doc, int width, LayoutCache cache, IReadOnlySet<int>? folded = null)
     {
         ArgumentNullException.ThrowIfNull(doc);
         ArgumentNullException.ThrowIfNull(cache);
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
 
+        ImmutableArray<FoldUnit> units = doc.FoldUnits;
+        FoldLayout folds = FoldLayout.Of(doc.Blocks.Length, units, folded);
+
         var lines = ImmutableArray.CreateBuilder<DisplayLine>();
         var columns = ImmutableArray.CreateBuilder<ImmutableArray<int>>();
         var starts = ImmutableArray.CreateBuilder<int>(doc.Blocks.Length);
+        var ends = ImmutableArray.CreateBuilder<int>(doc.Blocks.Length);
         var searchStarts = ImmutableArray.CreateBuilder<int>(doc.Blocks.Length);
         var firstLines = ImmutableArray.CreateBuilder<int>(doc.Blocks.Length);
         var maxEnds = ImmutableArray.CreateBuilder<int>(doc.Blocks.Length);
@@ -76,35 +94,61 @@ public sealed class DocumentLayout
         for (int index = 0; index < doc.Blocks.Length; index++)
         {
             RenderBlock block = doc.Blocks[index];
-            BlockLayout layout = cache.Get(doc, block, width);
             firstLines.Add(lines.Count);
             starts.Add(block.Start);
-            searchStarts.Add(block.Start + Math.Min(0, layout.MinOffset));
-            blocks.Add(layout);
-            lines.AddRange(layout.Lines);
-            columns.AddRange(layout.Columns);
+            ends.Add(block.End);
+
+            if (folds.Hidden[index])
+            {
+                searchStarts.Add(block.Start);
+                blocks.Add(BlockLayout.Hidden);
+            }
+            else
+            {
+                BlockLayout layout = cache.Get(doc, block, width, folds.FoldedLines[index]);
+                searchStarts.Add(block.Start + Math.Min(0, layout.MinOffset));
+                blocks.Add(layout);
+                lines.AddRange(layout.Lines);
+                columns.AddRange(layout.Columns);
+
+                // The separator belongs to this block and is drawn before the next block that is not hidden, so a folded head is
+                // followed by a blank line, and the hidden blocks leave none.
+                int next = NextVisible(folds.Hidden, index + 1);
+                if (next < doc.Blocks.Length && !(block.Tight && doc.Blocks[next].Tight))
+                {
+                    // The separator is anchored at the end of the block before it, relative to that block's start.
+                    ImmutableArray<Cell> separator = LinePrefix.Separator(block, doc.Blocks[next]);
+                    lines.Add(new DisplayLine(separator, block.End - block.Start, false, separator.Length));
+                    columns.Add(BlockLayout.ColumnsOf(separator));
+                }
+            }
 
             maxEnd = Math.Max(maxEnd, block.End);
             maxEnds.Add(maxEnd);
-
-            if (index + 1 < doc.Blocks.Length && !(block.Tight && doc.Blocks[index + 1].Tight))
-            {
-                // The separator is anchored at the end of the block before it, relative to that block's start.
-                ImmutableArray<Cell> separator = LinePrefix.Separator(block, doc.Blocks[index + 1]);
-                lines.Add(new DisplayLine(separator, block.End - block.Start, false, separator.Length));
-                columns.Add(BlockLayout.ColumnsOf(separator));
-            }
         }
 
         return new DocumentLayout(
             width,
             lines.ToImmutable(),
             columns.ToImmutable(),
+            folds,
             starts.ToImmutable(),
+            ends.ToImmutable(),
             searchStarts.ToImmutable(),
             firstLines.ToImmutable(),
             maxEnds.ToImmutable(),
             blocks.ToImmutable());
+    }
+
+    /// <summary>The index of the first block at or after <paramref name="index"/> that is not hidden, or the block count when none is.</summary>
+    private static int NextVisible(ImmutableArray<bool> hidden, int index)
+    {
+        while (index < hidden.Length && hidden[index])
+        {
+            index++;
+        }
+
+        return index;
     }
 
     /// <summary>The display line at an index.</summary>
@@ -177,6 +221,13 @@ public sealed class DocumentLayout
             return (0, 0);
         }
 
+        // Inside a hidden block, or a folded code block (whose code lines are hidden), the position is the folded head's.
+        int owner = LastBlockStartingAt(offset);
+        if (owner >= 0 && _redirect[owner] >= 0 && offset < _blockEnds[owner])
+        {
+            return HeadPosition(_redirect[owner]);
+        }
+
         // Only the blocks from the first one that ends after the offset to the last one that starts at or before it can hold the
         // exact cell. The greater cell is the first in document order from the first block on.
         int last = LastBlockStartingAtOrBefore(offset);
@@ -199,6 +250,42 @@ public sealed class DocumentLayout
 
         int lastLine = _lines.Length - 1;
         return (lastLine, _lines[lastLine].Cells.Sum(cell => cell.Width));
+    }
+
+    /// <summary>
+    /// The position of a folded head: its first line, and the column of its first mapped cell (column 0 when it has none, as a code
+    /// header does not).
+    /// </summary>
+    /// <param name="head">The index of the head block.</param>
+    private (int Line, int Column) HeadPosition(int head) =>
+        _blocks[head].TryFirstMapped(out (int Line, int Column) first)
+            ? (_firstLines[head] + first.Line, first.Column)
+            : (_firstLines[head], 0);
+
+    /// <summary>
+    /// The index of the last block that starts at or before an offset, or -1 when none does. The starts are in document order.
+    /// </summary>
+    /// <param name="offset">The absolute source offset.</param>
+    private int LastBlockStartingAt(int offset)
+    {
+        int low = 0;
+        int high = _blockStarts.Length - 1;
+        int found = -1;
+        while (low <= high)
+        {
+            int middle = (low + high) / 2;
+            if (_blockStarts[middle] <= offset)
+            {
+                found = middle;
+                low = middle + 1;
+            }
+            else
+            {
+                high = middle - 1;
+            }
+        }
+
+        return found;
     }
 
     /// <summary>
@@ -235,6 +322,26 @@ public sealed class DocumentLayout
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// The fold unit whose head is on a line: a section's heading lines, or a code unit's header line (not its code lines). Null
+    /// when the line is not part of a head, including the separator after one.
+    /// </summary>
+    /// <param name="line">The line, from 0 to <see cref="LineCount"/> minus 1.</param>
+    public FoldUnit? FoldUnitAt(int line)
+    {
+        CheckLine(line);
+        int block = BlockOf(line);
+        int unit = _unitOfBlock[block];
+        if (unit < 0)
+        {
+            return null;
+        }
+
+        FoldUnit found = _units[unit];
+        int headLines = found.Kind == FoldUnitKind.Code ? 1 : _blocks[block].Lines.Length;
+        return line >= _firstLines[block] && line < _firstLines[block] + headLines ? found : null;
     }
 
     /// <summary>The block that owns a line: the last block whose first line is at or before it.</summary>

@@ -19,6 +19,7 @@ namespace Mdedit.Core.Render;
 internal sealed class Lowerer
 {
     private readonly string _text;
+    private readonly ICodeColorizer? _colorizer;
     private readonly List<RenderBlock> _blocks = [];
     private readonly List<Frame> _frames = [];
     private readonly SortedSet<string> _labels = new(StringComparer.Ordinal);
@@ -26,9 +27,11 @@ internal sealed class Lowerer
 
     /// <summary>Starts lowering the document with the given source text.</summary>
     /// <param name="text">The source text the AST was parsed from.</param>
-    public Lowerer(string text)
+    /// <param name="colorizer">The colorizer for the code blocks that have a language, or null for no colouring.</param>
+    public Lowerer(string text, ICodeColorizer? colorizer = null)
     {
         _text = text;
+        _colorizer = colorizer;
     }
 
     /// <summary>Lowers the document and returns its leaf blocks in document order.</summary>
@@ -116,7 +119,9 @@ internal sealed class Lowerer
                 break;
 
             case FencedCodeBlock fenced:
-                Add(BlockKind.Code, start, end, CodeLines(fenced, start), language: LanguageOf(fenced.Info));
+                string? language = CodeLanguages.FirstWord(fenced.Info);
+                string? languageId = CodeLanguages.Normalize(language);
+                Add(BlockKind.Code, start, end, ColoredLines(CodeLines(fenced, start), languageId), language: language, languageId: languageId);
                 break;
 
             case CodeBlock code:
@@ -308,7 +313,7 @@ internal sealed class Lowerer
     }
 
     /// <summary>Adds a leaf block with the containers it sits in, and counts it as the next leaf.</summary>
-    private void Add(BlockKind kind, int start, int end, ImmutableArray<Run> runs, int headingLevel = 0, string? language = null, TableModel? table = null)
+    private void Add(BlockKind kind, int start, int end, ImmutableArray<Run> runs, int headingLevel = 0, string? language = null, string? languageId = null, TableModel? table = null)
     {
         ImmutableArray<Container> chain = Chain(start);
 
@@ -325,7 +330,7 @@ internal sealed class Lowerer
             }
         }
 
-        _blocks.Add(new RenderBlock(kind, start, end, chain, runs, headingLevel, language, tight, firstInItem, table));
+        _blocks.Add(new RenderBlock(kind, start, end, chain, runs, headingLevel, language, languageId, tight, firstInItem, table));
         _leafCount++;
     }
 
@@ -351,6 +356,55 @@ internal sealed class Lowerer
 
     private ImmutableArray<Run> CodeLines(CodeBlock code, int start) =>
         LineRuns(code, start, new CellStyle(StyleRole.CodeBlock));
+
+    /// <summary>
+    /// The code runs with their tokens set. The lines are joined with line feeds and given to the colorizer once; each cell takes
+    /// the token of the span that covers its first character. Without a colorizer, or a language, or when the colorizer returns
+    /// null, the runs are returned as they are, every token <see cref="CodeToken.None"/>.
+    /// </summary>
+    /// <param name="runs">The runs of the code block, one per line, whose cells are the line's characters.</param>
+    /// <param name="languageId">The normalized language, or null when the block has none.</param>
+    private ImmutableArray<Run> ColoredLines(ImmutableArray<Run> runs, string? languageId)
+    {
+        if (_colorizer is null || languageId is null)
+        {
+            return runs;
+        }
+
+        string code = string.Join('\n', runs.Select(run => string.Concat(run.Cells.Select(cell => cell.Text))));
+        IReadOnlyList<CodeSpan>? spans = _colorizer.Colorize(code, languageId);
+        if (spans is null)
+        {
+            return runs;
+        }
+
+        var tokens = new CodeToken[code.Length];
+        foreach (CodeSpan span in spans)
+        {
+            int to = Math.Min(code.Length, span.Start + span.Length);
+            for (int index = Math.Max(0, span.Start); index < to; index++)
+            {
+                tokens[index] = span.Token;
+            }
+        }
+
+        var colored = ImmutableArray.CreateBuilder<Run>(runs.Length);
+        int position = 0;
+        foreach (Run run in runs)
+        {
+            var cells = ImmutableArray.CreateBuilder<Cell>(run.Cells.Length);
+            foreach (Cell cell in run.Cells)
+            {
+                cells.Add(cell with { Style = cell.Style with { Token = tokens[position] } });
+                position += cell.Text.Length;
+            }
+
+            colored.Add(run with { Cells = cells.MoveToImmutable() });
+            position++;
+        }
+
+        return colored.MoveToImmutable();
+    }
 
     /// <summary>One run per line of a leaf block that has lines (code, HTML): each line is its content in the source.</summary>
     private ImmutableArray<Run> LineRuns(LeafBlock block, int start, CellStyle style)
@@ -408,8 +462,6 @@ internal sealed class Lowerer
 
         return (itemStart, _text[itemStart..index]);
     }
-
-    private static string? LanguageOf(string? info) => string.IsNullOrEmpty(info) ? null : info;
 
     private static AlertKind? AlertKindOf(string kind) => kind.ToUpperInvariant() switch
     {

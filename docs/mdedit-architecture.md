@@ -222,6 +222,11 @@ the cells after the prefix; the layout itself never cuts a line.
   `PositionOf` an offset inside a hidden block gives the head's first line (the view unfolds first when it needs the exact
   place).
 
+Decisions (2026-11-26): the cache key carries the head's hidden-line count, not only a folded flag, since the summary
+shows it; the summary appears only when lines are hidden; a folded head keeps its separator to the next visible block and
+hidden blocks leave none; `PositionOf` into a folded code block gives its header at column 0; `RenderBlock.Language` is the
+info string's first word as written and `LanguageId` its normalized id; `FoldUnits` is computed once per document.
+
 ### Copy, search and outline (M2a part 2)
 
 All work on the `RenderDocument` and source offsets, not on a layout, so wrapping and folding do not change them; folded

@@ -13,8 +13,12 @@ namespace Mdedit.Core.Render;
 /// <param name="Runs">The content, with offsets relative to <paramref name="Start"/>.</param>
 /// <param name="HeadingLevel">The level of a heading, 1 to 6; 0 for other blocks.</param>
 /// <param name="Language">
-/// The language of a fenced code block: the first word of its info string, or null when there is none (and for an
+/// The language of a fenced code block: the first word of its info string as written, or null when there is none (and for an
 /// indented code block).
+/// </param>
+/// <param name="LanguageId">
+/// The canonical id of <paramref name="Language"/> from <see cref="CodeLanguages.Normalize"/>, which a colorizer is given; null
+/// when <paramref name="Language"/> is null.
 /// </param>
 /// <param name="Tight">Whether the block sits in a tight list item. The layout puts no blank line between blocks of a tight list.</param>
 /// <param name="IsFirstInItem">Whether the block is the first leaf of its innermost list item, which gets the item's marker.</param>
@@ -30,6 +34,7 @@ public sealed record RenderBlock(
     ImmutableArray<Run> Runs,
     int HeadingLevel = 0,
     string? Language = null,
+    string? LanguageId = null,
     bool Tight = false,
     bool IsFirstInItem = false,
     TableModel? Table = null);

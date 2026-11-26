@@ -19,7 +19,8 @@ internal static class LinePrefix
     /// <param name="block">The block.</param>
     /// <param name="showMarker">Whether this is the block's first line, which gets the list markers of its first-leaf items.</param>
     /// <param name="fold">Whether this is the first content line of a heading, which gets the fold glyph instead of blanks.</param>
-    public static ImmutableArray<Cell> Content(RenderBlock block, bool showMarker, bool fold)
+    /// <param name="folded">Whether the heading is folded, which turns its glyph to the folded one.</param>
+    public static ImmutableArray<Cell> Content(RenderBlock block, bool showMarker, bool fold, bool folded = false)
     {
         ImmutableArray<Cell> containers = Containers(block, showMarker);
         if (block.Kind != BlockKind.Heading)
@@ -27,7 +28,9 @@ internal static class LinePrefix
             return containers;
         }
 
-        ImmutableArray<Cell> glyph = fold ? SyntheticCell.Text("▾ ", StyleRole.FoldGlyph) : SyntheticCell.Text("  ", StyleRole.Body);
+        ImmutableArray<Cell> glyph = fold
+            ? SyntheticCell.Text(folded ? "▸ " : "▾ ", StyleRole.FoldGlyph)
+            : SyntheticCell.Text("  ", StyleRole.Body);
         return containers.Concat(glyph).ToImmutableArray();
     }
 

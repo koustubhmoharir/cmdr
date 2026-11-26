@@ -4,7 +4,8 @@ namespace Mdedit.Core.Render;
 
 /// <summary>
 /// The identity of a block's layout in a <see cref="LayoutCache"/>: its source text, kind, heading level, language, container
-/// chain, tightness, first-in-item flag and the width. The container chain is compared element by element, because
+/// chain, tightness, first-in-item flag, the width, and for a folded head the number of lines its fold hides (the summary shows
+/// that number, so it is part of the layout). The container chain is compared element by element, because
 /// <see cref="ImmutableArray{T}"/> equality is by reference.
 /// </summary>
 internal sealed class LayoutKey : IEquatable<LayoutKey>
@@ -18,16 +19,19 @@ internal sealed class LayoutKey : IEquatable<LayoutKey>
     private readonly bool _isFirstInItem;
     private readonly int _width;
     private readonly string _references;
+    private readonly int? _foldedLines;
 
     /// <summary>Makes the key of a block at a width.</summary>
     /// <param name="text">The source text of the block, <c>document.Text[Start..End]</c>.</param>
     /// <param name="block">The block.</param>
     /// <param name="width">The screen width.</param>
     /// <param name="references">The document's <see cref="RenderDocument.ReferenceKey"/>, which decides how its links resolve.</param>
-    public LayoutKey(string text, RenderBlock block, int width, string references)
+    /// <param name="foldedLines">The hidden line count when the block is a folded head, or null when it is not folded.</param>
+    public LayoutKey(string text, RenderBlock block, int width, string references, int? foldedLines = null)
     {
         _text = text;
         _references = references;
+        _foldedLines = foldedLines;
         _kind = block.Kind;
         _headingLevel = block.HeadingLevel;
         _language = block.Language;
@@ -46,6 +50,7 @@ internal sealed class LayoutKey : IEquatable<LayoutKey>
             || _headingLevel != other._headingLevel
             || _tight != other._tight
             || _isFirstInItem != other._isFirstInItem
+            || _foldedLines != other._foldedLines
             || !string.Equals(_text, other._text, StringComparison.Ordinal)
             || !string.Equals(_language, other._language, StringComparison.Ordinal)
             || !string.Equals(_references, other._references, StringComparison.Ordinal)
@@ -79,6 +84,7 @@ internal sealed class LayoutKey : IEquatable<LayoutKey>
         hash.Add(_tight);
         hash.Add(_isFirstInItem);
         hash.Add(_width);
+        hash.Add(_foldedLines);
         hash.Add(_references, StringComparer.Ordinal);
         foreach (Container entry in _containers)
         {

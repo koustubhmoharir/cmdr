@@ -43,15 +43,21 @@ public sealed class BlockLayout
     /// </summary>
     public int ScrollWidth { get; }
 
+    /// <summary>The layout of a block that is hidden by a folded unit: no lines, and no mapped cells.</summary>
+    internal static readonly BlockLayout Hidden = new(ImmutableArray<DisplayLine>.Empty, 0);
+
     /// <summary>Lays out one block for a screen width.</summary>
     /// <param name="block">The block, from a <see cref="RenderDocument"/>.</param>
     /// <param name="width">The full screen width in columns, at least 1. Content wraps in the width left after the prefix.</param>
-    public static BlockLayout Layout(RenderBlock block, int width)
+    /// <param name="foldedLines">
+    /// The number of source lines hidden by the block's fold unit when the block is a folded head, or null when it is not folded.
+    /// </param>
+    public static BlockLayout Layout(RenderBlock block, int width, int? foldedLines = null)
     {
         ArgumentNullException.ThrowIfNull(block);
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
 
-        return new BlockLayout(BlockLayouter.Layout(block, width), BlockLayouter.ContentWidth(block, width));
+        return new BlockLayout(BlockLayouter.Layout(block, width, foldedLines), BlockLayouter.ContentWidth(block, width));
     }
 
     /// <summary>
@@ -70,6 +76,21 @@ public sealed class BlockLayout
 
         position = default;
         return false;
+    }
+
+    /// <summary>The first mapped cell of the block in document order, as its line and column, when there is one.</summary>
+    /// <param name="position">The line within the block and the screen column of the cell, when found.</param>
+    internal bool TryFirstMapped(out (int Line, int Column) position)
+    {
+        if (_index.IsEmpty)
+        {
+            position = default;
+            return false;
+        }
+
+        MappedCell cell = _index[_firstAfter[0]];
+        position = (cell.Line, cell.Column);
+        return true;
     }
 
     /// <summary>

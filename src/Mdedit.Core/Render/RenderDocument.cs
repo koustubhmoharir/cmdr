@@ -15,25 +15,48 @@ namespace Mdedit.Core.Render;
 /// </param>
 public sealed record RenderDocument(string Text, ImmutableArray<RenderBlock> Blocks, string ReferenceKey = "")
 {
+    // The fold units, computed on first use. Not copied by a with-expression (see the copy constructor), since a copy may have other
+    // blocks.
+    private ImmutableArray<FoldUnit>? _foldUnits;
+
+    /// <summary>Copies a document for a with-expression, without the cached fold units.</summary>
+    private RenderDocument(RenderDocument original)
+    {
+        Text = original.Text;
+        Blocks = original.Blocks;
+        ReferenceKey = original.ReferenceKey;
+    }
+
+    /// <summary>
+    /// The fold units of the document in order of their head blocks: a section for each container-free heading and a code unit
+    /// for each code block. Computed on first use and kept, since the document is immutable.
+    /// </summary>
+    public ImmutableArray<FoldUnit> FoldUnits => _foldUnits ??= FoldUnitFinder.Of(this);
+
     /// <summary>Lowers a parsed document to its leaf blocks.</summary>
     /// <param name="text">The source text <paramref name="ast"/> was parsed from. Its offsets are indexes into this string.</param>
     /// <param name="ast">The document, from <c>MdPipeline.Parse(text)</c>.</param>
-    public static RenderDocument Lower(string text, MarkdownDocument ast)
+    /// <param name="colorizer">
+    /// The colorizer of the code blocks that have a language, or null for no colouring. It is called once per such block; the
+    /// result sets the token of each code cell.
+    /// </param>
+    public static RenderDocument Lower(string text, MarkdownDocument ast, ICodeColorizer? colorizer = null)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(ast);
 
-        var lowerer = new Lowerer(text);
+        var lowerer = new Lowerer(text, colorizer);
         ImmutableArray<RenderBlock> blocks = lowerer.Lower(ast);
         return new RenderDocument(text, blocks, lowerer.ReferenceKey);
     }
 
     /// <summary>Parses <paramref name="text"/> with the mdedit pipeline and lowers it.</summary>
     /// <param name="text">The Markdown source.</param>
-    public static RenderDocument Parse(string text)
+    /// <param name="colorizer">The colorizer of the code blocks that have a language, or null for no colouring.</param>
+    public static RenderDocument Parse(string text, ICodeColorizer? colorizer = null)
     {
         ArgumentNullException.ThrowIfNull(text);
 
-        return Lower(text, MdPipeline.Parse(text));
+        return Lower(text, MdPipeline.Parse(text), colorizer);
     }
 }
