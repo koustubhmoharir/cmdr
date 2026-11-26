@@ -1,8 +1,9 @@
 # mdedit
 
-A terminal viewer for Markdown files. It shows the file rendered: headings, lists, quotes, tables, code blocks and links
-look as they will read, and the source is one step away. You move a cursor through the rendered text, select, search and
-copy. Editing comes later; for now mdedit only reads the file.
+A terminal viewer and editor for Markdown files. It shows the file rendered: headings, lists, quotes, tables, code blocks
+and links look as they will read, and the source is one key away (Ctrl+T), in the same window with the same undo history.
+You move a cursor through the rendered text, select, search and copy, and you edit the source. Saving to disk is not
+built yet: edits stay in memory until the file is saved.
 
 Runs on Linux and Windows. Built from this repository alongside cmdr; see the main [README](../README.md#install) for the .NET 10
 SDK and the Terminal.Gui submodule.
@@ -42,7 +43,7 @@ on Linux (`$XDG_DATA_HOME/mdedit/recent.json` when set).
 │  • Add the binary to your PATH                           │
 ╰──────────────────────────────────────────────────────────╯
 Install › Linux                                          All
-/ Find  y Copy  Space Fold  ^O Open                    ^Q Quit
+^T Edit  / Find  y Copy  Space Fold  ^O Open         ^Q Quit
 ```
 
 The message line shows, on the left, the path of the headings above the top line, and, on the right, the scroll
@@ -67,6 +68,9 @@ or until the next key. The last line lists the main keys.
 | `1`–`6` / `0` | Show the headings down to that level, folding the deeper sections; `0` unfolds everything |
 | `<` / `>` | In a table, scroll the table by eight columns to the left / right (see Tables) |
 | Shift+F10 | Open the menu at the cursor |
+| Ctrl+T | Edit mode, with the caret on the source character under the view's caret (see Edit mode) |
+| Ctrl+Z / Ctrl+Y | Undo / redo the source, in either mode (see Edit mode) |
+| Esc | Close the search bar |
 | Ctrl+O | Open another file |
 | Ctrl+Q | Quit |
 
@@ -126,6 +130,34 @@ Other languages are coloured when the highlighter has a grammar for their name; 
 plain. Colouring uses the TextMate grammars of the Terminal.Gui fork, which need the native Oniguruma library
 (`onigwrap`) that ships with the application: without it, all code is shown plain. The code keeps its colours when a
 line wraps.
+
+## Edit mode
+
+Ctrl+T switches to edit mode: the source text in an editor, with the caret on the source character under the view's caret.
+A selection in the view is the selection in the editor, and it comes back the same way. The editor is a plain text box with
+the usual keys: typing, the arrows and Shift+arrows, Home and End, Tab inserts a tab, and Enter and paste write the file's
+own line ending (a CRLF file gets CRLF).
+
+| Key | |
+|---|---|
+| Ctrl+T, Esc | Back to view mode. The view is rendered again when the text changed. The caret goes to the rendered character of the source caret; when the caret is on markup that is not shown (`**`, `# `), the next visible character |
+| Alt+Z | Word wrap on / off (on at the start) |
+| `/` | Types a slash (in view mode it opens the search) |
+| Ctrl+Z / Ctrl+Y | Undo / redo the editor's history |
+| Ctrl+F | Nothing yet: search in the source comes later |
+| Ctrl+Q, Ctrl+O | As in view mode |
+
+- **One history.** Undo and redo in view mode (Ctrl+Z / Ctrl+Y) undo the same history, and the view is rendered again. The
+  caret goes to where the change was: where the removed text was, or after the restored text.
+- **Title.** The file name, then ` *` while the text differs from the file as it was read, then ` [edit]` in edit mode.
+- **Hints.** View mode shows `^T Edit` first. Edit mode shows `^T View`, `Alt+Z Wrap` and `^Q Quit`.
+- **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
+  above it, and a table keeps its scroll.
+- **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
+  is kept on screen instead.
+- **Large files.** A file over 2 MB on disk opens in edit mode, with `Large file: opened as text`. Ctrl+T to view mode asks
+  `Render <n> MB?` (Render is the default) when the view has to be rendered: rendering the whole text takes time. Cancel
+  stays in edit mode.
 
 ## Folding
 

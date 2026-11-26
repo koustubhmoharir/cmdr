@@ -47,7 +47,7 @@ internal sealed partial class RenderedView : View
     /// <summary>The display lines the wheel scrolls per event.</summary>
     internal const int WheelLines = 3;
 
-    private readonly RenderDocument _document;
+    private RenderDocument _document;
     private readonly LayoutCache _cache = new();
     private DocumentLayout? _layout;
     private int _top;
@@ -65,11 +65,16 @@ internal sealed partial class RenderedView : View
 
     /// <summary>Creates the view over a document. It lays out at the first width it is given.</summary>
     /// <param name="document">The document to show.</param>
+    /// <param name="tracker">
+    /// Creates the positions that the fold state and the table scroll offsets are kept as, so that they follow the text when a new document
+    /// is set (see <see cref="SetDocument"/>). Null keeps them at their offsets, for a text that is not edited.
+    /// </param>
     /// <exception cref="ArgumentNullException"><paramref name="document"/> is <c>null</c>.</exception>
-    public RenderedView(RenderDocument document)
+    public RenderedView(RenderDocument document, IOffsetTracker? tracker = null)
     {
         ArgumentNullException.ThrowIfNull(document);
         _document = document;
+        _tracker = tracker ?? FixedOffsetTracker.Instance;
         CanFocus = true;
     }
 
@@ -112,6 +117,12 @@ internal sealed partial class RenderedView : View
             return start == end ? null : new SourceRange(start, end);
         }
     }
+
+    /// <summary>
+    /// The offset that the selection starts from, the end that is not the cursor; null when nothing is selected. With the cursor it gives
+    /// the selection exactly (see <see cref="PlaceCaret"/>).
+    /// </summary>
+    public int? SelectionAnchor => SelectionRange is { } range ? _offset == range.End ? range.Start : range.End : null;
 
     /// <summary>The screen position of the cursor's cell, for a menu opened from the keyboard.</summary>
     public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, _line - _top));
@@ -638,6 +649,35 @@ internal sealed partial class RenderedView : View
     }
 
     /// <summary>
+    /// Places the cursor at a source offset, with the selection from an anchor offset to it (or none). A unit that hides the offset is
+    /// unfolded first, as a search match does; the view scrolls to keep the cursor visible. The caret is placed by <see cref="ResolveCaret"/>,
+    /// so an offset on markup lands on the next visible character.
+    /// </summary>
+    /// <param name="offset">The source offset of the caret.</param>
+    /// <param name="anchor">The offset the selection starts from, or null for no selection.</param>
+    public void PlaceCaret(int offset, int? anchor)
+    {
+        if (!SyncLayout())
+        {
+            return;
+        }
+
+        int before = _offset;
+        int topBefore = _top;
+        if (UnfoldHiding(offset))
+        {
+            Reflow(Built.Width);
+        }
+
+        PlaceAt(offset);
+        _goal = _column;
+        _range = null;
+        _anchor = anchor is { } start && start != _offset ? start : null;
+        Settle(before, topBefore);
+        SetNeedsDraw();
+    }
+
+    /// <summary>
     /// Sets the search matches drawn in the search colours, and which one is active (its index in <paramref name="matches"/>, or -1).
     /// The matches are sorted and do not overlap, as <see cref="RenderSearch.Find"/> gives them.
     /// </summary>
@@ -696,8 +736,20 @@ internal sealed partial class RenderedView : View
         bool visible = IsCursorVisible();
         int anchor = visible || !HasCursor ? _offset : TopOffset;
         int row = visible ? _line - _top : 0;
-        bool hadCursor = HasCursor;
+        Rebuild(width, anchor, row, HasCursor);
+        PositionChanged?.Invoke();
+    }
 
+    /// <summary>
+    /// Builds the layout at a width for the current document and fold state, and places the top line so that the anchor's line is on a
+    /// screen row (the cursor stays at its offset when there was one). Shared by a reflow and a new document.
+    /// </summary>
+    /// <param name="width">The width of the layout.</param>
+    /// <param name="anchor">The source offset whose line keeps the row.</param>
+    /// <param name="row">The screen row of the anchor's line.</param>
+    /// <param name="hadCursor">Whether the view had a cursor before; without one the top line is only clamped.</param>
+    private void Rebuild(int width, int anchor, int row, bool hadCursor)
+    {
         _layout = BuildLayout(width);
         if (hadCursor)
         {
@@ -712,8 +764,8 @@ internal sealed partial class RenderedView : View
             _top = Math.Clamp(_top, 0, MaxTop());
         }
 
+        SyncTracking();
         UpdateCursor();
-        PositionChanged?.Invoke();
     }
 
     private DocumentLayout Built => _layout ?? throw new InvalidOperationException("The view has no layout yet.");
@@ -1206,6 +1258,7 @@ internal sealed partial class RenderedView : View
     {
         EnsureCaretColumnVisible();
         EnsureVisible();
+        SyncTracking();
         UpdateCursor();
         if (_offset != offsetBefore || _top != topBefore)
         {

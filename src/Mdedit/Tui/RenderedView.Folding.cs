@@ -248,6 +248,7 @@ internal sealed partial class RenderedView
             EnsureVisible();
         }
 
+        SyncTracking();
         UpdateCursor();
         SetNeedsDraw();
         PositionChanged?.Invoke();

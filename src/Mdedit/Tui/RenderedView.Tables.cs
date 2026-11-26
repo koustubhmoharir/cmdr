@@ -163,6 +163,7 @@ internal sealed partial class RenderedView
         }
 
         _shift[key] = Math.Clamp(_shift.GetValueOrDefault(key) + delta, 0, max);
+        SyncTracking();
         UpdateCursor();
         SetNeedsDraw();
         return true;

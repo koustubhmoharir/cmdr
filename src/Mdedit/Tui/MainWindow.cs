@@ -11,13 +11,20 @@ using Point = System.Drawing.Point;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The borderless main window: the rendered document in a rounded frame whose title is the file name, the message line (the heading
-/// path and the scroll position, or a message in their place), and the key hints on the last row.
+/// The borderless main window: the document in a rounded frame whose title is the file name, the message line (the heading path and the
+/// scroll position, or a message in their place), and the key hints on the last row. The frame holds the rendered view, or the source
+/// editor in edit mode; both show the one source buffer.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Quit and switch.</b> Ctrl+Q stops the window. Ctrl+O shows the picker over the document, and a file chosen there replaces the
-/// document when the window stops (see <see cref="SwitchTo"/>). Esc is swallowed: the window has nothing to go back to.
+/// document when the window stops (see <see cref="SwitchTo"/>). Esc is swallowed in view mode: the window has nothing to go back to.
+/// </para>
+/// <para>
+/// <b>Modes.</b> The window opens in view mode, except for a large file (over <see cref="LargeFileBytes"/> on disk), which opens in edit
+/// mode with <see cref="LargeFileOpened"/>. Ctrl+T switches between the modes, and Esc goes from edit mode to view mode. The view is
+/// rendered from the buffer when the buffer's version moved since its last render (see <see cref="RenderBuffer"/>). Ctrl+Z and Ctrl+Y undo
+/// and redo the buffer in view mode; in edit mode the editor's own keys do it.
 /// </para>
 /// <para>
 /// <b>Messages.</b> A message stays for <see cref="MessageDuration"/> or until the next key, whichever is first. The delay runs through
@@ -41,17 +48,37 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The message of a copy whose text is over <see cref="Osc52.MaxBytes"/>, which is not copied.</summary>
     internal const string TooLargeToCopy = "Too large to copy";
 
+    /// <summary>The size, in bytes on disk, above which a file opens in edit mode, and a view render asks first.</summary>
+    internal const long LargeFileBytes = 2 * 1024 * 1024;
+
+    /// <summary>The message after a large file opened in edit mode.</summary>
+    internal const string LargeFileOpened = "Large file: opened as text";
+
+    // The title of the question that a large file's view render asks first.
+    private const string LargeFileTitle = "Large file";
+
     private readonly Func<(PickOutcome Outcome, OpenedFile? File)> _pickFile;
     private readonly Func<TimeSpan, Action, Action> _schedule;
     private readonly OpenedFile _opened;
-    private readonly ImmutableArray<OutlineEntry> _outline;
+    private readonly long _largeFileBytes;
     private readonly FrameView _frame;
     private readonly RenderedView _view;
+    private readonly SourceEditor _editor;
     private readonly MessageLine _message;
     private readonly HintsLine _hints;
     private readonly ViewSearch _search;
+    private ImmutableArray<OutlineEntry> _outline;
     private PopoverMenu? _menu;
     private Action? _cancelExpiry;
+
+    // True in edit mode, when the editor is shown instead of the view.
+    private bool _editing;
+
+    // The buffer's version that the view was rendered from, or -1 before the first render of a large file.
+    private int _renderedVersion;
+
+    // True while the buffer's text differs from the text the file was read with.
+    private bool _dirty;
 
     /// <summary>
     /// Creates the window over a file, with the view at the document's start.
@@ -62,8 +89,15 @@ internal sealed class MainWindow : Window, ISearchHost
     /// Runs an action once after a delay on the UI thread, and returns a function that cancels it. Null uses the application's timers.
     /// Tests pass a fake, so that a message's expiry is driven without waiting.
     /// </param>
+    /// <param name="largeFileBytes">
+    /// The size above which the file opens in edit mode. Tests lower it; the application uses <see cref="LargeFileBytes"/>.
+    /// </param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
-    public MainWindow(OpenedFile file, Func<(PickOutcome Outcome, OpenedFile? File)> pickFile, Func<TimeSpan, Action, Action>? schedule = null)
+    public MainWindow(
+        OpenedFile file,
+        Func<(PickOutcome Outcome, OpenedFile? File)> pickFile,
+        Func<TimeSpan, Action, Action>? schedule = null,
+        long largeFileBytes = LargeFileBytes)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(pickFile);
@@ -71,13 +105,20 @@ internal sealed class MainWindow : Window, ISearchHost
         _opened = file;
         _pickFile = pickFile;
         _schedule = schedule ?? ScheduleOnApp;
+        _largeFileBytes = largeFileBytes;
 
         // No outer frame: the rendered view's frame, the message line and the hints fill the window.
         BorderStyle = LineStyle.None;
 
-        RenderDocument document = RenderDocument.Parse(file.File.Text.Text, TextMateColorizer.Shared);
+        // The buffer holds the text from the start. A large file's view is rendered only when the view is first shown.
+        _editor = new SourceEditor { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill(), Visible = false, LineBreak = file.File.Text.Newline };
+        _editor.Text = file.File.Text.Text;
+        _editor.Buffer.UndoStack.ClearAll();
+        bool large = IsLarge;
+
+        RenderDocument document = large ? RenderDocument.Parse(string.Empty) : RenderDocument.Parse(file.File.Text.Text, TextMateColorizer.Shared);
         _outline = Outline.Of(document);
-        _view = new RenderedView(document) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
+        _view = new RenderedView(document, new AnchorOffsetTracker(_editor.Buffer)) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _frame = new FrameView
         {
             BorderStyle = LineStyle.Rounded,
@@ -85,9 +126,8 @@ internal sealed class MainWindow : Window, ISearchHost
             Y = 0,
             Width = Dim.Fill(),
             Height = Dim.Fill(2),
-            Title = FileName,
         };
-        _frame.Add(_view);
+        _frame.Add(_view, _editor);
 
         _message = new MessageLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
@@ -105,13 +145,46 @@ internal sealed class MainWindow : Window, ISearchHost
         _view.PositionChanged += ShowStatus;
         _view.KeyPressed += ClearMessage;
         _view.ContextMenuRequested += ShowContextMenu;
-        _hints.Show(MdeditHints.View, MdeditHints.Quit);
+        _editor.BufferChanged += OnBufferChanged;
+        _editor.CaretChanged += (_, _) =>
+        {
+            if (_editing)
+            {
+                ShowStatus();
+            }
+        };
+        _editor.KeyPressed += ClearMessage;
+
+        _renderedVersion = large ? -1 : _editor.Version;
+        if (large)
+        {
+            _editing = true;
+            _view.Visible = false;
+            _editor.Visible = true;
+            _editor.SetFocus();
+            ShowMessage(LargeFileOpened, error: false);
+        }
+        else
+        {
+            _view.SetFocus();
+        }
+
+        UpdateTitle();
+        ShowHints();
         ShowStatus();
-        _view.SetFocus();
     }
 
     /// <summary>The rendered view, for the tests.</summary>
     internal RenderedView View => _view;
+
+    /// <summary>The source editor of edit mode, for the tests.</summary>
+    internal SourceEditor Editor => _editor;
+
+    /// <summary>Whether the window is in edit mode (the editor is shown), for the tests.</summary>
+    internal bool InEditMode => _editing;
+
+    /// <summary>Whether the file is larger than the size that opens in edit mode.</summary>
+    private bool IsLarge => _opened.File.Bytes.Length > _largeFileBytes;
 
     /// <summary>The message line, for the tests.</summary>
     internal MessageLine Message => _message;
@@ -137,8 +210,13 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <summary>The name of the file, as the frame's title shows it.</summary>
     private string FileName => Path.GetFileName(_opened.Path);
 
+    /// <summary>The application, for the questions of edit mode. Only used while the window runs.</summary>
+    private IApplication Ui => App ?? throw new InvalidOperationException("The window is not running in an application.");
+
     /// <summary>
-    /// The window's keys that the view does not take: Ctrl+Q quits, Ctrl+O opens the picker, and Esc is swallowed.
+    /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
+    /// both modes. In edit mode Esc returns to view mode and Ctrl+F does nothing yet. In view mode Esc is swallowed (or closes an open
+    /// search), Ctrl+Z and Ctrl+Y undo and redo, and the view's search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
@@ -155,10 +233,27 @@ internal sealed class MainWindow : Window, ISearchHost
             return true;
         }
 
+        if (key == Key.T.WithCtrl)
+        {
+            ToggleMode();
+            return true;
+        }
+
+        if (_editing)
+        {
+            return HandleEditKey(key) || base.OnKeyDown(key);
+        }
+
         if (key == Key.Esc)
         {
             // Esc closes an open search (its bar is not focused here, or Esc would have been taken by it). Otherwise it is swallowed.
             _search.Close();
+            return true;
+        }
+
+        if (key == Key.Z.WithCtrl || key == Key.Y.WithCtrl)
+        {
+            UndoView(redo: key == Key.Y.WithCtrl);
             return true;
         }
 
@@ -175,6 +270,138 @@ internal sealed class MainWindow : Window, ISearchHost
 
         return base.OnKeyDown(key);
     }
+
+    // ----- Modes -----
+
+    /// <summary>
+    /// The keys of edit mode that the editor does not take: Esc returns to view mode, and Ctrl+F does nothing until the search in edit
+    /// mode is built, so that it does not open the view's search over the editor.
+    /// </summary>
+    private bool HandleEditKey(Key key)
+    {
+        if (key == Key.Esc)
+        {
+            ShowView();
+            return true;
+        }
+
+        return key == Key.F.WithCtrl;
+    }
+
+    /// <summary>Ctrl+T: edit mode from view mode, and view mode from edit mode.</summary>
+    private void ToggleMode()
+    {
+        if (_editing)
+        {
+            ShowView();
+        }
+        else
+        {
+            ShowEdit();
+        }
+    }
+
+    /// <summary>
+    /// Shows the editor, with its caret and selection where the view's are: the caret at the view's cursor offset, and the selection (if any)
+    /// from the view's selection anchor to the cursor.
+    /// </summary>
+    private void ShowEdit()
+    {
+        if (_editing)
+        {
+            return;
+        }
+
+        int offset = _view.CursorOffset;
+        int? anchor = _view.SelectionAnchor;
+        _search.Close();
+        _editing = true;
+        _view.Visible = false;
+        _editor.Visible = true;
+        _editor.SetFocus();
+        _editor.PlaceCaret(offset, anchor);
+        UpdateTitle();
+        ShowHints();
+        ShowStatus();
+    }
+
+    /// <summary>
+    /// Shows the view, rendered from the buffer when its text moved since the last render, with the cursor at the editor's caret and the
+    /// selection carried over. A large file that needs a render asks first, and stays in edit mode when the answer is no. The view keeps
+    /// the caret visible; it does not keep the caret's screen row, which the editor does not report.
+    /// </summary>
+    private void ShowView()
+    {
+        if (!_editing)
+        {
+            return;
+        }
+
+        bool rendering = _renderedVersion != _editor.Version;
+        if (rendering && IsLarge && Confirm.Choose(Ui, LargeFileTitle, $"Render {_opened.File.Bytes.Length / (1024.0 * 1024.0):0.#} MB?", "Render", "Cancel") != 0)
+        {
+            return;
+        }
+
+        int offset = _editor.CaretOffset;
+        int? anchor = _editor.SelectionAnchor;
+        if (rendering)
+        {
+            RenderBuffer();
+        }
+
+        _editing = false;
+        _editor.Visible = false;
+        _view.Visible = true;
+        _view.SetFocus();
+        _view.PlaceCaret(offset, anchor);
+        UpdateTitle();
+        ShowHints();
+        ShowStatus();
+    }
+
+    /// <summary>
+    /// Renders the view from the buffer's text, and gives the view the new document (see <see cref="RenderedView.SetDocument"/>). The outline
+    /// and the search follow the document.
+    /// </summary>
+    private void RenderBuffer()
+    {
+        RenderDocument document = RenderDocument.Parse(_editor.Buffer.Text, TextMateColorizer.Shared);
+        _outline = Outline.Of(document);
+        _view.SetDocument(document);
+        _search.OnDocumentChanged(document);
+        _renderedVersion = _editor.Version;
+    }
+
+    /// <summary>
+    /// Undoes or redoes the buffer from view mode, and shows the result: the view is rendered again, and the cursor goes to the place of
+    /// the change. Does nothing when there is nothing to undo or redo.
+    /// </summary>
+    /// <param name="redo">True to redo, false to undo.</param>
+    private void UndoView(bool redo)
+    {
+        if (_editor.Undo(redo) is not { } caret)
+        {
+            return;
+        }
+
+        RenderBuffer();
+        _view.PlaceCaret(caret, null);
+        ShowStatus();
+    }
+
+    /// <summary>Called after each change of the buffer: the dirty state and the title follow the text.</summary>
+    private void OnBufferChanged()
+    {
+        _dirty = _editor.Buffer.Text != _opened.File.Text.Text;
+        UpdateTitle();
+    }
+
+    /// <summary>The frame's title: the file name, <c> *</c> when the text differs from the file, and <c> [edit]</c> in edit mode.</summary>
+    private void UpdateTitle() => _frame.Title = FileName + (_dirty ? " *" : string.Empty) + (_editing ? " [edit]" : string.Empty);
+
+    /// <summary>The key hints of the current mode, with Quit at the right.</summary>
+    private void ShowHints() => _hints.Show(_editing ? MdeditHints.Edit : MdeditHints.View, MdeditHints.Quit);
 
     // ----- Search and copy -----
 
@@ -363,8 +590,25 @@ internal sealed class MainWindow : Window, ISearchHost
         return $"{top * 100 / max}%";
     }
 
-    // Shows the heading path and the scroll position, unless a message is shown (the message line keeps the message then).
-    private void ShowStatus() => _message.SetStatus(HeadingPath(), ScrollPosition(_view.TopLine, _view.LineCount, _view.PageLines));
+    // Shows the heading path and the scroll position in view mode, and the caret's line and column in edit mode, unless a message is
+    // shown (the message line keeps the message then).
+    private void ShowStatus()
+    {
+        if (_editing)
+        {
+            _message.SetStatus(string.Empty, CaretLocation(_editor));
+            return;
+        }
+
+        _message.SetStatus(HeadingPath(), ScrollPosition(_view.TopLine, _view.LineCount, _view.PageLines));
+    }
+
+    /// <summary>The caret's 1-based line and column in the editor's text, as <c>line:col</c>, for the edit-mode status.</summary>
+    internal static string CaretLocation(SourceEditor editor)
+    {
+        var location = editor.Buffer.GetLocation(editor.CaretOffset);
+        return $"{location.Line}:{location.Column}";
+    }
 
     /// <summary>Shows a message in place of the status for <see cref="MessageDuration"/>, or until the next key.</summary>
     /// <param name="text">The message.</param>

@@ -48,9 +48,9 @@ The first version is M0–M3.
 
 ## M2c. Rich view
 
-- [ ] Horizontal scrolling of tables (`<`/`>`, Shift+wheel, edge markers), the cursor's cell kept visible.
-- [ ] TextMate colorizer adapter; plain code without the native library.
-- [ ] Folding: Space, `*`, `-`, `1`–`6`, `0`, glyphs and summaries, mouse.
+- [x] Horizontal scrolling of tables (`<`/`>`, Shift+wheel, edge markers), the cursor's cell kept visible. (b015473)
+- [x] TextMate colorizer adapter; plain code without the native library. (b015473)
+- [x] Folding: Space, `*`, `-`, `1`–`6`, `0`, glyphs and summaries, mouse. (b015473)
 
 ## M3. Editor
 

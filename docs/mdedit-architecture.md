@@ -352,9 +352,9 @@ Patterned on cfgedit's text mode and its save and external-change flows (`src/Cf
   scroll offsets by source offset (see Folds), recomputes the search matches, and keeps the top line's anchor on its row
   as a reflow does.
 - **Ctrl+T, view → edit**: the editor's caret goes to `RenderedView.CursorOffset`, and a selection becomes the editor's
-  selection over the same source range; the editor scrolls so the caret's line is on the same screen row as the view's
-  caret when it can. **Edit → view** (Ctrl+T or Esc): re-render, then the view's caret goes to `PositionOf(caret offset)`
-  (units hiding it are unfolded first) and the editor's selection becomes the view's selection; same screen-row rule.
+  selection over the same source range; the editor keeps the caret visible (it has no public way to read or set its
+  scroll row, so the screen row is not kept across the switch). **Edit → view** (Ctrl+T or Esc): re-render, then the view's caret goes to `PositionOf(caret offset)`
+  (units hiding it are unfolded first) and the editor's selection becomes the view's selection; the view keeps the caret visible. The edit-mode message line shows the caret's `line:col`.
 - **Title**: the file name, ` *` when dirty, ` [edit]` in edit mode. **Hints** per mode: view (`^T Edit` added first),
   edit (`^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `^Q Quit`).
 - **Dirty**: the buffer's text differs from `TextFile.Text.Text` (checked when the version moves, not on every draw).
