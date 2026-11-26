@@ -81,15 +81,21 @@ Decisions made while building it (2026-11-26):
   leaves get spaces of the same width.
 - Ordered list item: the number as written in the source plus its delimiter (`3.`, `3)`) and a space, mapped 1:1 to the
   source digits and delimiter; continuation indent of the same width.
-- Heading: a synthetic fold glyph `▾ ` (`FoldGlyph`) before the text. (The design's "only on hover" is replaced by this:
-  a stable column is simpler to click and keeps text from shifting when folding.)
+- Fold gutter: every line with cells starts with two gutter columns, before its containers and part of its prefix
+  (`PrefixCells`, so a scrolled table keeps it): the synthetic fold glyph `▾ ` / `▸ ` (`FoldGlyph`) on the first line of a
+  heading or a code block, blanks elsewhere. The glyph is in screen column 0 whatever the nesting, so it never lines up with
+  text, and heading text starts at the content column like the text under it. (The design's "only on hover" is replaced by
+  this: a stable column is simpler to click and keeps text from shifting when folding.) Lines with no cells (an empty code
+  line, a separator without bars) stay empty.
 
 **Blocks.**
 
 - Paragraph: its runs, wrapped.
-- Heading (ATX and setext): fold glyph, then its inline runs with `Role = Heading` and `HeadingLevel`.
-- Code block: a header line `▾ <language>` (or `▾ code` when there is none), role `CodeHeader`, synthetic, anchored at
-  the block's start; then one line per source code line, cells 1:1 (`StringLine` slices, already without the indentation
+- Heading (ATX and setext): its inline runs with `Role = Heading` and `HeadingLevel`.
+- Code block: a header line, the fold glyph in the gutter and the label `<language>` (or `code` when there is none), role
+  `CodeHeader`, anchored at the block's start. The label's first cell maps offset 0 (the fence, or an indented block's
+  indentation) when no code cell does, which is always for a folded block, so the header is a caret stop and Space there
+  folds or unfolds it; End on it stays on the label; then one line per source code line, cells 1:1 (`StringLine` slices, already without the indentation
   of an indented block), role `CodeBlock`. An empty code line has its line start as `Anchor`. Code lines wrap at the
   content width at grapheme boundaries; each continuation starts with a dim `↪` (`WrapMarker`, synthetic).
 - Thematic break: one line of `─` across the content width, synthetic, anchored at the break's start.
@@ -124,7 +130,7 @@ block, by binary search).
 ### Layout decisions (2026-11-26)
 
 - An alert containing a list: the title line carries the list marker; quotes nested inside the alert stay off it. The
-  heading fold glyph goes on the first content line, after a title.
+  heading's fold glyph goes in the gutter of its first content line, after a title.
 - Separator lines keep only the quote and alert bars, with the blanks needed before a bar to keep it in its column, and no
   trailing blanks. Two separate quotes with a blank line between them get a bar on their separator, because containers
   carry no spans to tell them apart.
@@ -224,7 +230,8 @@ the cells after the prefix; the layout itself never cuts a line.
 
 Decisions (2026-11-26): the cache key carries the head's hidden-line count, not only a folded flag, since the summary
 shows it; the summary appears only when lines are hidden; a folded head keeps its separator to the next visible block and
-hidden blocks leave none; `PositionOf` into a folded code block gives its header at column 0; `RenderBlock.Language` is the
+hidden blocks leave none; `PositionOf` into a folded code block gives its header's label (2026-11-26, revised: the header was synthetic and the caret
+skipped a folded code block); `RenderBlock.Language` is the
 info string's first word as written and `LanguageId` its normalized id; `FoldUnits` is computed once per document.
 
 ### Copy, search and outline (M2a part 2)
@@ -342,7 +349,9 @@ Patterned on cfgedit's text mode and its save and external-change flows (`src/Cf
 
 ### Source buffer and modes
 
-- **`SourceEditor`**: a Shared.Tui `TextArea` with `TabInserts`, `LineBreak` = the file's `SourceText.Newline`, the editor's
+- **`SourceEditor`**: a Shared.Tui `TextArea` with `TabInserts`, the fold gutter (`GutterOptions.Folding`, two columns
+  like the view's, so source and rendered text both start at column 2), Alt+F for the editor's fold toggle (its default,
+  Ctrl+M, arrives as Enter from a terminal), `LineBreak` = the file's `SourceText.Newline`, the editor's
   built-in Markdown highlighting (`MarkDown-Mode.xshd` through `HighlightingManager`), and `WordWrap` on; Alt+Z toggles
   word wrap. Its `TextDocument` is **the source buffer** for both modes: the window never keeps another copy of the text.
   The editor's undo stack is the one history; Ctrl+Z / Ctrl+Y in view mode undo and redo on it and re-render.
@@ -356,7 +365,7 @@ Patterned on cfgedit's text mode and its save and external-change flows (`src/Cf
   scroll row, so the screen row is not kept across the switch). **Edit → view** (Ctrl+T or Esc): re-render, then the view's caret goes to `PositionOf(caret offset)`
   (units hiding it are unfolded first) and the editor's selection becomes the view's selection; the view keeps the caret visible. The edit-mode message line shows the caret's `line:col`.
 - **Title**: the file name, ` *` when dirty, ` [edit]` in edit mode. **Hints** per mode: view (`^T Edit` added first),
-  edit (`^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `^Q Quit`).
+  edit (`^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold`, `^Q Quit`).
 - **Dirty**: the buffer's text differs from `TextFile.Text.Text` (checked when the version moves, not on every draw).
 - **Large files**: a file over 2 MB (its length in bytes on disk) opens in edit mode with the message `Large file: opened as text`; Ctrl+T to view mode then asks "Render <n> MB?" (Render /
   Cancel, Render the default).
@@ -371,9 +380,12 @@ the anchors, so the state is shared both ways.
 
 Decisions (2026-11-26): `MarkdownFoldingStrategy` makes the editor's foldings (a section from the end of its heading's
 first line to the end of its last block, a code unit from the end of its fence line); they are brought up to date 250 ms
-after a batch of changes that is not only letters, and always before Ctrl+T shows the view. The fold gutter is off: with
-it, the editor's text sits two columns right of the view's. So folds are made in view mode and shown in the editor, and a
-change in the editor's foldings (none without the gutter, but the sync is in place) flows back to the view.
+after a batch of changes that is not only letters, and always before Ctrl+T shows the view. A gutter click or Alt+F changes the editor's foldings, and the change flows back to
+the view. The editor's own fold marker (`FoldingTransformer`) misses a folding that starts at the end of a line, so
+`FoldSummaryTransformer`, one of the editor's line transformers, draws ` … n lines` after a folded head line (on the last
+segment of a wrapped line), with the view's count (`FoldUnit.HiddenLines`, which the strategy records on each update; the
+editor's own count would include a closing fence) and the view's `FoldSummary` colour. (Revised 2026-11-26: the gutter was
+off at first, and a folded unit showed nothing at all in edit mode.)
 
 ### Saving and closing
 

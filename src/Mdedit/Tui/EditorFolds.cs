@@ -1,4 +1,6 @@
 using Mdedit.Core.Render;
+using Terminal.Gui.Drawing;
+using Terminal.Gui.Editor;
 using Terminal.Gui.Editor.Document;
 using Terminal.Gui.Editor.Document.Folding;
 
@@ -15,6 +17,11 @@ namespace Mdedit.Tui;
 /// <b>Automatic folding is off.</b> The editor does not run the strategy by itself. A change that may affect the foldings (see
 /// <see cref="MarkdownFoldingStrategy.ChangeMayAffectFoldings"/>) raises <see cref="UpdateRequested"/>, and the window runs
 /// <see cref="Update"/> later, once per batch of changes. Until then the foldings move with the edits, as the editor keeps them.
+/// </para>
+/// <para>
+/// <b>Markers.</b> A folded unit shows its summary (<c>… 3 lines</c>, as the view does) through <see cref="FoldSummaryTransformer"/>, which the
+/// constructor adds to the editor's line transformers. The count is the view's (<see cref="FoldUnit.HiddenLines"/>), which the strategy
+/// records in each <see cref="Update"/>; the editor's own count would include a code block's closing fence.
 /// </para>
 /// <para>
 /// <b>Entering.</b> <see cref="Update"/> and then <see cref="TakeViewState"/> make the foldings of the current text, with the folded ones the
@@ -48,6 +55,7 @@ internal sealed class EditorFolds
         editor.AutomaticFolding = false;
         editor.FoldingManager = _manager;
         _manager.FoldingChanged += OnFoldingChanged;
+        editor.LineTransformers.Add(new FoldSummaryTransformer(_manager, HiddenLines, () => editor.GetAttributeForRole(VisualRole.Normal)));
         ((IDocument)editor.Buffer).TextChanging += OnTextChanging;
     }
 
@@ -125,6 +133,11 @@ internal sealed class EditorFolds
             }
         }
     }
+
+    /// <summary>The number of lines the view hides for a folding's unit, or 0 when the folding has no recorded count.</summary>
+    /// <param name="folding">A folding of the editor.</param>
+    private int HiddenLines(FoldingSection folding) =>
+        Anchor(folding) is { } anchor && _strategy.HiddenLines.TryGetValue(anchor, out int lines) ? lines : 0;
 
     /// <summary>The anchor of a folding's unit (its start, which moves with the edits), or null for a folding without one.</summary>
     private static AnchorOffset? Anchor(FoldingSection folding) =>

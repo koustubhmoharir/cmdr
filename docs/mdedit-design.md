@@ -131,6 +131,7 @@ dominant line ending), plus:
 | Ctrl+T, Esc | View mode, with the cursor on the rendered character of the caret's source character (or the nearest one, when the caret is on markup that is not shown). The view re-renders from the current text |
 | Ctrl+Z / Ctrl+Y | Undo / redo; one history for both modes, kept while the document is open |
 | Alt+Z | Word wrap on / off (on by default) |
+| Alt+F | Fold / unfold the section or code block at the caret; the fold gutter's `▾`/`▸` toggle on a click |
 | Ctrl+F; F3/Shift+F3 | Find in the source (SearchBar); the search text carries over between the modes |
 | Ctrl+S, Ctrl+O, Ctrl+Q | As in view mode |
 
@@ -244,9 +245,11 @@ is reparsed and the table must hold exactly the intended cells, or the edit is r
 
 The fold units are sections (a heading and everything up to the next heading of the same or a higher level) and code blocks.
 
-- Every heading starts with a dim fold glyph, `▾` unfolded and `▸` folded; a folded section adds a dim `… n lines`. A
-  code block starts with a header line, `▾` and its language, and folds to that line plus `… n lines`. The glyph has a
-  fixed column, so folding does not shift the text and the glyph is an easy click target.
+- The view has a two-column fold gutter: every heading has a dim fold glyph there, `▾` unfolded and `▸` folded, and a
+  folded section adds a dim `… n lines`. A code block starts with a header line, the glyph and its language, and folds to
+  that line plus `… n lines`. The glyph is in column 0, so it never lines up with the text under it, folding does not shift
+  the text, and the glyph is an easy click target. Edit mode has the editor's fold gutter, also two columns, and shows the
+  same summary after a folded line.
 - Folding moves a cursor inside the unit to its heading or fence line. Search, Ctrl+T from edit mode, link anchors (M4)
   and the outline (M4) unfold what they land in.
 - Fold state is a set of folded units identified by their start in the source, held as anchors that move with edits, so

@@ -22,6 +22,13 @@ namespace Mdedit.Tui;
 /// </remarks>
 internal sealed class MarkdownFoldingStrategy : IFoldingStrategy
 {
+    /// <summary>
+    /// The number of lines the view hides for the unit of each folding, keyed by the folding's anchor, as the last
+    /// <see cref="UpdateFoldings"/> found them (<see cref="FoldUnit.HiddenLines"/>). The editor's own count would include a code block's
+    /// closing fence.
+    /// </summary>
+    public IReadOnlyDictionary<AnchorOffset, int> HiddenLines { get; private set; } = new Dictionary<AnchorOffset, int>();
+
     /// <summary>Recomputes the foldings of the buffer's Markdown and keeps the state of the units whose starts survive.</summary>
     /// <param name="manager">The folding manager of the editor, which receives the new foldings.</param>
     /// <param name="document">The buffer.</param>
@@ -48,6 +55,7 @@ internal sealed class MarkdownFoldingStrategy : IFoldingStrategy
         RenderDocument render = RenderDocument.Parse(document.Text);
         var newFoldings = new List<NewFolding>();
         var units = new Dictionary<int, (AnchorOffset Anchor, bool Folded)>();
+        var hidden = new Dictionary<AnchorOffset, int>();
         foreach (FoldUnit unit in render.FoldUnits)
         {
             (int start, int end) = Range(render, unit);
@@ -62,6 +70,7 @@ internal sealed class MarkdownFoldingStrategy : IFoldingStrategy
             bool isFolded = folded.Contains(unit.Start);
             newFoldings.Add(new NewFolding(start, end) { Name = Name(render, unit), DefaultClosed = isFolded });
             units[start] = (anchor, isFolded);
+            hidden[anchor] = unit.HiddenLines;
         }
 
         manager.UpdateFoldings(newFoldings, -1);
@@ -73,6 +82,8 @@ internal sealed class MarkdownFoldingStrategy : IFoldingStrategy
                 folding.IsFolded = unit.Folded;
             }
         }
+
+        HiddenLines = hidden;
     }
 
     /// <summary>

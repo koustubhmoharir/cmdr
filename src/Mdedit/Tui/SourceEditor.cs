@@ -1,4 +1,5 @@
 using Shared.Tui;
+using Terminal.Gui.Editor;
 using Terminal.Gui.Editor.Document;
 using Terminal.Gui.Editor.Highlighting;
 using Terminal.Gui.Input;
@@ -7,13 +8,19 @@ namespace Mdedit.Tui;
 
 /// <summary>
 /// The source editor of edit mode, and the one copy of the document's text: its <see cref="Editor.Document"/> is the source buffer that
-/// both modes show. It is a <see cref="TextArea"/> with Markdown highlighting and word wrap on, and Alt+Z toggles the wrap. Its undo
-/// history is the buffer's, so <see cref="Undo"/> undoes and redoes in either mode.
+/// both modes show. It is a <see cref="TextArea"/> with Markdown highlighting, word wrap on, and the fold gutter. Alt+Z toggles the wrap,
+/// and Alt+F folds or unfolds the unit under the caret. Its undo history is the buffer's, so <see cref="Undo"/> undoes and redoes in
+/// either mode.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Version.</b> <see cref="Version"/> counts the document's changes, undo and redo included. The window compares it with the version
 /// its rendered view was built from, so a render happens only when the text moved.
+/// </para>
+/// <para>
+/// <b>Folds.</b> The fold gutter (<see cref="GutterOptions.Folding"/>, two columns, as the view's) shows the folds and toggles them on a
+/// click; the folds themselves are <see cref="EditorFolds"/>'s. Alt+F runs the editor's own fold toggle, which Ctrl+M cannot carry since
+/// a terminal sends Ctrl+M as Enter.
 /// </para>
 /// <para>
 /// <b>Highlighting.</b> The built-in definition is <see cref="HighlightingName"/> (the <c>MarkDown-Mode</c> grammar), found through the
@@ -31,16 +38,28 @@ internal sealed class SourceEditor : TextArea
     /// <summary>The key that toggles word wrap.</summary>
     internal static readonly Key WrapKey = Key.Z.WithAlt;
 
+    /// <summary>The key that folds or unfolds the unit under the caret.</summary>
+    internal static readonly Key FoldKey = Key.F.WithAlt;
+
+    /// <summary>
+    /// The editor's command that toggles the fold under the caret (its <c>ToggleFoldUnderCaret</c>, which the editor binds to Ctrl+M). The
+    /// editor does not name it in the public API, so it is given by its value.
+    /// </summary>
+    private const Command ToggleFoldCommand = (Command)73;
+
     private int _version;
 
     /// <summary>
-    /// Creates an empty editor with Tab inserting tabs, word wrap on, and the Markdown highlighting.
+    /// Creates an empty editor with Tab inserting tabs, word wrap on, the fold gutter, Alt+F bound to the fold toggle, and the Markdown
+    /// highlighting.
     /// </summary>
     /// <exception cref="InvalidOperationException">The built-in Markdown highlighting definition cannot be found.</exception>
     public SourceEditor()
     {
         TabInserts = true;
         WordWrap = true;
+        GutterOptions = GutterOptions.Folding;
+        KeyBindings.Add(FoldKey, ToggleFoldCommand);
         HighlightingDefinition = HighlightingManager.Instance.GetDefinition(HighlightingName)
             ?? HighlightingManager.Instance.GetDefinitionByExtension(HighlightingExtension)
             ?? throw new InvalidOperationException($"The highlighting definition '{HighlightingName}' is not available.");

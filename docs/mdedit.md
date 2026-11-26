@@ -144,6 +144,7 @@ own line ending (a CRLF file gets CRLF).
 |---|---|
 | Ctrl+T, Esc | Back to view mode. The view is rendered again when the text changed. The caret goes to the rendered character of the source caret; when the caret is on markup that is not shown (`**`, `# `), the next visible character. Esc closes an open search first |
 | Alt+Z | Word wrap on / off (on at the start) |
+| Alt+F | Fold or unfold the section or code block at the caret |
 | `/` | Types a slash (in view mode it opens the search) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the editor's history |
 | Ctrl+F | Find in the source (the search bar, as in view mode). F3 / Shift+F3 go to the next / previous match, with the same wrap and no-match messages as view mode. Enter goes to the first match after the caret; the match is selected, with the caret at its start. Esc closes the bar, and the focus goes back to the editor |
@@ -156,7 +157,7 @@ own line ending (a CRLF file gets CRLF).
 - **Search.** The matches are the source text, markup included: `**b` finds the start of bold text. They follow the edits while
   the bar is open. The search text carries over when the mode changes, and the active match does not: the bar closes when the
   mode changes, and Ctrl+F, F3 or Shift+F3 in the other mode searches again with the same text.
-- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap` and `^Q Quit`.
+- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold` and `^Q Quit`.
 - **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
   above it, and a table keeps its scroll.
 - **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
@@ -209,7 +210,8 @@ be read is reported once on the message line, and not again until the file chang
 
 Sections (a heading and everything up to the next heading of the same or a higher level) and code blocks fold. A folded
 heading shows `▸` and `… n lines`, the number of source lines hidden; a folded code block shows its language and the
-number of its code lines. Unfolded headings show `▾`.
+number of its code lines. Unfolded headings show `▾`. The glyphs sit in a two-column gutter at the left edge, so the text starts in the third
+column.
 
 | Key | |
 |---|---|
@@ -222,9 +224,10 @@ number of its code lines. Unfolded headings show `▾`.
 Folding keeps the caret's row on the screen when the fold is above it. Search unfolds what hides a match before it selects
 the match, and the search still finds text in folded content. Folds stay when the window is resized.
 
-**Edit mode.** The editor shows the same folds: a folded section shows only its heading line, and a folded code block shows
-its fence line. Edit mode has no fold keys and no fold gutter (Space types a space), so folds are changed in view mode, and
-the editor shows them when it is entered. Typing keeps a fold while its heading or fence line keeps its start, as in view
+**Edit mode.** The editor shows the same folds, in a fold gutter of its own: a folded section shows its heading line with
+`▸` and `… n lines`, and a folded code block its fence line. Alt+F folds or unfolds the section or code block at the caret
+(Space types a space), and a click on a `▾` or `▸` in the gutter does the same. Folds made in either mode carry over to the
+other. Typing keeps a fold while its heading or fence line keeps its start, as in view
 mode. The editor's folds are brought up to date a moment after a change that is not only letters (a space, a marker, a
 line break), and before the view is shown again.
 
