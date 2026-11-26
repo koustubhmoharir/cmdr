@@ -121,10 +121,29 @@ block, by binary search).
   the last line.
 - `string TextOf(int line)`: the line's cell texts joined, for tests and search.
 
+### Layout decisions (2026-11-26)
+
+- An alert containing a list: the title line carries the list marker; quotes nested inside the alert stay off it. The
+  heading fold glyph goes on the first content line, after a title.
+- Separator lines keep only the quote and alert bars, with the blanks needed before a bar to keep it in its column, and no
+  trailing blanks. Two separate quotes with a blank line between them get a bar on their separator, because containers
+  carry no spans to tell them apart.
+- A line's Anchor is the first mapped cell after the last cell it shows, so a space dropped at a wrap counts; the end of
+  a line maps to that space, which `PositionOf` places at the start of the next line.
+- A word wider than the content width starts a new line before it is broken between graphemes. A single cell wider than
+  the content width goes on its own line and overflows, so wrapping always progresses.
+- A code header is not wrapped.
+- Synthetic cells have the offset `Cell.Synthetic` (`int.MinValue`); relative offsets can be negative (ordered markers lie
+  before their block), so no small number can mean "synthetic".
+- `PositionOf` searches blocks by their lowest mapped offset (`BlockLayout.MinOffset`), since markers precede the block's
+  start.
+
 ### Cache
 
-`LayoutCache` keeps `BlockLayout`s keyed by (the block's source text, its container chain, its `Tight` and
-`IsFirstInItem`, the width). A resize computes each block once; an edit changes the text of a few blocks, and every other
+`LayoutCache` keeps `BlockLayout`s keyed by (the block's source text, its kind, heading level and language, its container
+chain, its `Tight` and `IsFirstInItem`, the document's `ReferenceKey`, the width). The reference key (the sorted labels of
+the link reference definitions) is there because a paragraph's lowering depends on definitions elsewhere: `[x]` is a link
+only when `[x]: url` exists. A resize computes each block once; an edit changes the text of a few blocks, and every other
 block's layout is reused (its offsets are relative, so they are still right after shifting by the block's new `Start`).
 The cache is bounded (least recently used, 4,096 entries).
 

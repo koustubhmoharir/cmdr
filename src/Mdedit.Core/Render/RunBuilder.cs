@@ -31,8 +31,8 @@ internal sealed class RunBuilder
         for (int index = 0; index < text.Length;)
         {
             int length = StringInfo.GetNextTextElementLength(text.AsSpan(index));
-            int offset = offsets is null ? -1 : offsets[index];
-            Append(text.Substring(index, length), offset == -1 ? -1 : offset - _blockStart, style, linkId);
+            int offset = offsets is null ? Cell.Synthetic : offsets[index];
+            Append(text.Substring(index, length), offset == Cell.Synthetic ? Cell.Synthetic : offset - _blockStart, style, linkId);
             index += length;
         }
     }
@@ -85,7 +85,7 @@ internal sealed class RunBuilder
 
     private void Append(string grapheme, int offset, CellStyle style, int linkId)
     {
-        if (_cells.Count > 0 && offset >= 0 && MayJoinPrevious(grapheme, _cells[^1]))
+        if (_cells.Count > 0 && offset != Cell.Synthetic && MayJoinPrevious(grapheme, _cells[^1]))
         {
             Cell last = _cells[^1];
             string joined = last.Text + grapheme;
@@ -102,5 +102,5 @@ internal sealed class RunBuilder
     }
 
     private static bool MayJoinPrevious(string grapheme, Cell last) =>
-        last.Offset >= 0 && (!char.IsAscii(grapheme[0]) || last.Text.EndsWith('‍'));
+        last.IsMapped && (!char.IsAscii(grapheme[0]) || last.Text.EndsWith('‍'));
 }

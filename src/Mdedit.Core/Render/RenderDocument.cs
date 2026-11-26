@@ -9,7 +9,11 @@ namespace Mdedit.Core.Render;
 /// </summary>
 /// <param name="Text">The source text the offsets refer to.</param>
 /// <param name="Blocks">The leaf blocks, in document order.</param>
-public sealed record RenderDocument(string Text, ImmutableArray<RenderBlock> Blocks)
+/// <param name="ReferenceKey">
+/// The normalized labels of the document's link reference definitions, sorted and joined with line feeds (empty when there are
+/// none). A block's lowering can depend on them, so a layout cache keys on it as well as on the block's text.
+/// </param>
+public sealed record RenderDocument(string Text, ImmutableArray<RenderBlock> Blocks, string ReferenceKey = "")
 {
     /// <summary>Lowers a parsed document to its leaf blocks.</summary>
     /// <param name="text">The source text <paramref name="ast"/> was parsed from. Its offsets are indexes into this string.</param>
@@ -19,7 +23,9 @@ public sealed record RenderDocument(string Text, ImmutableArray<RenderBlock> Blo
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(ast);
 
-        return new RenderDocument(text, new Lowerer(text).Lower(ast));
+        var lowerer = new Lowerer(text);
+        ImmutableArray<RenderBlock> blocks = lowerer.Lower(ast);
+        return new RenderDocument(text, blocks, lowerer.ReferenceKey);
     }
 
     /// <summary>Parses <paramref name="text"/> with the mdedit pipeline and lowers it.</summary>

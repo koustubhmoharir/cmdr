@@ -21,6 +21,7 @@ internal sealed class Lowerer
     private readonly string _text;
     private readonly List<RenderBlock> _blocks = [];
     private readonly List<Frame> _frames = [];
+    private readonly SortedSet<string> _labels = new(StringComparer.Ordinal);
     private int _leafCount;
 
     /// <summary>Starts lowering the document with the given source text.</summary>
@@ -38,6 +39,12 @@ internal sealed class Lowerer
         return _blocks.ToImmutableArray();
     }
 
+    /// <summary>
+    /// The normalized labels of the document's link reference definitions, sorted and joined with line feeds, empty when there
+    /// are none. Valid after <see cref="Lower"/>.
+    /// </summary>
+    public string ReferenceKey => string.Join('\n', _labels);
+
     /// <summary>One open container on the walk: its entry, how many leaves had been emitted when it opened, and for a list item whether its list is loose.</summary>
     private readonly record struct Frame(Container Entry, int LeavesAtEntry, bool ListIsLoose);
 
@@ -51,6 +58,18 @@ internal sealed class Lowerer
 
     private void Visit(Block block)
     {
+        if (block is LinkReferenceDefinitionGroup group)
+        {
+            // Markdig normalizes the labels; a link anywhere in the document can resolve to one of them.
+            foreach (LinkReferenceDefinition definition in group.Links.Values)
+            {
+                if (definition.Label is { } label)
+                {
+                    _labels.Add(label);
+                }
+            }
+        }
+
         int start = block.Span.Start;
         int end = block.Span.End < block.Span.Start ? start : block.Span.End + 1;
 

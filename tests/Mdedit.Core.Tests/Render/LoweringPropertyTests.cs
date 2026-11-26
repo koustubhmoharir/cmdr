@@ -54,7 +54,7 @@ public sealed class LoweringPropertyTests
         foreach (string file in files)
         {
             RenderDocument document = RenderDocument.Parse(File.ReadAllText(file));
-            mapped += document.Blocks.Sum(block => block.Runs.Sum(run => run.Cells.Count(cell => cell.Offset >= 0)));
+            mapped += document.Blocks.Sum(block => block.Runs.Sum(run => run.Cells.Count(cell => cell.IsMapped)));
 
             List<string> violations = Violations(document);
             Assert.True(violations.Count == 0, $"{Path.GetFileName(file)}: {string.Join("; ", violations.Take(5))}");
@@ -85,7 +85,7 @@ public sealed class LoweringPropertyTests
                         violations.Add($"cell '{cell.Text}' has width {cell.Width}");
                     }
 
-                    if (cell.Offset < 0)
+                    if (!cell.IsMapped)
                     {
                         continue;
                     }

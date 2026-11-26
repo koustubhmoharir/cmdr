@@ -25,7 +25,7 @@ internal static class RenderDump
 
     /// <summary>The absolute source offsets of a run's cells, comma separated; <c>-</c> for a synthetic cell.</summary>
     public static string Offsets(RenderBlock block, int run) =>
-        string.Join(",", block.Runs[run].Cells.Select(cell => cell.Offset < 0 ? "-" : (block.Start + cell.Offset).ToString()));
+        string.Join(",", block.Runs[run].Cells.Select(cell => !cell.IsMapped ? "-" : (block.Start + cell.Offset).ToString()));
 
     /// <summary>The kind, span and flags of a block, for asserting the block structure.</summary>
     public static string Shape(RenderBlock block) =>
@@ -55,7 +55,7 @@ internal static class RenderDump
     private static string Describe(Cell cell, int blockStart)
     {
         var text = new StringBuilder(cell.Text);
-        text.Append('@').Append(cell.Offset < 0 ? "-" : (blockStart + cell.Offset).ToString());
+        text.Append('@').Append(!cell.IsMapped ? "-" : (blockStart + cell.Offset).ToString());
         if (cell.Style.Role != StyleRole.Body)
         {
             text.Append('/').Append(cell.Style.Role);
