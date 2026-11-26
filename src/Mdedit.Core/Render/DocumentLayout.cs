@@ -267,7 +267,7 @@ public sealed class DocumentLayout
 
     /// <summary>
     /// The position of a folded head: its first line, and the column of its first mapped cell (column 0 when it has none). A folded
-    /// code block's first mapped cell is its header glyph.
+    /// code block's first mapped cell is its header label.
     /// </summary>
     /// <param name="head">The index of the head block.</param>
     private (int Line, int Column) HeadPosition(int head) =>

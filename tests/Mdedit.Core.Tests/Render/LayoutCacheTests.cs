@@ -50,7 +50,7 @@ public sealed class LayoutCacheTests
     public void Different_widths_do_not_share_entries()
     {
         var cache = new LayoutCache();
-        DocumentLayout narrow = LayoutDump.Build("aaa bbb ccc\n", 7, cache);
+        DocumentLayout narrow = LayoutDump.Build("aaa bbb ccc\n", 9, cache);
         DocumentLayout wide = LayoutDump.Build("aaa bbb ccc\n", 40, cache);
 
         Assert.NotSame(narrow.Blocks[0], wide.Blocks[0]);
@@ -135,7 +135,7 @@ public sealed class LayoutCacheTests
         DocumentLayout again = LayoutDump.Build("see [x]\n", 40, cache);
 
         Assert.DoesNotContain(again.Line(0).Cells, cell => cell.Style.Inline.HasFlag(InlineStyle.Link));
-        Assert.Equal("see [x]", again.TextOf(0));
+        Assert.Equal("  see [x]", again.TextOf(0));
     }
 
     [Fact]

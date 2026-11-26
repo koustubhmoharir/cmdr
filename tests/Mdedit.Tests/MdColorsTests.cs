@@ -88,8 +88,8 @@ public sealed class MdColorsTests
         TerminalScreen screen = TerminalHarness.Run(view, 40, 12)[0];
 
         int row = screen.RowOf("var x");
-        Assert.Equal(MdColors.TokenKeyword, screen.Cells[row][0].Attribute.Foreground);
-        Assert.Equal(MdColors.CodeText, screen.Cells[row][4].Attribute.Foreground);
+        Assert.Equal(MdColors.TokenKeyword, screen.Cells[row][2].Attribute.Foreground);
+        Assert.Equal(MdColors.CodeText, screen.Cells[row][6].Attribute.Foreground);
     }
 
     [Fact]

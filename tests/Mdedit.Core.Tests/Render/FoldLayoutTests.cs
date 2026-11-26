@@ -12,7 +12,7 @@ public sealed class FoldLayoutTests
     public void Unfolded_sections_show_every_line()
     {
         Assert.Equal(
-            new[] { "▾ A", string.Empty, "paragraph", string.Empty, "▾ B", string.Empty, "paragraph", string.Empty, "▾ C", string.Empty, "paragraph" },
+            new[] { "▾ A", string.Empty, "  paragraph", string.Empty, "▾ B", string.Empty, "  paragraph", string.Empty, "▾ C", string.Empty, "  paragraph" },
             Lines(Sections, 40, folded: null));
     }
 
@@ -22,7 +22,7 @@ public sealed class FoldLayoutTests
         int a = Units(Sections)[0].Start;
 
         Assert.Equal(
-            new[] { "▸ A … 6 lines", string.Empty, "▾ C", string.Empty, "paragraph" },
+            new[] { "▸ A … 6 lines", string.Empty, "▾ C", string.Empty, "  paragraph" },
             Lines(Sections, 40, Set(a)));
     }
 
@@ -32,7 +32,7 @@ public sealed class FoldLayoutTests
         int b = Units(Sections)[1].Start;
 
         Assert.Equal(
-            new[] { "▾ A", string.Empty, "paragraph", string.Empty, "▸ B … 2 lines", string.Empty, "▾ C", string.Empty, "paragraph" },
+            new[] { "▾ A", string.Empty, "  paragraph", string.Empty, "▸ B … 2 lines", string.Empty, "▾ C", string.Empty, "  paragraph" },
             Lines(Sections, 40, Set(b)));
     }
 
@@ -43,11 +43,11 @@ public sealed class FoldLayoutTests
         HashSet<int> state = Set(units[1].Start);
 
         state.Add(units[0].Start);
-        Assert.Equal(new[] { "▸ A … 6 lines", string.Empty, "▾ C", string.Empty, "paragraph" }, Lines(Sections, 40, state));
+        Assert.Equal(new[] { "▸ A … 6 lines", string.Empty, "▾ C", string.Empty, "  paragraph" }, Lines(Sections, 40, state));
 
         state.Remove(units[0].Start);
         Assert.Equal(
-            new[] { "▾ A", string.Empty, "paragraph", string.Empty, "▸ B … 2 lines", string.Empty, "▾ C", string.Empty, "paragraph" },
+            new[] { "▾ A", string.Empty, "  paragraph", string.Empty, "▸ B … 2 lines", string.Empty, "▾ C", string.Empty, "  paragraph" },
             Lines(Sections, 40, state));
     }
 
@@ -80,18 +80,19 @@ public sealed class FoldLayoutTests
     }
 
     [Fact]
-    public void A_folded_fenced_code_header_has_one_mapped_cell_which_is_its_glyph_at_the_block_start()
+    public void A_folded_fenced_code_header_has_one_mapped_cell_which_is_its_label_at_the_block_start()
     {
         DocumentLayout layout = DocumentLayout.Build(RenderDocument.Parse("```cs\nint x;\n```\n"), 40, new LayoutCache(), Set(0));
 
         Assert.Equal(new[] { 0 }, layout.Line(0).Cells.Where(cell => cell.IsMapped).Select(cell => cell.Offset));
         Assert.Equal("▸", layout.Line(0).Cells[0].Text);
+        Assert.Equal("c", layout.Line(0).Cells[2].Text);
     }
 
     [Fact]
     public void A_folded_code_block_header_is_not_wrapped_even_when_the_summary_does_not_fit()
     {
-        // Width 12 leaves 10 columns; "▸ csharp … 1 line" is 17 wide and stays on its one line.
+        // Width 12 leaves 10 columns after the gutter; "csharp … 1 line" is 15 wide and stays on its one line.
         Assert.Equal(new[] { "▸ csharp … 1 line" }, Lines("```csharp\nxxxxxxxxxx\n```\n", 12, Set(0)));
     }
 
@@ -154,7 +155,7 @@ public sealed class FoldLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("# aaa bbb ccc\n\npara\n", 9);
 
-        Assert.Equal(new[] { "▾ aaa bbb", "  ccc", string.Empty, "para" }, Enumerable.Range(0, layout.LineCount).Select(layout.TextOf));
+        Assert.Equal(new[] { "▾ aaa bbb", "  ccc", string.Empty, "  para" }, Enumerable.Range(0, layout.LineCount).Select(layout.TextOf));
         Assert.Equal(0, layout.FoldUnitAt(0)!.Start);
         Assert.Equal(0, layout.FoldUnitAt(1)!.Start);
         Assert.Null(layout.FoldUnitAt(2));
@@ -189,7 +190,7 @@ public sealed class FoldLayoutTests
         Assert.Equal((0, 2), layout.PositionOf(5));
         Assert.Equal((0, 2), layout.PositionOf(22));
         Assert.Equal((2, 2), layout.PositionOf(35));
-        Assert.Equal((4, 0), layout.PositionOf(38));
+        Assert.Equal((4, 2), layout.PositionOf(38));
     }
 
     [Fact]
@@ -198,17 +199,17 @@ public sealed class FoldLayoutTests
         const string text = "```cs\nint x;\nint y;\n```\n";
         DocumentLayout layout = DocumentLayout.Build(RenderDocument.Parse(text), 40, new LayoutCache(), Set(0));
 
-        Assert.Equal((0, 0), layout.PositionOf(0));
-        Assert.Equal((0, 0), layout.PositionOf(15));
+        Assert.Equal((0, 2), layout.PositionOf(0));
+        Assert.Equal((0, 2), layout.PositionOf(15));
     }
 
     [Fact]
-    public void Position_of_an_offset_in_a_folded_code_block_in_a_list_item_is_the_glyph_after_the_bullet()
+    public void Position_of_an_offset_in_a_folded_code_block_in_a_list_item_is_the_label_after_the_bullet()
     {
         const string text = "- ```cs\n  int x;\n  ```\n";
         DocumentLayout layout = DocumentLayout.Build(RenderDocument.Parse(text), 40, new LayoutCache(), Set(Units(text)[0].Start));
 
-        Assert.Equal((0, 2), layout.PositionOf(text.IndexOf("int", StringComparison.Ordinal)));
+        Assert.Equal((0, 4), layout.PositionOf(text.IndexOf("int", StringComparison.Ordinal)));
     }
 
     [Fact]

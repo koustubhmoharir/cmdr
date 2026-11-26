@@ -44,15 +44,15 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(
             view,
-            v => v.HandleMouse(Click(10, 2)),
+            v => v.HandleMouse(Click(12, 2)),
             v => v.HandleKey(Key.CursorDown.WithShift));
 
+        // The goal column 12 is the 'e' of "when" on the second line, which starts with "to " at offset intro + 37.
         int intro = Offset(Mixed, "Intro");
-        int wrap = Offset(Mixed, "wrap");
-        Assert.Equal(new SourceRange(intro + 10, wrap + 10), view.SelectionRange);
+        Assert.Equal(new SourceRange(intro + 10, intro + 47), view.SelectionRange);
         TerminalScreen screen = result.Screens[^1];
-        Assert.Equal(Mixed.Substring(intro + 10, "Intro line one, which is long enough to ".Length - 10), ReversedText(screen, 2));
-        Assert.Equal(Mixed.Substring(wrap, 10), ReversedText(screen, 3));
+        Assert.Equal(Mixed.Substring(intro + 10, "Intro line one, which is long enough ".Length - 10), ReversedText(screen, 2));
+        Assert.Equal(Mixed.Substring(intro + 37, 10), ReversedText(screen, 3));
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.HandleMouse(Click(0, 2)),
-            v => v.HandleMouse(Drag(10, 2)),
+            v => v.HandleMouse(Drag(12, 2)),
             v => v.HandleMouse(Release()));
 
         Assert.Equal(new SourceRange(intro, intro + "Intro line".Length), view.SelectionRange);
@@ -128,7 +128,7 @@ public sealed partial class RenderedViewTests
     {
         RenderedView view = View(Mixed);
 
-        Result result = Run(view, v => v.HandleMouse(DoubleClick(7, 2)));
+        Result result = Run(view, v => v.HandleMouse(DoubleClick(9, 2)));
 
         int line = Offset(Mixed, "line");
         Assert.Equal(new SourceRange(line, line + 4), view.SelectionRange);
@@ -140,7 +140,7 @@ public sealed partial class RenderedViewTests
     {
         RenderedView view = View(Mixed);
 
-        Result result = Run(view, v => v.HandleMouse(DoubleClick(5, 2)));
+        Result result = Run(view, v => v.HandleMouse(DoubleClick(7, 2)));
 
         Assert.Null(view.SelectionRange);
         Assert.Equal(string.Empty, ReversedText(result.Screens[^1], 2));
@@ -215,7 +215,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(view, v => v.HandleMouse(Click(3, 10)), v => v.HandleKey(Key.End), v => v.HandleKey(Key.CursorRight));
 
         Assert.Equal(end, result.Snaps[1].Offset);
-        Assert.Equal(new Point(15, 10), result.Snaps[1].Cursor);
+        Assert.Equal(new Point(17, 10), result.Snaps[1].Cursor);
         // The document ends there, so Right has nothing to go to.
         Assert.Equal(end, result.Snaps[2].Offset);
     }
@@ -228,14 +228,14 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(
             view,
-            v => v.HandleMouse(Click(3, 0)),
+            v => v.HandleMouse(Click(5, 0)),
             v => v.HandleKey(Key.CursorRight),
             v => v.HandleKey(Key.CursorRight),
             v => v.HandleKey(Key.CursorLeft));
 
         Assert.Equal(text.IndexOf('.'), result.Snaps[0].Offset);
         Assert.Equal(text.IndexOf("\n", StringComparison.Ordinal), result.Snaps[1].Offset);
-        Assert.Equal(new Point(4, 0), result.Snaps[1].Cursor);
+        Assert.Equal(new Point(6, 0), result.Snaps[1].Cursor);
         Assert.Equal(text.IndexOf("Two", StringComparison.Ordinal), result.Snaps[2].Offset);
         Assert.Equal(text.IndexOf("\n", StringComparison.Ordinal), result.Snaps[3].Offset);
     }
@@ -249,7 +249,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(view, v => v.HandleMouse(Click(30, 10)));
 
         Assert.Equal(end, result.Snaps[0].Offset);
-        Assert.Equal(new Point(15, 10), result.Snaps[0].Cursor);
+        Assert.Equal(new Point(17, 10), result.Snaps[0].Cursor);
     }
 
     // ----- Selection helpers -----

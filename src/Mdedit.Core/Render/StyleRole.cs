@@ -46,7 +46,7 @@ public enum StyleRole
     /// <summary>The synthetic dim arrow that starts a continuation row of a wrapped code line.</summary>
     WrapMarker,
 
-    /// <summary>The synthetic glyph before a heading's text that folds it.</summary>
+    /// <summary>The synthetic fold glyph in the gutter, on the first line of a heading or a code block, that folds it.</summary>
     FoldGlyph,
 
     /// <summary>The synthetic line that stands for a folded block.</summary>

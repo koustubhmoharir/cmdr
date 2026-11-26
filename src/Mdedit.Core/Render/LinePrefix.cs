@@ -4,34 +4,39 @@ using Shared.Core;
 namespace Mdedit.Core.Render;
 
 /// <summary>
-/// The prefix of a display line, built from the block's containers outermost first: a bar per quote or alert, the bullet or
-/// the number of a list item on the first line that the marker belongs to, and the fold glyph of a heading. Lines without the
-/// marker get blanks of the same width, so that the content of every line starts in the same column.
+/// The prefix of a display line, built from the gutter and then the block's containers outermost first: a bar per quote or alert,
+/// and the bullet or the number of a list item on the first line that the marker belongs to. The gutter is the first two columns of
+/// every line that has cells, at screen column 0 whatever the nesting: the fold glyph and a space on the first line of a heading or
+/// a code block, blanks on every other line. Lines without the marker get blanks of the same width, so that the content of every
+/// line starts in the same column.
 /// </summary>
 internal static class LinePrefix
 {
     private const string Bullets = "•◦▪";
 
     /// <summary>
-    /// The prefix of a content line of a block: its containers (see <see cref="Containers"/>), then for a heading the fold glyph
-    /// on its first content line and blanks of its width on the others.
+    /// The gutter of a line: the fold glyph and a space when <paramref name="glyph"/> is set (<c>▾ </c> unfolded, <c>▸ </c> folded), else
+    /// two blanks.
+    /// </summary>
+    /// <param name="glyph">Whether the line is the first line of a heading or a code block, which shows the fold glyph.</param>
+    /// <param name="folded">Whether that head is folded, which turns its glyph to the folded one.</param>
+    public static ImmutableArray<Cell> Gutter(bool glyph = false, bool folded = false) =>
+        glyph
+            ? SyntheticCell.Text(folded ? "▸ " : "▾ ", StyleRole.FoldGlyph)
+            : SyntheticCell.Text("  ", StyleRole.Body);
+
+    /// <summary>
+    /// The prefix of a content line of a block: the gutter, then its containers (see <see cref="Containers"/>). The fold glyph goes on
+    /// the first line of a heading or a code block (its header line), when <paramref name="fold"/> is set.
     /// </summary>
     /// <param name="block">The block.</param>
     /// <param name="showMarker">Whether this is the block's first line, which gets the list markers of its first-leaf items.</param>
-    /// <param name="fold">Whether this is the first content line of a heading, which gets the fold glyph instead of blanks.</param>
-    /// <param name="folded">Whether the heading is folded, which turns its glyph to the folded one.</param>
+    /// <param name="fold">Whether this is the block's first content line, which gets the fold glyph when the block is a heading or a code block.</param>
+    /// <param name="folded">Whether the block is a folded head, which turns its glyph to the folded one.</param>
     public static ImmutableArray<Cell> Content(RenderBlock block, bool showMarker, bool fold, bool folded = false)
     {
-        ImmutableArray<Cell> containers = Containers(block, showMarker);
-        if (block.Kind != BlockKind.Heading)
-        {
-            return containers;
-        }
-
-        ImmutableArray<Cell> glyph = fold
-            ? SyntheticCell.Text(folded ? "▸ " : "▾ ", StyleRole.FoldGlyph)
-            : SyntheticCell.Text("  ", StyleRole.Body);
-        return containers.Concat(glyph).ToImmutableArray();
+        bool glyph = fold && (block.Kind is BlockKind.Heading or BlockKind.Code);
+        return Gutter(glyph, folded).Concat(Containers(block, showMarker)).ToImmutableArray();
     }
 
     /// <summary>
@@ -52,16 +57,16 @@ internal static class LinePrefix
     }
 
     /// <summary>
-    /// The prefix of the title line of an alert. The title line is the block's first line, so the markers that would be on the
-    /// first content line go here: the markers of the list items that the title's alert contains, or that sit outside every
-    /// alert before it. Quotes nested inside the alert are not part of the title line.
+    /// The prefix of the title line of an alert: the gutter, then the containers of the title. The title line is the block's first
+    /// line, so the markers that would be on the first content line go here: the markers of the list items that the title's alert
+    /// contains, or that sit outside every alert before it. Quotes nested inside the alert are not part of the title line.
     /// </summary>
     /// <param name="block">The block.</param>
     /// <param name="titles">The chain indexes of the alerts that have a title line (see <see cref="TitleOwner"/>).</param>
     /// <param name="index">Which of <paramref name="titles"/> this title is.</param>
     public static ImmutableArray<Cell> Title(RenderBlock block, ImmutableArray<int> titles, int index)
     {
-        var cells = ImmutableArray.CreateBuilder<Cell>();
+        ImmutableArray<Cell>.Builder cells = Gutter().ToBuilder();
         int alert = titles[index];
         for (int i = 0; i < block.Containers.Length; i++)
         {
@@ -110,9 +115,9 @@ internal static class LinePrefix
     }
 
     /// <summary>
-    /// The shared prefix of the blank separator line between two blocks: a bar for each quote or alert that both blocks are in.
-    /// Blanks stand for the list items shared before a bar, so that the bar stays in its column; none are kept after the last
-    /// bar.
+    /// The shared prefix of the blank separator line between two blocks: a bar for each quote or alert that both blocks are in,
+    /// behind the gutter. Blanks stand for the list items shared before a bar, so that the bar stays in its column; none are kept
+    /// after the last bar. Empty when no bar is shared, so that the separator is an empty line.
     /// </summary>
     /// <param name="previous">The block before the separator.</param>
     /// <param name="next">The block after it.</param>
@@ -137,8 +142,10 @@ internal static class LinePrefix
             }
         }
 
-        // Blanks after the last bar are dropped, so that a separator between list items stays an empty line.
-        return cells.Take(keep).ToImmutableArray();
+        // Blanks after the last bar are dropped, so that a separator between list items stays an empty line. A separator with a bar
+        // has the gutter in front of it like every line with cells.
+        ImmutableArray<Cell> bars = cells.Take(keep).ToImmutableArray();
+        return bars.IsEmpty ? bars : Gutter().Concat(bars).ToImmutableArray();
     }
 
     /// <summary>The display width of a prefix.</summary>

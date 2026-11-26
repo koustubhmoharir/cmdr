@@ -13,7 +13,8 @@ namespace Mdedit.Core.Render;
 /// </param>
 /// <param name="IsContinuation">Whether the row is a line produced by wrapping, which continues the row before it.</param>
 /// <param name="PrefixCells">
-/// The number of leading cells that are the container prefix of the line: quote bars, list markers and their indentation. The
-/// cells after them are content, which is what a horizontal scroll moves. Heading fold glyphs and code wrap markers are content.
+/// The number of leading cells that are the prefix of the line: the gutter (fold glyph or blanks), then the container prefix (quote
+/// bars, list markers and their indentation). The cells after them are content, which is what a horizontal scroll moves. Code
+/// wrap markers are content.
 /// </param>
 public sealed record DisplayLine(ImmutableArray<Cell> Cells, int Anchor, bool IsContinuation, int PrefixCells);

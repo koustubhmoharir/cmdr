@@ -14,7 +14,7 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("| a | b |\n|---|---|\n| 1 | 2 |\n", 40);
 
-        Assert.Equal(new[] { "┌───┬───┐", "│ a │ b │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘" }, Lines(layout));
+        Assert.Equal(new[] { "  ┌───┬───┐", "  │ a │ b │", "  ├───┼───┤", "  │ 1 │ 2 │", "  └───┴───┘" }, Lines(layout));
         Assert.Equal(0, layout.Blocks[0].ScrollWidth);
     }
 
@@ -23,8 +23,8 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("| a | b |\n|---|---|\n| 1 | 2 |\n", 40);
 
-        Assert.Equal("│@-/TableBorder| @-|a@2| @-|│@-/TableBorder| @-|b@6| @-|│@-/TableBorder", LayoutDump.Cells(layout, 1));
-        Assert.Equal("│@-/TableBorder| @-|1@22| @-|│@-/TableBorder| @-|2@26| @-|│@-/TableBorder", LayoutDump.Cells(layout, 3));
+        Assert.Equal(" @-| @-|│@-/TableBorder| @-|a@2| @-|│@-/TableBorder| @-|b@6| @-|│@-/TableBorder", LayoutDump.Cells(layout, 1));
+        Assert.Equal(" @-| @-|│@-/TableBorder| @-|1@22| @-|│@-/TableBorder| @-|2@26| @-|│@-/TableBorder", LayoutDump.Cells(layout, 3));
         Assert.All(layout.Line(0).Cells, cell => Assert.False(cell.IsMapped));
     }
 
@@ -44,11 +44,11 @@ public sealed class TableLayoutTests
 
         Assert.Equal(new[]
         {
-            "┌──────┬─────┬───────┐",
-            "│ left │ mid │ right │",
-            "├──────┼─────┼───────┤",
-            "│ a    │  b  │     c │",
-            "└──────┴─────┴───────┘",
+            "  ┌──────┬─────┬───────┐",
+            "  │ left │ mid │ right │",
+            "  ├──────┼─────┼───────┤",
+            "  │ a    │  b  │     c │",
+            "  └──────┴─────┴───────┘",
         }, Lines(layout));
     }
 
@@ -58,8 +58,8 @@ public sealed class TableLayoutTests
         // Column width 4 (the header), the body cell is 1 wide: 3 free columns, 1 on the left and 2 on the right.
         DocumentLayout layout = LayoutDump.Build("| abcd |\n|:-:|\n| x |\n", 40);
 
-        Assert.Equal("│ abcd │", layout.TextOf(1));
-        Assert.Equal("│  x   │", layout.TextOf(3));
+        Assert.Equal("  │ abcd │", layout.TextOf(1));
+        Assert.Equal("  │  x   │", layout.TextOf(3));
     }
 
     [Fact]
@@ -67,25 +67,25 @@ public sealed class TableLayoutTests
     {
         // Natural widths 13 and 10 with borders need 30 columns; 26 is the content width. The first column is narrowed
         // from 13 to 9 (it is the widest each time, and at 10 against 10 the leftmost goes first).
-        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n| x | y |\n", 26);
+        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n| x | y |\n", 28);
 
         Assert.Equal(new[]
         {
-            "┌" + new string('─', 11) + "┬" + new string('─', 12) + "┐",
-            "│ one two   │ alpha beta │",
-            "│ three     │            │",
-            "├" + new string('─', 11) + "┼" + new string('─', 12) + "┤",
-            "│ x         │ y          │",
-            "└" + new string('─', 11) + "┴" + new string('─', 12) + "┘",
+            "  ┌" + new string('─', 11) + "┬" + new string('─', 12) + "┐",
+            "  │ one two   │ alpha beta │",
+            "  │ three     │            │",
+            "  ├" + new string('─', 11) + "┼" + new string('─', 12) + "┤",
+            "  │ x         │ y          │",
+            "  └" + new string('─', 11) + "┴" + new string('─', 12) + "┘",
         }, Lines(layout));
     }
 
     [Fact]
     public void A_row_as_tall_as_its_tallest_cell_pads_the_other_cells_and_its_second_line_continues_the_first()
     {
-        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n", 26);
+        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n", 28);
 
-        Assert.Equal("│ three     │            │", layout.TextOf(2));
+        Assert.Equal("  │ three     │            │", layout.TextOf(2));
         Assert.False(layout.Line(1).IsContinuation);
         Assert.True(layout.Line(2).IsContinuation);
         Assert.Equal(new[] { 0, 0, 0 }, new[] { layout.Line(1).Anchor, layout.Line(2).Anchor, layout.Line(0).Anchor });
@@ -94,30 +94,30 @@ public sealed class TableLayoutTests
     [Fact]
     public void Wrapped_cell_lines_are_mapped_to_their_source_words()
     {
-        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n", 26);
+        DocumentLayout layout = LayoutDump.Build("| one two three | alpha beta |\n|---|---|\n", 28);
 
-        Assert.StartsWith("│@-/TableBorder| @-|o@2|n@3|e@4| @5|t@6|w@7|o@8| @9|", LayoutDump.Cells(layout, 1));
-        Assert.StartsWith("│@-/TableBorder| @-|t@10|h@11|r@12|e@13|e@14|", LayoutDump.Cells(layout, 2));
+        Assert.StartsWith(" @-| @-|│@-/TableBorder| @-|o@2|n@3|e@4| @5|t@6|w@7|o@8| @9|", LayoutDump.Cells(layout, 1));
+        Assert.StartsWith(" @-| @-|│@-/TableBorder| @-|t@10|h@11|r@12|e@13|e@14|", LayoutDump.Cells(layout, 2));
     }
 
     [Fact]
     public void A_table_wider_than_the_content_keeps_its_minimum_widths_and_overflows()
     {
-        DocumentLayout layout = LayoutDump.Build("| aaaaaaaaaa | bbbbbbbbbb |\n|---|---|\n| c | d |\n", 10);
+        DocumentLayout layout = LayoutDump.Build("| aaaaaaaaaa | bbbbbbbbbb |\n|---|---|\n| c | d |\n", 12);
 
-        Assert.Equal("┌" + new string('─', 12) + "┬" + new string('─', 12) + "┐", layout.TextOf(0));
+        Assert.Equal("  ┌" + new string('─', 12) + "┬" + new string('─', 12) + "┐", layout.TextOf(0));
         Assert.Equal(27, layout.Blocks[0].ScrollWidth);
-        Assert.Equal("│ aaaaaaaaaa │ bbbbbbbbbb │", layout.TextOf(1));
+        Assert.Equal("  │ aaaaaaaaaa │ bbbbbbbbbb │", layout.TextOf(1));
     }
 
     [Fact]
     public void A_word_longer_than_the_minimum_cap_breaks_inside_its_cell()
     {
         string word = new('a', 37);
-        DocumentLayout layout = LayoutDump.Build($"| {word} |\n|---|\n| x |\n", 20);
+        DocumentLayout layout = LayoutDump.Build($"| {word} |\n|---|\n| x |\n", 22);
 
-        Assert.Equal("│ " + new string('a', 24) + " │", layout.TextOf(1));
-        Assert.Equal("│ " + new string('a', 13) + new string(' ', 12) + "│", layout.TextOf(2));
+        Assert.Equal("  │ " + new string('a', 24) + " │", layout.TextOf(1));
+        Assert.Equal("  │ " + new string('a', 13) + new string(' ', 12) + "│", layout.TextOf(2));
         Assert.Equal(28, layout.Blocks[0].ScrollWidth);
     }
 
@@ -126,7 +126,7 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("| a | b |\n|---|---|\n", 40);
 
-        Assert.Equal(new[] { "┌───┬───┐", "│ a │ b │", "├───┼───┤", "└───┴───┘" }, Lines(layout));
+        Assert.Equal(new[] { "  ┌───┬───┐", "  │ a │ b │", "  ├───┼───┤", "  └───┴───┘" }, Lines(layout));
         Assert.Equal(19, layout.Line(2).Anchor);
         Assert.Equal(19, layout.Line(3).Anchor);
     }
@@ -136,8 +136,8 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("> | a |\n> |---|\n> | 1 |\n", 40);
 
-        Assert.Equal(new[] { "│ ┌───┐", "│ │ a │", "│ ├───┤", "│ │ 1 │", "│ └───┘" }, Lines(layout));
-        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(2, layout.Line(line).PrefixCells));
+        Assert.Equal(new[] { "  │ ┌───┐", "  │ │ a │", "  │ ├───┤", "  │ │ 1 │", "  │ └───┘" }, Lines(layout));
+        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(4, layout.Line(line).PrefixCells));
     }
 
     [Fact]
@@ -145,8 +145,8 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("- | a |\n  |---|\n  | 1 |\n", 40);
 
-        Assert.Equal(new[] { "• ┌───┐", "  │ a │", "  ├───┤", "  │ 1 │", "  └───┘" }, Lines(layout));
-        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(2, layout.Line(line).PrefixCells));
+        Assert.Equal(new[] { "  • ┌───┐", "    │ a │", "    ├───┤", "    │ 1 │", "    └───┘" }, Lines(layout));
+        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(4, layout.Line(line).PrefixCells));
     }
 
     [Fact]
@@ -154,14 +154,14 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("> [!NOTE]\n> | a |\n> |---|\n> | 1 |\n", 40);
 
-        Assert.Equal(new[] { "│ Note", "│ ┌───┐", "│ │ a │", "│ ├───┤", "│ │ 1 │", "│ └───┘" }, Lines(layout));
-        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(2, layout.Line(line).PrefixCells));
+        Assert.Equal(new[] { "  │ Note", "  │ ┌───┐", "  │ │ a │", "  │ ├───┤", "  │ │ 1 │", "  │ └───┘" }, Lines(layout));
+        Assert.All(Enumerable.Range(0, layout.LineCount), line => Assert.Equal(4, layout.Line(line).PrefixCells));
     }
 
     [Fact]
     public void Overflowing_table_in_a_quote_scrolls_by_its_width_without_the_quote_bar()
     {
-        DocumentLayout layout = LayoutDump.Build("> | aaaaaaaaaa | bbbbbbbbbb |\n> |---|---|\n> | c | d |\n", 10);
+        DocumentLayout layout = LayoutDump.Build("> | aaaaaaaaaa | bbbbbbbbbb |\n> |---|---|\n> | c | d |\n", 12);
 
         Assert.Equal(27, layout.Blocks[0].ScrollWidth);
     }
@@ -171,19 +171,19 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("| a | b |\n|---|---|\n| 1 | 2 |\n", 40);
 
-        Assert.Equal(2, layout.OffsetAt(1, 2));
+        Assert.Equal(2, layout.OffsetAt(1, 4));
         Assert.Equal(2, layout.OffsetAt(1, 0));
         Assert.Equal(0, layout.OffsetAt(0, 0));
         Assert.Equal(29, layout.OffsetAt(4, 0));
-        Assert.Equal((1, 2), layout.PositionOf(2));
-        Assert.Equal((3, 6), layout.PositionOf(26));
+        Assert.Equal((1, 4), layout.PositionOf(2));
+        Assert.Equal((3, 8), layout.PositionOf(26));
     }
 
     [Fact]
     public void ScrollWidthOf_gives_the_tables_width_on_its_lines_and_0_on_separators_and_other_blocks()
     {
         string table = "| " + new string('a', 30) + " | " + new string('b', 30) + " |\n|---|---|\n| x | y |\n";
-        DocumentLayout layout = LayoutDump.Build("Intro.\n\n" + table, 20);
+        DocumentLayout layout = LayoutDump.Build("Intro.\n\n" + table, 22);
 
         int width = layout.Blocks[1].ScrollWidth;
         Assert.True(width > 20);

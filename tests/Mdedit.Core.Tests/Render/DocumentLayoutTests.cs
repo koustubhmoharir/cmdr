@@ -11,14 +11,14 @@ public sealed class DocumentLayoutTests
     [Fact]
     public void Blocks_are_separated_by_one_blank_line_unless_both_are_tight()
     {
-        Assert.Equal(new[] { "• a", "• b", string.Empty, "c" }, LayoutDump.Lines("- a\n- b\n\nc\n"));
-        Assert.Equal(new[] { "• a", string.Empty, "• b" }, LayoutDump.Lines("- a\n\n- b\n"));
+        Assert.Equal(new[] { "  • a", "  • b", string.Empty, "  c" }, LayoutDump.Lines("- a\n- b\n\nc\n"));
+        Assert.Equal(new[] { "  • a", string.Empty, "  • b" }, LayoutDump.Lines("- a\n\n- b\n"));
     }
 
     [Fact]
     public void Separator_between_quotes_carries_the_bar()
     {
-        Assert.Equal(new[] { "│ a", "│ ", "│ b" }, LayoutDump.Lines("> a\n>\n> b\n"));
+        Assert.Equal(new[] { "  │ a", "  │ ", "  │ b" }, LayoutDump.Lines("> a\n>\n> b\n"));
     }
 
     [Fact]
@@ -74,8 +74,9 @@ public sealed class DocumentLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("中文\n");
 
-        Assert.Equal(0, layout.OffsetAt(0, 1));
-        Assert.Equal(1, layout.OffsetAt(0, 2));
+        // The gutter takes columns 0 and 1, so the first character is at column 2 and the second at column 4.
+        Assert.Equal(0, layout.OffsetAt(0, 3));
+        Assert.Equal(1, layout.OffsetAt(0, 4));
     }
 
     [Fact]
@@ -91,7 +92,7 @@ public sealed class DocumentLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("ab cd\n");
 
-        Assert.Equal((0, 3), layout.PositionOf(3));
+        Assert.Equal((0, 5), layout.PositionOf(3));
     }
 
     [Fact]
@@ -100,8 +101,8 @@ public sealed class DocumentLayoutTests
         // The backslash at offset 0 is unmapped; the '*' at offset 1 is the next mapped cell.
         DocumentLayout layout = LayoutDump.Build("\\*x\n");
 
-        Assert.Equal((0, 0), layout.PositionOf(0));
-        Assert.Equal("*x", layout.TextOf(0));
+        Assert.Equal((0, 2), layout.PositionOf(0));
+        Assert.Equal("  *x", layout.TextOf(0));
     }
 
     [Fact]
@@ -110,9 +111,9 @@ public sealed class DocumentLayoutTests
         // "**bold**": the opening delimiter is offsets 0 and 1, the text starts at 2.
         DocumentLayout layout = LayoutDump.Build("**bold**\n");
 
-        Assert.Equal((0, 0), layout.PositionOf(0));
-        Assert.Equal((0, 0), layout.PositionOf(1));
-        Assert.Equal((0, 0), layout.PositionOf(2));
+        Assert.Equal((0, 2), layout.PositionOf(0));
+        Assert.Equal((0, 2), layout.PositionOf(1));
+        Assert.Equal((0, 2), layout.PositionOf(2));
     }
 
     [Fact]
@@ -121,8 +122,8 @@ public sealed class DocumentLayoutTests
         // "&amp;x": the entity is offsets 0 to 4 and every cell of it is at 0; the 'x' is at 5.
         DocumentLayout layout = LayoutDump.Build("&amp;x\n");
 
-        Assert.Equal((0, 1), layout.PositionOf(3));
-        Assert.Equal((0, 1), layout.PositionOf(5));
+        Assert.Equal((0, 3), layout.PositionOf(3));
+        Assert.Equal((0, 3), layout.PositionOf(5));
     }
 
     [Fact]
@@ -130,7 +131,7 @@ public sealed class DocumentLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("ab\n\ncd\n");
 
-        Assert.Equal((2, 2), layout.PositionOf(1000));
+        Assert.Equal((2, 4), layout.PositionOf(1000));
     }
 
     [Fact]
@@ -139,7 +140,7 @@ public sealed class DocumentLayoutTests
         // "one" ends at 3, "two" starts at 5: offset 4 (the blank line) is the 't' at 5.
         DocumentLayout layout = LayoutDump.Build("one\n\ntwo\n");
 
-        Assert.Equal((2, 0), layout.PositionOf(4));
+        Assert.Equal((2, 2), layout.PositionOf(4));
     }
 
     [Fact]
@@ -147,7 +148,7 @@ public sealed class DocumentLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("- item\n");
 
-        Assert.Equal((0, 2), layout.PositionOf(0));
+        Assert.Equal((0, 4), layout.PositionOf(0));
     }
 
     [Fact]

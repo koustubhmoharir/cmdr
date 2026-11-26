@@ -310,7 +310,7 @@ public sealed partial class MainWindowTests
         RenderedView view = session.Window.View;
         Assert.True(view.IsFolded(view.Units[0]));
         Assert.Equal(Index(edited, "# Title"), view.Units[0].Start);
-        Assert.Equal(Framed("New paragraph."), session.Screens[^1].Text(1));
+        Assert.Equal(Framed("  New paragraph."), session.Screens[^1].Text(1));
         Assert.Equal(Framed("▸ Title … 6 lines"), session.Screens[^1].Text(3));
     }
 

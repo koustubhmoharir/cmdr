@@ -16,7 +16,7 @@ namespace Mdedit.Tests;
 /// </summary>
 public sealed partial class RenderedViewTests
 {
-    // Source lines: 0 "# One", 2 "First…", 4 "## Sub", 6 "Sub text here.", 8 "# Two", 10 "Two text.". One's section holds Sub.
+    // Source lines: 0 "# One", 2 "First…", 4 "## Sub", 6 "  Sub text here.", 8 "# Two", 10 "Two text.". One's section holds Sub.
     private const string Sections = "# One\n\nFirst section text.\n\n## Sub\n\nSub text here.\n\n# Two\n\nTwo text.\n";
 
     // The rows of Sections with nothing folded.
@@ -24,15 +24,15 @@ public sealed partial class RenderedViewTests
     [
         "▾ One",
         "",
-        "First section text.",
+        "  First section text.",
         "",
         "▾ Sub",
         "",
-        "Sub text here.",
+        "  Sub text here.",
         "",
         "▾ Two",
         "",
-        "Two text.",
+        "  Two text.",
     ];
 
     [Fact]
@@ -41,7 +41,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(View(Sections), v => v.HandleKey(Key.Space), v => v.HandleKey(Key.Space));
 
         // One's section hides the source lines 1 to 6: the blank after the heading, the paragraph, Sub and its paragraph.
-        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[1]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[3]));
     }
 
@@ -50,10 +50,10 @@ public sealed partial class RenderedViewTests
     {
         RenderedView view = View(Sections);
 
-        // One Down reaches the paragraph "First section text.", which is in One and not in Sub.
+        // One Down reaches the paragraph "  First section text.", which is in One and not in Sub.
         Result result = Run(view, v => v.HandleKey(Key.CursorDown), v => v.HandleKey(Key.Space));
 
-        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[3]));
+        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[3]));
         Assert.Equal(Offset(Sections, "One"), result.Snaps[1].Offset);
         Assert.Equal(new Point(2, 0), result.Snaps[1].Cursor);
     }
@@ -66,8 +66,8 @@ public sealed partial class RenderedViewTests
         Result result = Run(View(nested), v => v.HandleKey((Key)'1'), v => v.HandleKey((Key)'0'));
 
         // The level-2 heading B folds the level-3 C inside it, which the digit 1 folds too: B hides source lines 3 to 6.
-        Assert.Equal(Pad(["▾ A", "", "▸ B … 4 lines", "", "▾ D", "", "d text"]), Rows(result.Screens[1]));
-        Assert.Equal(Pad(["▾ A", "", "▾ B", "", "▾ C", "", "text", "", "▾ D", "", "d text"]), Rows(result.Screens[3]));
+        Assert.Equal(Pad(["▾ A", "", "▸ B … 4 lines", "", "▾ D", "", "  d text"]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▾ A", "", "▾ B", "", "▾ C", "", "  text", "", "▾ D", "", "  d text"]), Rows(result.Screens[3]));
     }
 
     [Fact]
@@ -84,10 +84,10 @@ public sealed partial class RenderedViewTests
             v => v.HandleKey((Key)'*'));
 
         // Sub is the section around "Sub text here.": only Sub folds, and the caret goes to its heading.
-        Assert.Equal(Pad(["▾ One", "", "First section text.", "", "▸ Sub … 2 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[3]));
+        Assert.Equal(Pad(["▾ One", "", "  First section text.", "", "▸ Sub … 2 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[3]));
         Assert.Equal(Offset(Sections, "Sub"), result.Snaps[1].Offset);
         // Space on the paragraph folds One, which holds the folded Sub; then * on One's heading unfolds One and Sub together.
-        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[7]));
+        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[7]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[9]));
     }
 
@@ -100,7 +100,7 @@ public sealed partial class RenderedViewTests
             v => v.HandleMouse(Click(6, 0)),
             v => v.HandleMouse(Click(3, 0)));
 
-        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[1]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[3]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[5]));
         // A click on the heading's text places the caret on the character under it: column 3 is the "n" of One.
@@ -115,7 +115,7 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(view, v => v.HandleKey(Key.Space));
 
-        Assert.Equal(Pad(["▸ cs … 2 lines", "", "after"]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▸ cs … 2 lines", "", "  after"]), Rows(result.Screens[1]));
         Assert.Equal(Offset(code, "```"), view.CursorOffset);
     }
 
@@ -126,7 +126,18 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(View(code), v => v.HandleMouse(Click(0, 0)));
 
-        Assert.Equal(Pad(["▸ cs … 1 line", "", "after"]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▸ cs … 1 line", "", "  after"]), Rows(result.Screens[1]));
+    }
+
+    [Fact]
+    public void A_click_on_the_glyph_of_a_nested_code_header_folds_it_and_the_glyph_is_in_column_zero()
+    {
+        const string text = "- item\n\n  ```py\n  x = 1\n  ```\n\nafter\n";
+        RenderedView view = View(text);
+
+        Result result = Run(view, v => v.HandleMouse(Click(0, 2)));
+
+        Assert.Equal(Pad(["  • item", "", "▸   py … 1 line", "", "  after"]), Rows(result.Screens[1]));
     }
 
     [Fact]
@@ -138,7 +149,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(View(code), v => v.ToggleFold(v.Units[0]), v => v.HandleKey(Key.CursorDown), v => v.HandleKey(Key.Space));
 
         Assert.Equal(Offset(code, "```"), result.Snaps[2].Offset);
-        Assert.Equal(Pad(["para", "", "▾ cs", "var x = 1;", "", "after"]), Rows(result.Screens[5]));
+        Assert.Equal(Pad(["  para", "", "▾ cs", "  var x = 1;", "", "  after"]), Rows(result.Screens[5]));
     }
 
     [Fact]
@@ -192,7 +203,7 @@ public sealed partial class RenderedViewTests
             v => v.SelectRange(new SourceRange(match, match + 4)));
 
         // The click folds Sub; the search then unfolds it, and the match is selected.
-        Assert.Equal(Pad(["▾ One", "", "First section text.", "", "▸ Sub … 2 lines", "", "▾ Two", "", "Two text."]), Rows(result.Screens[1]));
+        Assert.Equal(Pad(["▾ One", "", "  First section text.", "", "▸ Sub … 2 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[1]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[3]));
         Assert.Equal(new SourceRange(match, match + 4), view.SelectionRange);
     }

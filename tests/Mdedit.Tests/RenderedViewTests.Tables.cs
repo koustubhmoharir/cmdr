@@ -83,7 +83,7 @@ public sealed partial class RenderedViewTests
         List<TerminalScreen> screens = Screens(
             View(WideTable),
             v => v.HandleKey(Greater),
-            v => v.HandleMouse(Click(0, 1)));
+            v => v.HandleMouse(Click(2, 1)));
 
         Assert.Equal(Pad(InitialTableRows()), Rows(screens[2]));
     }
@@ -95,7 +95,7 @@ public sealed partial class RenderedViewTests
 
         string header = Rows(screens[^1])[1];
         // The last cell ends at the table's last column, with the left marker in the first column and no right marker.
-        Assert.StartsWith("◂", header, StringComparison.Ordinal);
+        Assert.StartsWith("  ◂", header, StringComparison.Ordinal);
         Assert.EndsWith("Cdefghijklmnopqrstuv │", header, StringComparison.Ordinal);
         Assert.DoesNotContain("▸", header, StringComparison.Ordinal);
     }
@@ -110,15 +110,15 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.HandleKey(Greater),
-            v => v.HandleMouse(Click(1, 1)),
-            v => v.HandleMouse(Click(17, 1)));
+            v => v.HandleMouse(Click(3, 1)),
+            v => v.HandleMouse(Click(19, 1)));
 
         // Column 1 of the scrolled header is column 9 of the table: the seventh letter of the first cell (its index 7, 'h').
         Assert.Equal(first + 7, result.Snaps[1].Offset);
-        Assert.Equal(new Point(1, 1), result.Snaps[1].Cursor);
+        Assert.Equal(new Point(3, 1), result.Snaps[1].Cursor);
         // Column 17 is column 25 of the table, the first letter of the second cell.
         Assert.Equal(bee, result.Snaps[2].Offset);
-        Assert.Equal(new Point(17, 1), result.Snaps[2].Cursor);
+        Assert.Equal(new Point(19, 1), result.Snaps[2].Cursor);
     }
 
     [Fact]
@@ -130,8 +130,8 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.HandleKey(Greater),
-            v => v.HandleMouse(Click(17, 1)),
-            v => v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed | MouseFlags.PositionReport, Position = new Point(20, 1) }));
+            v => v.HandleMouse(Click(19, 1)),
+            v => v.HandleMouse(new Mouse { Flags = MouseFlags.LeftButtonPressed | MouseFlags.PositionReport, Position = new Point(22, 1) }));
 
         // Column 20 is column 28 of the table: the fourth letter of the second cell ('e'), so the selection is the first three letters.
         Assert.Equal(new SourceRange(bee, bee + 3), view.SelectionRange);
@@ -158,7 +158,7 @@ public sealed partial class RenderedViewTests
         List<TerminalScreen> screens = Screens(View(FitTable), v => v.HandleKey(Greater));
 
         Assert.Equal(Rows(screens[0]), Rows(screens[1]));
-        Assert.Equal(Pad(["┌───┬───┐", "│ a │ b │", "├───┼───┤", "│ 1 │ 2 │", "└───┴───┘", "", "After."]), Rows(screens[0]));
+        Assert.Equal(Pad(["  ┌───┬───┐", "  │ a │ b │", "  ├───┼───┤", "  │ 1 │ 2 │", "  └───┴───┘", "", "  After."]), Rows(screens[0]));
     }
 
     [Fact]
@@ -170,9 +170,9 @@ public sealed partial class RenderedViewTests
         string before = Rows(screens[0])[1];
         string after = Rows(screens[1])[1];
         // The bar of the quote is the first two columns; the table's left border is the third column, which the marker replaces.
-        Assert.Equal(before[..2], after[..2]);
-        Assert.Equal("│", before.Substring(2, 1));
-        Assert.Equal("◂", after.Substring(2, 1));
+        Assert.Equal(before[..4], after[..4]);
+        Assert.Equal("│", before.Substring(4, 1));
+        Assert.Equal("◂", after.Substring(4, 1));
     }
 
     // ----- Helpers for the table tests -----
@@ -180,25 +180,25 @@ public sealed partial class RenderedViewTests
     /// <summary>The expected rows of <see cref="WideTable"/> at its start: the first 39 columns, and the right edge marker in column 39.</summary>
     private static string[] InitialTableRows() =>
     [
-        "┌" + new string('─', 22) + "┬" + new string('─', 15) + "▸",
-        "│ Abcdefghijklmnopqrst │ Bcdefghijklmno▸",
-        "├" + new string('─', 22) + "┼" + new string('─', 15) + "▸",
-        "│ one" + new string(' ', 17) + " │ two" + new string(' ', 11) + "▸",
-        "└" + new string('─', 22) + "┴" + new string('─', 15) + "▸",
+        "  ┌" + new string('─', 22) + "┬" + new string('─', 13) + "▸",
+        "  │ Abcdefghijklmnopqrst │ Bcdefghijklm▸",
+        "  ├" + new string('─', 22) + "┼" + new string('─', 13) + "▸",
+        "  │ one" + new string(' ', 18) + "│ two" + new string(' ', 9) + "▸",
+        "  └" + new string('─', 22) + "┴" + new string('─', 13) + "▸",
         "",
-        "After the table.",
+        "  After the table.",
     ];
 
     /// <summary>The expected rows of <see cref="WideTable"/> scrolled by eight columns: a left marker, the cells from column 8, and the second bars.</summary>
     private static string[] ScrolledTableRows() =>
     [
-        "◂" + new string('─', 14) + "┬" + new string('─', 22) + "┬▸",
-        "◂hijklmnopqrst │ Bcdefghijklmnopqrstu │▸",
-        "◂" + new string('─', 14) + "┼" + new string('─', 22) + "┼▸",
-        "◂" + new string(' ', 13) + " │ two" + new string(' ', 17) + " │▸",
-        "◂" + new string('─', 14) + "┴" + new string('─', 22) + "┴▸",
+        "  ◂" + new string('─', 14) + "┬" + new string('─', 21) + "▸",
+        "  ◂hijklmnopqrst │ Bcdefghijklmnopqrstu▸",
+        "  ◂" + new string('─', 14) + "┼" + new string('─', 21) + "▸",
+        "  ◂" + new string(' ', 14) + "│ two" + new string(' ', 17) + "▸",
+        "  ◂" + new string('─', 14) + "┴" + new string('─', 21) + "▸",
         "",
-        "After the table.",
+        "  After the table.",
     ];
 
     /// <summary>The rows of a list padded with empty rows to the height of the view.</summary>

@@ -49,7 +49,7 @@ public sealed partial class RenderedViewTests
         Assert.Equal(Offset(Mixed, "second item"), result.Snaps[4].Offset);
         Assert.Equal(6, result.Snaps[4].Line);
         Assert.Equal(Offset(Mixed, "first item") + 10, result.Snaps[5].Offset);
-        Assert.Equal(new Point(12, 5), result.Snaps[3].Cursor);
+        Assert.Equal(new Point(14, 5), result.Snaps[3].Cursor);
     }
 
     [Fact]
@@ -59,19 +59,34 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(
             view,
-            v => v.HandleMouse(Click(25, 2)),
+            v => v.HandleMouse(Click(27, 2)),
             v => v.HandleKey(Key.CursorDown),
             v => v.HandleKey(Key.CursorDown),
             v => v.HandleKey(Key.CursorUp));
 
         Assert.Equal(Offset(Mixed, "Intro") + 25, result.Snaps[0].Offset);
-        Assert.Equal(Offset(Mixed, "wrap") + 25, result.Snaps[1].Offset);
+        Assert.Equal(Offset(Mixed, "to wrap") + 25, result.Snaps[1].Offset);
         Assert.Equal(3, result.Snaps[1].Line);
         // The line of the bullets is shorter than the goal column, so the cursor goes to its end position.
         Assert.Equal(Offset(Mixed, "first item") + 10, result.Snaps[2].Offset);
         Assert.Equal(5, result.Snaps[2].Line);
         // Up skips the blank line and returns to the wrapped line at the goal column.
-        Assert.Equal(Offset(Mixed, "wrap") + 25, result.Snaps[3].Offset);
+        Assert.Equal(Offset(Mixed, "to wrap") + 25, result.Snaps[3].Offset);
+    }
+
+    [Fact]
+    public void End_on_a_code_header_whose_label_is_its_only_mapped_cell_stays_on_the_label()
+    {
+        // An empty block's header is its only line with a mapped cell: the label maps the block's start (the fence), so End keeps the caret
+        // there and does not go to the end of the fence's first character.
+        const string text = "```cs\n```\n";
+        RenderedView view = View(text);
+
+        Result result = Run(view, v => v.HandleMouse(Click(2, 0)), v => v.HandleKey(Key.End));
+
+        Assert.Equal(0, result.Snaps[0].Offset);
+        Assert.Equal(0, result.Snaps[1].Offset);
+        Assert.Equal(new Point(2, 0), result.Snaps[1].Cursor);
     }
 
     [Fact]
@@ -81,14 +96,14 @@ public sealed partial class RenderedViewTests
 
         Result result = Run(
             view,
-            v => v.HandleMouse(Click(10, 2)),
+            v => v.HandleMouse(Click(12, 2)),
             v => v.HandleKey(Key.End),
             v => v.HandleKey(Key.Home));
 
         int intro = Offset(Mixed, "Intro");
         Assert.Equal(intro + 10, result.Snaps[0].Offset);
         // The line ends with the space that wraps the next word: it is a mapped cell, so it is the last one on the line.
-        Assert.Equal(intro + "Intro line one, which is long enough to ".Length - 1, result.Snaps[1].Offset);
+        Assert.Equal(intro + "Intro line one, which is long enough ".Length - 1, result.Snaps[1].Offset);
         Assert.Equal(intro, result.Snaps[2].Offset);
     }
 
@@ -123,7 +138,7 @@ public sealed partial class RenderedViewTests
         Assert.Equal(Offset(text, "p7\n"), result.Snaps[0].Offset);
         Assert.Equal(12, result.Snaps[0].Line);
         Assert.Equal(12, result.Snaps[0].Top);
-        Assert.Equal(new Point(0, 0), result.Snaps[0].Cursor);
+        Assert.Equal(new Point(2, 0), result.Snaps[0].Cursor);
     }
 
     [Fact]
@@ -137,7 +152,7 @@ public sealed partial class RenderedViewTests
         Assert.Equal(0, result.Snaps[4].Top);
         Assert.Equal(10, result.Snaps[4].Line);
         Assert.Equal(1, result.Snaps[5].Top);
-        Assert.Equal(new Point(0, 11), result.Snaps[5].Cursor);
+        Assert.Equal(new Point(2, 11), result.Snaps[5].Cursor);
     }
 
     [Fact]
@@ -155,7 +170,7 @@ public sealed partial class RenderedViewTests
         Assert.Null(result.Snaps[0].Cursor);
         Assert.Equal(0, result.Snaps[1].Offset);
         Assert.Equal(0, result.Snaps[1].Top);
-        Assert.Equal(new Point(0, 0), result.Snaps[1].Cursor);
+        Assert.Equal(new Point(2, 0), result.Snaps[1].Cursor);
     }
 
     [Fact]
@@ -190,7 +205,7 @@ public sealed partial class RenderedViewTests
 
         Assert.Equal(Offset(Mixed, "first item"), result.Snaps[0].Offset);
         Assert.Equal(5, result.Snaps[0].Line);
-        Assert.Equal(new Point(2, 5), result.Snaps[0].Cursor);
+        Assert.Equal(new Point(4, 5), result.Snaps[0].Cursor);
     }
 
     [Fact]

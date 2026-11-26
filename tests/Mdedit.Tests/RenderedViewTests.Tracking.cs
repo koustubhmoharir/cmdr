@@ -31,7 +31,7 @@ public sealed partial class RenderedViewTests
             });
 
         TerminalScreen screen = result.Screens[^1];
-        Assert.Equal("Lead.", screen.Text(0));
+        Assert.Equal("  Lead.", screen.Text(0));
         Assert.Equal("▸ Title … 6 lines", screen.Text(2));
         Assert.True(view.IsFolded(view.Units[0]));
         Assert.Equal(lead.Length, view.Units[0].Start);
@@ -54,7 +54,7 @@ public sealed partial class RenderedViewTests
             });
 
         TerminalScreen screen = result.Screens[^1];
-        Assert.Equal("First paragraph.", screen.Text(0));
+        Assert.Equal("  First paragraph.", screen.Text(0));
         Assert.Equal("▾ Part", screen.Text(2));
         Assert.DoesNotContain("▸", string.Concat(Enumerable.Range(0, 10).Select(screen.Text)), StringComparison.Ordinal);
     }
@@ -92,7 +92,7 @@ public sealed partial class RenderedViewTests
         // The table row with the left edge marker (the header) is drawn the same after the edit, two rows lower with the new lead.
         string before = ScrolledRow(result.Screens[3]);
         string after = ScrolledRow(result.Screens[^1]);
-        Assert.StartsWith("◂", before, StringComparison.Ordinal);
+        Assert.StartsWith("  ◂", before, StringComparison.Ordinal);
         Assert.Equal(before, after);
     }
 

@@ -18,8 +18,8 @@ namespace Mdedit.Tui;
 /// section around the caret.
 /// </para>
 /// <para>
-/// <b>Heads without cells.</b> A folded code block's header line has no mapped cell, so a caret that the fold hides moves to the stop before
-/// the block (the end of the text above it), as <see cref="ResolveCaret"/> gives for an offset with no stop on its line.
+/// <b>Heads.</b> A folded code block's header line maps the block's start through its label, so a caret that the fold hides moves to that
+/// label. A code header's glyph is in the gutter, not mapped, and a click on it folds (see <see cref="IsFoldClick"/>).
 /// </para>
 /// </remarks>
 internal sealed partial class RenderedView
@@ -306,8 +306,6 @@ internal sealed partial class RenderedView
         return true;
     }
 
-    /// <summary>Whether a click on a cell folds or unfolds: a heading's glyph, a code header's glyph, or a fold summary.</summary>
-    private static bool IsFoldClick(Cell cell) =>
-        cell.Style.Role is StyleRole.FoldGlyph or StyleRole.FoldSummary
-        || (cell.Style.Role == StyleRole.CodeHeader && cell.Text is "▾" or "▸");
+    /// <summary>Whether a click on a cell folds or unfolds: the fold glyph in the gutter of a heading or a code header, or a fold summary.</summary>
+    private static bool IsFoldClick(Cell cell) => cell.Style.Role is StyleRole.FoldGlyph or StyleRole.FoldSummary;
 }

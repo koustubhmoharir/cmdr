@@ -803,11 +803,12 @@ internal sealed partial class RenderedView : View
 
     /// <summary>
     /// Whether a line is the last display line of its block that has mapped cells. Only such a line has an end position: the caret
-    /// rests after its last cell (see <see cref="EndOffset"/>).
+    /// rests after its last cell (see <see cref="EndOffset"/>). A code header whose label maps the block's start has none: that cell is
+    /// the block's start, not text the caret can end after, so the caret rests on the label instead.
     /// </summary>
     private bool IsBlockEnd(int line)
     {
-        if (!HasMapped(line))
+        if (!HasMapped(line) || Built.Line(line).Cells.Last(cell => cell.IsMapped).Style.Role == StyleRole.CodeHeader)
         {
             return false;
         }
@@ -874,7 +875,7 @@ internal sealed partial class RenderedView : View
             }
         }
 
-        // A line with no stop of its own (a folded code header) gives the stop before it, or the first one after it when none is before.
+        // A line with no stop of its own gives the stop before it, or the first one after it when none is before.
         int cell = CellFor(line, offset, column);
         return cell < 0 ? LastMappedAtOrBefore(line) ?? NextStop(line, -1) : (line, cell);
     }

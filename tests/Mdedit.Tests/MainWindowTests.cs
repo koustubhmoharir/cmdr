@@ -31,9 +31,9 @@ public sealed partial class MainWindowTests : IDisposable
         Assert.Equal("\x2570", screen.Cells[9][0].Grapheme);
         // The frame is 40 columns: a border, 38 columns of text and a border. A heading has its fold glyph before its text.
         Assert.Equal(Framed("\u25BE Install"), screen.Text(1));
-        Assert.Equal(Framed("Intro text."), screen.Text(3));
+        Assert.Equal(Framed("  Intro text."), screen.Text(3));
         Assert.Equal(Framed("\u25BE Linux"), screen.Text(5));
-        Assert.Equal(Framed("\u2022 step one"), screen.Text(7));
+        Assert.Equal(Framed("  \u2022 step one"), screen.Text(7));
     }
 
     [Fact]
