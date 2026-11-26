@@ -98,6 +98,8 @@ StyleCopReport.xml
 *.tmp_proj
 *_wpftmp.csproj
 *.log
+# but not test fixtures (logvu parses these in its tests)
+!tests/**/Fixtures/*.log
 *.tlog
 *.vspscc
 *.vssscc

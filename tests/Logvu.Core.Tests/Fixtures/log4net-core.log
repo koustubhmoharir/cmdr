@@ -1,0 +1,15 @@
+INFO  2026-11-18 10:20:30,123 [12] SheetKraft.Engine.Runner - Started run 42
+DEBUG 2026-11-18 10:20:30,456 [12] SheetKraft.Engine.Sheets - Loaded sheet Q3 with 1204 rows
+INFO  2026-11-18 10:20:31,002 [Worker 3] SheetKraft.Engine.Runner - Step 1 of 4 complete
+ERROR 2026-11-18 10:20:31,007 [Worker 3] SheetKraft.Engine.Runner - Run failed
+System.InvalidOperationException: Sheet not found
+   at SheetKraft.Engine.Runner.Execute(Int32 id) in C:\src\Engine\Runner.cs:line 88
+ ---> System.IO.IOException: locked
+   --- End of inner exception stack trace ---
+
+Retrying is not possible; see the log for run 42.
+WARN  2026-11-18 10:20:32,250 [12] SheetKraft.Engine.Export - Export skipped: no template
+INFO  2026-11-18 10:20:33,000 [Worker 1] SheetKraft.Engine.Runner - Run 43 queued
+FATAL 2026-11-18 10:20:35,812 [main] SheetKraft.Host - Host stopped unexpectedly
+System.OutOfMemoryException: Insufficient memory to continue
+   at SheetKraft.Host.Program.Main(String[] args) in C:\src\Host\Program.cs:line 19

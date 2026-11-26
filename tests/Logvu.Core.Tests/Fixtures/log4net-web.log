@@ -1,0 +1,10 @@
+WARN  2026-11-18 10:20:30,123 v.5.2.1 u.17 10.0.0.5 10.0.0.1 [23] SheetKraftWeb.Controllers.ApiController - Slow request
+INFO  2026-11-18 10:20:31,410 v.5.2.1 u.17 10.0.0.5 10.0.0.1 [23] SheetKraftWeb.Controllers.SheetsController - Opened sheet 88
+INFO  2026-11-18 10:20:31,900 v.(null) u.(null) (null) (null) [7] SheetKraftWeb.Startup - Anonymous health check
+ERROR 2026-11-18 10:20:33,004 v.5.2.1 u.22 10.0.0.8 10.0.0.1 [31] SheetKraftWeb.Controllers.ExportController - Export failed
+System.TimeoutException: The operation has timed out.
+   at SheetKraftWeb.Services.Exporter.Run(Int32 sheetId) in C:\src\Web\Services\Exporter.cs:line 54
+
+   at SheetKraftWeb.Controllers.ExportController.Get(Int32 id) in C:\src\Web\Controllers\ExportController.cs:line 33
+INFO  2026-11-18 10:20:34,718 v.5.2.1 u.22 10.0.0.8 10.0.0.1 [31] SheetKraftWeb.Controllers.ExportController - Export page served
+WARN  2026-11-18 10:20:35,001 v.(null) u.(null) 10.0.0.9 10.0.0.1 [9] SheetKraftWeb.Middleware.RateLimit - Client 10.0.0.9 over limit
