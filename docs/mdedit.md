@@ -74,6 +74,7 @@ or until the next key. The last line lists the main keys.
 | Ctrl+Z / Ctrl+Y | Undo / redo the source, in either mode (see Edit mode) |
 | Esc | Close the search bar |
 | Ctrl+O | Open another file |
+| `o`, Alt+O | Open the outline of the headings (see Outline) |
 | Ctrl+Q | Quit |
 
 Any movement without Shift clears the selection. Copying writes the text to the clipboard through the terminal (OSC 52),
@@ -145,6 +146,7 @@ own line ending (a CRLF file gets CRLF).
 | Ctrl+T, Esc | Back to view mode. The view is rendered again when the text changed. The caret goes to the rendered character of the source caret; when the caret is on markup that is not shown (`**`, `# `), the next visible character. Esc closes an open search first |
 | Alt+Z | Word wrap on / off (on at the start) |
 | Alt+F | Fold or unfold the section or code block at the caret |
+| Alt+O | Open the outline of the headings, to go to one (see Outline) |
 | `/` | Types a slash (in view mode it opens the search) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the editor's history |
 | Ctrl+F | Find in the source (the search bar, as in view mode). F3 / Shift+F3 go to the next / previous match, with the same wrap and no-match messages as view mode. Enter goes to the first match after the caret; the match is selected, with the caret at its start. Esc closes the bar, and the focus goes back to the editor |
@@ -157,7 +159,7 @@ own line ending (a CRLF file gets CRLF).
 - **Search.** The matches are the source text, markup included: `**b` finds the start of bold text. They follow the edits while
   the bar is open. The search text carries over when the mode changes, and the active match does not: the bar closes when the
   mode changes, and Ctrl+F, F3 or Shift+F3 in the other mode searches again with the same text.
-- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold` and `^Q Quit`.
+- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold`, `Alt+O Outline` and `^Q Quit`.
 - **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
   above it, and a table keeps its scroll.
 - **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
@@ -265,3 +267,26 @@ the last of them, with the caret and the top line where they were. The unsaved-c
 a followed link. Going back takes the place off the list, so Alt+Left again goes to the one before, and with none left it says
 "No previous file". Ctrl+O, when a file is chosen, clears the list. A file that cannot be read any more is reported, and its
 place is dropped from the list.
+
+## Outline
+
+`o` in view mode, or Alt+O in either mode, opens the outline: a list of the headings of the document, with a filter field
+above it. Each heading is indented by two spaces for each level below the first, so a level-2 heading sits under the level-1
+heading before it. The list starts on the heading of the section the caret is in.
+
+| Key | |
+|---|---|
+| Typing | Filters the list: a heading stays when its text contains what was typed, ignoring case. The indent stays. The list selects the first heading that is left |
+| Up / Down, PgUp / PgDn, Home / End | Move the selection in the list, while the filter field has the focus |
+| Enter | Go to the selected heading (nothing happens when the filter leaves none) |
+| Esc | Close the outline and stay where the caret was |
+
+| Mouse | |
+|---|---|
+| Click on a heading | Select it. A double-click goes to it, as Enter does |
+
+- **In view mode**, the heading goes to the top of the view and the caret is on it, as a `#heading` link does: the section
+  that hides the heading is unfolded first.
+- **In edit mode**, the caret goes to the start of the heading's line, and the folds that hide the heading are unfolded.
+  The outline is that of the text as it is now, including the changes not yet rendered.
+- **No headings**: a document with no heading says "No headings" on the message line, and no list opens.

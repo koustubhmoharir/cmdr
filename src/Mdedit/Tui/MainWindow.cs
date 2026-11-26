@@ -304,9 +304,9 @@ internal sealed partial class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
-    /// both modes. In edit mode Esc closes an open search or else returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see
-    /// <see cref="HandleEditKey"/>). In view mode Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and redo, and the view's
-    /// search and copy keys apply.
+    /// both modes, and Alt+O opens the outline (see <see cref="HandleOutlineKey"/>). In edit mode Esc closes an open search or else
+    /// returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see <see cref="HandleEditKey"/>). In view mode Esc is swallowed (or closes an
+    /// open search), Ctrl+Z and Ctrl+Y undo and redo, and the view's search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
@@ -332,6 +332,11 @@ internal sealed partial class MainWindow : Window, ISearchHost
         if (key == Key.S.WithCtrl)
         {
             Save();
+            return true;
+        }
+
+        if (HandleOutlineKey(key))
+        {
             return true;
         }
 

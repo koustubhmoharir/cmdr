@@ -76,7 +76,7 @@ The first version is M0–M3.
 - [x] Core: links per block, link classification, heading anchors. (66438b4)
 - [x] Links in the view: `→ url` on the message line, Tab / Shift+Tab, Enter and Ctrl+click follow (anchor, file with the
       back stack and Alt+Left, external copy). (911742f)
-- [ ] Outline dialog (Alt+O in both modes, `o` in view mode).
+- [x] Outline dialog (Alt+O in both modes, `o` in view mode). (this commit)
 - [ ] Windows acceptance pass. *(Windows)*
 
 ## M5. Table editing
