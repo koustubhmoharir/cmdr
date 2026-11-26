@@ -9,6 +9,8 @@
     <Project Path="src/Logvu/Logvu.csproj" />
     <Project Path="src/Cfgedit.Core/Cfgedit.Core.csproj" />
     <Project Path="src/Cfgedit/Cfgedit.csproj" />
+    <Project Path="src/Mdedit.Core/Mdedit.Core.csproj" />
+    <Project Path="src/Mdedit/Mdedit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Cmdr.Core.Tests/Cmdr.Core.Tests.csproj" />
@@ -20,5 +22,7 @@
     <Project Path="tests/Logvu.Tests/Logvu.Tests.csproj" />
     <Project Path="tests/Cfgedit.Core.Tests/Cfgedit.Core.Tests.csproj" />
     <Project Path="tests/Cfgedit.Tests/Cfgedit.Tests.csproj" />
+    <Project Path="tests/Mdedit.Core.Tests/Mdedit.Core.Tests.csproj" />
+    <Project Path="tests/Mdedit.Tests/Mdedit.Tests.csproj" />
   </Folder>
 </Solution>

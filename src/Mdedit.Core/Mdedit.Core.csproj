@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shared.Core\Shared.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The same Markdig version as the Terminal.Gui fork (Terminal.Gui/Directory.Packages.props), so that one copy is loaded. -->
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.4.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mdedit.Core.Tests" />
+    <InternalsVisibleTo Include="Mdedit.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Embedded so that an application publishing as a single file has no separate .pdb. -->
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mdedit.Core\Mdedit.Core.csproj" />
+    <ProjectReference Include="..\Shared.Core\Shared.Core.csproj" />
+    <ProjectReference Include="..\Shared.Tui\Shared.Tui.csproj" />
+  </ItemGroup>
+
+  <!--
+    Terminal.Gui is built from the fork in the Terminal.Gui submodule, not from the NuGet package: the fork carries
+    performance fixes that are not upstream yet. The build properties are TerminalGuiBuildProperties in
+    Directory.Build.props.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj"
+                      AdditionalProperties="$(TerminalGuiBuildProperties)" />
+  </ItemGroup>
+
+  <!-- A clone without the submodule would otherwise fail with hundreds of missing-type errors. -->
+  <Target Name="CheckTerminalGuiSubmodule" BeforeTargets="CollectPackageReferences;ResolveProjectReferences"
+          Condition="!Exists('$(MSBuildThisFileDirectory)..\..\Terminal.Gui\Terminal.Gui\Terminal.Gui.csproj')">
+    <Error Text="The Terminal.Gui submodule is missing. Run: git submodule update --init" />
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mdedit.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>mdedit</AssemblyName>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    Publishing: one framework-dependent executable (needs the .NET runtime installed).
+    dotnet publish src/Mdedit -c Release -r win-x64     (or linux-x64, osx-arm64, ...)
+    Native libraries of dependencies are bundled too and extracted on first run; only English resources are kept.
+  -->
+  <PropertyGroup>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
