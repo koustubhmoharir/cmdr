@@ -16,10 +16,10 @@ The first version is M0–M3.
 ## M1. Scaffolding
 
 - [x] `src/Mdedit.Core`, `src/Mdedit` (`mdedit` executable), `tests/Mdedit.Core.Tests`, `tests/Mdedit.Tests`, all in
-      `Cmdr.slnx`, with the Terminal.Gui fork reference set up like cfgedit's.
-- [x] The Markdig pipeline (`MdPipeline`) with the extensions of the design.
-- [x] `mdedit --version`, plus usage for bad arguments, with Program tests.
-- [x] `publish.ps1` publishes and installs `mdedit`.
+      `Cmdr.slnx`, with the Terminal.Gui fork reference set up like cfgedit's. (0fa6de1)
+- [x] The Markdig pipeline (`MdPipeline`) with the extensions of the design. (0fa6de1)
+- [x] `mdedit --version`, plus usage for bad arguments, with Program tests. (0fa6de1)
+- [x] `publish.ps1` publishes and installs `mdedit`. (0fa6de1)
 
 ## M2a. Render core (Mdedit.Core)
 

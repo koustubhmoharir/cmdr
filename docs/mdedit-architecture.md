@@ -59,6 +59,20 @@ Relative offsets let a block's lowering and layout be reused after an edit elsew
 
 Anything not listed renders its source span as plain text, 1:1.
 
+Decisions made while building it (2026-11-26):
+
+- **Hard breaks** split a block's content into runs: each run is one stretch between hard breaks, and the next run's `Start`
+  is the break's offset (the newline for a two-space break, the `\` for a backslash break). The break itself has no cell.
+- **Link ids** are unique within a block, not the document, so that a block's lowering stays reusable; a link is identified
+  by (block, `LinkId`).
+- **Headings:** only `Body` cells take the `Heading` role; inline HTML, image markers and task boxes keep their own.
+- **Task boxes:** the space after `]` is a synthetic `Body` cell; the source space is not a cell.
+- **NUL** stays NUL in the cell (Markdig reads it as U+FFFD), so the cell matches the source.
+- **Unknown alert kinds** (`> [!FOO]`) lower as a quote whose first line is the marker text as written.
+- **Blocks with no rendering** (link reference definitions, anything not in the block list) are `BlockKind.Raw`: source
+  lines 1:1, role `Html` (dim).
+- **Empty list items and empty alerts** get an empty paragraph, so the marker or title has a line to draw on.
+
 **Block prefixes.** Synthetic, dim, built from the container chain:
 
 - Quote and alert: `│ ` per level (`QuoteBar`). An alert's first line is its title (`Note`, `Tip`, `Important`, `Warning`,
