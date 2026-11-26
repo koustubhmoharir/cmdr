@@ -30,18 +30,20 @@ The first version is M0–M3.
 - [x] Table column sizing (natural, minimum capped at 24, shrink widest first, horizontal overflow) and cell wrapping. (530724d)
 - [x] Code blocks: `ICodeColorizer`, the info-string alias table, wrapping with `↪` markers. (4d1b230)
 - [x] Fold units (sections, code blocks) and folded layout (summary lines). (4d1b230)
-- [ ] Copy: plain text and Markdown of a source range.
-- [ ] Search in the rendered text.
-- [ ] Heading outline.
+- [x] Copy: plain text and Markdown of a source range. (374f68b)
+- [x] Search in the rendered text. (374f68b)
+- [x] Heading outline. (374f68b)
 
 ## M2b. Viewer
 
 - [ ] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), load errors.
 - [ ] Main window: rendered view, title, message line, hints line.
-- [ ] Cursor, selection, scrolling, reflow on resize keeping the cursor's screen row.
+- [ ] Cursor, scrolling, reflow on resize keeping the cursor's screen row.
+- [ ] Selection (Shift+movement, drag, double-click).
 - [ ] Search (SearchBar) in the rendered text.
 - [ ] Copy as plain text and as Markdown (`y`, `Y`, Ctrl+C, right-click menu).
-- [ ] Mouse: wheel, click, drag, double-click, hints line, right-click menu.
+- [ ] Mouse: wheel, click.
+- [ ] Mouse: drag, double-click, right-click menu.
 - [ ] `docs/mdedit.md` started; README links it.
 
 ## M2c. Rich view
