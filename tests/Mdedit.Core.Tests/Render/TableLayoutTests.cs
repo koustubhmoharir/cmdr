@@ -179,5 +179,27 @@ public sealed class TableLayoutTests
         Assert.Equal((3, 6), layout.PositionOf(26));
     }
 
+    [Fact]
+    public void ScrollWidthOf_gives_the_tables_width_on_its_lines_and_0_on_separators_and_other_blocks()
+    {
+        string table = "| " + new string('a', 30) + " | " + new string('b', 30) + " |\n|---|---|\n| x | y |\n";
+        DocumentLayout layout = LayoutDump.Build("Intro.\n\n" + table, 20);
+
+        int width = layout.Blocks[1].ScrollWidth;
+        Assert.True(width > 20);
+        Assert.Equal(0, layout.ScrollWidthOf(0));
+        Assert.Equal(0, layout.ScrollWidthOf(1));
+        Assert.All(Enumerable.Range(2, layout.LineCount - 2), line => Assert.Equal(width, layout.ScrollWidthOf(line)));
+    }
+
+    [Fact]
+    public void A_code_block_never_scrolls_even_with_a_header_wider_than_the_line()
+    {
+        DocumentLayout layout = LayoutDump.Build("```" + new string('x', 40) + "\ncode\n```\n", 20);
+
+        Assert.Equal(0, layout.Blocks[0].ScrollWidth);
+        Assert.Equal(0, layout.ScrollWidthOf(0));
+    }
+
     private static string[] Lines(DocumentLayout layout) => Enumerable.Range(0, layout.LineCount).Select(layout.TextOf).ToArray();
 }

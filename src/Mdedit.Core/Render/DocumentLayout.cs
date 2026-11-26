@@ -170,6 +170,19 @@ public sealed class DocumentLayout
         return _blockStarts[BlockOf(index)];
     }
 
+    /// <summary>
+    /// The <see cref="BlockLayout.ScrollWidth"/> of a line's block: the width of the block's content when it is a table wider than
+    /// the screen, else 0. A separator line belongs to no block's content and gives 0.
+    /// </summary>
+    /// <param name="index">The line, from 0 to <see cref="LineCount"/> minus 1.</param>
+    public int ScrollWidthOf(int index)
+    {
+        CheckLine(index);
+        int block = BlockOf(index);
+        bool separator = index - _firstLines[block] >= _blocks[block].Lines.Length;
+        return separator ? 0 : _blocks[block].ScrollWidth;
+    }
+
     /// <summary>The text of a line: its cell texts joined.</summary>
     /// <param name="line">The line, from 0 to <see cref="LineCount"/> minus 1.</param>
     public string TextOf(int line)

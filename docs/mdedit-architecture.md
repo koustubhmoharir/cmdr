@@ -333,3 +333,71 @@ A `View` over a `RenderDocument`, a `DocumentLayout` (rebuilt when the width or 
   cursor and is scrolled into view. The matches are recomputed when the document changes.
 - Right-click opens a menu at the mouse: Copy text, Copy Markdown (Fold / Unfold from M2c). The menu works with the mouse
   and the keyboard.
+
+## Editor (M3, Mdedit)
+
+Patterned on cfgedit's text mode and its save and external-change flows (`src/Cfgedit/Tui/EditController.cs`,
+`MainWindow.cs`: `Save`, `CheckExternalChange`, `InFlow`, `AskUnsaved`, `CloseOrKeep`), with the file layer of
+`Shared.Core.TextFile`.
+
+### Source buffer and modes
+
+- **`SourceEditor`**: a Shared.Tui `TextArea` with `TabInserts`, `LineBreak` = the file's `SourceText.Newline`, the editor's
+  built-in Markdown highlighting (`MarkDown-Mode.xshd` through `HighlightingManager`), and `WordWrap` on; Alt+Z toggles
+  word wrap. Its `TextDocument` is **the source buffer** for both modes: the window never keeps another copy of the text.
+  The editor's undo stack is the one history; Ctrl+Z / Ctrl+Y in view mode undo and redo on it and re-render.
+- **Rendering from the buffer**: the window keeps the buffer's version (a counter bumped on every `TextDocument` change)
+  at its last render. Entering view mode (and undo/redo in view mode) re-parses the buffer's text when the version moved,
+  and gives the new `RenderDocument` to `RenderedView.SetDocument`, which keeps the caret, selection, folds and table
+  scroll offsets by source offset (see Folds), recomputes the search matches, and keeps the top line's anchor on its row
+  as a reflow does.
+- **Ctrl+T, view → edit**: the editor's caret goes to `RenderedView.CursorOffset`, and a selection becomes the editor's
+  selection over the same source range; the editor scrolls so the caret's line is on the same screen row as the view's
+  caret when it can. **Edit → view** (Ctrl+T or Esc): re-render, then the view's caret goes to `PositionOf(caret offset)`
+  (units hiding it are unfolded first) and the editor's selection becomes the view's selection; same screen-row rule.
+- **Title**: the file name, ` *` when dirty, ` [edit]` in edit mode. **Hints** per mode: view (`^T Edit` added first),
+  edit (`^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `^Q Quit`).
+- **Dirty**: the buffer's text differs from `TextFile.Text.Text` (checked when the version moves, not on every draw).
+- **Large files**: a file over 2 MB (its length in bytes on disk) opens in edit mode with the message `Large file: opened as text`; Ctrl+T to view mode then asks "Render <n> MB?" (Render /
+  Cancel, Render the default).
+
+### Folds across edits
+
+The view's fold keys become `TextAnchor`s in the buffer (created at the unit's start, moving with insertions before it).
+On each render, a unit is folded when an anchor sits at its start; anchors whose unit is gone are dropped. The table scroll
+offsets are kept the same way. Edit mode shows the same units as editor folds (`FoldingManager`), built from the current
+`RenderDocument.FoldUnits` on entering edit mode with the folded ones collapsed; folding or unfolding in the editor updates
+the anchors, so the state is shared both ways.
+
+### Saving and closing
+
+- **Ctrl+S** in either mode: if `TextFile.ChangedOnDisk()`, Confirm "Changed on disk" Overwrite / Reload / Cancel (Overwrite
+  the default, as cfgedit). Then `TextFile.Save(TextFile.Text.WithText(buffer text))`; `Saved` on success, the
+  `TextFileException`'s message (the error style) on failure. After the first save of a new file the host records it in the
+  recent list.
+- **Unsaved changes**: Ctrl+Q, Ctrl+O (before switching) and Close after a deletion ask "Save changes to <name>?" Save /
+  Discard / Cancel, Save the default; a failed save cancels the action.
+- **New files**: `mdedit <path>` for a path that does not exist asks "Create <name>?" (Create / Cancel); the window opens on
+  `TextFile.CreateNew(path, SourceText.Create("", UTF-8 without BOM, no BOM))` in edit mode, with the platform newline for
+  Enter. Nothing is written before the first save; the folder must exist (the save reports it otherwise).
+
+### External changes
+
+As cfgedit's: a 1 s timer from the window's start to its stop calls `CheckExternalChange` when the window is idle (no
+dialog, popover menu, picker or save/close flow; a deferred check is not queued). `TextFile.PollDisk()`:
+
+- `Changed`, buffer clean: the buffer's whole text is replaced by the file's as one undo step (`TextDocument.Replace` in an
+  undo group); message `Reloaded` unless the undo history was empty. Caret, selection and folds are kept by offset where
+  they still fit.
+- `Changed`, buffer dirty: "<name> changed on disk" Keep mine / Reload, Keep mine the default; Reload as above (the edits
+  stay one Ctrl+Z away); Keep mine calls `TextFile.AcceptDiskState()`, so the next save does not ask and the document is
+  dirty while it differs from the disk.
+- `Deleted`: "<name> was deleted or moved" Keep / Close, Keep the default; Keep calls `MarkMissing()` (the next save
+  creates the file); Close discards and returns to the recent-files picker.
+- A failed poll shows its message once per state.
+
+### Search in edit mode
+
+The same `SearchBar` and query as view mode. In edit mode the matches are `SearchPattern.Matches(buffer text)` (source
+text), recomputed when the buffer changes; the active match is selected in the editor and the caret goes to its start. The
+query carries over between the modes; the matches do not (view mode searches rendered text).

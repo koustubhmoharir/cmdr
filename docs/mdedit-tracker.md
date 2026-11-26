@@ -39,16 +39,16 @@ The first version is M0–M3.
 - [x] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), load errors. (95f222e)
 - [x] Main window: rendered view, title, message line, hints line. (95f222e)
 - [x] Cursor, scrolling, reflow on resize keeping the cursor's screen row. (95f222e)
-- [ ] Selection (Shift+movement, drag, double-click).
-- [ ] Search (SearchBar) in the rendered text.
-- [ ] Copy as plain text and as Markdown (`y`, `Y`, Ctrl+C, right-click menu).
+- [x] Selection (Shift+movement, drag, double-click). (1e35cbd)
+- [x] Search (SearchBar) in the rendered text. (1e35cbd)
+- [x] Copy as plain text and as Markdown (`y`, `Y`, Ctrl+C, right-click menu). (1e35cbd)
 - [x] Mouse: wheel, click. (95f222e)
-- [ ] Mouse: drag, double-click, right-click menu.
-- [ ] `docs/mdedit.md` started; README links it.
+- [x] Mouse: drag, double-click, right-click menu. (1e35cbd)
+- [x] `docs/mdedit.md` started; README links it. (1e35cbd)
 
 ## M2c. Rich view
 
-- [ ] Horizontal scrolling of tables (keys, Shift+wheel, edge markers), the cursor's cell kept visible.
+- [ ] Horizontal scrolling of tables (`<`/`>`, Shift+wheel, edge markers), the cursor's cell kept visible.
 - [ ] TextMate colorizer adapter; plain code without the native library.
 - [ ] Folding: Space, `*`, `-`, `1`–`6`, `0`, glyphs and summaries, mouse.
 

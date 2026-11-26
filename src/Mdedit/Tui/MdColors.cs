@@ -10,7 +10,8 @@ namespace Mdedit.Tui;
 /// wrap markers, rules and raw HTML are dim. Pure: the view's normal attribute is passed in, and only its foreground is replaced.
 /// </summary>
 /// <remarks>
-/// The colours are for dark terminal backgrounds. Code tokens are not coloured yet, so a code cell has the code colour only.
+/// The colours are for dark terminal backgrounds. A code block's cells take the colour of their token (see <see cref="ForToken"/>); the
+/// cells without a token, and the inline code spans, have the code colour.
 /// </remarks>
 internal static class MdColors
 {
@@ -59,6 +60,39 @@ internal static class MdColors
     /// <summary>The colour of a CAUTION alert title.</summary>
     public static readonly Color AlertCaution = new(0xE0, 0x6C, 0x75);
 
+    /// <summary>The colour of a keyword token.</summary>
+    public static readonly Color TokenKeyword = new(0xC6, 0x78, 0xDD);
+
+    /// <summary>The colour of a string token.</summary>
+    public static readonly Color TokenString = new(0x98, 0xC3, 0x79);
+
+    /// <summary>The colour of a number token.</summary>
+    public static readonly Color TokenNumber = new(0xD1, 0x9A, 0x66);
+
+    /// <summary>The colour of a comment token, which is also italic.</summary>
+    public static readonly Color TokenComment = new(0x7F, 0x86, 0x93);
+
+    /// <summary>The colour of a type token.</summary>
+    public static readonly Color TokenType = new(0xE5, 0xC0, 0x7B);
+
+    /// <summary>The colour of a function name token.</summary>
+    public static readonly Color TokenFunction = new(0x61, 0xAF, 0xEF);
+
+    /// <summary>The colour of an operator token.</summary>
+    public static readonly Color TokenOperator = new(0x56, 0xB6, 0xC2);
+
+    /// <summary>The colour of a punctuation token.</summary>
+    public static readonly Color TokenPunctuation = new(0xAB, 0xB2, 0xBF);
+
+    /// <summary>The colour of a preprocessor directive token.</summary>
+    public static readonly Color TokenPreprocessor = new(0xE0, 0x6C, 0x75);
+
+    /// <summary>The colour of a constant token (literals such as <c>true</c> and <c>null</c>).</summary>
+    public static readonly Color TokenConstant = new(0xD1, 0x9A, 0x66);
+
+    /// <summary>The colour of an attribute or markup tag token.</summary>
+    public static readonly Color TokenAttribute = new(0x7F, 0xD1, 0xAE);
+
     /// <summary>The colour of a message that reports an error.</summary>
     public static readonly Color Error = new(0xD7, 0x5F, 0x5F);
 
@@ -79,6 +113,15 @@ internal static class MdColors
             case StyleRole.CodeBlock or StyleRole.CodeHeader:
                 background = CodeBackground;
                 foreground = CodeText;
+                if (style.Role == StyleRole.CodeBlock && ForToken(style.Token) is { } token)
+                {
+                    foreground = token;
+                    if (style.Token == CodeToken.Comment)
+                    {
+                        text |= TextStyle.Italic;
+                    }
+                }
+
                 break;
             case StyleRole.QuoteBar or StyleRole.TableBorder or StyleRole.FoldGlyph or StyleRole.WrapMarker
                 or StyleRole.ThematicBreak or StyleRole.Html or StyleRole.FoldSummary:
@@ -131,6 +174,27 @@ internal static class MdColors
 
         return new Attribute(foreground, background, text);
     }
+
+    /// <summary>
+    /// The colour of a code token, or null for a token that has none of its own (<see cref="CodeToken.None"/> and the identifiers, which keep
+    /// the code colour).
+    /// </summary>
+    /// <param name="token">The token of a code cell.</param>
+    public static Color? ForToken(CodeToken token) => token switch
+    {
+        CodeToken.Keyword => TokenKeyword,
+        CodeToken.String => TokenString,
+        CodeToken.Number => TokenNumber,
+        CodeToken.Comment => TokenComment,
+        CodeToken.Type => TokenType,
+        CodeToken.Function => TokenFunction,
+        CodeToken.Operator => TokenOperator,
+        CodeToken.Punctuation => TokenPunctuation,
+        CodeToken.Preprocessor => TokenPreprocessor,
+        CodeToken.Constant => TokenConstant,
+        CodeToken.Attribute or CodeToken.Tag => TokenAttribute,
+        _ => null,
+    };
 
     /// <summary>
     /// The attribute of an alert title, bold, in the colour of its kind. The title is the text of the alert's title cells (<c>Note</c>,

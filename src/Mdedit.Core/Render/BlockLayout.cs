@@ -15,14 +15,14 @@ public sealed class BlockLayout
     private readonly ImmutableArray<MappedCell> _index;
     private readonly ImmutableArray<int> _firstAfter;
 
-    private BlockLayout(ImmutableArray<DisplayLine> lines, int contentWidth)
+    private BlockLayout(ImmutableArray<DisplayLine> lines, int contentWidth, bool scrolls)
     {
         Lines = lines;
         Columns = lines.Select(line => ColumnsOf(line.Cells)).ToImmutableArray();
         _index = BuildIndex(lines, Columns);
         _firstAfter = BuildFirstAfter(_index);
         MinOffset = _index.Length == 0 ? 0 : _index[0].Offset;
-        ScrollWidth = ScrollWidthOf(lines, contentWidth);
+        ScrollWidth = scrolls ? ScrollWidthOf(lines, contentWidth) : 0;
     }
 
     /// <summary>The display lines of the block, in order: the title lines of its alerts, then its content.</summary>
@@ -38,13 +38,14 @@ public sealed class BlockLayout
     internal ImmutableArray<ImmutableArray<int>> Columns { get; }
 
     /// <summary>
-    /// The width of the widest line of the block without its container prefix, when that is more than the content width; 0 when
-    /// no line is wider than the content. A block with a non-zero value is wider than the screen, so the view scrolls it.
+    /// For a table, the width of its widest line without the container prefix, when that is more than the content width; 0 when
+    /// no line is wider than the content, and for every other kind of block (code wraps, and a single cell wider than a very
+    /// narrow line is not worth a scroll). A block with a non-zero value is wider than the screen, so the view scrolls it.
     /// </summary>
     public int ScrollWidth { get; }
 
     /// <summary>The layout of a block that is hidden by a folded unit: no lines, and no mapped cells.</summary>
-    internal static readonly BlockLayout Hidden = new(ImmutableArray<DisplayLine>.Empty, 0);
+    internal static readonly BlockLayout Hidden = new(ImmutableArray<DisplayLine>.Empty, 0, scrolls: false);
 
     /// <summary>Lays out one block for a screen width.</summary>
     /// <param name="block">The block, from a <see cref="RenderDocument"/>.</param>
@@ -57,7 +58,8 @@ public sealed class BlockLayout
         ArgumentNullException.ThrowIfNull(block);
         ArgumentOutOfRangeException.ThrowIfLessThan(width, 1);
 
-        return new BlockLayout(BlockLayouter.Layout(block, width, foldedLines), BlockLayouter.ContentWidth(block, width));
+        return new BlockLayout(
+            BlockLayouter.Layout(block, width, foldedLines), BlockLayouter.ContentWidth(block, width), block.Kind == BlockKind.Table);
     }
 
     /// <summary>

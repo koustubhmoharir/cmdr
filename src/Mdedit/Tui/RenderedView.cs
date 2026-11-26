@@ -32,13 +32,17 @@ namespace Mdedit.Tui;
 /// offset is the same after the change and its line stays where it was on screen.
 /// </para>
 /// <para>
+/// <b>Folds and tables.</b> The fold state and its keys are in the folding part of the class, and the horizontal offsets of the wide
+/// blocks (tables) in the scrolling part. Screen columns of a scrolled block are converted to layout columns through its offset.
+/// </para>
+/// <para>
 /// <b>Selection.</b> A selection is held as offsets: an anchor (set by a Shift movement, or by the first motion of a drag), which
 /// the cursor's offset ends, or an exact range (set by <see cref="SelectRange"/>, for a search match or a word). A plain movement, a
 /// press or a right-click outside the selection clears it. A drag scrolls one line per motion event while the mouse is above or below
 /// the view.
 /// </para>
 /// </remarks>
-internal sealed class RenderedView : View
+internal sealed partial class RenderedView : View
 {
     /// <summary>The display lines the wheel scrolls per event.</summary>
     internal const int WheelLines = 3;
@@ -112,8 +116,8 @@ internal sealed class RenderedView : View
     /// <summary>The screen position of the cursor's cell, for a menu opened from the keyboard.</summary>
     public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, _line - _top));
 
-    /// <summary>The caret's column, kept inside the viewport: an end position on a full line sits on the last column.</summary>
-    private int VisibleColumn => Math.Min(_column, Math.Max(0, Viewport.Width - 1));
+    /// <summary>The caret's screen column, kept inside the viewport: an end position on a full line sits on the last column.</summary>
+    private int VisibleColumn => CaretScreenColumn();
 
     /// <summary>
     /// True when the document has a caret stop to rest the cursor on. A document with none (empty, or only rules) has no cursor.
@@ -219,9 +223,29 @@ internal sealed class RenderedView : View
     /// </summary>
     private bool ApplyKey(Key key)
     {
-        if (!SyncLayout() || !HasCursor)
+        if (!SyncLayout())
         {
             return false;
+        }
+
+        if (FoldKey(key))
+        {
+            return true;
+        }
+
+        if (!HasCursor)
+        {
+            return false;
+        }
+
+        if (IsPlain(key, '<'))
+        {
+            return ScrollCursorBlock(-ScrollColumns);
+        }
+
+        if (IsPlain(key, '>'))
+        {
+            return ScrollCursorBlock(ScrollColumns);
         }
 
         bool extend = key.IsShift && IsExtendable(key.NoShift);
@@ -323,6 +347,31 @@ internal sealed class RenderedView : View
             return false;
         }
 
+        // The fork reports a horizontal wheel as WheeledLeft and WheeledRight, which contain the vertical flags, so they are tested first.
+        if (mouse.Flags.HasFlag(MouseFlags.WheeledLeft))
+        {
+            WheelTable(mouse, -ScrollColumns);
+            return true;
+        }
+
+        if (mouse.Flags.HasFlag(MouseFlags.WheeledRight))
+        {
+            WheelTable(mouse, ScrollColumns);
+            return true;
+        }
+
+        // Shift with the vertical wheel scrolls a table under the mouse; elsewhere it scrolls the document as the wheel does.
+        bool shift = mouse.Flags.HasFlag(MouseFlags.Shift);
+        if (shift && mouse.Flags.HasFlag(MouseFlags.WheeledUp) && WheelTable(mouse, -ScrollColumns))
+        {
+            return true;
+        }
+
+        if (shift && mouse.Flags.HasFlag(MouseFlags.WheeledDown) && WheelTable(mouse, ScrollColumns))
+        {
+            return true;
+        }
+
         if (mouse.Flags.HasFlag(MouseFlags.WheeledUp))
         {
             Wheel(-WheelLines);
@@ -374,6 +423,14 @@ internal sealed class RenderedView : View
         }
 
         SetFocus();
+
+        // An edge marker scrolls its table, and a fold glyph or summary folds its unit; neither places the cursor.
+        int line = _top + y;
+        if (PressMarker(line, x) || ClickFold(line, x))
+        {
+            return true;
+        }
+
         int before = _offset;
         int topBefore = _top;
         PlaceClick(x, y);
@@ -483,7 +540,7 @@ internal sealed class RenderedView : View
         }
 
         int line = _top + y;
-        int cell = CellAt(line, x);
+        int cell = CellAt(line, LayoutColumn(line, x));
         if (cell < 0 || WordAt(line, cell) is not { } word)
         {
             return false;
@@ -567,6 +624,11 @@ internal sealed class RenderedView : View
 
         int before = _offset;
         int topBefore = _top;
+        if (UnfoldHiding(range.Start))
+        {
+            Reflow(Built.Width);
+        }
+
         PlaceAt(range.Start);
         _goal = _column;
         _anchor = null;
@@ -619,7 +681,7 @@ internal sealed class RenderedView : View
     {
         if (_layout is null)
         {
-            _layout = DocumentLayout.Build(_document, width, _cache);
+            _layout = BuildLayout(width);
             _top = 0;
             if (FirstMapped() is { } first)
             {
@@ -636,13 +698,14 @@ internal sealed class RenderedView : View
         int row = visible ? _line - _top : 0;
         bool hadCursor = HasCursor;
 
-        _layout = DocumentLayout.Build(_document, width, _cache);
+        _layout = BuildLayout(width);
         if (hadCursor)
         {
             int anchorLine = ResolveCaret(anchor) is { } anchorCaret ? anchorCaret.Line : _layout.PositionOf(anchor).Line;
             _top = Math.Clamp(anchorLine - row, 0, MaxTop());
             PlaceAt(_offset);
             _goal = _column;
+            EnsureCaretColumnVisible();
         }
         else
         {
@@ -661,7 +724,7 @@ internal sealed class RenderedView : View
 
     private void ClampTop() => _top = Math.Clamp(_top, 0, MaxTop());
 
-    private bool IsCursorVisible() => HasCursor && _line >= _top && _line < _top + ViewportHeight;
+    private bool IsCursorVisible() => HasCursor && _line >= _top && _line < _top + ViewportHeight && !CaretScrolledOut();
 
     /// <summary>Scrolls by the least amount that keeps the cursor's line in view.</summary>
     private void EnsureVisible()
@@ -759,8 +822,9 @@ internal sealed class RenderedView : View
             }
         }
 
+        // A line with no stop of its own (a folded code header) gives the stop before it, or the first one after it when none is before.
         int cell = CellFor(line, offset, column);
-        return cell < 0 ? LastMappedAtOrBefore(line) : (line, cell);
+        return cell < 0 ? LastMappedAtOrBefore(line) ?? NextStop(line, -1) : (line, cell);
     }
 
     /// <summary>The last line before <paramref name="line"/> that has a mapped cell, or -1 when there is none.</summary>
@@ -799,8 +863,11 @@ internal sealed class RenderedView : View
     }
 
     /// <summary>The source offset that a screen column of a line selects (see <see cref="TargetAtColumn"/>).</summary>
-    private int OffsetAtColumn(int line, int x) =>
-        TargetAtColumn(line, x) is { } target ? OffsetOf(target.Line, target.Cell) : Built.OffsetAt(line, x);
+    private int OffsetAtColumn(int line, int x)
+    {
+        int column = LayoutColumn(line, x);
+        return TargetAtColumn(line, column) is { } target ? OffsetOf(target.Line, target.Cell) : Built.OffsetAt(line, column);
+    }
 
     /// <summary>
     /// Sets the cursor to a caret stop of a line: a mapped cell, or the end position (cell index <c>Length</c>). The goal column follows the
@@ -837,13 +904,14 @@ internal sealed class RenderedView : View
     /// <summary>Sets the cursor to the stop that a screen column of a line selects (see <see cref="TargetAtColumn"/>).</summary>
     private void PlaceColumn(int line, int x)
     {
-        if (TargetAtColumn(line, x) is { } target)
+        int column = LayoutColumn(line, x);
+        if (TargetAtColumn(line, column) is { } target)
         {
             PlaceCell(target.Line, target.Cell, keepGoal: false);
         }
         else
         {
-            PlaceAt(Built.OffsetAt(line, x));
+            PlaceAt(Built.OffsetAt(line, column));
         }
     }
 
@@ -1136,6 +1204,7 @@ internal sealed class RenderedView : View
     /// <summary>After a move: keeps the cursor on screen, places the terminal cursor, and raises the event when the cursor or the top moved.</summary>
     private void Settle(int offsetBefore, int topBefore)
     {
+        EnsureCaretColumnVisible();
         EnsureVisible();
         UpdateCursor();
         if (_offset != offsetBefore || _top != topBefore)
@@ -1154,6 +1223,11 @@ internal sealed class RenderedView : View
             : new Cursor { Position = null, Style = CursorStyle.BlinkingBar };
     }
 
+    /// <summary>
+    /// Draws a display line: the container prefix in place, then the content cells shifted by the block's offset (see the scrolling part of
+    /// the class). The line is built column by column, so that a wide cell cut at the left edge is a space, a wide cell that does not fit is
+    /// left out, and the edge markers replace the cell in their column. Runs of one attribute are drawn together.
+    /// </summary>
     private void DrawLine(int y, int line, int width, Attribute normal)
     {
         DisplayLine display = Built.Line(line);
@@ -1161,20 +1235,33 @@ internal sealed class RenderedView : View
         int baseOffset = Built.BaseOffset(line);
         SourceRange? selection = SelectionRange;
         (int first, int last) = SelectedSpan(cells, baseOffset, selection);
+        int prefix = PrefixWidthOf(display);
+        int shift = ShiftOf(line);
+        string?[] texts = new string?[width];
+        Attribute[] attributes = new Attribute[width];
+        Array.Fill(texts, " ");
+        Array.Fill(attributes, normal);
+
         string? alert = null;
-        Move(0, y);
-        int x = 0;
+        int column = 0;
+        int contentColumn = 0;
         for (int c = 0; c < cells.Length; c++)
         {
             Cell cell = cells[c];
-            if (x + cell.Width > width)
-            {
-                break;
-            }
-
             if (cell.Width == 0)
             {
                 continue;
+            }
+
+            bool isPrefix = c < display.PrefixCells;
+            int start = isPrefix ? column : prefix + contentColumn - shift;
+            if (isPrefix)
+            {
+                column += cell.Width;
+            }
+            else
+            {
+                contentColumn += cell.Width;
             }
 
             Attribute attribute;
@@ -1189,15 +1276,99 @@ internal sealed class RenderedView : View
             }
 
             attribute = Highlight(attribute, cell, c, baseOffset, selection, first, last);
-            SetAttribute(attribute);
-            AddStr(cell.Text);
-            x += cell.Width;
+            if (!isPrefix && start < prefix)
+            {
+                // Scrolled out on the left: a wide cell that still reaches the first column is drawn as a space there.
+                if (start + cell.Width > prefix)
+                {
+                    texts[prefix] = " ";
+                    attributes[prefix] = attribute;
+                }
+
+                continue;
+            }
+
+            if (start + cell.Width > width)
+            {
+                break;
+            }
+
+            texts[start] = cell.Text;
+            attributes[start] = attribute;
+            for (int k = 1; k < cell.Width; k++)
+            {
+                texts[start + k] = null;
+            }
         }
 
-        if (x < width)
+        (bool leftMarker, bool rightMarker) = MarkersOf(line);
+        Attribute marker = MdColors.For(new CellStyle(StyleRole.TableBorder), normal);
+        if (leftMarker)
         {
-            SetAttribute(normal);
-            AddStr(new string(' ', width - x));
+            PlaceMarker(texts, attributes, prefix, "◂", marker);
+        }
+
+        if (rightMarker)
+        {
+            PlaceMarker(texts, attributes, width - 1, "▸", marker);
+        }
+
+        DrawColumns(y, texts, attributes);
+    }
+
+    /// <summary>
+    /// Puts an edge marker in a column. A wide cell that the marker covers, on either side of the column, is replaced by a space, so that no
+    /// half of a wide cell is left.
+    /// </summary>
+    private static void PlaceMarker(string?[] texts, Attribute[] attributes, int column, string text, Attribute attribute)
+    {
+        if (column < 0 || column >= texts.Length)
+        {
+            return;
+        }
+
+        if (texts[column] is null && column > 0)
+        {
+            texts[column - 1] = " ";
+        }
+
+        if (column + 1 < texts.Length && texts[column + 1] is null)
+        {
+            texts[column + 1] = " ";
+        }
+
+        texts[column] = text;
+        attributes[column] = attribute;
+    }
+
+    /// <summary>Draws the columns of one row: runs of columns with the same attribute are drawn together; a null column is the second half of a wide cell.</summary>
+    private void DrawColumns(int y, string?[] texts, Attribute[] attributes)
+    {
+        int x = 0;
+        while (x < texts.Length)
+        {
+            if (texts[x] is null)
+            {
+                x++;
+                continue;
+            }
+
+            Attribute attribute = attributes[x];
+            int start = x;
+            var run = new System.Text.StringBuilder();
+            while (x < texts.Length && (texts[x] is null || attributes[x] == attribute))
+            {
+                if (texts[x] is { } text)
+                {
+                    run.Append(text);
+                }
+
+                x++;
+            }
+
+            Move(start, y);
+            SetAttribute(attribute);
+            AddStr(run.ToString());
         }
     }
 

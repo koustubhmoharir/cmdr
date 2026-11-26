@@ -53,7 +53,8 @@ public sealed partial class MainWindowTests : IDisposable
 
         TerminalScreen screen = Run(file, 40, 12).Screens[0];
 
-        Assert.Equal(Status("/ Find  y Copy  ^O Open", "^Q Quit"), screen.Text(11));
+        // At 40 columns the row is cut after Space Fold; the cut hint keeps its first characters and the quit key stays at the right.
+        Assert.Equal(Status("/ Find  y Copy  Space Fold  ^O O…", "^Q Quit"), screen.Text(11));
     }
 
     [Fact]
@@ -165,13 +166,13 @@ public sealed partial class MainWindowTests : IDisposable
     }
 
     [Fact]
-    public void At_80_columns_the_hints_are_Find_Copy_and_Open_at_the_left_and_Quit_at_the_right_edge()
+    public void At_80_columns_the_hints_are_Find_Copy_Fold_and_Open_at_the_left_and_Quit_at_the_right_edge()
     {
         OpenedFile file = Opened("notes.md", Small);
 
         TerminalScreen screen = Run(file, 80, 12).Screens[0];
 
-        string left = "/ Find  y Copy  ^O Open";
+        string left = "/ Find  y Copy  Space Fold  ^O Open";
         Assert.Equal(left + new string(' ', 80 - left.Length - "^Q Quit".Length) + "^Q Quit", screen.Text(11));
     }
 

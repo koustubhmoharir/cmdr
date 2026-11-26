@@ -75,7 +75,7 @@ internal sealed class MainWindow : Window, ISearchHost
         // No outer frame: the rendered view's frame, the message line and the hints fill the window.
         BorderStyle = LineStyle.None;
 
-        RenderDocument document = RenderDocument.Parse(file.File.Text.Text);
+        RenderDocument document = RenderDocument.Parse(file.File.Text.Text, TextMateColorizer.Shared);
         _outline = Outline.Of(document);
         _view = new RenderedView(document) { X = 0, Y = 0, Width = Dim.Fill(), Height = Dim.Fill() };
         _frame = new FrameView
@@ -245,34 +245,41 @@ internal sealed class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// The context menu of the view: Copy text and Copy Markdown. It is created on first use and registered with the application's
-    /// popovers, which show it at a screen position and take the keys while it is open.
+    /// Opens the context menu at a screen position, the mouse's for a right-click and the cursor's for the menu key. The entries are Copy
+    /// text and Copy Markdown, and Fold or Unfold (labelled by the state of the unit at that position) when a unit is there. The menu is
+    /// built for each opening, since its entries depend on the position, and it is registered with the application's popovers, which take
+    /// the keys while it is open.
     /// </summary>
-    private PopoverMenu Menu
-    {
-        get
-        {
-            if (_menu is null)
-            {
-                _menu = new PopoverMenu(new List<MenuItem>
-                {
-                    new MenuItem(commandText: "Copy text", action: () => CopyView(markdown: false)),
-                    new MenuItem(commandText: "Copy Markdown", action: () => CopyView(markdown: true)),
-                });
-                App?.Popovers?.Register(_menu);
-            }
-
-            return _menu;
-        }
-    }
-
-    /// <summary>Opens the context menu at a screen position: the mouse's for a right-click, the cursor's for the menu key.</summary>
     /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
     private void ShowContextMenu(Point screen)
     {
-        PopoverMenu menu = Menu;
-        App?.Popovers?.Register(menu);
-        menu.MakeVisible(screen);
+        DisposeMenu();
+        var items = new List<MenuItem>
+        {
+            new MenuItem(commandText: "Copy text", action: () => CopyView(markdown: false)),
+            new MenuItem(commandText: "Copy Markdown", action: () => CopyView(markdown: true)),
+        };
+        if (_view.FoldUnitAtScreen(screen) is { } unit)
+        {
+            string label = _view.IsFolded(unit) ? "Unfold" : "Fold";
+            items.Add(new MenuItem(commandText: label, action: () => _view.ToggleFold(unit)));
+        }
+
+        _menu = new PopoverMenu(items);
+        App?.Popovers?.Register(_menu);
+        _menu.MakeVisible(screen);
+    }
+
+    /// <summary>Hides the context menu, if one was opened, and removes it from the application's popovers.</summary>
+    private void DisposeMenu()
+    {
+        if (_menu is { } menu)
+        {
+            menu.Visible = false;
+            App?.Popovers?.DeRegister(menu);
+            menu.Dispose();
+            _menu = null;
+        }
     }
 
     /// <inheritdoc/>
@@ -292,12 +299,9 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <inheritdoc/>
     protected override void Dispose(bool disposing)
     {
-        if (disposing && _menu is { } menu)
+        if (disposing)
         {
-            menu.Visible = false;
-            App?.Popovers?.DeRegister(menu);
-            menu.Dispose();
-            _menu = null;
+            DisposeMenu();
         }
 
         base.Dispose(disposing);

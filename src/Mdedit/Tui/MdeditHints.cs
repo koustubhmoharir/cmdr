@@ -13,12 +13,13 @@ internal static class MdeditHints
     private static Hint OpenFile { get; } = KeyHints.Bound(Key.O.WithCtrl, "^O Open file");
 
     /// <summary>
-    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Find, Copy, Open. The quit key is
-    /// the right part (see <see cref="Quit"/>), so it stays on the row when the left part is cut.
+    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Find, Copy, Fold, Open. The quit key
+    /// is the right part (see <see cref="Quit"/>), so it stays on the row when the left part is cut.
     /// </summary>
     public static Hint View { get; } = KeyHints.Join(
         KeyHints.Bound('/', "/ Find"),
         KeyHints.Bound('y', "y Copy"),
+        KeyHints.Bound(Key.Space, "Space Fold"),
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
 
     /// <summary>The quit key, shown at the right edge of the viewer's hints.</summary>
