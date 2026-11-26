@@ -108,7 +108,7 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void A_folded_code_block_shows_its_header_with_the_number_of_its_hidden_lines_and_the_caret_moves_past_it()
+    public void A_folded_code_block_shows_its_header_with_the_number_of_its_hidden_lines_and_the_caret_stays_on_the_header()
     {
         const string code = "```cs\nvar x = 1;\nvar y = 2;\n```\n\nafter\n";
         RenderedView view = View(code);
@@ -116,7 +116,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(view, v => v.HandleKey(Key.Space));
 
         Assert.Equal(Pad(["▸ cs … 2 lines", "", "after"]), Rows(result.Screens[1]));
-        Assert.Equal(Offset(code, "after"), view.CursorOffset);
+        Assert.Equal(Offset(code, "```"), view.CursorOffset);
     }
 
     [Fact]
@@ -127,6 +127,18 @@ public sealed partial class RenderedViewTests
         Result result = Run(View(code), v => v.HandleMouse(Click(0, 0)));
 
         Assert.Equal(Pad(["▸ cs … 1 line", "", "after"]), Rows(result.Screens[1]));
+    }
+
+    [Fact]
+    public void Down_reaches_a_folded_code_header_and_Space_there_unfolds_it()
+    {
+        const string code = "para\n\n```cs\nvar x = 1;\n```\n\nafter\n";
+
+        // The block is folded first; Down from the paragraph lands on its header, where Space unfolds it.
+        Result result = Run(View(code), v => v.ToggleFold(v.Units[0]), v => v.HandleKey(Key.CursorDown), v => v.HandleKey(Key.Space));
+
+        Assert.Equal(Offset(code, "```"), result.Snaps[2].Offset);
+        Assert.Equal(Pad(["para", "", "▾ cs", "var x = 1;", "", "after"]), Rows(result.Screens[5]));
     }
 
     [Fact]

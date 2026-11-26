@@ -80,6 +80,15 @@ public sealed class FoldLayoutTests
     }
 
     [Fact]
+    public void A_folded_fenced_code_header_has_one_mapped_cell_which_is_its_glyph_at_the_block_start()
+    {
+        DocumentLayout layout = DocumentLayout.Build(RenderDocument.Parse("```cs\nint x;\n```\n"), 40, new LayoutCache(), Set(0));
+
+        Assert.Equal(new[] { 0 }, layout.Line(0).Cells.Where(cell => cell.IsMapped).Select(cell => cell.Offset));
+        Assert.Equal("▸", layout.Line(0).Cells[0].Text);
+    }
+
+    [Fact]
     public void A_folded_code_block_header_is_not_wrapped_even_when_the_summary_does_not_fit()
     {
         // Width 12 leaves 10 columns; "▸ csharp … 1 line" is 17 wide and stays on its one line.
@@ -191,6 +200,15 @@ public sealed class FoldLayoutTests
 
         Assert.Equal((0, 0), layout.PositionOf(0));
         Assert.Equal((0, 0), layout.PositionOf(15));
+    }
+
+    [Fact]
+    public void Position_of_an_offset_in_a_folded_code_block_in_a_list_item_is_the_glyph_after_the_bullet()
+    {
+        const string text = "- ```cs\n  int x;\n  ```\n";
+        DocumentLayout layout = DocumentLayout.Build(RenderDocument.Parse(text), 40, new LayoutCache(), Set(Units(text)[0].Start));
+
+        Assert.Equal((0, 2), layout.PositionOf(text.IndexOf("int", StringComparison.Ordinal)));
     }
 
     [Fact]

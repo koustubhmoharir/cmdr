@@ -248,7 +248,7 @@ internal static class MdeditHost
     // The recent-files picker, as the application starts with it. Returns the file chosen, or null when the user quits it.
     private static OpenedFile? StartPicker(IApplication app, RecentFiles? recent)
     {
-        using var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Recent files", MdeditHints.Picker, openFile: true, fileTypes: FileTypes);
+        using var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Recent files", MdeditHints.Picker, openFile: true, fileTypes: FileTypes, itemsName: "files", errorTitle: "Open file");
         app.Run(picker);
         return picker.Opened;
     }
@@ -256,7 +256,7 @@ internal static class MdeditHost
     // The picker shown over a running document. Esc returns to the document; Ctrl+Q quits the application.
     private static (PickOutcome Outcome, OpenedFile? File) ShowPicker(IApplication app, RecentFiles? recent)
     {
-        using var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Open file", MdeditHints.OpenPicker, openFile: true, fileTypes: FileTypes);
+        using var picker = new RecentPicker<OpenedFile>(app, recent, TryLoad, "Open file", MdeditHints.OpenPicker, openFile: true, fileTypes: FileTypes, itemsName: "files", errorTitle: "Open file");
         app.Run(picker);
 
         if (picker.Opened is { } file)

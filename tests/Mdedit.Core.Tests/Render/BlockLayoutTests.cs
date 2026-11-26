@@ -45,6 +45,23 @@ public sealed class BlockLayoutTests
     }
 
     [Fact]
+    public void Fenced_code_header_glyph_maps_the_block_start_and_the_rest_of_the_header_stays_synthetic()
+    {
+        DocumentLayout layout = LayoutDump.Build("```cs\nint x;\n```\n");
+
+        Assert.Equal("▾@0/CodeHeader| @-/CodeHeader|c@-/CodeHeader|s@-/CodeHeader", LayoutDump.Cells(layout, 0));
+    }
+
+    [Fact]
+    public void Indented_code_header_glyph_maps_the_block_start_and_the_code_starts_after_the_indentation()
+    {
+        DocumentLayout layout = LayoutDump.Build("    int x;\n");
+
+        Assert.Equal("▾@0/CodeHeader| @-/CodeHeader|c@-/CodeHeader|o@-/CodeHeader|d@-/CodeHeader|e@-/CodeHeader", LayoutDump.Cells(layout, 0));
+        Assert.Equal(4, layout.Line(1).Cells.First(cell => cell.IsMapped).Offset);
+    }
+
+    [Fact]
     public void Words_wrap_at_the_width_and_spaces_that_do_not_fit_are_not_shown()
     {
         Assert.Equal(new[] { "aaa bbb", "ccc" }, LayoutDump.Lines("aaa bbb ccc", 7));

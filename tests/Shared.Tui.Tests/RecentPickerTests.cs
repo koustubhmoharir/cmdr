@@ -113,6 +113,17 @@ public sealed class RecentPickerTests
     }
 
     [Fact]
+    public void Empty_line_names_the_rows_as_the_items_name_given_and_configs_by_default()
+    {
+        using var f = new Fixture(openFile: true);
+        Assert.Equal("No recent configs. Press Ctrl+O to open one.", f.Picker.EmptyLine.Text);
+
+        f.UseItemsName("files");
+
+        Assert.Equal("No recent files. Press Ctrl+O to open one.", f.Picker.EmptyLine.Text);
+    }
+
+    [Fact]
     public void Non_empty_list_hides_the_empty_line()
     {
         using var f = new Fixture(openFile: true, "a.json");
@@ -658,6 +669,22 @@ public sealed class RecentPickerTests
             showError: message => Errors.Add(message),
             pickFile: () => null,
             alternate);
+    }
+
+    /// <summary>Replaces the picker with one whose empty-list message names the rows as given (Open file on, no store entries).</summary>
+    public void UseItemsName(string itemsName)
+    {
+        Picker.Dispose();
+        Picker = new RecentPicker<FakeConfig>(
+            _app,
+            RecentFiles.Load(StorePath),
+            TryOpen,
+            "Recent files",
+            PickerHint,
+            openFile: true,
+            showError: message => Errors.Add(message),
+            pickFile: () => null,
+            itemsName: itemsName);
     }
 
     /// <summary>Replaces the picker with one that shows the real file dialog.</summary>

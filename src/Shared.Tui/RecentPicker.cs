@@ -72,6 +72,11 @@ public sealed class RecentPicker<T> : Window
     /// The file types the Open file dialog offers, the first being selected. Null offers <c>.json</c> config files, as cmdr and logvu
     /// need.
     /// </param>
+    /// <param name="itemsName">
+    /// What the rows are called in the empty-list message: "No recent {<paramref name="itemsName"/>}". The default "configs" is what
+    /// cmdr, logvu and cfgedit need.
+    /// </param>
+    /// <param name="errorTitle">The title of the box that shows a file's load error. The default "Configuration" is what cmdr, logvu and cfgedit need.</param>
     public RecentPicker(
         IApplication app,
         RecentFiles? recent,
@@ -80,8 +85,10 @@ public sealed class RecentPicker<T> : Window
         Hint hint,
         bool openFile,
         PickerOpen<T>? alternate = null,
-        IReadOnlyList<IAllowedType>? fileTypes = null)
-        : this(app, recent, tryOpen, title, hint, openFile, showError: null, pickFile: null, alternate, fileTypes)
+        IReadOnlyList<IAllowedType>? fileTypes = null,
+        string itemsName = "configs",
+        string errorTitle = "Configuration")
+        : this(app, recent, tryOpen, title, hint, openFile, MessageBoxError(app, errorTitle), pickFile: null, alternate, fileTypes, itemsName: itemsName)
     {
     }
 
@@ -96,6 +103,7 @@ public sealed class RecentPicker<T> : Window
     /// The outermost git repository of a directory, or null for none. Null checks the file system. Tests pass their own, so that the
     /// colours do not depend on the folders above the test's files.
     /// </param>
+    /// <param name="itemsName">What the rows are called in the empty-list message. See the public constructor.</param>
     internal RecentPicker(
         IApplication app,
         RecentFiles? recent,
@@ -107,7 +115,8 @@ public sealed class RecentPicker<T> : Window
         Func<string?>? pickFile,
         PickerOpen<T>? alternate = null,
         IReadOnlyList<IAllowedType>? fileTypes = null,
-        Func<string, string?>? repoRootOf = null)
+        Func<string, string?>? repoRootOf = null,
+        string itemsName = "configs")
     {
         ArgumentNullException.ThrowIfNull(app);
         ArgumentNullException.ThrowIfNull(tryOpen);
@@ -119,7 +128,7 @@ public sealed class RecentPicker<T> : Window
         _tryOpen = tryOpen;
         _alternate = alternate;
         _openFile = openFile;
-        _showError = showError ?? (message => MessageBox.ErrorQuery(app, "Configuration", message, "_OK"));
+        _showError = showError ?? MessageBoxError(app, "Configuration");
         _pickFile = pickFile ?? (() => ShowOpenDialog(app, fileTypes ?? [new AllowedType("Config files", ".json")]));
         _repoRootOf = repoRootOf ?? RepoOf;
         _home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -148,7 +157,7 @@ public sealed class RecentPicker<T> : Window
             Y = 0,
             Width = Dim.Fill(),
             Height = 1,
-            Text = openFile ? "No recent configs. Press Ctrl+O to open one." : "No recent configs.",
+            Text = openFile ? $"No recent {itemsName}. Press Ctrl+O to open one." : $"No recent {itemsName}.",
             Visible = false,
         };
 
@@ -314,6 +323,10 @@ public sealed class RecentPicker<T> : Window
             SelectRow(selected);
         }
     }
+
+    /// <summary>Shows a load error in a message box with the given title.</summary>
+    private static Action<string> MessageBoxError(IApplication app, string title) =>
+        message => MessageBox.ErrorQuery(app, title, message, "_OK");
 
     // The outermost git repository of a directory, or null. The check is guarded inside RepoRoot.HasGitEntry.
     private static string? RepoOf(string directory) => RepoRoot.Outermost(directory, RepoRoot.HasGitEntry);

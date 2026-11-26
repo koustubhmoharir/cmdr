@@ -5,7 +5,8 @@ namespace Mdedit.Core.Render;
 /// <summary>
 /// Lays out the lines of one block: the title line of each alert the block starts, then the content of its kind, every line
 /// with its prefix and its anchor. Offsets stay relative to the block's start. A folded heading shows its fold glyph as
-/// folded and the summary of the lines it hides; a folded code block shows its header line and the summary only.
+/// folded and the summary of the lines it hides; a folded code block shows its header line and the summary only, and its glyph
+/// maps the block's start (see <see cref="WrappedContent"/>).
 /// </summary>
 internal static class BlockLayouter
 {
@@ -131,13 +132,23 @@ internal static class BlockLayouter
             case BlockKind.Code:
                 string glyph = foldedLines is null ? "▾ " : "▸ ";
                 ImmutableArray<Cell> header = SyntheticCell.Text(glyph + (block.Language ?? "code"), StyleRole.CodeHeader);
+
+                // The glyph stands for the block's own start (offset 0: the fence, or an indented block's indentation) when no content cell
+                // maps offset 0, so that two cells never share it. A folded block lays out no code; a fenced block's first code cell is
+                // past the fence, and an indented block's is past its indentation.
+                if (foldedLines is not null || !runs.Any(run => run.Cells.Any(cell => cell.Offset == 0)))
+                {
+                    header = header.SetItem(0, header[0] with { Offset = 0 });
+                }
+
+                // The glyph is not a run cell, so the header keeps the fallback anchor (the block's start) even with the mapped glyph.
                 if (foldedLines is not null)
                 {
-                    lines.Add((Synthetic(header.AddRange(Summary(foldedLines.Value, leadingSpace: true))), 0));
+                    lines.Add((new WrappedLine(header.AddRange(Summary(foldedLines.Value, leadingSpace: true)), -1, false, false), 0));
                     break;
                 }
 
-                lines.Add((Synthetic(header), 0));
+                lines.Add((new WrappedLine(header, -1, false, false), 0));
                 foreach (Run run in runs)
                 {
                     AddRun(lines, TextWrap.Cells(run.Cells, index, width, marked: true), run.Start);
