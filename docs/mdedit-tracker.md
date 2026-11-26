@@ -71,8 +71,21 @@ The first version is M0–M3.
 - [x] A two-column fold gutter in the view, so fold glyphs never line up with text. (ea9f36b)
 - [x] Folding in edit mode: the editor's fold gutter, the `… n lines` summary, Alt+F. (591fd7f)
 
+## M4. Navigation
+
+- [x] Core: links per block, link classification, heading anchors. (66438b4)
+- [x] Links in the view: `→ url` on the message line, Tab / Shift+Tab, Enter and Ctrl+click follow (anchor, file with the
+      back stack and Alt+Left, external copy). (this commit)
+- [ ] Outline dialog (Alt+O in both modes, `o` in view mode).
+- [ ] Windows acceptance pass. *(Windows)*
+
+## M5. Table editing
+
+- [ ] Core: `TableSource` (the table as written, aligned or not) and `TableEdit` (cell text, rows, columns, alignment, with
+      verification).
+- [ ] View: the inline cell field (F2, Enter), Alt+arrows, the table menu (Alt+T, right-click).
+- [ ] Windows acceptance pass. *(Windows)*
+
 ## Later
 
-- M4 Navigation: links, outline dialog.
-- M5 Table editing.
-- M6 Rendered-view editing.
+- M6 Rendered-view editing (rules to be designed first; the view's letter keys move to modifiers).

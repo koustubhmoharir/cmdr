@@ -233,3 +233,35 @@ line break), and before the view is shown again.
 
 With the mouse, a click on a `▾` or `▸` glyph, or on a `… n lines` summary, folds or unfolds that unit, and the right-click
 menu has Fold or Unfold for the unit at the mouse.
+
+## Links
+
+In view mode the links of the document are the places the caret goes to with Tab. The message line shows the URL of the link
+under the caret in place of the heading path, with an arrow in front.
+
+| Key | |
+|---|---|
+| Tab / Shift+Tab | The caret goes to the next / previous link, in the order of the text. Links that a fold hides are skipped. Past the last link, Tab wraps to the first one with a message, and Shift+Tab past the first wraps to the last. A document with no link says so |
+| Enter | Follow the link under the caret (see below) |
+| Alt+Left | Go back to the file that the last followed link left (see Back) |
+
+| Mouse | |
+|---|---|
+| Ctrl+click on a link | Follow the link. The caret goes to the clicked link. A plain click on a link only places the caret |
+
+A link goes where its destination says:
+
+- **`#heading`**: the heading in this file. The section that hides the heading is unfolded, the caret goes to the heading, and
+  the heading becomes the top line. A heading that does not exist is reported on the message line.
+- **A relative path to a file** (`other.md`, `../notes/todo.md#plan`): the file is opened in mdedit, in a new window, at the heading
+  of the fragment when there is one. A file that does not exist is reported as not found; a file that cannot be read shows its
+  error and the window stays. Unsaved changes are asked about first, as Ctrl+O asks (Save, Discard or Cancel). The path is
+  resolved against the folder of the current file.
+- **Any other URL** (`https:`, `mailto:`, …): copied to the clipboard, through the terminal as Copy does, and the message says
+  what was copied. mdedit opens nothing itself. A link with no destination says "Empty link".
+
+**Back.** Each followed file link remembers where it was left: the file, the caret and the top line. Alt+Left goes back to
+the last of them, with the caret and the top line where they were. The unsaved-changes question comes first, as it does for
+a followed link. Going back takes the place off the list, so Alt+Left again goes to the one before, and with none left it says
+"No previous file". Ctrl+O, when a file is chosen, clears the list. A file that cannot be read any more is reported, and its
+place is dropped from the list.

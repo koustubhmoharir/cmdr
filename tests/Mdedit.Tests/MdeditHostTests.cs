@@ -83,13 +83,36 @@ public sealed class MdeditHostTests : IDisposable
         var third = Opened("c.md");
         var ran = new List<string>();
 
-        MdeditHost.RunDocuments(first, file =>
+        MdeditHost.RunDocuments(new MdeditHost.Visit(first), (visit, _) =>
         {
-            ran.Add(file.Path);
-            return file == first ? second : file == second ? third : null;
+            ran.Add(visit.File.Path);
+            return visit.File == first ? new MdeditHost.Visit(second) : visit.File == second ? new MdeditHost.Visit(third) : null;
         });
 
         Assert.Equal([first.Path, second.Path, third.Path], ran);
+    }
+
+    [Fact]
+    public void Documents_of_one_run_share_the_back_stack_and_each_visit_carries_its_fragment_and_restore_point()
+    {
+        var first = Opened("a.md");
+        var second = Opened("b.md");
+        var entry = new BackEntry(first.Path, 3, 0);
+        var seen = new List<(string File, string? Fragment, BackEntry? Restore, int Stack)>();
+
+        MdeditHost.RunDocuments(new MdeditHost.Visit(first), (visit, back) =>
+        {
+            seen.Add((visit.File.Path, visit.Fragment, visit.Restore, back.Count));
+            if (visit.File == first)
+            {
+                back.Push(entry);
+                return new MdeditHost.Visit(second, "Intro", entry);
+            }
+
+            return null;
+        });
+
+        Assert.Equal([(first.Path, null, null, 0), (second.Path, "Intro", entry, 1)], seen);
     }
 
     private OpenedFile Opened(string name)

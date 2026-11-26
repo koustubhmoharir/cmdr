@@ -34,7 +34,7 @@ internal static class MdeditHost
         try
         {
             app.Init();
-            RunDocuments(file, next => RunDocument(app, next, recent));
+            RunDocuments(new Visit(file), (visit, back) => RunDocument(app, visit, recent, back));
         }
         finally
         {
@@ -56,7 +56,7 @@ internal static class MdeditHost
 
             if (StartPicker(app, recent) is { } file)
             {
-                RunDocuments(file, next => RunDocument(app, next, recent));
+                RunDocuments(new Visit(file), (visit, back) => RunDocument(app, visit, recent, back));
             }
         }
         finally
@@ -104,11 +104,9 @@ internal static class MdeditHost
         }
 
         var file = new OpenedFile(path, TextFile.CreateNew(path, SourceText.Create(string.Empty, Utf8WithoutBom, hasBom: false)));
-        OpenedFile? next = RunDocument(app, file, loadRecent(), RecordOnFirstSave(path, loadRecent));
-        if (next is not null)
-        {
-            RunDocuments(next, following => RunDocument(app, following, loadRecent(), onFirstSave: null));
-        }
+        RunDocuments(
+            new Visit(file, OnFirstSave: RecordOnFirstSave(path, loadRecent)),
+            (visit, back) => RunDocument(app, visit, loadRecent(), back));
     }
 
     /// <summary>The question for a path that does not exist: "Create &lt;name&gt;?" with Create as the default. True for Create.</summary>
@@ -136,19 +134,31 @@ internal static class MdeditHost
     private static Encoding Utf8WithoutBom { get; } = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>
-    /// Runs documents one after another: <paramref name="runDocument"/> runs the viewer of a document and returns the file chosen
-    /// while it ran, or null. The loop ends with the first run that returns null.
+    /// Runs documents one after another: <paramref name="runDocument"/> runs the viewer of a document, with the back stack of the run, and
+    /// returns the document to show next, or null. The loop ends with the first run that returns null. The stack is made for each run of
+    /// the loop, so that the places a followed link leaves are there for the Back of the documents that follow.
     /// </summary>
     /// <param name="first">The first document.</param>
-    /// <param name="runDocument">Runs one document and returns the file to open next, or null.</param>
-    internal static void RunDocuments(OpenedFile first, Func<OpenedFile, OpenedFile?> runDocument)
+    /// <param name="runDocument">Runs one document and returns the document to show next, or null.</param>
+    internal static void RunDocuments(Visit first, Func<Visit, BackStack, Visit?> runDocument)
     {
-        OpenedFile? file = first;
-        while (file is not null)
+        var back = new BackStack();
+        Visit? visit = first;
+        while (visit is not null)
         {
-            file = runDocument(file);
+            visit = runDocument(visit, back);
         }
     }
+
+    /// <summary>
+    /// One document of a run of documents (see <see cref="RunDocuments"/>): the file, the heading that a followed link names (or null), the place
+    /// that a Back returns to (or null), and the action that runs after the first save of a new file (or null).
+    /// </summary>
+    /// <param name="File">The file to show.</param>
+    /// <param name="Fragment">The fragment of the link that opened the file: the window starts at that heading.</param>
+    /// <param name="Restore">The caret and top line that a Back returns to: the window starts there.</param>
+    /// <param name="OnFirstSave">Runs after the first successful save of the file (see <see cref="MainWindow"/>).</param>
+    internal sealed record Visit(OpenedFile File, string? Fragment = null, BackEntry? Restore = null, Action? OnFirstSave = null);
 
     /// <summary>
     /// Loads a file for a picker: the file, or the message to show when it does not load.
@@ -229,20 +239,33 @@ internal static class MdeditHost
         return recent;
     }
 
-    // Shows the document's viewer, and the picker over it when Ctrl+O is pressed. Returns the file chosen with Ctrl+O, or null. When the file
-    // was deleted and the window closed (see MainWindow.ReturnToPicker), the recent-files picker is shown as at startup instead.
-    private static OpenedFile? RunDocument(IApplication app, OpenedFile file, RecentFiles? recent, Action? onFirstSave = null)
+    // Shows the document's viewer, and the picker over it when Ctrl+O is pressed. Returns the document to show next, or null: the file chosen
+    // with Ctrl+O, or a file followed from a link (with its heading and the place a Back returns to). When the file was deleted and the window
+    // closed (see MainWindow.ReturnToPicker), the recent-files picker is shown as at startup instead, and the back stack is cleared.
+    private static Visit? RunDocument(IApplication app, Visit visit, RecentFiles? recent, BackStack back)
     {
         bool returnToPicker;
-        OpenedFile? next;
-        using (var window = new MainWindow(file, () => ShowPicker(app, recent), onFirstSave: onFirstSave))
+        Visit? next;
+        using (var window = new MainWindow(
+            visit.File,
+            () => ShowPicker(app, recent),
+            onFirstSave: visit.OnFirstSave,
+            back: back,
+            fragment: visit.Fragment,
+            restore: visit.Restore))
         {
             app.Run(window);
             returnToPicker = window.ReturnToPicker;
-            next = window.SwitchTo;
+            next = window.SwitchTo is { } file ? new Visit(file, window.GoToFragment, window.RestoreTo) : null;
         }
 
-        return returnToPicker ? StartPicker(app, recent) : next;
+        if (!returnToPicker)
+        {
+            return next;
+        }
+
+        back.Clear();
+        return StartPicker(app, recent) is { } picked ? new Visit(picked) : null;
     }
 
     // The recent-files picker, as the application starts with it. Returns the file chosen, or null when the user quits it.

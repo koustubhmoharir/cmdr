@@ -116,7 +116,9 @@ errors exit 2.
 | `*` / `-` | Unfold everything under the cursor's section / fold the section the cursor is in |
 | `1`–`6`, `0` | Show headings down to that level, folding the deeper sections / unfold all |
 | `<` / `>` in a table | Scroll the table horizontally (the cursor's cell stays visible). Shift+arrows select, everywhere |
-| Enter, F2 in a table cell | Edit the cell (M5) |
+| F2 in a table cell (Enter too, when not on a link) | Edit the cell (M5) |
+| Alt+Up/Down, Alt+Left/Right in a table | Move the row / column (M5) |
+| Alt+T in a table | Table menu: rows, columns, alignment (M5) |
 | Ctrl+Z / Ctrl+Y | Undo / redo: the same history as edit mode (see Source buffer and undo) |
 | Ctrl+T | Edit mode, with the caret on the source character under the view's cursor |
 | Ctrl+S, Ctrl+O, Ctrl+Q | Save, open another file, quit (unsaved-changes flow) |
@@ -235,8 +237,8 @@ is reparsed and the table must hold exactly the intended cells, or the edit is r
   directly comes with rendered-view editing. A `|` typed is written `\|`; line breaks are refused (pipe-table cells are one
   line).
 - **Rows:** add after / before, delete, duplicate, move up / down. **Columns:** add left / right, delete, move left / right,
-  change alignment. Keys follow cfgedit's table editor (`a`/`i`, Delete on the row marker, Alt+arrows), with the column
-  operations on Ctrl+ variants and in the right-click menu.
+  change alignment. Alt+arrows move rows and columns; the rest are in the table menu (Alt+T) and the right-click menu.
+  No letter keys: the view becomes editable in M6, so its commands take modifiers (user, 2026-11-26).
 - **Source formatting:** a table whose rows are all aligned in the source (every `|` of a column at the same display
   column) is rewritten aligned after an edit, keeping its style (outer pipes or not, padding, the delimiter row's dashes);
   any other table is edited minimally (only the cells and lines that change), so its diff stays small.
@@ -286,6 +288,20 @@ plain paragraph (a blank line in the source). The rules for the rest are to be d
 styled and a plain run, Backspace across invisible delimiters, a caret inside an entity or escape, Enter in a list item, a
 quote or a heading, and typing directly in table cells. Every edit is checked as cfgedit's are: the source is reparsed and the rendered text
 must show exactly the intended change, or the edit is refused.
+
+Decisions for M6 (user, 2026-11-26):
+
+- **The view is always editable**: typing inserts text, and every view command takes a modifier, the same in both modes
+  where the command exists in both. `y` / `Y` become Ctrl+C (plain text) / Alt+C (Markdown); Space becomes Alt+F; `1`–`6`,
+  `0` become Alt+1–6, Alt+0; `*` and `-` move to the right-click menu only; `<` / `>` are dropped (the caret, Shift+wheel and
+  the edge markers scroll tables); `g` / `G` become Ctrl+Home / Ctrl+End; `o` becomes Alt+O; Tab / Shift+Tab go to the
+  next / previous link, or the next / previous cell in a table (Tab never inserts a tab in the view).
+- **Enter edits** (splits a paragraph, adds a list item, …). Ctrl+Enter or Ctrl+click follows the link under the caret
+  (Alt+Enter is often the terminal's full-screen key).
+- **Typing at the end of a style continues it**: after `**bold**` the typed text is bold, as in a word processor. Links
+  are the exception: they never grow at their end, so text typed after a link is outside it.
+- **Paste inserts Markdown source**, so pasted `**x**` is bold and pasted lines can make paragraphs or items; the result is
+  checked like every edit, and a paste that would break the structure around it (inside a table cell, say) is refused.
 
 ## Saving and external changes
 

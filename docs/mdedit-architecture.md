@@ -457,9 +457,11 @@ means "edit").
     cell, and the heading's line becomes the top line (as far as the end of the document allows). Not found: "No heading
     #<fragment>" (error style).
   - File: resolved against the current file's directory. Not found or a directory: "Not found: <path>" (error style). Else
-    the unsaved-changes flow of Ctrl+O (Save / Discard / Cancel); then the window loads the file through the host's loader
-    (a load error is shown on the message line and the document stays), and closes with `SwitchTo` set and a `BackEntry`
-    for itself; the new window goes to the fragment's heading when there is one.
+    the window loads the file through the host's loader (a load error is shown on the message line and the document stays),
+    then runs the unsaved-changes flow of Ctrl+O (Save / Discard / Cancel; loading first means Discard never loses the
+    edits to a file that then fails to load), and closes with `SwitchTo` set and a `BackEntry`
+    for itself; the new window goes to the fragment's heading, or says "No heading #…" when there is none. The host owns one
+    `BackStack` per run of documents and shares it with each window, which pushes, peeks and pops it.
   - External: copied with OSC 52, as Copy is; message "Copied link: <url>".
 - **Back** (Alt+Left in view mode): the host keeps a stack of `BackEntry(string Path, int CaretOffset, int TopOffset)`, one
   pushed per followed file link. Alt+Left with an empty stack: "No previous file". Else the unsaved-changes flow, then the
@@ -473,3 +475,59 @@ means "edit").
   unfolded.
 - The window's navigation code lives in `MainWindow.Navigation.cs` (partial) and `OutlineDialog.cs`, to keep
   `MainWindow.cs` from growing.
+
+## Table editing (M5)
+
+The design's "Table editing (M5)" holds the rules. Keys follow the direction the user chose on 2026-11-26 for M6 (the
+view becomes editable, so commands take modifier keys and no letters): F2 edits the cell at the caret, and Enter does too
+when the caret is not on a link; Alt+Up/Down move the row, Alt+Left/Right move the column; Alt+T opens the table menu at
+the caret, and the right-click menu over a table has the same items. (Alt+Left in a table moves the column; outside a
+table it is Back, M4.)
+
+### Core (Mdedit.Core, no Terminal.Gui)
+
+- **`TableSource.Parse(string text, RenderBlock table)`**: the table as written: per source line (header, delimiter,
+  body rows) its line span, its container prefix (the text from the line's start to the row's first character: `> `,
+  list indentation), whether it has a leading and a trailing pipe, and each cell's span (between unescaped pipes; GFM
+  splits on every unescaped `|`, code spans included) with its content span (trimmed of spaces). Markdig's row and cell
+  spans locate the rows; the pipes are found by scanning the line. Also `IsAligned`: every line has its pipes at the same
+  display columns (`DisplayWidth`), the delimiter row included.
+- **`TableEdit`** (pure): each operation takes the source text and the table block and returns
+  `TableEditResult` = one replacement `(Start, Length, Text)` plus the target cell `(Row, Column)` for the caret, or a
+  refusal message. Operations: `SetCell(row, column, text)`, `InsertRow(at)`, `DeleteRow(row)`, `DuplicateRow(row)`,
+  `MoveRow(row, delta)`, `InsertColumn(at)`, `DeleteColumn(column)`, `MoveColumn(column, delta)`,
+  `SetAlignment(column, alignment)`. Rows are numbered as the `TableModel` has them (0 = header; the delimiter row is not a
+  row).
+  - Cell text: the inline field shows the cell's source content with `\|` shown as `|`; on commit every `|` is written
+    `\|`, and a line break is refused ("A table cell is one line"). Leading and trailing spaces are dropped.
+  - Refusals: deleting the header row ("The header row cannot be deleted"), deleting the last column, moving the header
+    row or a row onto it ("The header row stays first"), moving past either end ("Already first" / "Already last").
+  - **Aligned tables** (`IsAligned`) are rewritten whole: each column as wide as its widest cell (at least 3, for the
+    delimiter's dashes), one space of padding on each side, cells left-justified, centred or right-justified by the
+    column's alignment, the delimiter row as dashes with the alignment's colons, the outer-pipe style and each line's
+    container prefix kept.
+  - **Other tables** are edited minimally: only the cells and lines that change. A new row copies the outer-pipe style of
+    the row it is inserted next to, with empty cells (`|  |  |`); a new column adds ` |` cells at the same position on every
+    line (` --- |` on the delimiter); a moved row swaps lines; a moved column swaps the cells' source on every line.
+  - The several changes of one operation are one replacement (from the first changed offset to the last), so the
+    operation is one undo step and anchors outside it are untouched.
+  - **Verification** (as cfgedit's): the edited text is reparsed; the table that starts at the same offset must have the
+    intended number of rows and columns, the alignments, and every cell's plain text equal to the intended one (the
+    others unchanged). Otherwise the result is a refusal "Could not edit the table safely", and nothing changes.
+
+### View and window (Mdedit)
+
+- `RenderedView.TableCellAtCaret()`: the table block and `(Row, Column)` of the caret's cell, from the cell's offset and the
+  `TableModel`; null outside a table. After an operation, the window applies the replacement to the buffer (one undo
+  step), re-renders, and puts the caret on the first mapped cell of the target cell (or the cell's position when it is
+  empty).
+- **Inline field**: a `TextField` over the cell's first screen line, from the cell's column to the view's right edge (at
+  least 20 columns; the table scrolls to show the cell first). Enter commits, Esc cancels, Tab commits and edits the next
+  cell (the next row's first after the last column; after the last row it commits and closes), Shift+Tab the previous. A
+  refusal shows on the message line and the field stays open with the text. While the field is open, the external-change
+  check waits, as it does for dialogs.
+- **Table menu** (Alt+T, and the right-click menu over a table): Edit cell, Insert row above / below, Duplicate row,
+  Delete row, Move row up / down, Insert column left / right, Delete column, Move column left / right, Align column
+  left / centre / right / none. Items that would be refused are still shown and give their message.
+- Edit mode has no table operations (the source is edited directly).
+- Window code in `MainWindow.Tables.cs` (partial) and `TableCellField.cs`.

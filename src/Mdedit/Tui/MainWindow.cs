@@ -20,7 +20,12 @@ namespace Mdedit.Tui;
 /// <para>
 /// <b>Quit and switch.</b> Ctrl+Q stops the window, and Ctrl+O shows the picker over the document; a file chosen there replaces the
 /// document when the window stops (see <see cref="SwitchTo"/>). Both ask about unsaved changes first (see <b>Saving</b>). Esc is swallowed in
-/// view mode: the window has nothing to go back to.
+/// view mode: the window has nothing to go back to here (see <b>Links</b> for Alt+Left).
+/// </para>
+/// <para>
+/// <b>Links.</b> In view mode Tab and Shift+Tab move between links, Enter and a Ctrl+click follow one, and Alt+Left goes back to the file a
+/// followed link left. A file link stops the window with <see cref="SwitchTo"/> set, as Ctrl+O does; the host shows the file in a new window
+/// (see <c>MainWindow.Navigation.cs</c>).
 /// </para>
 /// <para>
 /// <b>Modes.</b> The window opens in view mode, except for a new file (one that does not exist yet), which opens in edit mode, and a large file
@@ -43,7 +48,7 @@ namespace Mdedit.Tui;
 /// user closes stops the window with <see cref="ReturnToPicker"/> set.
 /// </para>
 /// </remarks>
-internal sealed class MainWindow : Window, ISearchHost
+internal sealed partial class MainWindow : Window, ISearchHost
 {
     /// <summary>How long a message stays on the message line when no key clears it.</summary>
     internal static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(4);
@@ -143,13 +148,24 @@ internal sealed class MainWindow : Window, ISearchHost
     /// <param name="onFirstSave">
     /// Runs after the first successful save of a new file, when the host records the file in the recent list. Null for none.
     /// </param>
+    /// <param name="loadFile">
+    /// Loads a file that a followed link or a Back names, as the picker does: the file, or the message why it does not load. Null uses
+    /// <see cref="MdeditHost.TryLoad"/>.
+    /// </param>
+    /// <param name="back">The back stack shared with the host for the run of documents. Null gives the window a stack of its own.</param>
+    /// <param name="fragment">The fragment of the link that opened the window: the window starts at that heading. Null for none.</param>
+    /// <param name="restore">The place a Back returned to: the window starts with its caret and top line. Null for none.</param>
     /// <exception cref="ArgumentNullException">An argument is <c>null</c>.</exception>
     public MainWindow(
         OpenedFile file,
         Func<(PickOutcome Outcome, OpenedFile? File)> pickFile,
         Func<TimeSpan, Action, Action>? schedule = null,
         long largeFileBytes = LargeFileBytes,
-        Action? onFirstSave = null)
+        Action? onFirstSave = null,
+        Func<string, (OpenedFile? Value, string? Error)>? loadFile = null,
+        BackStack? back = null,
+        string? fragment = null,
+        BackEntry? restore = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(pickFile);
@@ -160,6 +176,8 @@ internal sealed class MainWindow : Window, ISearchHost
         _pickFile = pickFile;
         _schedule = schedule ?? ScheduleOnApp;
         _largeFileBytes = largeFileBytes;
+        _loadFile = loadFile ?? MdeditHost.TryLoad;
+        _back = back ?? new BackStack();
 
         // No outer frame: the rendered view's frame, the message line and the hints fill the window.
         BorderStyle = LineStyle.None;
@@ -201,6 +219,7 @@ internal sealed class MainWindow : Window, ISearchHost
         _view.PositionChanged += ShowStatus;
         _view.KeyPressed += ClearMessage;
         _view.ContextMenuRequested += ShowContextMenu;
+        _view.LinkActivated += FollowLink;
         _editor.BufferChanged += OnBufferChanged;
         _editor.CaretChanged += (_, _) =>
         {
@@ -231,6 +250,7 @@ internal sealed class MainWindow : Window, ISearchHost
             _view.SetFocus();
         }
 
+        ApplyStart(restore, fragment, file.File.Text.Text.Length);
         _dirty = _controller.IsDirty(_editor.Buffer.Text);
         UpdateTitle();
         ShowHints();
@@ -318,6 +338,11 @@ internal sealed class MainWindow : Window, ISearchHost
         if (_editing)
         {
             return HandleEditKey(key) || base.OnKeyDown(key);
+        }
+
+        if (HandleLinkKey(key))
+        {
+            return true;
         }
 
         if (key == Key.Esc)
@@ -781,8 +806,8 @@ internal sealed class MainWindow : Window, ISearchHost
         return $"{top * 100 / max}%";
     }
 
-    // Shows the heading path and the scroll position in view mode, and the caret's line and column in edit mode, unless a message is
-    // shown (the message line keeps the message then).
+    // Shows the message line's left part (the caret's link or the heading path) and the scroll position in view mode, and the caret's line and
+    // column in edit mode, unless a message is shown (the message line keeps the message then).
     private void ShowStatus()
     {
         if (_editing)
@@ -791,7 +816,7 @@ internal sealed class MainWindow : Window, ISearchHost
             return;
         }
 
-        _message.SetStatus(HeadingPath(), ScrollPosition(_view.TopLine, _view.LineCount, _view.PageLines));
+        _message.SetStatus(LeftStatus(), ScrollPosition(_view.TopLine, _view.LineCount, _view.PageLines));
     }
 
     /// <summary>The caret's 1-based line and column in the editor's text, as <c>line:col</c>, for the edit-mode status.</summary>
@@ -852,6 +877,7 @@ internal sealed class MainWindow : Window, ISearchHost
             case PickOutcome.Chosen when file is not null:
                 if (CloseOrKeep("Open") == CloseOutcome.Closed)
                 {
+                    _back.Clear();
                     SwitchTo = file;
                     Stop();
                 }

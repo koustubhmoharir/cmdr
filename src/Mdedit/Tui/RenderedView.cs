@@ -422,11 +422,17 @@ internal sealed partial class RenderedView : View
             return false;
         }
 
-        return mouse.Flags.HasFlag(MouseFlags.PositionReport) ? _dragging && Drag(x, y) : Press(x, y);
+        return mouse.Flags.HasFlag(MouseFlags.PositionReport)
+            ? _dragging && Drag(x, y)
+            : Press(x, y, ctrl: mouse.Flags.HasFlag(MouseFlags.Ctrl));
     }
 
-    /// <summary>A left press in the view: the cursor goes to the cell, the selection is cleared, and a drag starts from there.</summary>
-    private bool Press(int x, int y)
+    /// <summary>
+    /// A left press in the view: the cursor goes to the cell, the selection is cleared, and a drag starts from there. A Ctrl+press on a link
+    /// places the cursor the same way, and raises <see cref="LinkActivated"/> instead of starting a drag.
+    /// </summary>
+    /// <param name="ctrl">Whether Ctrl is held.</param>
+    private bool Press(int x, int y, bool ctrl)
     {
         if (!InView(y))
         {
@@ -445,6 +451,13 @@ internal sealed partial class RenderedView : View
         int before = _offset;
         int topBefore = _top;
         PlaceClick(x, y);
+        Settle(before, topBefore);
+        if (ctrl && CaretLink is { } link)
+        {
+            LinkActivated?.Invoke(link);
+            return true;
+        }
+
         _press = _offset;
         _dragging = true;
         if (App is { } && !App.Mouse.IsGrabbed(this))
@@ -452,7 +465,6 @@ internal sealed partial class RenderedView : View
             App.Mouse.GrabMouse(this);
         }
 
-        Settle(before, topBefore);
         return true;
     }
 
@@ -723,6 +735,11 @@ internal sealed partial class RenderedView : View
         {
             _layout = BuildLayout(width);
             _top = 0;
+            if (TakePendingGoTo())
+            {
+                return;
+            }
+
             if (FirstMapped() is { } first)
             {
                 PlaceCell(first.Line, first.Cell, keepGoal: false);
