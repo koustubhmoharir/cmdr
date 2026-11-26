@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using Mdedit.Core.Render;
+using Shared.Tui;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
@@ -11,14 +12,16 @@ using Point = System.Drawing.Point;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The rendered document in a view: the display lines of its layout drawn from a top line, with the cursor on a mapped cell. The
-/// cursor moves over mapped cells only (see <see cref="HandleKey"/>), keeps its source offset across a width change, and is shown as
-/// the terminal cursor. The wheel scrolls without moving the cursor.
+/// The rendered document in a view: the display lines of its layout drawn from a top line, with the caret on a caret stop. A caret stop is
+/// a mapped cell, or the end position of a block (after its last character). The caret moves over stops only (see
+/// <see cref="HandleKey"/>), keeps its source offset across a width change, and is shown as the terminal cursor. The wheel scrolls
+/// without moving the cursor.
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Cursor.</b> The cursor is a line, the index of a cell in that line, the cell's screen column and its source offset. Up and
-/// Down keep a goal column, which only the horizontal moves, Home, End and a click change.
+/// <b>Cursor.</b> The cursor is a line, the index of a cell in that line (the index after the last cell is the end position of a
+/// block), the screen column and the source offset. The caret is a bar before a character, so a selection is the half-open range from
+/// the anchor to the caret. Up and Down keep a goal column, which only the horizontal moves, Home, End and a click change.
 /// </para>
 /// <para>
 /// <b>Scrolling.</b> Keys keep the cursor on screen by the least scrolling. The wheel scrolls <see cref="WheelLines"/> lines.
@@ -27,6 +30,12 @@ namespace Mdedit.Tui;
 /// <b>Reflow.</b> On a width change the layout is rebuilt. The anchor is the cursor's offset when the cursor is on screen, and the
 /// first mapped cell of the top line otherwise. The anchor keeps its screen row (the cursor's row, or the top row), so the cursor's
 /// offset is the same after the change and its line stays where it was on screen.
+/// </para>
+/// <para>
+/// <b>Selection.</b> A selection is held as offsets: an anchor (set by a Shift movement, or by the first motion of a drag), which
+/// the cursor's offset ends, or an exact range (set by <see cref="SelectRange"/>, for a search match or a word). A plain movement, a
+/// press or a right-click outside the selection clears it. A drag scrolls one line per motion event while the mouse is above or below
+/// the view.
 /// </para>
 /// </remarks>
 internal sealed class RenderedView : View
@@ -43,6 +52,12 @@ internal sealed class RenderedView : View
     private int _column;
     private int _offset;
     private int _goal;
+    private int? _anchor;
+    private SourceRange? _range;
+    private int _press;
+    private bool _dragging;
+    private ImmutableArray<SourceRange> _matches = ImmutableArray<SourceRange>.Empty;
+    private int _active = -1;
 
     /// <summary>Creates the view over a document. It lays out at the first width it is given.</summary>
     /// <param name="document">The document to show.</param>
@@ -60,11 +75,48 @@ internal sealed class RenderedView : View
     /// <summary>Raised when a key reaches the view, before it is handled, so that the window can clear a transient message.</summary>
     public event Action? KeyPressed;
 
+    /// <summary>
+    /// Raised by a right-click on the view, with the mouse's screen position, so that the window can open its context menu there. The
+    /// cursor and the selection are settled before it is raised (a right-click outside the selection places the cursor).
+    /// </summary>
+    public event Action<Point>? ContextMenuRequested;
+
     /// <summary>The document shown.</summary>
     public RenderDocument Document => _document;
 
     /// <summary>
-    /// True when the document has a mapped cell to rest the cursor on. A document with none (empty, or only rules) has no cursor.
+    /// The selected source range, or null when nothing is selected: the exact range of <see cref="SelectRange"/>, or else the half-open
+    /// range from the anchor to the cursor (null when they are the same offset).
+    /// </summary>
+    public SourceRange? SelectionRange
+    {
+        get
+        {
+            if (_range is { } range)
+            {
+                return range;
+            }
+
+            if (_anchor is not { } anchor || !HasCursor)
+            {
+                return null;
+            }
+
+            // The caret is a bar before a character, so the selection is the half-open range between the anchor and the caret.
+            int start = Math.Min(anchor, _offset);
+            int end = Math.Max(anchor, _offset);
+            return start == end ? null : new SourceRange(start, end);
+        }
+    }
+
+    /// <summary>The screen position of the cursor's cell, for a menu opened from the keyboard.</summary>
+    public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, _line - _top));
+
+    /// <summary>The caret's column, kept inside the viewport: an end position on a full line sits on the last column.</summary>
+    private int VisibleColumn => Math.Min(_column, Math.Max(0, Viewport.Width - 1));
+
+    /// <summary>
+    /// True when the document has a caret stop to rest the cursor on. A document with none (empty, or only rules) has no cursor.
     /// </summary>
     public bool HasCursor => _cell >= 0;
 
@@ -161,7 +213,10 @@ internal sealed class RenderedView : View
         return true;
     }
 
-    /// <summary>Applies a key to the view state. Returns true when it was handled.</summary>
+    /// <summary>
+    /// Applies a key to the view state. Returns true when it was handled. Shift with an arrow, Home, End, PgUp or PgDn extends the
+    /// selection by the same movement; any other movement clears it.
+    /// </summary>
     private bool ApplyKey(Key key)
     {
         if (!SyncLayout() || !HasCursor)
@@ -169,57 +224,83 @@ internal sealed class RenderedView : View
             return false;
         }
 
-        if (key == Key.CursorLeft)
+        bool extend = key.IsShift && IsExtendable(key.NoShift);
+        Key move = extend ? key.NoShift : key;
+        if (!IsMovement(move))
+        {
+            return false;
+        }
+
+        int start = _offset;
+        if (!extend)
+        {
+            _anchor = null;
+        }
+
+        _range = null;
+
+        if (move == Key.CursorLeft)
         {
             MoveHorizontal(-1);
         }
-        else if (key == Key.CursorRight)
+        else if (move == Key.CursorRight)
         {
             MoveHorizontal(1);
         }
-        else if (key == Key.CursorUp)
+        else if (move == Key.CursorUp)
         {
             MoveVertical(-1);
         }
-        else if (key == Key.CursorDown)
+        else if (move == Key.CursorDown)
         {
             MoveVertical(1);
         }
-        else if (key == Key.Home.WithCtrl || IsPlain(key, 'g'))
+        else if (move == Key.Home.WithCtrl || IsPlain(move, 'g'))
         {
             MoveTo(FirstMapped());
         }
-        else if (key == Key.End.WithCtrl || IsPlain(key, 'G'))
+        else if (move == Key.End.WithCtrl || IsPlain(move, 'G'))
         {
-            MoveTo(LastMapped());
+            MoveTo(LastStop());
         }
-        else if (key == Key.Home)
+        else if (move == Key.Home)
         {
             MoveToLineEnd(first: true);
         }
-        else if (key == Key.End)
+        else if (move == Key.End)
         {
             MoveToLineEnd(first: false);
         }
-        else if (key == Key.PageUp)
+        else if (move == Key.PageUp)
         {
             MovePage(-1);
         }
-        else if (key == Key.PageDown)
+        else
         {
             MovePage(1);
         }
-        else
+
+        if (extend && _anchor is null && _offset != start)
         {
-            return false;
+            _anchor = start;
         }
 
         return true;
     }
 
+    /// <summary>The keys that a Shift extends the selection with: the arrows, Home, End, PgUp and PgDn.</summary>
+    private static bool IsExtendable(Key key) =>
+        key == Key.CursorLeft || key == Key.CursorRight || key == Key.CursorUp || key == Key.CursorDown
+        || key == Key.Home || key == Key.End || key == Key.PageUp || key == Key.PageDown;
+
+    /// <summary>The keys that move the cursor: the extendable keys, the document's ends, and g and G.</summary>
+    private static bool IsMovement(Key key) =>
+        IsExtendable(key) || key == Key.Home.WithCtrl || key == Key.End.WithCtrl || IsPlain(key, 'g') || IsPlain(key, 'G');
+
     /// <summary>
-    /// Handles a mouse event: the wheel scrolls without moving the cursor, and a left press moves the cursor to the cell under the mouse
-    /// (on a cell with no source text, to the next mapped cell). Returns false for any other event.
+    /// Handles a mouse event: the wheel scrolls without moving the cursor; a left press places the cursor and starts a drag, a drag
+    /// (motion with the button down) extends the selection, a release ends it, and a double-click selects the word under the mouse;
+    /// a right-click asks for the context menu. Returns false for any other event.
     /// </summary>
     /// <param name="mouse">The event.</param>
     internal bool HandleMouse(Mouse mouse)
@@ -254,28 +335,261 @@ internal sealed class RenderedView : View
             return true;
         }
 
-        if (!mouse.Flags.HasFlag(MouseFlags.LeftButtonPressed) || !HasCursor)
+        if (mouse.Flags.HasFlag(MouseFlags.LeftButtonReleased))
+        {
+            return EndDrag();
+        }
+
+        if (mouse.Flags.HasFlag(MouseFlags.RightButtonClicked))
+        {
+            return ContextClick(mouse);
+        }
+
+        if (!HasCursor)
         {
             return false;
         }
 
         int x = mouse.Position?.X ?? 0;
         int y = mouse.Position?.Y ?? 0;
-        if (y < 0 || y >= ViewportHeight || _top + y >= LineCount)
+        if (mouse.Flags.HasFlag(MouseFlags.LeftButtonDoubleClicked))
+        {
+            return SelectWord(x, y);
+        }
+
+        if (!mouse.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+        {
+            return false;
+        }
+
+        return mouse.Flags.HasFlag(MouseFlags.PositionReport) ? _dragging && Drag(x, y) : Press(x, y);
+    }
+
+    /// <summary>A left press in the view: the cursor goes to the cell, the selection is cleared, and a drag starts from there.</summary>
+    private bool Press(int x, int y)
+    {
+        if (!InView(y))
         {
             return false;
         }
 
         SetFocus();
-        int line = _top + y;
         int before = _offset;
         int topBefore = _top;
-        int offset = _layout!.OffsetAt(line, Math.Max(0, x));
-        PlaceAt(offset);
-        _goal = _column;
+        PlaceClick(x, y);
+        _press = _offset;
+        _dragging = true;
+        if (App is { } && !App.Mouse.IsGrabbed(this))
+        {
+            App.Mouse.GrabMouse(this);
+        }
+
         Settle(before, topBefore);
         return true;
     }
+
+    /// <summary>
+    /// A motion with the button down: the cursor goes to the cell under the mouse and the selection runs from the press. Above or below
+    /// the view, the top line scrolls by one line and the cursor goes to the edge row.
+    /// </summary>
+    private bool Drag(int x, int y)
+    {
+        int before = _offset;
+        int topBefore = _top;
+        int height = ViewportHeight;
+        int line;
+        if (y < 0)
+        {
+            // The edge row is the top one, or the first row of the view that has a mapped cell (a cursor on a row with none would scroll).
+            _top = Math.Max(0, _top - 1);
+            int last = Math.Min(_top + height - 1, LineCount - 1);
+            line = _top;
+            while (line < last && !HasMapped(line))
+            {
+                line++;
+            }
+        }
+        else if (y >= height)
+        {
+            // The edge row is the last one of the view, or the last row above it that has a mapped cell.
+            _top = Math.Min(MaxTop(), _top + 1);
+            line = Math.Min(_top + height - 1, LineCount - 1);
+            while (line > _top && !HasMapped(line))
+            {
+                line--;
+            }
+        }
+        else
+        {
+            line = Math.Min(_top + y, LineCount - 1);
+        }
+
+        PlaceColumn(line, Math.Max(0, x));
+        _goal = _column;
+        _range = null;
+        if (_anchor is null && _offset != _press)
+        {
+            _anchor = _press;
+        }
+
+        Settle(before, topBefore);
+        return true;
+    }
+
+    /// <summary>The release of the button: the drag ends and the mouse is released to the application.</summary>
+    private bool EndDrag()
+    {
+        if (!_dragging)
+        {
+            return false;
+        }
+
+        _dragging = false;
+        App?.Mouse.UngrabMouse();
+        return true;
+    }
+
+    /// <summary>
+    /// A right-click: a click outside the selection places the cursor there (clearing the selection), a click inside keeps it. The window
+    /// is then asked to open its menu at the mouse.
+    /// </summary>
+    private bool ContextClick(Mouse mouse)
+    {
+        int x = mouse.Position?.X ?? 0;
+        int y = mouse.Position?.Y ?? 0;
+        if (HasCursor && InView(y))
+        {
+            SetFocus();
+            int offset = OffsetAtColumn(_top + y, Math.Max(0, x));
+            if (SelectionRange is not { } selection || offset < selection.Start || offset >= selection.End)
+            {
+                int before = _offset;
+                int topBefore = _top;
+                PlaceClick(x, y);
+                Settle(before, topBefore);
+            }
+        }
+
+        ContextMenuRequested?.Invoke(mouse.ScreenPosition);
+        return true;
+    }
+
+    /// <summary>The double-click: the word under the mouse is selected. A click on a space, a synthetic cell or outside the text selects nothing.</summary>
+    private bool SelectWord(int x, int y)
+    {
+        if (!InView(y))
+        {
+            return false;
+        }
+
+        int line = _top + y;
+        int cell = CellAt(line, x);
+        if (cell < 0 || WordAt(line, cell) is not { } word)
+        {
+            return false;
+        }
+
+        SelectRange(word);
+        return true;
+    }
+
+    /// <summary>Places the cursor at the cell under a view position, and clears the selection and the drag.</summary>
+    private void PlaceClick(int x, int y)
+    {
+        _anchor = null;
+        _range = null;
+        PlaceColumn(_top + y, Math.Max(0, x));
+        _goal = _column;
+    }
+
+    /// <summary>Whether a view row is a row of the document on the screen.</summary>
+    private bool InView(int y) => y >= 0 && y < ViewportHeight && _top + y < LineCount;
+
+    /// <summary>The index of the cell of a line under a screen column, or -1 when no cell covers it.</summary>
+    private int CellAt(int line, int column)
+    {
+        ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        int[] columns = ColumnsOf(line);
+        for (int c = 0; c < cells.Length; c++)
+        {
+            if (cells[c].Width > 0 && column >= columns[c] && column < columns[c] + cells[c].Width)
+            {
+                return c;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The source range of the word that the cell at an index belongs to: the maximal run of mapped, non-space cells around it on the
+    /// line. Null when the cell is synthetic or a space.
+    /// </summary>
+    private SourceRange? WordAt(int line, int cell)
+    {
+        ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        if (!IsWordCell(cells[cell]))
+        {
+            return null;
+        }
+
+        int first = cell;
+        int last = cell;
+        while (first > 0 && IsWordCell(cells[first - 1]))
+        {
+            first--;
+        }
+
+        while (last + 1 < cells.Length && IsWordCell(cells[last + 1]))
+        {
+            last++;
+        }
+
+        int baseOffset = Built.BaseOffset(line);
+        int lastOffset = baseOffset + cells[last].Offset;
+        return new SourceRange(baseOffset + cells[first].Offset, lastOffset + SourceCells.Length(_document, lastOffset));
+    }
+
+    /// <summary>Whether a cell is part of a word: mapped, and not a space.</summary>
+    private static bool IsWordCell(Cell cell) => cell.IsMapped && !string.IsNullOrWhiteSpace(cell.Text);
+
+    /// <summary>
+    /// Selects an exact source range: the cursor goes to its first cell and is scrolled into view, and the selection is the range. Used
+    /// for a search match and a word. Does nothing when the view has no cursor.
+    /// </summary>
+    /// <param name="range">The range, in absolute source offsets.</param>
+    public void SelectRange(SourceRange range)
+    {
+        if (!SyncLayout() || !HasCursor)
+        {
+            return;
+        }
+
+        int before = _offset;
+        int topBefore = _top;
+        PlaceAt(range.Start);
+        _goal = _column;
+        _anchor = null;
+        _range = range;
+        Settle(before, topBefore);
+        SetNeedsDraw();
+    }
+
+    /// <summary>
+    /// Sets the search matches drawn in the search colours, and which one is active (its index in <paramref name="matches"/>, or -1).
+    /// The matches are sorted and do not overlap, as <see cref="RenderSearch.Find"/> gives them.
+    /// </summary>
+    /// <param name="matches">The matches, in document order. Empty removes the highlights.</param>
+    /// <param name="active">The index of the active match, or -1 for none.</param>
+    public void SetMatches(IReadOnlyList<SourceRange> matches, int active)
+    {
+        ArgumentNullException.ThrowIfNull(matches);
+
+        _matches = ImmutableArray.CreateRange(matches);
+        _active = active;
+        SetNeedsDraw();
+    }
+
 
     // ----- Layout -----
 
@@ -325,7 +639,7 @@ internal sealed class RenderedView : View
         _layout = DocumentLayout.Build(_document, width, _cache);
         if (hadCursor)
         {
-            (int anchorLine, _) = _layout.PositionOf(anchor);
+            int anchorLine = ResolveCaret(anchor) is { } anchorCaret ? anchorCaret.Line : _layout.PositionOf(anchor).Line;
             _top = Math.Clamp(anchorLine - row, 0, MaxTop());
             PlaceAt(_offset);
             _goal = _column;
@@ -372,14 +686,132 @@ internal sealed class RenderedView : View
 
     // ----- Cursor placement -----
 
-    /// <summary>Sets the cursor to a mapped cell of a line. The goal column follows the cell unless <paramref name="keepGoal"/> is set.</summary>
-    private void PlaceCell(int line, int cell, bool keepGoal)
+    /// <summary>
+    /// Whether a line is the last display line of its block that has mapped cells. Only such a line has an end position: the caret
+    /// rests after its last cell (see <see cref="EndOffset"/>).
+    /// </summary>
+    private bool IsBlockEnd(int line)
+    {
+        if (!HasMapped(line))
+        {
+            return false;
+        }
+
+        int block = Built.BaseOffset(line);
+        for (int l = line + 1; l < LineCount && Built.BaseOffset(l) == block; l++)
+        {
+            if (HasMapped(l))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The end position of a block's last line, as an absolute source offset: the offset of its last mapped cell plus that cell's source
+    /// length. It is the offset just after the block's last character.
+    /// </summary>
+    private int EndOffset(int line)
     {
         ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        int last = cells.Length - 1;
+        while (!cells[last].IsMapped)
+        {
+            last--;
+        }
+
+        int absolute = Built.BaseOffset(line) + cells[last].Offset;
+        return absolute + SourceCells.Length(_document, absolute);
+    }
+
+    /// <summary>The screen column just after the last cell of a line.</summary>
+    private int EndColumn(int line) => Built.Line(line).Cells.Sum(cell => cell.Width);
+
+    /// <summary>The absolute source offset of a caret stop: a cell's offset, or the end offset for the end position (cell index <c>Length</c>).</summary>
+    private int OffsetOf(int line, int cell) =>
+        cell == Built.Line(line).Cells.Length ? EndOffset(line) : Built.BaseOffset(line) + Built.Line(line).Cells[cell].Offset;
+
+    /// <summary>Whether a caret can rest on a line's cell index: a mapped cell, or the end position of a block's last line.</summary>
+    private bool IsStop(int line, int cell)
+    {
+        ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        return cell < cells.Length ? cells[cell].IsMapped : IsBlockEnd(line);
+    }
+
+    /// <summary>
+    /// The caret stop that an offset places the caret on: the end position of a block when the offset is the end offset of its last
+    /// line, else the mapped cell that the source map gives (see <see cref="CellFor"/>). Null when the document has no stop.
+    /// </summary>
+    private (int Line, int Cell)? ResolveCaret(int offset)
+    {
+        (int line, int column) = Built.PositionOf(offset);
+
+        // The end offset of a block is the offset of the next character of the source, which the map places on a later line. So the end
+        // position is looked for on this line and on the last line before it that has mapped cells.
+        int previous = LineWithMappedBefore(line);
+        foreach (int candidate in new[] { line, previous })
+        {
+            if (candidate >= 0 && IsBlockEnd(candidate) && EndOffset(candidate) == offset)
+            {
+                return (candidate, Built.Line(candidate).Cells.Length);
+            }
+        }
+
+        int cell = CellFor(line, offset, column);
+        return cell < 0 ? LastMappedAtOrBefore(line) : (line, cell);
+    }
+
+    /// <summary>The last line before <paramref name="line"/> that has a mapped cell, or -1 when there is none.</summary>
+    private int LineWithMappedBefore(int line)
+    {
+        for (int l = Math.Min(line, LineCount) - 1; l >= 0; l--)
+        {
+            if (HasMapped(l))
+            {
+                return l;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The caret stop that a screen column of a line selects: the cell covering the column, or the first mapped cell after it on the line;
+    /// past the last cell, the end position of a block's last line. Null when the line has no stop at or after the column, so that the
+    /// caller uses the source map instead.
+    /// </summary>
+    private (int Line, int Cell)? TargetAtColumn(int line, int x)
+    {
+        ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        int cover = CellAt(line, x);
+        int start = cover >= 0 ? cover : x >= EndColumn(line) ? cells.Length : 0;
+        for (int c = start; c < cells.Length; c++)
+        {
+            if (cells[c].IsMapped)
+            {
+                return (line, c);
+            }
+        }
+
+        return IsBlockEnd(line) ? (line, cells.Length) : null;
+    }
+
+    /// <summary>The source offset that a screen column of a line selects (see <see cref="TargetAtColumn"/>).</summary>
+    private int OffsetAtColumn(int line, int x) =>
+        TargetAtColumn(line, x) is { } target ? OffsetOf(target.Line, target.Cell) : Built.OffsetAt(line, x);
+
+    /// <summary>
+    /// Sets the cursor to a caret stop of a line: a mapped cell, or the end position (cell index <c>Length</c>). The goal column follows the
+    /// stop unless <paramref name="keepGoal"/> is set.
+    /// </summary>
+    private void PlaceCell(int line, int cell, bool keepGoal)
+    {
         _line = line;
         _cell = cell;
-        _column = ColumnsOf(line)[cell];
-        _offset = Built.BaseOffset(line) + cells[cell].Offset;
+        _column = cell < Built.Line(line).Cells.Length ? ColumnsOf(line)[cell] : EndColumn(line);
+        _offset = OffsetOf(line, cell);
         if (!keepGoal)
         {
             _goal = _column;
@@ -387,25 +819,32 @@ internal sealed class RenderedView : View
     }
 
     /// <summary>
-    /// Sets the cursor to the cell of a source offset, as the layout's source map places it (the next mapped cell when the offset is not
-    /// mapped). A line with no mapped cell is replaced by the last mapped cell before it.
+    /// Sets the cursor to the caret stop of a source offset (see <see cref="ResolveCaret"/>). A line with no stop is replaced by the last
+    /// stop before it; a document with none has no cursor.
     /// </summary>
     private void PlaceAt(int offset)
     {
-        (int line, int column) = Built.PositionOf(offset);
-        int cell = CellFor(line, offset, column);
-        if (cell < 0)
+        if (ResolveCaret(offset) is { } caret)
         {
-            (line, cell) = LastMappedAtOrBefore(line) ?? (0, -1);
-            if (cell < 0)
-            {
-                _cell = -1;
-                _offset = 0;
-                return;
-            }
+            PlaceCell(caret.Line, caret.Cell, keepGoal: false);
+            return;
         }
 
-        PlaceCell(line, cell, keepGoal: false);
+        _cell = -1;
+        _offset = 0;
+    }
+
+    /// <summary>Sets the cursor to the stop that a screen column of a line selects (see <see cref="TargetAtColumn"/>).</summary>
+    private void PlaceColumn(int line, int x)
+    {
+        if (TargetAtColumn(line, x) is { } target)
+        {
+            PlaceCell(target.Line, target.Cell, keepGoal: false);
+        }
+        else
+        {
+            PlaceAt(Built.OffsetAt(line, x));
+        }
     }
 
     /// <summary>The index of the mapped cell of a line at an offset, else the first mapped cell at or after the column, else the last mapped one; -1 when the line has none.</summary>
@@ -459,15 +898,15 @@ internal sealed class RenderedView : View
 
     // ----- Finding cells -----
 
-    /// <summary>The mapped cell after (line, cell) in document order, or null when there is none.</summary>
-    private (int Line, int Cell)? NextMapped(int line, int cell)
+    /// <summary>The caret stop after (line, cell) in document order: a mapped cell or an end position, or null when there is none.</summary>
+    private (int Line, int Cell)? NextStop(int line, int cell)
     {
         for (int l = line; l < LineCount; l++)
         {
-            ImmutableArray<Cell> cells = Built.Line(l).Cells;
-            for (int c = l == line ? cell + 1 : 0; c < cells.Length; c++)
+            int length = Built.Line(l).Cells.Length;
+            for (int c = l == line ? cell + 1 : 0; c <= length; c++)
             {
-                if (cells[c].IsMapped)
+                if (IsStop(l, c))
                 {
                     return (l, c);
                 }
@@ -477,16 +916,16 @@ internal sealed class RenderedView : View
         return null;
     }
 
-    /// <summary>The mapped cell before (line, cell) in document order, or null when there is none.</summary>
-    private (int Line, int Cell)? PrevMapped(int line, int cell)
+    /// <summary>The caret stop before (line, cell) in document order: a mapped cell or an end position, or null when there is none.</summary>
+    private (int Line, int Cell)? PrevStop(int line, int cell)
     {
         for (int l = Math.Min(line, LineCount - 1); l >= 0; l--)
         {
-            ImmutableArray<Cell> cells = Built.Line(l).Cells;
-            int start = l == line ? Math.Min(cell - 1, cells.Length - 1) : cells.Length - 1;
+            int length = Built.Line(l).Cells.Length;
+            int start = l == line ? Math.Min(cell - 1, length) : length;
             for (int c = start; c >= 0; c--)
             {
-                if (cells[c].IsMapped)
+                if (IsStop(l, c))
                 {
                     return (l, c);
                 }
@@ -497,19 +936,26 @@ internal sealed class RenderedView : View
     }
 
     /// <summary>The first mapped cell of the document, or null.</summary>
-    private (int Line, int Cell)? FirstMapped() => NextMapped(0, -1);
+    private (int Line, int Cell)? FirstMapped() => NextStop(0, -1);
 
-    /// <summary>The last mapped cell of the document, or null.</summary>
-    private (int Line, int Cell)? LastMapped() =>
-        LineCount == 0 ? null : PrevMapped(LineCount - 1, Built.Line(LineCount - 1).Cells.Length);
+    /// <summary>The last caret stop of the document, which is the end position of the last block, or null for an empty document.</summary>
+    private (int Line, int Cell)? LastStop() => LineCount == 0 ? null : PrevStop(LineCount - 1, int.MaxValue / 2);
 
-    /// <summary>The last mapped cell of the line at or before <paramref name="line"/>, or null.</summary>
-    private (int Line, int Cell)? LastMappedAtOrBefore(int line) => PrevMapped(line, int.MaxValue / 2);
+    /// <summary>The last caret stop at or before a line, or null when there is none.</summary>
+    private (int Line, int Cell)? LastMappedAtOrBefore(int line) => PrevStop(line, int.MaxValue / 2);
 
-    /// <summary>The index of the first or the last mapped cell of a line, or -1 when it has none.</summary>
+    /// <summary>
+    /// The index of the first mapped cell of a line, or of its last caret stop (the end position on a block's last line, else the last
+    /// mapped cell). -1 when the line has no stop.
+    /// </summary>
     private int EdgeMappedCell(int line, bool first)
     {
         ImmutableArray<Cell> cells = Built.Line(line).Cells;
+        if (!first && IsBlockEnd(line))
+        {
+            return cells.Length;
+        }
+
         if (first)
         {
             for (int c = 0; c < cells.Length; c++)
@@ -561,6 +1007,12 @@ internal sealed class RenderedView : View
             }
         }
 
+        // The end position is a column too, at the end of the line.
+        if (IsBlockEnd(line) && Math.Abs(goal - EndColumn(line)) is int endDistance && endDistance < bestDistance)
+        {
+            best = cells.Length;
+        }
+
         return best;
     }
 
@@ -596,10 +1048,10 @@ internal sealed class RenderedView : View
     {
         int before = _offset;
         int topBefore = _top;
-        (int Line, int Cell)? target = direction > 0 ? NextMapped(_line, _cell) : PrevMapped(_line, _cell);
-        if (target is { } cell)
+        (int Line, int Cell)? target = direction > 0 ? NextStop(_line, _cell) : PrevStop(_line, _cell);
+        if (target is { } stop)
         {
-            PlaceCell(cell.Line, cell.Cell, keepGoal: false);
+            PlaceCell(stop.Line, stop.Cell, keepGoal: false);
         }
 
         Settle(before, topBefore);
@@ -698,18 +1150,23 @@ internal sealed class RenderedView : View
     private void UpdateCursor()
     {
         Cursor = IsCursorVisible()
-            ? new Cursor { Position = ViewportToScreen(new Point(_column, _line - _top)), Style = CursorStyle.BlinkingBar }
+            ? new Cursor { Position = CursorScreenPosition, Style = CursorStyle.BlinkingBar }
             : new Cursor { Position = null, Style = CursorStyle.BlinkingBar };
     }
 
     private void DrawLine(int y, int line, int width, Attribute normal)
     {
         DisplayLine display = Built.Line(line);
+        ImmutableArray<Cell> cells = display.Cells;
+        int baseOffset = Built.BaseOffset(line);
+        SourceRange? selection = SelectionRange;
+        (int first, int last) = SelectedSpan(cells, baseOffset, selection);
         string? alert = null;
         Move(0, y);
         int x = 0;
-        foreach (Cell cell in display.Cells)
+        for (int c = 0; c < cells.Length; c++)
         {
+            Cell cell = cells[c];
             if (x + cell.Width > width)
             {
                 break;
@@ -731,6 +1188,7 @@ internal sealed class RenderedView : View
                 attribute = MdColors.For(cell.Style, normal);
             }
 
+            attribute = Highlight(attribute, cell, c, baseOffset, selection, first, last);
             SetAttribute(attribute);
             AddStr(cell.Text);
             x += cell.Width;
@@ -741,6 +1199,78 @@ internal sealed class RenderedView : View
             SetAttribute(normal);
             AddStr(new string(' ', width - x));
         }
+    }
+
+    /// <summary>
+    /// The attribute of a cell with the highlights applied: a cell in a search match takes the match colour (the active one its own),
+    /// which replaces the selection's reverse as <see cref="SearchColors"/> does. A cell in the selection is reversed. A synthetic cell
+    /// between two selected cells of its line (a table's border) is reversed too, so that a selected row looks continuous.
+    /// </summary>
+    private Attribute Highlight(Attribute attribute, Cell cell, int index, int baseOffset, SourceRange? selection, int first, int last)
+    {
+        if (!cell.IsMapped)
+        {
+            return first >= 0 && index > first && index < last ? Reversed(attribute) : attribute;
+        }
+
+        int offset = baseOffset + cell.Offset;
+        int match = MatchAt(offset);
+        if (match >= 0)
+        {
+            return match == _active ? SearchColors.Active(attribute) : SearchColors.Match(attribute);
+        }
+
+        return selection is { } range && offset >= range.Start && offset < range.End ? Reversed(attribute) : attribute;
+    }
+
+    /// <summary>The attribute with the reverse style added.</summary>
+    private static Attribute Reversed(Attribute attribute) => new(attribute.Foreground, attribute.Background, attribute.Style | TextStyle.Reverse);
+
+    /// <summary>
+    /// The indexes of the first and the last mapped cell of a line that are in the selection, or -1 and -1 when none is.
+    /// </summary>
+    private static (int First, int Last) SelectedSpan(ImmutableArray<Cell> cells, int baseOffset, SourceRange? selection)
+    {
+        if (selection is not { } range)
+        {
+            return (-1, -1);
+        }
+
+        int first = -1;
+        int last = -1;
+        for (int c = 0; c < cells.Length; c++)
+        {
+            if (cells[c].IsMapped && baseOffset + cells[c].Offset is int offset && offset >= range.Start && offset < range.End)
+            {
+                first = first < 0 ? c : first;
+                last = c;
+            }
+        }
+
+        return (first, last);
+    }
+
+    /// <summary>The index of the search match that holds an offset, or -1. The matches are sorted and do not overlap.</summary>
+    private int MatchAt(int offset)
+    {
+        int low = 0;
+        int high = _matches.Length - 1;
+        int found = -1;
+        while (low <= high)
+        {
+            int mid = (low + high) / 2;
+            if (_matches[mid].Start <= offset)
+            {
+                found = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        return found >= 0 && offset < _matches[found].End ? found : -1;
     }
 
     private static string AlertTitleOf(DisplayLine line) =>

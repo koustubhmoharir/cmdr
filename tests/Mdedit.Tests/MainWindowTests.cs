@@ -10,7 +10,7 @@ namespace Mdedit.Tests;
 /// scroll position, the key hints, and the keys that quit, switch and are swallowed.
 /// </summary>
 [Collection("Terminal GUI")]
-public sealed class MainWindowTests : IDisposable
+public sealed partial class MainWindowTests : IDisposable
 {
     private const string Small = "# Install\n\nIntro text.\n\n## Linux\n\n- step one\n- step two\n";
 
@@ -47,13 +47,13 @@ public sealed class MainWindowTests : IDisposable
     }
 
     [Fact]
-    public void The_hints_line_shows_Open_at_the_left_and_Quit_at_the_right_edge()
+    public void The_hints_line_shows_Find_Copy_and_Open_at_the_left_and_Quit_at_the_right_edge()
     {
         OpenedFile file = Opened("notes.md", Small);
 
         TerminalScreen screen = Run(file, 40, 12).Screens[0];
 
-        Assert.Equal(Status("^O Open", "^Q Quit"), screen.Text(11));
+        Assert.Equal(Status("/ Find  y Copy  ^O Open", "^Q Quit"), screen.Text(11));
     }
 
     [Fact]
@@ -162,6 +162,17 @@ public sealed class MainWindowTests : IDisposable
         Assert.True(session.Window.Stopped);
         Assert.Null(session.Window.SwitchTo);
         Assert.Equal(0, pickers);
+    }
+
+    [Fact]
+    public void At_80_columns_the_hints_are_Find_Copy_and_Open_at_the_left_and_Quit_at_the_right_edge()
+    {
+        OpenedFile file = Opened("notes.md", Small);
+
+        TerminalScreen screen = Run(file, 80, 12).Screens[0];
+
+        string left = "/ Find  y Copy  ^O Open";
+        Assert.Equal(left + new string(' ', 80 - left.Length - "^Q Quit".Length) + "^Q Quit", screen.Text(11));
     }
 
     [Fact]

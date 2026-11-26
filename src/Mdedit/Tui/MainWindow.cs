@@ -6,6 +6,7 @@ using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
+using Point = System.Drawing.Point;
 
 namespace Mdedit.Tui;
 
@@ -23,13 +24,22 @@ namespace Mdedit.Tui;
 /// the scheduler, so tests drive the expiry.
 /// </para>
 /// </remarks>
-internal sealed class MainWindow : Window
+internal sealed class MainWindow : Window, ISearchHost
 {
     /// <summary>How long a message stays on the message line when no key clears it.</summary>
     internal static readonly TimeSpan MessageDuration = TimeSpan.FromSeconds(4);
 
     /// <summary>The separator between the headings of the heading path.</summary>
     internal const string PathSeparator = " › ";
+
+    /// <summary>The message after the plain text of a selection or block was copied.</summary>
+    internal const string CopiedText = "Copied text";
+
+    /// <summary>The message after the Markdown of a selection or block was copied.</summary>
+    internal const string CopiedMarkdown = "Copied Markdown";
+
+    /// <summary>The message of a copy whose text is over <see cref="Osc52.MaxBytes"/>, which is not copied.</summary>
+    internal const string TooLargeToCopy = "Too large to copy";
 
     private readonly Func<(PickOutcome Outcome, OpenedFile? File)> _pickFile;
     private readonly Func<TimeSpan, Action, Action> _schedule;
@@ -39,6 +49,8 @@ internal sealed class MainWindow : Window
     private readonly RenderedView _view;
     private readonly MessageLine _message;
     private readonly HintsLine _hints;
+    private readonly ViewSearch _search;
+    private PopoverMenu? _menu;
     private Action? _cancelExpiry;
 
     /// <summary>
@@ -79,10 +91,20 @@ internal sealed class MainWindow : Window
 
         _message = new MessageLine { X = 0, Y = Pos.AnchorEnd(2), Width = Dim.Fill(), Height = 1 };
         _hints = new HintsLine { X = 0, Y = Pos.AnchorEnd(1), Width = Dim.Fill(), Height = 1 };
-        Add(_frame, _message, _hints);
+        _search = new ViewSearch(this, _view);
+
+        // The search bar sits above the message line. It is shown with the frame one row shorter (see ShowSearchBar).
+        _search.Bar.X = 0;
+        _search.Bar.Y = Pos.AnchorEnd(3);
+        _search.Bar.Width = Dim.Fill();
+        _search.Bar.Height = 1;
+        _search.Bar.Visible = false;
+        Add(_frame, _search.Bar, _message, _hints);
+        WriteRaw = sequence => App?.Driver?.WriteRaw(sequence);
 
         _view.PositionChanged += ShowStatus;
         _view.KeyPressed += ClearMessage;
+        _view.ContextMenuRequested += ShowContextMenu;
         _hints.Show(MdeditHints.View, MdeditHints.Quit);
         ShowStatus();
         _view.SetFocus();
@@ -93,6 +115,15 @@ internal sealed class MainWindow : Window
 
     /// <summary>The message line, for the tests.</summary>
     internal MessageLine Message => _message;
+
+    /// <summary>The view search, for the tests.</summary>
+    internal ViewSearch Search => _search;
+
+    /// <summary>
+    /// Writes a raw control sequence to the terminal: the OSC 52 of a copy. The application's driver by default; a test replaces it to
+    /// read what would be written.
+    /// </summary>
+    internal Action<string> WriteRaw { get; set; }
 
     /// <summary>The key hints, for the tests.</summary>
     internal HintsLine Hints => _hints;
@@ -126,11 +157,154 @@ internal sealed class MainWindow : Window
 
         if (key == Key.Esc)
         {
+            // Esc closes an open search (its bar is not focused here, or Esc would have been taken by it). Otherwise it is swallowed.
+            _search.Close();
+            return true;
+        }
+
+        if (HandleSearchKey(key))
+        {
+            return true;
+        }
+
+        if (key == PopoverMenu.DefaultKey)
+        {
+            ShowContextMenu(_view.CursorScreenPosition);
             return true;
         }
 
         return base.OnKeyDown(key);
     }
+
+    // ----- Search and copy -----
+
+    /// <summary>
+    /// The keys of the view's search and copy: <c>/</c> and Ctrl+F open the bar, <c>n</c> and F3 go to the next match, <c>N</c> and
+    /// Shift+F3 to the previous one, <c>y</c> and Ctrl+C copy the selection (or the block under the cursor) as plain text, and <c>Y</c>
+    /// as Markdown. Returns false for a key they do not bind.
+    /// </summary>
+    private bool HandleSearchKey(Key key)
+    {
+        if (IsPlain(key, 'y') || key == Key.C.WithCtrl)
+        {
+            CopyView(markdown: false);
+        }
+        else if (IsPlain(key, 'Y'))
+        {
+            CopyView(markdown: true);
+        }
+        else if (key == Key.F.WithCtrl || IsPlain(key, '/'))
+        {
+            _search.Open(focusBar: true);
+        }
+        else if (key == Key.F3 || IsPlain(key, 'n'))
+        {
+            _search.Find(next: true);
+        }
+        else if (key == Key.F3.WithShift || IsPlain(key, 'N'))
+        {
+            _search.Find(next: false);
+        }
+        else
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the selection (or the block under the cursor) to the clipboard with OSC 52, as plain text or as Markdown, and says what was
+    /// copied. A copy with nothing in it does nothing; a text over <see cref="Osc52.MaxBytes"/> is not copied.
+    /// </summary>
+    /// <param name="markdown">True for the Markdown of the source, false for the plain rendered text.</param>
+    internal void CopyView(bool markdown)
+    {
+        RenderDocument document = _view.Document;
+        if (ViewCopy.RangeOf(document, _view.SelectionRange, _view.CursorOffset) is not { } range)
+        {
+            return;
+        }
+
+        string text = markdown
+            ? TextExtraction.Markdown(document, range.Start, range.End)
+            : TextExtraction.PlainText(document, range.Start, range.End);
+        if (text.Length == 0)
+        {
+            return;
+        }
+
+        if (!Osc52.Fits(text))
+        {
+            ShowMessage(TooLargeToCopy, error: true);
+            return;
+        }
+
+        WriteRaw(Osc52.Build(text));
+        ShowMessage(markdown ? CopiedMarkdown : CopiedText, error: false);
+    }
+
+    /// <summary>
+    /// The context menu of the view: Copy text and Copy Markdown. It is created on first use and registered with the application's
+    /// popovers, which show it at a screen position and take the keys while it is open.
+    /// </summary>
+    private PopoverMenu Menu
+    {
+        get
+        {
+            if (_menu is null)
+            {
+                _menu = new PopoverMenu(new List<MenuItem>
+                {
+                    new MenuItem(commandText: "Copy text", action: () => CopyView(markdown: false)),
+                    new MenuItem(commandText: "Copy Markdown", action: () => CopyView(markdown: true)),
+                });
+                App?.Popovers?.Register(_menu);
+            }
+
+            return _menu;
+        }
+    }
+
+    /// <summary>Opens the context menu at a screen position: the mouse's for a right-click, the cursor's for the menu key.</summary>
+    /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
+    private void ShowContextMenu(Point screen)
+    {
+        PopoverMenu menu = Menu;
+        App?.Popovers?.Register(menu);
+        menu.MakeVisible(screen);
+    }
+
+    /// <inheritdoc/>
+    void ISearchHost.ShowSearchBar(bool open)
+    {
+        _frame.Height = Dim.Fill(open ? 3 : 2);
+        _search.Bar.Visible = open;
+        SetNeedsLayout();
+    }
+
+    /// <inheritdoc/>
+    void ISearchHost.FocusView() => _view.SetFocus();
+
+    /// <inheritdoc/>
+    void ISearchHost.ShowMessage(string text, bool error) => ShowMessage(text, error);
+
+    /// <inheritdoc/>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && _menu is { } menu)
+        {
+            menu.Visible = false;
+            App?.Popovers?.DeRegister(menu);
+            menu.Dispose();
+            _menu = null;
+        }
+
+        base.Dispose(disposing);
+    }
+
+    /// <summary>A key with no modifier, that types the character.</summary>
+    private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;
 
     /// <summary>
     /// The heading path above the top line: the headings that start at or before the top line's text, outermost first, each heading

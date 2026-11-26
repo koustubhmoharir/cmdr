@@ -115,7 +115,7 @@ errors exit 2.
 | Space | Fold or unfold the section or code block under the cursor (see Folding) |
 | `*` / `-` | Unfold everything under the cursor's section / fold the section the cursor is in |
 | `1`–`6`, `0` | Show headings down to that level, folding the deeper sections / unfold all |
-| Shift+Left/Right in a table, `<` / `>` | Scroll the table horizontally (the cursor's cell stays visible) |
+| `<` / `>` in a table | Scroll the table horizontally (the cursor's cell stays visible). Shift+arrows select, everywhere |
 | Enter, F2 in a table cell | Edit the cell (M5) |
 | Ctrl+Z / Ctrl+Y | Undo / redo: the same history as edit mode (see Source buffer and undo) |
 | Ctrl+T | Edit mode, with the caret on the source character under the view's cursor |
@@ -136,7 +136,8 @@ dominant line ending), plus:
 
 ### Cursor
 
-View mode has a cursor: a position in the rendered text, drawn as the terminal cursor, moved with the arrow keys and by a
+View mode has a cursor: a caret before a character of the rendered text (or after the last character of a block), drawn
+as the terminal cursor, moved with the arrow keys and by a
 click. Ctrl+T maps it to the source and back through the source map (see Renderer): view → edit puts the caret on the
 cell's source offset; edit → view puts the cursor on the cell of the caret's offset, or of the nearest mapped offset at or
 after it when the caret is on markup that is not shown (`**`, `# `, an escape's backslash, the inside of an entity).
@@ -221,7 +222,7 @@ A pipe table is laid out as a grid with box-drawing borders, sized by its column
    shift, and the rest of the document stays put. A dim `◂` / `▸` at the row edges shows hidden columns on that side.
 
 Each table has its own horizontal offset in the view, keyed like fold state (below). Moving the cursor
-into a hidden column scrolls the table to show it; Shift+Left/Right, `<`/`>`, Shift+wheel and the edge markers scroll it.
+into a hidden column scrolls the table to show it; `<`/`>`, Shift+wheel and the edge markers scroll it.
 A table that fits has no offset.
 
 ### Table editing (M5)

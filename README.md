@@ -8,7 +8,7 @@ stopping a command stops everything it started.
 Runs on Linux and Windows.
 
 This repository also contains **logvu**, a terminal viewer for rotated application logs (see [docs/logvu.md](docs/logvu.md)),
-and **cfgedit**, a tree editor for XML, JSON, `.env`, TOML and YAML config files that changes only what you edit (see [docs/cfgedit.md](docs/cfgedit.md)).
+and **cfgedit**, a tree editor for XML, JSON, `.env`, TOML and YAML config files that changes only what you edit (see [docs/cfgedit.md](docs/cfgedit.md)), and **mdedit**, a terminal viewer for Markdown files (see [docs/mdedit.md](docs/mdedit.md)).
 
 ```
 ╭┤cmdr.json├───────────────────╮╭┤servers / web├─────────────────────────────╮
@@ -59,9 +59,9 @@ dotnet publish src/Cmdr -c Release -r linux-x64    # Linux   → Cmdr
 ```
 
 The executable lands in `src/Cmdr/bin/Release/net10.0/<rid>/publish/`; add `-o <dir>` to choose the
-folder. `./publish.ps1` (PowerShell) publishes cmdr, logvu and cfgedit for the current platform to `publish/<rid>/` and installs
-them: on Windows it adds that folder to the user PATH, on Linux it links `~/.local/bin/cmdr`, `~/.local/bin/logvu` and
-`~/.local/bin/cfgedit` to
+folder. `./publish.ps1` (PowerShell) publishes cmdr, logvu, cfgedit and mdedit for the current platform to `publish/<rid>/` and installs
+them: on Windows it adds that folder to the user PATH, on Linux it links `~/.local/bin/cmdr`, `~/.local/bin/logvu`,
+`~/.local/bin/cfgedit` and `~/.local/bin/mdedit` to
 the executables. `-All` also publishes for `win-x64` and `linux-x64`; `-NoInstall` skips the install. On first run it unpacks one small native library of a dependency to `%TEMP%\.net\Cmdr\` on
 Windows or `~/.net/Cmdr/` on Linux (override with `DOTNET_BUNDLE_EXTRACT_BASE_DIR`).
 

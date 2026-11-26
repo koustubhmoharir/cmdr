@@ -14,7 +14,7 @@ namespace Mdedit.Tests;
 /// reflow on a width change. Each expected offset is found in the source text, not in the layout, and the screen text is the drawn one.
 /// </summary>
 [Collection("Terminal GUI")]
-public sealed class RenderedViewTests
+public sealed partial class RenderedViewTests
 {
     private const int Width = 40;
     private const int Height = 12;
@@ -44,11 +44,12 @@ public sealed class RenderedViewTests
 
         Assert.Equal(Offset(Mixed, "first item"), result.Snaps[2].Offset);
         Assert.Equal(5, result.Snaps[2].Line);
-        Assert.Equal(Offset(Mixed, "first item") + 9, result.Snaps[3].Offset);
+        // End goes past the last character of the item, which is its block's end position.
+        Assert.Equal(Offset(Mixed, "first item") + 10, result.Snaps[3].Offset);
         Assert.Equal(Offset(Mixed, "second item"), result.Snaps[4].Offset);
         Assert.Equal(6, result.Snaps[4].Line);
-        Assert.Equal(Offset(Mixed, "first item") + 9, result.Snaps[5].Offset);
-        Assert.Equal(new Point(11, 5), result.Snaps[3].Cursor);
+        Assert.Equal(Offset(Mixed, "first item") + 10, result.Snaps[5].Offset);
+        Assert.Equal(new Point(12, 5), result.Snaps[3].Cursor);
     }
 
     [Fact]
@@ -66,8 +67,8 @@ public sealed class RenderedViewTests
         Assert.Equal(Offset(Mixed, "Intro") + 25, result.Snaps[0].Offset);
         Assert.Equal(Offset(Mixed, "wrap") + 25, result.Snaps[1].Offset);
         Assert.Equal(3, result.Snaps[1].Line);
-        // The line of the bullets is shorter than the goal column, so the cursor goes to its last character.
-        Assert.Equal(Offset(Mixed, "first item") + 9, result.Snaps[2].Offset);
+        // The line of the bullets is shorter than the goal column, so the cursor goes to its end position.
+        Assert.Equal(Offset(Mixed, "first item") + 10, result.Snaps[2].Offset);
         Assert.Equal(5, result.Snaps[2].Line);
         // Up skips the blank line and returns to the wrapped line at the goal column.
         Assert.Equal(Offset(Mixed, "wrap") + 25, result.Snaps[3].Offset);
@@ -92,7 +93,7 @@ public sealed class RenderedViewTests
     }
 
     [Fact]
-    public void G_and_the_document_end_keys_go_to_the_first_and_last_mapped_cell()
+    public void G_and_the_document_end_keys_go_to_the_first_cell_and_the_end_position_of_the_last_block()
     {
         RenderedView view = View(Numbered(30));
 
@@ -104,9 +105,9 @@ public sealed class RenderedViewTests
             v => v.HandleKey(Key.End.WithCtrl),
             v => v.HandleKey(Key.G));
 
-        Assert.Equal(Offset(Numbered(30), "p30") + 2, result.Snaps[1].Offset);
+        Assert.Equal(Offset(Numbered(30), "p30") + 3, result.Snaps[1].Offset);
         Assert.Equal(0, result.Snaps[2].Offset);
-        Assert.Equal(Offset(Numbered(30), "p30") + 2, result.Snaps[3].Offset);
+        Assert.Equal(Offset(Numbered(30), "p30") + 3, result.Snaps[3].Offset);
         Assert.Equal(0, result.Snaps[4].Offset);
     }
 

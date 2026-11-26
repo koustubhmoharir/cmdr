@@ -299,7 +299,7 @@ A `View` over a `RenderDocument`, a `DocumentLayout` (rebuilt when the width or 
 `LayoutCache` kept for the window's life) and view state:
 
 - **Cursor**: a layout position (line, column), kept also as the source offset of its cell; plus a goal column for
-  Up/Down. The cursor rests on mapped cells only: Left/Right move to the previous/next mapped cell in document order
+  Up/Down. The cursor rests on mapped cells and on block end positions (below): Left/Right move to the previous/next mapped cell in document order
   (crossing lines, skipping synthetic cells, so in a table they move from cell to cell), Home/End to the first/last mapped
   cell of the display line, Up/Down to the mapped cell at or nearest the goal column on the previous/next line that has
   one (lines without mapped cells are skipped), PgUp/PgDn by a page, g/G and Ctrl+Home/End to the first/last mapped cell.
@@ -309,7 +309,11 @@ A `View` over a `RenderDocument`, a `DocumentLayout` (rebuilt when the width or 
 - **Reflow**: on a width change, the anchor is the cursor's source offset when the cursor is visible, else the first
   mapped cell of the top line; its screen row is recorded; after the new layout, the top line is set so the anchor's line
   is on that row (clamped to the document).
-- **Selection** (M2b part 2): an anchor offset and the cursor offset; Shift+movement extends it; a drag extends it and
+- **End positions**: the caret may also rest just after the last cell of a block's last display line (offset: the last
+  mapped cell's offset plus its source length), so a block's last character can be selected and Ctrl+T can put the source
+  caret at the end of a paragraph.
+- **Selection** (M2b part 2): an anchor offset and the cursor offset, exclusive (`[min, max)`), since the caret sits before a
+  character; Shift+movement extends it; a drag extends it and
   scrolls when the mouse is above or below the view; a double-click selects the word (the run of non-space mapped cells)
   under the mouse; a click clears it and moves the cursor. Drawn reversed.
 - **Search highlighting** (part 2): every match's cells drawn in the search colours, the active one in the active colour.

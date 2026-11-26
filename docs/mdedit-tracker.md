@@ -36,13 +36,13 @@ The first version is M0–M3.
 
 ## M2b. Viewer
 
-- [ ] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), load errors.
-- [ ] Main window: rendered view, title, message line, hints line.
-- [ ] Cursor, scrolling, reflow on resize keeping the cursor's screen row.
+- [x] Program and host: picker, Ctrl+O with the file dialog, recent list (`mdedit/recent.json`), load errors. (95f222e)
+- [x] Main window: rendered view, title, message line, hints line. (95f222e)
+- [x] Cursor, scrolling, reflow on resize keeping the cursor's screen row. (95f222e)
 - [ ] Selection (Shift+movement, drag, double-click).
 - [ ] Search (SearchBar) in the rendered text.
 - [ ] Copy as plain text and as Markdown (`y`, `Y`, Ctrl+C, right-click menu).
-- [ ] Mouse: wheel, click.
+- [x] Mouse: wheel, click. (95f222e)
 - [ ] Mouse: drag, double-click, right-click menu.
 - [ ] `docs/mdedit.md` started; README links it.
 
