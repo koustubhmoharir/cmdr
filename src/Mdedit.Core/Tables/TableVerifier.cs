@@ -9,11 +9,15 @@ namespace Mdedit.Core.Tables;
 /// </summary>
 internal static class TableVerifier
 {
-    /// <summary>Whether the edited document holds the table the grid describes.</summary>
+    /// <summary>
+    /// Whether the edited document holds the table the grid describes: its rows, columns and alignments, the plain text of every cell, and
+    /// on each row the edit wrote, the header's number of cells as written (see <see cref="WrittenRowsHaveColumns"/>).
+    /// </summary>
     /// <param name="text">The edited document's source text.</param>
     /// <param name="original">The table block before the edit; its start is where the edited table must start.</param>
     /// <param name="expected">The table after the edit.</param>
-    public static bool Verify(string text, RenderBlock original, TableGrid expected)
+    /// <param name="before">The table's grid before the edit, which tells the rows the edit wrote. Null treats every row as written.</param>
+    public static bool Verify(string text, RenderBlock original, TableGrid expected, TableGrid? before = null)
     {
         RenderDocument document = RenderDocument.Parse(text);
         RenderBlock? block = document.Blocks.FirstOrDefault(candidate => candidate.Kind == BlockKind.Table && candidate.Start == original.Start);
@@ -40,8 +44,44 @@ internal static class TableVerifier
             }
         }
 
+        return WrittenRowsHaveColumns(text, block, expected, before);
+    }
+
+    /// <summary>
+    /// Whether every row the edit wrote has exactly the header's number of cells in the source as written. GFM drops the cells past the
+    /// header's count, and a cell whose pipe is not escaped splits a row, so a row that writes more cells loses content from view. A row
+    /// is written when it differs from its row before the edit (every row counts when <paramref name="before"/> is null).
+    /// </summary>
+    /// <param name="text">The edited document's source text.</param>
+    /// <param name="block">The edited table's block, in the reparsed document.</param>
+    /// <param name="expected">The table after the edit.</param>
+    /// <param name="before">The table before the edit, or null.</param>
+    private static bool WrittenRowsHaveColumns(string text, RenderBlock block, TableGrid expected, TableGrid? before)
+    {
+        TableSource source = TableSource.Parse(text, block);
+        for (int row = 0; row < expected.Rows.Length; row++)
+        {
+            if (before is not null && row < before.Rows.Length && SameRow(before.Rows[row], expected.Rows[row]))
+            {
+                continue;
+            }
+
+            if (source.Row(row).Cells.Length != expected.Columns)
+            {
+                return false;
+            }
+        }
+
         return true;
     }
+
+    /// <summary>Whether two rows of a grid are written the same: the prefix, the pipes and the cells' raw text.</summary>
+    private static bool SameRow(GridRow a, GridRow b) =>
+        a.Prefix == b.Prefix
+        && a.LeadingPipe == b.LeadingPipe
+        && a.TrailingPipe == b.TrailingPipe
+        && a.Suffix == b.Suffix
+        && a.Cells.Select(cell => cell.Raw).SequenceEqual(b.Cells.Select(cell => cell.Raw));
 
     /// <summary>
     /// The plain text a cell must show: the one the document gave it, or for a cell an edit wrote, the plain text of its content

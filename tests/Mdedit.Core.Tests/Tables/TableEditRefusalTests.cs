@@ -13,6 +13,25 @@ public sealed class TableEditRefusalTests
     private const string OneColumn = "| a |\n|---|\n| 1 |\n";
 
     [Fact]
+    public void A_backslash_before_a_pipe_in_the_last_column_is_refused_because_GFM_would_drop_the_cell()
+    {
+        // The row would read "| 1 | a\\|b |": three cells, and the header has two, so GFM would drop "b".
+        TableEditResult result = TableEdit.SetCell(Table, TableCase.Table(Table), 1, 1, "a\\|b");
+
+        Assert.Equal("Could not edit the table safely", result.Refusal);
+        Assert.Equal(Table, TableCase.Apply(Table, result));
+    }
+
+    [Fact]
+    public void An_ordinary_edit_in_the_last_column_still_passes_the_source_check()
+    {
+        TableEditResult result = TableEdit.SetCell(Table, TableCase.Table(Table), 1, 1, "x");
+
+        Assert.False(result.IsRefused);
+        Assert.StartsWith("| 1 | x", TableCase.Apply(Table, result).Split('\n')[2], StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Deleting_the_header_row_is_refused()
     {
         TableEditResult result = TableEdit.DeleteRow(Table, TableCase.Table(Table), 0);

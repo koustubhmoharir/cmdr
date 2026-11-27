@@ -206,7 +206,7 @@ public static class TableEdit
         (int start, int length, string replacement) = TableWriter.Splice(text, source, edited);
 
         string result = string.Concat(text.AsSpan(0, start), replacement, text.AsSpan(start + length));
-        if (!TableVerifier.Verify(result, table, edited))
+        if (!TableVerifier.Verify(result, table, edited, TableGrid.From(source, table)))
         {
             return TableEditResult.Refuse(CouldNotEdit);
         }

@@ -110,6 +110,27 @@ Each table keeps its own offset, so scrolling one table does not move another.
 The container of a table in a quote or a list stays in place while the table scrolls. A table that fits has no offset.
 Code blocks do not scroll: a long line in a code block wraps.
 
+### Editing a table
+
+In view mode, F2, or Enter with the caret on a cell that is not a link, opens a field over the cell, with the cell's source
+text (an escaped `\|` shows as `|`). Enter writes the cell, Esc cancels, and Tab or Shift+Tab writes it and opens the next or
+previous cell: the next row's first cell after the last column, and the previous row's last cell before the first. After the
+last cell, Tab writes the cell and closes the field. A write is one undo step (Ctrl+Z), and the caret goes to the cell.
+
+- Alt+Up and Alt+Down move the caret's row up and down; Alt+Left and Alt+Right move its column left and right. The caret
+  moves with the row or column. Outside a table Alt+Left is still Back (see Links).
+- Alt+T opens the table menu at the caret, and the right-click menu over a table has the same items: Edit cell, Insert row
+  above and below, Duplicate row, Delete row, Move row up and down, a Column submenu (Insert column left and right, Delete
+  column, Move column left and right), and an Align column submenu (left, centre, right or none). An item that cannot be
+  done is still shown; choosing it shows why.
+- An aligned table (every line's pipes at the same columns) is written aligned again after an edit. Any other table has
+  only the cells and lines that change written.
+- Some changes are refused, with a message, and nothing changes: deleting or duplicating the header row, moving the header
+  row or a row onto it, moving a row or column past either end, deleting the last column, and a cell whose text would split
+  the row (a line break, or a backslash before a `|`). A refused write in the field keeps the field open with its text.
+
+Edit mode has none of these keys: its source is edited directly.
+
 ## Code
 
 Fenced code blocks are coloured by token: keywords, strings, numbers, comments, types, function names, operators and

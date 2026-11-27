@@ -187,19 +187,31 @@ internal sealed partial class RenderedView
             return;
         }
 
-        int line = _line;
+        DisplayLine display = Built.Line(_line);
+        int width = _cell < display.Cells.Length ? Math.Max(1, display.Cells[_cell].Width) : 1;
+        EnsureColumnVisible(_line, _column, width);
+    }
+
+    /// <summary>
+    /// Makes a span of a line's content visible in its block, by the least scrolling (see <see cref="EnsureCaretColumnVisible"/>). Does
+    /// nothing for a line outside a scrolling block, or a span in the prefix.
+    /// </summary>
+    /// <param name="line">The display line.</param>
+    /// <param name="column">The layout column where the span starts.</param>
+    /// <param name="width">The span's width in columns, at least 1.</param>
+    private void EnsureColumnVisible(int line, int column, int width)
+    {
         DisplayLine display = Built.Line(line);
         int prefix = PrefixWidthOf(display);
         int key = Built.BaseOffset(line);
-        if (_column < prefix || !_maxShift.TryGetValue(key, out int max) || ContentWidthOf(display) == 0)
+        if (column < prefix || !_maxShift.TryGetValue(key, out int max) || ContentWidthOf(display) == 0)
         {
             return;
         }
 
         int content = ContentWidthOf(display);
         int visible = Built.Width - prefix;
-        int start = _column - prefix;
-        int width = _cell < display.Cells.Length ? Math.Max(1, display.Cells[_cell].Width) : 1;
+        int start = column - prefix;
         int end = start + width;
         int shift = _shift.GetValueOrDefault(key);
 

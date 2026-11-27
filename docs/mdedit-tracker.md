@@ -83,9 +83,13 @@ The first version is M0–M3.
 
 - [x] Core: `TableSource` (the table as written, aligned or not) and `TableEdit` (cell text, rows, columns, alignment, with
       verification). (3a08348)
-- [ ] View: the inline cell field (F2, Enter), Alt+arrows, the table menu (Alt+T, right-click).
+- [x] View: the inline cell field (F2, Enter), Alt+arrows, the table menu (Alt+T, right-click). (this commit)
 - [ ] Windows acceptance pass. *(Windows)*
 
-## Later
+## M6. Rendered-view editing
 
-- M6 Rendered-view editing (rules to be designed first; the view's letter keys move to modifiers).
+- [ ] M6a: the key remap; typing, Backspace, Delete and selection replacement inside a block, with verification and
+      pending insertions; undo grouping.
+- [ ] M6b: Enter, Backspace at a block's start, Delete at its end.
+- [ ] M6c: typing in table cells, paste as Markdown, deleting a selection across blocks.
+- [ ] Windows acceptance pass. *(Windows)*

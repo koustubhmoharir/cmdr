@@ -160,4 +160,23 @@ public sealed class TableSourceTests
         Assert.Equal("bb", table.CellText(0, 1));
         Assert.Equal("", table.CellText(0, 5));
     }
+
+    [Fact]
+    public void A_row_that_starts_with_an_empty_cell_has_all_its_cells()
+    {
+        const string text = "| a | b |\n|---|---|\n|  | 22 |\n";
+
+        Assert.Equal(2, TableSource.Parse(text, TableCase.Table(text)).Row(1).Cells.Length);
+    }
+
+    [Fact]
+    public void An_all_empty_row_is_scanned_on_its_own_line()
+    {
+        const string text = "| a | b |\n|---|---|\n|  |  |\n| 1 | 2 |\n";
+        TableSource source = TableSource.Parse(text, TableCase.Table(text));
+
+        Assert.Equal(20, source.Row(1).Line.Start);
+        Assert.Equal(2, source.Row(1).Cells.Length);
+        Assert.Equal(2, source.Row(2).Cells.Length);
+    }
 }

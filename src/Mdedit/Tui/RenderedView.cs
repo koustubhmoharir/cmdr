@@ -798,19 +798,24 @@ internal sealed partial class RenderedView : View
     /// <summary>Scrolls by the least amount that keeps the cursor's line in view.</summary>
     private void EnsureVisible()
     {
-        if (!HasCursor)
+        if (HasCursor)
         {
-            return;
+            EnsureLineVisible(_line);
         }
+    }
 
+    /// <summary>Scrolls by the least amount that brings a display line into the viewport's rows.</summary>
+    /// <param name="line">The display line.</param>
+    private void EnsureLineVisible(int line)
+    {
         int height = ViewportHeight;
-        if (_line < _top)
+        if (line < _top)
         {
-            _top = _line;
+            _top = line;
         }
-        else if (_line >= _top + height)
+        else if (line >= _top + height)
         {
-            _top = _line - height + 1;
+            _top = line - height + 1;
         }
 
         ClampTop();

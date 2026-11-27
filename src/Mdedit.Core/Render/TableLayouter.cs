@@ -121,6 +121,11 @@ internal static class TableLayouter
             for (int column = 0; column < widths.Length; column++)
             {
                 ImmutableArray<Cell> content = line < wrapped[column].Count ? wrapped[column][line].Cells : ImmutableArray<Cell>.Empty;
+                if (line == 0 && content.IsEmpty && EmptyCellBlank(row, column) is { } blank)
+                {
+                    content = [blank];
+                }
+
                 int extra = Math.Max(0, widths[column] - Width(content));
                 int left = table.Alignments[column] switch
                 {
@@ -140,6 +145,15 @@ internal static class TableLayouter
 
         return result;
     }
+
+    /// <summary>
+    /// The mapped blank of an empty cell: one space at the cell's source position, so that the caret has a stop on the cell. It takes the
+    /// padding's width, so the grid is the same as with no blank. Null when the cell has no position (see <see cref="TableRowModel.Positions"/>).
+    /// </summary>
+    private static Cell? EmptyCellBlank(TableRowModel row, int column) =>
+        row.Positions.IsDefault || column >= row.Positions.Length || row.Positions[column] == Cell.Synthetic
+            ? null
+            : new Cell(" ", 1, new CellStyle(StyleRole.Body), row.Positions[column], -1);
 
     /// <summary>A horizontal border with a corner or junction at each column edge, drawn as synthetic border cells.</summary>
     private static ImmutableArray<Cell> Border(ImmutableArray<int> widths, char left, char middle, char right)

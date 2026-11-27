@@ -29,15 +29,24 @@ internal static class TableSourceScanner
             throw new InvalidOperationException("The table block does not match its source.");
         }
 
-        TableSourceLine header = ScanRow(text, rows[0]);
+        TableSourceLine header = ScanRow(text, LineStartOf(text, table.Start), rows[0]);
         int delimiterStart = header.Line.End + header.Newline.Length;
         TableSourceLine delimiter = ScanLine(text, delimiterStart, DelimiterContentStart(text, delimiterStart));
-        ImmutableArray<TableSourceLine> body = rows.Skip(1).Select(row => ScanRow(text, row)).ToImmutableArray();
+
+        // Each body row is the line after the one before it: Markdig gives an all-empty row no span, so the lines are counted, not found.
+        var body = new List<TableSourceLine>();
+        int lineStart = delimiter.Line.End + delimiter.Newline.Length;
+        foreach (TableRow row in rows.Skip(1))
+        {
+            TableSourceLine line = ScanRow(text, lineStart, row);
+            body.Add(line);
+            lineStart = line.Line.End + line.Newline.Length;
+        }
 
         var lines = new List<TableSourceLine> { header, delimiter };
         lines.AddRange(body);
         bool aligned = AllPipesAligned(text, lines);
-        return new TableSource(text, header, delimiter, body, aligned);
+        return new TableSource(text, header, delimiter, body.ToImmutableArray(), aligned);
     }
 
     /// <summary>The table that starts at <paramref name="start"/>, found by parsing the whole document.</summary>
@@ -48,25 +57,25 @@ internal static class TableSourceScanner
     }
 
     /// <summary>Scans the line of a Markdig table row.</summary>
-    private static TableSourceLine ScanRow(string text, TableRow row)
+    private static TableSourceLine ScanRow(string text, int lineStart, TableRow row)
     {
-        int lineStart = LineStartOf(text, row.Span.Start);
-        return ScanLine(text, lineStart, RowContentStart(text, lineStart, row.Span.Start));
+        int markdigStart = row.Span.Start;
+        int contentStart = row.Span.End >= markdigStart && markdigStart >= lineStart
+            ? RowContentStart(text, lineStart, markdigStart)
+            : UnescapedPipes(text, lineStart, LineEndOf(text, lineStart)).FirstOrDefault(LineEndOf(text, lineStart));
+        return ScanLine(text, lineStart, contentStart);
     }
 
     /// <summary>
-    /// The first character of a row, given Markdig's row start. Markdig starts a row after its leading pipe, so a pipe before the
-    /// start (after its spaces) is the row's first character.
+    /// The first character of a row, given Markdig's row start. The line's prefix (quote markers, list indentation) has no pipe, so the
+    /// first unescaped pipe before Markdig's start is the row's leading pipe. Markdig's start can be past the first pipe when the row begins
+    /// with an empty cell (its span is the first non-empty cell), so the pipe is searched for from the line start, not just before the start.
+    /// Without such a pipe the row has no leading pipe, and its first character is Markdig's start.
     /// </summary>
     private static int RowContentStart(string text, int lineStart, int markdigStart)
     {
-        int index = markdigStart - 1;
-        while (index >= lineStart && IsBlank(text[index]))
-        {
-            index--;
-        }
-
-        return index >= lineStart && text[index] == '|' ? index : markdigStart;
+        ImmutableArray<int> pipes = UnescapedPipes(text, lineStart, markdigStart);
+        return pipes.Length > 0 ? pipes[0] : markdigStart;
     }
 
     /// <summary>Scans one line: its pipes, its cells and their contents.</summary>

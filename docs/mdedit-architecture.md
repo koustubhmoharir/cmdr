@@ -535,7 +535,69 @@ in a backslash before a typed `|` (`a\|b`) is refused by the verification, since
   refusal shows on the message line and the field stays open with the text. While the field is open, the external-change
   check waits, as it does for dialogs.
 - **Table menu** (Alt+T, and the right-click menu over a table): Edit cell, Insert row above / below, Duplicate row,
-  Delete row, Move row up / down, Insert column left / right, Delete column, Move column left / right, Align column
-  left / centre / right / none. Items that would be refused are still shown and give their message.
+  Delete row, Move row up / down, a **Column** submenu (insert left / right, delete, move left / right) and an **Align
+  column** submenu (left / centre / right / none), so that both menus fit an 80x24 terminal. Items that would be refused
+  are still shown and give their message.
+- **Empty cells are caret stops**: the layout maps one blank of an empty cell to the cell's position in the source (just
+  before its closing pipe, recorded by the lowering in `TableRowModel.Positions`; Markdig gives an empty cell no span).
+  The runs are unchanged, so copy and search do not see it. A row shorter than the header has no stops for its missing
+  cells.
+- The verification also reparses the source: every row an edit wrote must have the header's number of cells as written
+  (GFM drops extra cells silently, so `a\|b` in the last column would lose `b`).
 - Edit mode has no table operations (the source is edited directly).
 - Window code in `MainWindow.Tables.cs` (partial) and `TableCellField.cs`.
+
+## Rendered-view editing (M6)
+
+The design's "Rendered-view editing" holds the user's decisions (2026-11-26): the view is always editable, its commands
+take modifiers, Enter edits and Ctrl+Enter / Ctrl+click follow a link, typing at the end of a style continues it (not a
+link), and paste inserts Markdown source. M6 comes in three parts.
+
+- **M6a** Keys and text: the key remap; typing, Backspace and Delete inside a block; replacing or deleting a selection
+  inside one block; undo grouping.
+- **M6b** Structure: Enter (split or add a block), Backspace at a block's start and Delete at its end (merge or unwrap).
+- **M6c** Tables and paste: typing directly in table cells (Tab moves between cells), paste, deleting a selection across
+  blocks.
+
+### Edit engine (Mdedit.Core.Editing, no Terminal.Gui)
+
+Every rendered-view edit is a pure function of the `RenderDocument` (its text and blocks) and the caret or selection,
+given as source offsets, returning `ViewEditResult` = one replacement `(Start, Length, Text)` and the caret's source offset
+after it, or a refusal message. The window applies the replacement to the buffer and re-renders, as table edits do.
+
+- **Insertion point** of text typed with the caret before cell *c* of a block (or at its end position): with a previous
+  mapped cell *p* in the same run, right after *p*'s source (its offset plus its source length, see `RenderSearch`'s
+  `SourceLength`), so the text joins *p*'s styles (continuation); except that when *p* is in a link that *c* is not in,
+  after the link's end (`LinkInfo.End`), so links never grow at the end. With no *p* (the run's start), at *c*'s offset,
+  so the text takes *c*'s styles. In a code span or a code block the text is inserted as is; elsewhere it is escaped:
+  `\`, `*`, `_`, `` ` ``, `[`, `]`, `<`, `&` always; `|` in a table; `#`, `>`, `-`, `+`, `=` and `1.`-style digits when
+  they would start the block's line.
+- **Backspace / Delete** remove the previous / next mapped cell's source in the same block: its source length, an entity
+  whole, an escape with its backslash. A style span (`InlineSpan`) left with no text is removed with its delimiters; a
+  link left with no text is removed with its destination. At a block's start / end they are M6b's.
+- **Selection inside one block**: the source of every selected mapped cell is removed (the markup between cells stays,
+  so delimiters stay balanced), then empty spans are removed as above; typing with a selection removes it first and
+  inserts at the point where it started.
+- The several removals of one edit are written as one replacement covering them (the block's changed middle), so an edit
+  is one change of the buffer.
+- **Verification**: the edited text is reparsed. The blocks outside the edit must be unchanged (kind, containers, plain
+  text), the edited block must have the same kind and containers, and its plain text must equal the expected one (the
+  old plain text with the typed text inserted at the caret, or the removed characters gone). Otherwise the edit is
+  refused with "Can't edit this here; Ctrl+T edits the source", and nothing changes.
+- **Pending insertion**: text whose rendering would not show (a space at a block's end or start, two spaces, a new empty
+  block after Enter at a block's end) is kept by the view as a *pending insertion*: a source offset, the source text
+  waiting to be inserted, and the synthetic cells the view draws for it at the caret. The next typed character is
+  inserted together with the pending text as one edit; moving the caret, a command or a mode switch drops it (nothing was
+  written). M6b's new paragraphs and list items start as pending insertions too (a new item shows its marker), so
+  Markdown never holds an empty block.
+
+### View and window (Mdedit)
+
+- **Keys (M6a)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
+  Ctrl+Home / Ctrl+End; Alt+O outline; Tab / Shift+Tab next / previous link, or cell in a table; Ctrl+Enter follows a
+  link; `*` and `-` folding only in the right-click menu; `<` / `>` removed. F2 still edits a table cell in its field
+  (M5) until M6c; Enter edits from M6b on (until then it keeps following a link and opening the cell field).
+- **Undo grouping**: consecutive typed characters with no caret move in between are one undo step, closed by a space or a
+  line break after a word, a caret move, a command or a mode switch (the buffer's `UndoStack` groups).
+- Typing on a synthetic position (a fold summary, a code label, a table border) or in a folded unit's head is refused with
+  a message; typing in edit mode is the editor's.

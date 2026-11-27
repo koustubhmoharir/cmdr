@@ -317,6 +317,12 @@ internal sealed partial class MainWindow : Window, ISearchHost
             return true;
         }
 
+        if (_cellField is not null)
+        {
+            // The inline field has the keys that it does not take (see HandleTableKey): none of the window's other keys run under it.
+            return true;
+        }
+
         if (key == Key.O.WithCtrl)
         {
             OpenPicker();
@@ -343,6 +349,12 @@ internal sealed partial class MainWindow : Window, ISearchHost
         if (_editing)
         {
             return HandleEditKey(key) || base.OnKeyDown(key);
+        }
+
+        // The table keys come before the links, so that Alt+Left moves the column in a table, and Enter edits a cell unless it is on a link.
+        if (HandleTableKey(key))
+        {
+            return true;
         }
 
         if (HandleLinkKey(key))
@@ -682,14 +694,13 @@ internal sealed partial class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// Opens the context menu at a screen position, the mouse's for a right-click and the cursor's for the menu key. The entries are Copy
-    /// text and Copy Markdown, and Fold or Unfold (labelled by the state of the unit at that position) when a unit is there. The menu is
-    /// built for each opening, since its entries depend on the position, and it is registered with the application's popovers, which take
-    /// the keys while it is open.
+    /// text and Copy Markdown, Fold or Unfold (labelled by the state of the unit at that position) when a unit is there, and the table items
+    /// (see <see cref="TableItems"/>) when the caret is in a table cell. The menu is built for each opening, since its entries depend on the
+    /// position.
     /// </summary>
     /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
     private void ShowContextMenu(Point screen)
     {
-        DisposeMenu();
         var items = new List<MenuItem>
         {
             new MenuItem(commandText: "Copy text", action: () => CopyView(markdown: false)),
@@ -701,6 +712,23 @@ internal sealed partial class MainWindow : Window, ISearchHost
             items.Add(new MenuItem(commandText: label, action: () => _view.ToggleFold(unit)));
         }
 
+        if (_view.TableCellAtCaret() is { } cell)
+        {
+            items.AddRange(TableItems(cell));
+        }
+
+        ShowMenu(items, screen);
+    }
+
+    /// <summary>
+    /// Shows a menu at a screen position, in place of the one that is open. It is registered with the application's popovers, which take the
+    /// keys while it is open.
+    /// </summary>
+    /// <param name="items">The entries.</param>
+    /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
+    private void ShowMenu(List<MenuItem> items, Point screen)
+    {
+        DisposeMenu();
         _menu = new PopoverMenu(items);
         App?.Popovers?.Register(_menu);
         _menu.MakeVisible(screen);
@@ -1099,10 +1127,10 @@ internal sealed partial class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// True when no save or close flow runs, no dialog, picker or context menu is open, and this window is the application's top runnable.
+    /// True when no save or close flow runs, no dialog, picker, context menu or table cell field is open, and this window is the application's top runnable.
     /// A dialog or the picker is a runnable on top of it, so none of them is interrupted by a reload.
     /// </summary>
-    private bool IsIdle => !_flowing && _menu is not { Visible: true } && App?.TopRunnableView == this;
+    private bool IsIdle => !_flowing && _cellField is null && _menu is not { Visible: true } && App?.TopRunnableView == this;
 
     /// <summary>Runs a save or close flow, with the external check held off while it runs.</summary>
     private T InFlow<T>(Func<T> flow)

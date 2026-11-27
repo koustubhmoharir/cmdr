@@ -258,11 +258,84 @@ internal sealed class Lowerer
 
             int line = index == 0 ? 0 : index + 1;
             int rowStart = lineStarts[Math.Min(line, lineStarts.Length - 1)];
-            rows.Add(new TableRowModel(row.IsHeader, rowStart, RowCells(row, alignments.Length, rowStart, inlines)));
+            rows.Add(new TableRowModel(row.IsHeader, rowStart, RowCells(row, alignments.Length, rowStart, inlines), CellPositions(row, alignments.Length, start + rowStart, start)));
             index++;
         }
 
         return new TableModel(alignments, rows.ToImmutable());
+    }
+
+    /// <summary>
+    /// The source position of each column's cell, relative to the block at <paramref name="start"/>: the cell's closing pipe, which is
+    /// its end after its padding (for an empty cell, its place between its pipes); the line's end for the last column of a row with no
+    /// trailing pipe. A column the row does not have is <see cref="Cell.Synthetic"/>. Markdig gives an empty cell no span, so the
+    /// pipes are found in the row's line: a pipe is unescaped when no backslash precedes it, and the row has a leading pipe when its
+    /// pipe count, less the trailing one, is one more than its cells' count less one (a cell is between two pipes, or the first and the
+    /// line end).
+    /// </summary>
+    /// <param name="row">The row.</param>
+    /// <param name="columns">The table's columns.</param>
+    /// <param name="lineStart">The absolute offset of the row's line.</param>
+    /// <param name="start">The absolute offset of the block.</param>
+    private ImmutableArray<int> CellPositions(TableRow row, int columns, int lineStart, int start)
+    {
+        int cells = row.OfType<TableCell>().Count();
+        List<int> pipes = UnescapedPipes(lineStart, out int lineEnd);
+        bool trailing = pipes.Count > 0 && pipes[^1] == LastNonSpace(lineStart, lineEnd);
+        bool leading = pipes.Count - (trailing ? 1 : 0) - cells + 1 == 1;
+        var positions = ImmutableArray.CreateBuilder<int>(columns);
+        for (int column = 0; column < columns; column++)
+        {
+            if (column >= cells)
+            {
+                positions.Add(Cell.Synthetic);
+                continue;
+            }
+
+            int index = leading ? column + 1 : column;
+            positions.Add((index < pipes.Count ? pipes[index] : lineEnd) - start);
+        }
+
+        return positions.ToImmutable();
+    }
+
+    /// <summary>The offsets of the unescaped pipes of the line that starts at <paramref name="lineStart"/>, and the line's end.</summary>
+    private List<int> UnescapedPipes(int lineStart, out int lineEnd)
+    {
+        var pipes = new List<int>();
+        int index = lineStart;
+        while (index < _text.Length && _text[index] is not ('\r' or '\n'))
+        {
+            if (_text[index] == '\\')
+            {
+                index += 2;
+                continue;
+            }
+
+            if (_text[index] == '|')
+            {
+                pipes.Add(index);
+            }
+
+            index++;
+        }
+
+        lineEnd = Math.Min(index, _text.Length);
+        return pipes;
+    }
+
+    /// <summary>The offset of the last character of the line that is not a space or a tab, or -1 when there is none.</summary>
+    private int LastNonSpace(int lineStart, int lineEnd)
+    {
+        for (int index = lineEnd - 1; index >= lineStart; index--)
+        {
+            if (_text[index] is not (' ' or '\t'))
+            {
+                return index;
+            }
+        }
+
+        return -1;
     }
 
     /// <summary>The cells of a row, one run per column: the first <paramref name="columns"/> cells, padded with empty runs.</summary>
