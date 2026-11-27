@@ -189,6 +189,12 @@ body rows. Anchors: a row's lines anchor at the row's source line start; the top
 next row's start (the block's end when there is none); the bottom border at the block's end. A row's second and later
 lines are continuation lines; borders are not.
 
+**Caret stops.** Every cell has one caret stop on the layout. An empty cell's is one blank between its pipes (its `Positions`
+entry). A non-empty cell's is the first padding cell after its text, on the cell's last line of text, mapped at the offset
+just after its last mapped character (`TableRowModel.ContentEnds`, drawn by `TableLayouter`'s `EndBlank`), so the caret can
+rest after the text and type there. The blank is a layout cell only: the runs keep their cells, so copy and search do not
+see it, and the grid is the same as without it.
+
 **Overflow.** `DisplayLine` gets `PrefixCells`: the number of cells at the start of the line that belong to the container
 prefix (for every line, not only tables). `BlockLayout` gets `ScrollWidth`: the width of its widest line minus the prefix,
 when that is more than the content width, else 0. The view scrolls a block with a non-zero `ScrollWidth` by shifting only
@@ -577,7 +583,10 @@ after it, or a refusal message. The window applies the replacement to the buffer
   link left with no text is removed with its destination. At a block's start / end they are M6b's.
 - **Selection inside one block**: the source of every selected mapped cell is removed (the markup between cells stays,
   so delimiters stay balanced), then empty spans are removed as above; typing with a selection removes it first and
-  inserts at the point where it started.
+  inserts at the point where it started. A selection's ends are resolved by the blocks that hold them (`EditSite.BlockAt`,
+  both ends included), not by caret stops: a double-click on a styled word ends just before its closing marker, which is no
+  stop. The cells it covers decide what goes, so the span is emptied and its markers go with it. In a table, a selection
+  is inside one cell when both ends are in the same cell (`EditSite.CellAt`).
 - The several removals of one edit are written as one replacement covering them (the block's changed middle), so an edit
   is one change of the buffer.
 - **Verification**: the edited text is reparsed. The blocks outside the edit must be unchanged (kind, containers, plain
@@ -652,6 +661,11 @@ Decisions taken while building it:
   `Replacement.Then` to the view as its pending at the caret, after the caret is placed.
 - **Caret stops (M6b)**: a paragraph line that a hard break ends has an end position, after its last mapped cell, as the
   last line of a block has (`IsHardBreakEnd`); Delete there joins the lines. Code lines have no such stop yet.
+- **Table cell end stops**: a non-empty cell's end stop (see Tables in the render core) is a caret stop, so Right and Left
+  visit it, and typing or Backspace there edits the cell. Delete there does nothing (a table cell's end is no join).
+  End on a table row goes to the end stop of its last column, after the last letter, as End on a paragraph's last line
+  goes after its text; the view scrolls to show it. Home goes to the row's first mapped cell, as before. Tab still goes to
+  the next cell's first stop.
 - **Empty document**: a document with no block has no caret stop, so the view draws an empty line of its own with the
   caret on it (after the gutter, and after the pending's display text when it holds one). The window gives typing the
   empty inline pending at offset 0 (`TypingPending`), so the first character writes a paragraph. Enter, Backspace and
@@ -790,5 +804,11 @@ containers, but not container identity), and requires at least one block between
 fence) is refused. Known limits: a table cell takes one line (a line break, even a trailing one, is refused); a row shorter than the header has no
 stop in its missing columns, so Enter there is refused; a cross-block join whose last block's remainder spans lines with container prefixes is refused
 by the verifier, not joined; what a paste renders (a list marker in the middle of a paragraph, say) is not judged; an Enter over a selection in a cell
-is refused as a whole when the Enter after the removal is. The view must handle `ViewEditResult.Move` (the window's result switch has no case for it
+is refused as a whole when the Enter after the removal is. A cross-block selection whose end is not a stop keeps the text from the first
+mapped cell after the end, so the markers the selection covers go with it (`ViewEdit.KeptFrom`); a whole block is removed when its
+start is at or before its first stop, and its end is at or after its last. A table cell with only synthetic text (an image with no alt text, say)
+has no end stop, as it has no text to end. The view must handle `ViewEditResult.Move` (the window's result switch has no case for it
 yet, so the result is ignored), and send a bracketed paste or Ctrl+V to `Paste`; in a table cell, F2 still opens the field.
+
+**Known limit (view).** After an edit that rewrites an aligned table, undo restores the text but puts the caret at the end
+of the restored change (the whole changed middle of the table), which can be a later cell than the one edited.

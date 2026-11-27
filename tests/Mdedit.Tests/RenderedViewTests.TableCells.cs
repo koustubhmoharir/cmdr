@@ -84,12 +84,35 @@ public sealed partial class RenderedViewTests
 
         Run(view, v =>
         {
+            // The first Right goes to the end stop of "a", which is in its cell; the second goes to the empty cell's place.
             v.PlaceCaret(Offset(GridWithEmpty, "a"), null);
+            v.HandleKey(Key.CursorRight);
             v.HandleKey(Key.CursorRight);
             cell = v.TableCellAtCaret();
         });
 
         Assert.Equal(new RenderedView.TableCell(0, 0, 1), cell);
+    }
+
+    [Fact]
+    public void Right_from_a_cell_s_last_letter_reaches_its_end_stop_and_then_the_next_cell_and_Left_comes_back()
+    {
+        RenderedView view = View(Grid);
+        var caret = new List<int>();
+
+        Run(view, v =>
+        {
+            v.PlaceCaret(Offset(Grid, "a"), null);
+            v.HandleKey(Key.CursorRight);
+            caret.Add(v.CursorOffset);
+            v.HandleKey(Key.CursorRight);
+            caret.Add(v.CursorOffset);
+            v.HandleKey(Key.CursorLeft);
+            caret.Add(v.CursorOffset);
+        });
+
+        // "a" is at 2, its end stop at 3 (after the letter, before the padding), and "b" at 6.
+        Assert.Equal(new[] { 3, 6, 3 }, caret);
     }
 
     [Fact]

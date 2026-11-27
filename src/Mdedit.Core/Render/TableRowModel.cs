@@ -19,4 +19,9 @@ namespace Mdedit.Core.Render;
 /// have. For an empty cell this is its place between its pipes, where the layout maps a blank so that the caret can rest on the cell
 /// (see <see cref="TableLayouter"/>). Empty when the model is built without positions.
 /// </param>
-public sealed record TableRowModel(bool IsHeader, int Start, ImmutableArray<Run> Cells, ImmutableArray<int> Positions = default);
+/// <param name="ContentEnds">
+/// The source offset, relative to the block, just after the last mapped character of each column's content, or <see cref="Cell.Synthetic"/>
+/// for a column with no mapped character. For a non-empty cell this is its end stop, where the layout maps a blank after the text so that the
+/// caret can rest after the last character (see <see cref="TableLayouter"/>). Empty when the model is built without them.
+/// </param>
+public sealed record TableRowModel(bool IsHeader, int Start, ImmutableArray<Run> Cells, ImmutableArray<int> Positions = default, ImmutableArray<int> ContentEnds = default);

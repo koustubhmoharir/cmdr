@@ -145,12 +145,12 @@ public sealed partial class RenderedViewTests
         RenderedView view = View(WideTable);
         int last = Offset(WideTable, "Cdefghijklmnopqrstuv") + 19;
 
-        // End goes to the last letter of the header row, which is in the third cell, at table column 67: the least offset that shows it
-        // is 29, with the letter in the last column before the right marker.
+        // End goes to the end stop of the header row's last cell, after its last letter at 67, so the caret is at 68: the padding before
+        // the right border. The table scrolls until that column shows, which is the last column in full, so no right marker is drawn.
         List<TerminalScreen> screens = Screens(view, v => v.HandleKey(Key.End));
 
-        Assert.Equal(last, view.CursorOffset);
-        Assert.EndsWith("Cdefghijklmnopqrstuv▸", Rows(screens[1])[1], StringComparison.Ordinal);
+        Assert.Equal(last + 1, view.CursorOffset);
+        Assert.EndsWith("Cdefghijklmnopqrstuv │", Rows(screens[1])[1], StringComparison.Ordinal);
     }
 
     [Fact]

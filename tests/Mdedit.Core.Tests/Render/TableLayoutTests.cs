@@ -23,8 +23,8 @@ public sealed class TableLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build("| a | b |\n|---|---|\n| 1 | 2 |\n", 40);
 
-        Assert.Equal(" @-| @-|│@-/TableBorder| @-|a@2| @-|│@-/TableBorder| @-|b@6| @-|│@-/TableBorder", LayoutDump.Cells(layout, 1));
-        Assert.Equal(" @-| @-|│@-/TableBorder| @-|1@22| @-|│@-/TableBorder| @-|2@26| @-|│@-/TableBorder", LayoutDump.Cells(layout, 3));
+        Assert.Equal(" @-| @-|│@-/TableBorder| @-|a@2| @3|│@-/TableBorder| @-|b@6| @7|│@-/TableBorder", LayoutDump.Cells(layout, 1));
+        Assert.Equal(" @-| @-|│@-/TableBorder| @-|1@22| @23|│@-/TableBorder| @-|2@26| @27|│@-/TableBorder", LayoutDump.Cells(layout, 3));
         Assert.All(layout.Line(0).Cells, cell => Assert.False(cell.IsMapped));
     }
 

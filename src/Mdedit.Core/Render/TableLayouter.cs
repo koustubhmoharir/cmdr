@@ -6,7 +6,8 @@ namespace Mdedit.Core.Render;
 /// <summary>
 /// Draws a table block as a grid. The column widths come from the natural width of each column, narrowed one column at a time
 /// to the minimum (the longest word, capped) when the table is too wide; each cell is word-wrapped to its column and padded,
-/// and a row is as tall as its tallest cell. Borders and padding are synthetic. Offsets are relative to the block.
+/// and a row is as tall as its tallest cell. Borders are synthetic, and so is padding except for the one blank of a cell that holds a caret
+/// stop (see <see cref="EmptyCellBlank"/> and <see cref="EndBlank"/>). Offsets are relative to the block.
 /// </summary>
 internal static class TableLayouter
 {
@@ -134,9 +135,16 @@ internal static class TableLayouter
                     _ => 0,
                 };
 
+                // The end stop is the first padding cell after the text, on the cell's last line of text.
+                ImmutableArray<Cell> padding = Blanks(extra - left + 1);
+                if (line == wrapped[column].Count - 1 && EndBlank(row, column) is { } end)
+                {
+                    padding = padding.SetItem(0, end);
+                }
+
                 cells.AddRange(Blanks(1 + left));
                 cells.AddRange(content);
-                cells.AddRange(Blanks(extra - left + 1));
+                cells.AddRange(padding);
                 cells.Add(Bar());
             }
 
@@ -154,6 +162,16 @@ internal static class TableLayouter
         row.Positions.IsDefault || column >= row.Positions.Length || row.Positions[column] == Cell.Synthetic
             ? null
             : new Cell(" ", 1, new CellStyle(StyleRole.Body), row.Positions[column], -1);
+
+    /// <summary>
+    /// The mapped blank after the text of a non-empty cell: one space at the offset just after the cell's last mapped character, so that the caret
+    /// has a stop after the text and can append to it. It is the first padding cell, so the grid is the same as with no blank. Null when the cell
+    /// has no mapped character (see <see cref="TableRowModel.ContentEnds"/>).
+    /// </summary>
+    private static Cell? EndBlank(TableRowModel row, int column) =>
+        row.ContentEnds.IsDefault || column >= row.ContentEnds.Length || row.ContentEnds[column] == Cell.Synthetic
+            ? null
+            : new Cell(" ", 1, new CellStyle(StyleRole.Body), row.ContentEnds[column], -1);
 
     /// <summary>A horizontal border with a corner or junction at each column edge, drawn as synthetic border cells.</summary>
     private static ImmutableArray<Cell> Border(ImmutableArray<int> widths, char left, char middle, char right)

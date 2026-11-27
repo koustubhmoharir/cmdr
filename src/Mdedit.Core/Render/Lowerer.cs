@@ -258,11 +258,32 @@ internal sealed class Lowerer
 
             int line = index == 0 ? 0 : index + 1;
             int rowStart = lineStarts[Math.Min(line, lineStarts.Length - 1)];
-            rows.Add(new TableRowModel(row.IsHeader, rowStart, RowCells(row, alignments.Length, rowStart, inlines), CellPositions(row, alignments.Length, start + rowStart, start)));
+            ImmutableArray<Run> cells = RowCells(row, alignments.Length, rowStart, inlines);
+            rows.Add(new TableRowModel(row.IsHeader, rowStart, cells, CellPositions(row, alignments.Length, start + rowStart, start), ContentEnds(cells, start, end)));
             index++;
         }
 
         return new TableModel(alignments, rows.ToImmutable());
+    }
+
+    /// <summary>
+    /// The source offset just after the last mapped character of each column's cell, relative to the block at <paramref name="start"/>, or
+    /// <see cref="Cell.Synthetic"/> for a column with no mapped character. The last mapped cell's source length is taken from the text, so an
+    /// entity or an escape ends where it ends in the source.
+    /// </summary>
+    /// <param name="cells">One run per column.</param>
+    /// <param name="start">The absolute offset of the block.</param>
+    /// <param name="end">The absolute offset of the block's end, exclusive.</param>
+    private ImmutableArray<int> ContentEnds(ImmutableArray<Run> cells, int start, int end)
+    {
+        var ends = ImmutableArray.CreateBuilder<int>(cells.Length);
+        foreach (Run run in cells)
+        {
+            int last = Array.FindLastIndex(run.Cells.ToArray(), cell => cell.IsMapped);
+            ends.Add(last < 0 ? Cell.Synthetic : run.Cells[last].Offset + SourceLength.Of(_text, start, end, run, last));
+        }
+
+        return ends.ToImmutable();
     }
 
     /// <summary>

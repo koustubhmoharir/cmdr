@@ -16,7 +16,8 @@ public sealed class TableEmptyCellLayoutTests
     {
         DocumentLayout layout = LayoutDump.Build(Empty);
 
-        Assert.Equal(new[] { 2, 7, 9 }, layout.Line(1).Cells.Where(cell => cell.IsMapped).Select(cell => cell.Offset).ToArray());
+        // 3 and 10 are the end stops of "a" and "c", the first padding cell after each.
+        Assert.Equal(new[] { 2, 3, 7, 9, 10 }, layout.Line(1).Cells.Where(cell => cell.IsMapped).Select(cell => cell.Offset).ToArray());
     }
 
     [Fact]

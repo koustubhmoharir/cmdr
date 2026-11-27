@@ -162,18 +162,22 @@ public static partial class ViewEdit
             return typed.Length == 0 ? Refuse(EditMessages.NothingSelected) : Insert(doc, start, typed);
         }
 
-        if (EditSite.Find(doc, start) is not { } first || EditSite.Find(doc, end) is not { } last)
+        // The ends are resolved by the blocks that hold them, not by caret stops: the end of a selection may be a place no stop is at, such as
+        // the offset just before a closing marker, and the cells the selection covers decide what goes.
+        int firstBlock = EditSite.BlockAt(doc, start);
+        int lastBlock = EditSite.BlockAt(doc, end);
+        if (firstBlock < 0 || lastBlock < 0)
         {
             return Refuse(EditMessages.NoPlace);
         }
 
-        if (first.BlockIndex != last.BlockIndex)
+        if (firstBlock != lastBlock)
         {
-            return ReplaceAcrossBlocks(doc, first, last, start, end, typed);
+            return ReplaceAcrossBlocks(doc, firstBlock, lastBlock, start, end, typed);
         }
 
-        RenderBlock block = doc.Blocks[first.BlockIndex];
-        if (block.Kind == BlockKind.Table && first.Run != last.Run)
+        RenderBlock block = doc.Blocks[firstBlock];
+        if (block.Kind == BlockKind.Table && EditSite.CellAt(block, start) != EditSite.CellAt(block, end))
         {
             return Refuse(EditMessages.CellSelection);
         }
@@ -186,7 +190,7 @@ public static partial class ViewEdit
 
         if (selected.Select(position => position.Run).Distinct().Count() > 1)
         {
-            return ReplaceAcrossLines(doc, first.BlockIndex, start, end, selected, typed);
+            return ReplaceAcrossLines(doc, firstBlock, start, end, selected, typed);
         }
 
         RemovalSet removals = RemovalSet.Of(doc, block, selected, typed.Length == 0);
@@ -198,7 +202,7 @@ public static partial class ViewEdit
         int at = block.Kind == BlockKind.Table && previous < 0 && next < 0
             ? block.Start + block.Runs[run].Cells[selected[0].Cell].Offset
             : EditSite.InsertionPoint(doc, block, block.Runs[run], previous, next);
-        return Write(new EditRequest(doc, first.BlockIndex, run, start, removals, at, typed, string.Empty));
+        return Write(new EditRequest(doc, firstBlock, run, start, removals, at, typed, string.Empty));
     }
 
     /// <summary>A deletion of the given cells, written at the start of what it removes.</summary>

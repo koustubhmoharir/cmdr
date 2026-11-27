@@ -18,19 +18,30 @@ internal static class SourceLength
     /// <param name="block">The block that owns the run.</param>
     /// <param name="run">The run.</param>
     /// <param name="index">The index of the cell in the run.</param>
-    public static int Of(RenderDocument doc, RenderBlock block, Run run, int index)
+    public static int Of(RenderDocument doc, RenderBlock block, Run run, int index) => Of(doc.Text, block.Start, block.End, run, index);
+
+    /// <summary>
+    /// The source length of the cell at <paramref name="index"/> of <paramref name="run"/>, for a block whose source is given by its text and bounds
+    /// (the lowering has no document yet).
+    /// </summary>
+    /// <param name="text">The source text the offsets refer to.</param>
+    /// <param name="blockStart">The absolute offset of the block's start.</param>
+    /// <param name="blockEnd">The absolute offset of the block's end, exclusive.</param>
+    /// <param name="run">The run.</param>
+    /// <param name="index">The index of the cell in the run.</param>
+    public static int Of(string text, int blockStart, int blockEnd, Run run, int index)
     {
         Cell cell = run.Cells[index];
-        int absolute = block.Start + cell.Offset;
-        int limit = Math.Min(doc.Text.Length, block.End);
+        int absolute = blockStart + cell.Offset;
+        int limit = Math.Min(text.Length, blockEnd);
         if (absolute >= limit)
         {
             return 1;
         }
 
-        if (doc.Text[absolute] == '&')
+        if (text[absolute] == '&')
         {
-            Match entity = EntityPattern.Match(doc.Text, absolute);
+            Match entity = EntityPattern.Match(text, absolute);
             int length = entity.Success ? Math.Min(entity.Length, limit - absolute) : 0;
             bool otherCellInside = run.Cells.Any(other => other.IsMapped && other.Offset > cell.Offset && other.Offset < cell.Offset + length);
             if (length > 0 && !otherCellInside)
@@ -39,6 +50,6 @@ internal static class SourceLength
             }
         }
 
-        return StringInfo.GetNextTextElementLength(doc.Text.AsSpan(absolute, limit - absolute));
+        return StringInfo.GetNextTextElementLength(text.AsSpan(absolute, limit - absolute));
     }
 }

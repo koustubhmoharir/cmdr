@@ -17,20 +17,18 @@ public static partial class ViewEdit
     /// <c>OnlyBlockPending</c>).
     /// </summary>
     /// <param name="doc">The document.</param>
-    /// <param name="first">The stop the selection starts at.</param>
-    /// <param name="last">The stop the selection ends at, in a later block.</param>
+    /// <param name="a">The index of the block the selection starts in.</param>
+    /// <param name="b">The index of the block the selection ends in, a later one.</param>
     /// <param name="start">The selection's start offset.</param>
     /// <param name="end">The selection's end offset.</param>
     /// <param name="typed">The text that takes the selection's place; empty deletes it.</param>
-    private static ViewEditResult ReplaceAcrossBlocks(RenderDocument doc, Site first, Site last, int start, int end, string typed)
+    private static ViewEditResult ReplaceAcrossBlocks(RenderDocument doc, int a, int b, int start, int end, string typed)
     {
         string text = doc.Text;
-        int a = first.BlockIndex;
-        int b = last.BlockIndex;
         RenderBlock head = doc.Blocks[a];
         RenderBlock tail = doc.Blocks[b];
-        bool headWhole = start == FirstStop(doc, head);
-        bool tailWhole = end == LastStop(doc, tail);
+        bool headWhole = start <= FirstStop(doc, head);
+        bool tailWhole = end >= LastStop(doc, tail);
         bool headKeeps = !(headWhole && typed.Length == 0);
         bool tailKeeps = !tailWhole;
         if ((IsWholeOnly(head) && headKeeps) || (IsWholeOnly(tail) && tailKeeps))
@@ -50,7 +48,7 @@ public static partial class ViewEdit
         {
             // The text before the selection, the typed text and the text after it are one block: the first block's kind and containers.
             int at = EditSite.EscapeStart(doc, head, start);
-            int to = tailKeeps ? EditSite.EscapeStart(doc, tail, end) : tail.End;
+            int to = tailKeeps ? KeptFrom(doc, tail, end) : tail.End;
             string written = Escaper.Escape(typed, EditSite.LinePrefix(text, at), EditSite.IsRaw(head, at));
             string joined = BlockText.Split(head, start).Before + typed + (tailKeeps ? BlockText.Split(tail, end).After : string.Empty);
             expected.RemoveRange(a, b - a + 1);
@@ -62,7 +60,7 @@ public static partial class ViewEdit
         {
             // The first block is removed. The last block keeps its containers and marker, and loses only the text the selection covers.
             int tailLine = LineStart(text, tail.Start);
-            int to = EditSite.EscapeStart(doc, tail, end);
+            int to = KeptFrom(doc, tail, end);
             string after = text[..headLine] + text[tailLine..tail.Start] + text[to..];
             expected.RemoveRange(a, b - a + 1);
             expected.Insert(a, shapes[b] with { Text = Trimmed(tail, BlockText.Split(tail, end).After) });
@@ -130,6 +128,29 @@ public static partial class ViewEdit
                 yield return empty;
             }
         }
+    }
+
+    /// <summary>
+    /// Where the text a selection leaves in a block begins, for the selection's end in it. An end that is a caret stop keeps its text from there. An
+    /// end that is no stop (just before a closing marker, say) keeps from the first mapped cell after it, so that the markup the selection covers goes
+    /// with it; the block's end when no cell follows.
+    /// </summary>
+    /// <param name="doc">The document.</param>
+    /// <param name="block">The block the end is in.</param>
+    /// <param name="end">The selection's end offset in the block.</param>
+    private static int KeptFrom(RenderDocument doc, RenderBlock block, int end)
+    {
+        if (Stops(doc, block).Contains(end))
+        {
+            return EditSite.EscapeStart(doc, block, end);
+        }
+
+        List<int> following = block.Runs
+            .SelectMany(run => run.Cells)
+            .Where(cell => cell.IsMapped && block.Start + cell.Offset >= end)
+            .Select(cell => block.Start + cell.Offset)
+            .ToList();
+        return following.Count == 0 ? block.End : EditSite.EscapeStart(doc, block, following.Min());
     }
 
     /// <summary>The first caret stop of a block: where its text starts, or its start when it has no stop.</summary>

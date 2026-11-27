@@ -85,6 +85,59 @@ internal static class EditSite
     }
 
     /// <summary>
+    /// The index of the block a source offset lies in, both ends included, so that a selection's end that is no caret stop (just before a closing
+    /// marker, say) still resolves to its block. -1 when no block holds it, as in the blank lines between blocks.
+    /// </summary>
+    /// <param name="doc">The document.</param>
+    /// <param name="offset">The absolute source offset.</param>
+    public static int BlockAt(RenderDocument doc, int offset)
+    {
+        for (int b = 0; b < doc.Blocks.Length; b++)
+        {
+            if (doc.Blocks[b].Start <= offset && offset <= doc.Blocks[b].End)
+            {
+                return b;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// The run of a table block that a source offset belongs to: the cell whose stop it is (a mapped cell or an empty cell's place), else the cell
+    /// of the last mapped character before it, else the first cell. Used to tell whether a selection is inside one cell.
+    /// </summary>
+    /// <param name="block">A table block.</param>
+    /// <param name="offset">The absolute source offset.</param>
+    public static int CellAt(RenderBlock block, int offset)
+    {
+        for (int r = 0; r < block.Runs.Length; r++)
+        {
+            if (block.Runs[r].Cells.Any(cell => cell.IsMapped && block.Start + cell.Offset == offset) || EmptyCellOffset(block, r) == offset)
+            {
+                return r;
+            }
+        }
+
+        int run = 0;
+        int last = int.MinValue;
+        for (int r = 0; r < block.Runs.Length; r++)
+        {
+            foreach (Cell cell in block.Runs[r].Cells.Where(cell => cell.IsMapped))
+            {
+                int at = block.Start + cell.Offset;
+                if (at < offset && at > last)
+                {
+                    last = at;
+                    run = r;
+                }
+            }
+        }
+
+        return run;
+    }
+
+    /// <summary>
     /// The absolute offset of the caret stop of an empty table cell: its place between its pipes, where the layout draws a blank for it. -1 when
     /// the run is not an empty cell of a table, or the row has no such column.
     /// </summary>
