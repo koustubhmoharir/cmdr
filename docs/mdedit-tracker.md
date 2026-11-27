@@ -83,7 +83,7 @@ The first version is M0–M3.
 
 - [x] Core: `TableSource` (the table as written, aligned or not) and `TableEdit` (cell text, rows, columns, alignment, with
       verification). (3a08348)
-- [x] View: the inline cell field (F2, Enter), Alt+arrows, the table menu (Alt+T, right-click). (this commit)
+- [x] View: the inline cell field (F2, Enter), Alt+arrows, the table menu (Alt+T, right-click). (c96a8b5)
 - [ ] Windows acceptance pass. *(Windows)*
 
 ## M6. Rendered-view editing
