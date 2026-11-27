@@ -13,15 +13,16 @@ internal static class MdeditHints
     private static Hint OpenFile { get; } = KeyHints.Bound(Key.O.WithCtrl, "^O Open file");
 
     /// <summary>
-    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Edit, Save, Find, Copy, Fold, Open. The
-    /// quit key is the right part (see <see cref="Quit"/>), so it stays on the row when the left part is cut.
+    /// The key hints of the viewer, the most important first, so that the row keeps them when it is cut: Source, Save, Find, Copy, Fold,
+    /// Outline, Open. The quit key is the right part (see <see cref="Quit"/>), so it stays on the row when the left part is cut.
     /// </summary>
     public static Hint View { get; } = KeyHints.Join(
-        KeyHints.Bound(Key.T.WithCtrl, "^T Edit"),
+        KeyHints.Bound(Key.T.WithCtrl, "^T Source"),
         KeyHints.Bound(Key.S.WithCtrl, "^S Save"),
-        KeyHints.Bound('/', "/ Find"),
-        KeyHints.Bound('y', "y Copy"),
-        KeyHints.Bound(Key.Space, "Space Fold"),
+        KeyHints.Bound(Key.F.WithCtrl, "^F Find"),
+        KeyHints.Bound(Key.C.WithCtrl, "^C Copy"),
+        KeyHints.Bound(RenderedView.ToggleFoldKey, "Alt+F Fold"),
+        KeyHints.Bound(MainWindow.OutlineKey, "Alt+O Outline"),
         KeyHints.Bound(Key.O.WithCtrl, "^O Open"));
 
     /// <summary>

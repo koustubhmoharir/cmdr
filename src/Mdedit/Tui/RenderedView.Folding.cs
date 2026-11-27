@@ -13,9 +13,9 @@ namespace Mdedit.Tui;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Target.</b> Space, <c>*</c>, a click on a head's glyph and the menu act on the <i>target</i> of a line: the unit whose head is on the
-/// line, else the innermost unit around the line's block (a section, or a code block the line is in). <c>-</c> takes the innermost
-/// section around the caret.
+/// <b>Target.</b> Alt+F, a click on a head's glyph and the menu act on the <i>target</i> of a line: the unit whose head is on the
+/// line, else the innermost unit around the line's block (a section, or a code block the line is in). The menu's "Fold section" takes
+/// the innermost section around the caret.
 /// </para>
 /// <para>
 /// <b>Heads.</b> A folded code block's header line maps the block's start through its label, so a caret that the fold hides moves to that
@@ -30,6 +30,12 @@ internal sealed partial class RenderedView
     /// <summary>Whether a fold unit is folded in the view.</summary>
     /// <param name="unit">A unit of the document.</param>
     public bool IsFolded(FoldUnit unit) => _folded.Contains(unit.Start);
+
+    /// <summary>
+    /// Whether the cursor is on the head of a folded unit: the head's line, which the fold's summary follows. The view does not edit it while the
+    /// unit is folded.
+    /// </summary>
+    public bool CursorOnFoldedHead => HasCursor && Built.FoldUnitAt(_line) is { } unit && IsFolded(unit);
 
     /// <summary>Folds the unit when it is unfolded, and unfolds it when it is folded. The layout is rebuilt and the caret keeps its row.</summary>
     /// <param name="unit">A unit of the document.</param>
@@ -118,30 +124,25 @@ internal sealed partial class RenderedView
         return found;
     }
 
+    /// <summary>The key that toggles the caret's target: Alt+F, as the editor's fold key.</summary>
+    internal static readonly Key ToggleFoldKey = Key.F.WithAlt;
+
+    // The keys that show the headings down to a level: Alt+1 is level 1, and so on to Alt+6.
+    private static readonly Key[] LevelKeys = [Key.D1.WithAlt, Key.D2.WithAlt, Key.D3.WithAlt, Key.D4.WithAlt, Key.D5.WithAlt, Key.D6.WithAlt];
+
     /// <summary>
-    /// The keys of the fold state: Space toggles the target, <c>*</c> unfolds the target and every unit inside it, <c>-</c> folds the innermost
-    /// section around the caret, <c>1</c> to <c>6</c> show the headings down to that level, and <c>0</c> unfolds everything. Returns false for
-    /// any other key, and for a key with no target.
+    /// The keys of the fold state: Alt+F toggles the target, Alt+1 to Alt+6 show the headings down to that level, and Alt+0 unfolds everything.
+    /// Returns false for any other key, and for a key with no target.
     /// </summary>
     /// <param name="key">The key.</param>
     private bool FoldKey(Key key)
     {
-        if (IsPlain(key, ' '))
+        if (key == ToggleFoldKey)
         {
             return ToggleTarget();
         }
 
-        if (IsPlain(key, '*'))
-        {
-            return UnfoldTarget();
-        }
-
-        if (IsPlain(key, '-'))
-        {
-            return FoldSectionAroundCaret();
-        }
-
-        if (IsPlain(key, '0'))
+        if (key == Key.D0.WithAlt)
         {
             if (_folded.Count == 0)
             {
@@ -152,13 +153,14 @@ internal sealed partial class RenderedView
             return true;
         }
 
-        if (IsPlain(key, '1') || IsPlain(key, '2') || IsPlain(key, '3') || IsPlain(key, '4') || IsPlain(key, '5') || IsPlain(key, '6'))
+        int level = Array.IndexOf(LevelKeys, key) + 1;
+        if (level == 0)
         {
-            ShowLevel(key.AsRune.Value - '0');
-            return true;
+            return false;
         }
 
-        return false;
+        ShowLevel(level);
+        return true;
     }
 
     /// <summary>Toggles the caret's target. Returns false when there is none.</summary>
@@ -173,38 +175,30 @@ internal sealed partial class RenderedView
         return true;
     }
 
-    /// <summary>Unfolds the caret's target and every unit inside it. Returns false when there is no target.</summary>
-    private bool UnfoldTarget()
+    /// <summary>
+    /// Unfolds a unit and every unit inside it: the menu's "Unfold all inside". The layout is rebuilt and the caret keeps its row.
+    /// </summary>
+    /// <param name="target">A unit of the document.</param>
+    public void UnfoldInside(FoldUnit target) => ChangeFolds(() =>
     {
-        if (CaretTarget() is not { } target)
+        foreach (FoldUnit unit in _document.FoldUnits)
         {
-            return false;
-        }
-
-        ChangeFolds(() =>
-        {
-            foreach (FoldUnit unit in _document.FoldUnits)
+            if (unit.HeadBlock >= target.HeadBlock && unit.HeadBlock < target.EndBlock)
             {
-                if (unit.HeadBlock >= target.HeadBlock && unit.HeadBlock < target.EndBlock)
-                {
-                    _folded.Remove(unit.Start);
-                }
+                _folded.Remove(unit.Start);
             }
-        });
-        return true;
-    }
-
-    /// <summary>Folds the innermost section around the caret. Returns false when the caret is in no section.</summary>
-    private bool FoldSectionAroundCaret()
-    {
-        if (!HasCursor || UnitAround(BlockOfLine(_line), sectionsOnly: true) is not { } section)
-        {
-            return false;
         }
+    });
 
-        ChangeFolds(() => _folded.Add(section.Start));
-        return true;
-    }
+    /// <summary>
+    /// The innermost section around the caret, which the menu's "Fold section" folds; null when the caret is in no section or there is no
+    /// cursor.
+    /// </summary>
+    public FoldUnit? SectionAroundCaret() => HasCursor ? UnitAround(BlockOfLine(_line), sectionsOnly: true) : null;
+
+    /// <summary>Folds a section. The layout is rebuilt and the caret keeps its row.</summary>
+    /// <param name="section">A section of the document, from <see cref="SectionAroundCaret"/>.</param>
+    public void FoldSection(FoldUnit section) => ChangeFolds(() => _folded.Add(section.Start));
 
     /// <summary>Folds every section whose heading is deeper than a level, and unfolds the others. Code units keep their state.</summary>
     /// <param name="level">The deepest heading level still shown, from 1 to 6.</param>
@@ -240,6 +234,7 @@ internal sealed partial class RenderedView
             return;
         }
 
+        SetPending(null);
         bool wasVisible = IsCursorVisible();
         change();
         Reflow(Built.Width);

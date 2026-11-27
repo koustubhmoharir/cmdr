@@ -21,10 +21,8 @@ public sealed partial class MainWindowTests
     // The outline's rows, as the list shows them.
     private static readonly string[] OutlinedRows = ["Install", "  Linux", "  Windows"];
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void In_view_mode_o_and_Alt_O_open_the_outline_listing_every_heading(bool alt)
+    [Fact]
+    public void In_view_mode_Alt_O_opens_the_outline_listing_every_heading()
     {
         OpenedFile file = Opened("notes.md", Outlined);
         List<string> rows = [];
@@ -41,7 +39,7 @@ public sealed partial class MainWindowTests
                     rows.AddRange(dialog.Rows.Select(row => row.Label));
                     title = dialog.Title;
                 });
-                window.NewKeyDownEvent(alt ? MainWindow.OutlineKey : new Key('o'));
+                window.NewKeyDownEvent(MainWindow.OutlineKey);
                 outline.Finish();
             });
 

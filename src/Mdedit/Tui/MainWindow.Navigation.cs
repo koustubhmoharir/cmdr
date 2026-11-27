@@ -5,7 +5,7 @@ using Terminal.Gui.Input;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The links of the window, in view mode: the message line shows the link under the caret, Tab and Shift+Tab move between links, Enter and a
+/// The links of the window, in view mode: the message line shows the link under the caret, Tab and Shift+Tab move between links, Enter, Ctrl+Enter and a
 /// Ctrl+click follow one, and Alt+Left goes back to the file that a followed link left.
 /// </summary>
 /// <remarks>
@@ -70,7 +70,7 @@ internal sealed partial class MainWindow
     internal string LeftStatus() => _view.CaretLink is { } link ? LinkArrow + link.Url : HeadingPath();
 
     /// <summary>
-    /// The window's link keys in view mode: Tab and Shift+Tab (with the message of a wrap), Enter on a link, and Alt+Left. Returns false for a
+    /// The window's link keys in view mode: Tab and Shift+Tab (with the message of a wrap), Enter and Ctrl+Enter on a link, and Alt+Left. Returns false for a
     /// key it does not bind. The view has already taken the keys it moves the caret with.
     /// </summary>
     private bool HandleLinkKey(Key key)
@@ -87,7 +87,7 @@ internal sealed partial class MainWindow
             return true;
         }
 
-        if (key == Key.Enter && _view.CaretLink is { } link)
+        if (IsFollowKey(key) && _view.CaretLink is { } link)
         {
             FollowLink(link);
             return true;
@@ -101,6 +101,15 @@ internal sealed partial class MainWindow
 
         return false;
     }
+
+    /// <summary>
+    /// The key that line feed sends: many terminals send Ctrl+Enter as a line feed (Ctrl+J), so it follows a link as Ctrl+Enter does.
+    /// </summary>
+    internal static readonly Key LineFeedKey = Key.J.WithCtrl;
+
+    /// <summary>The keys that follow the link at the caret: Enter, Ctrl+Enter, and the line feed of Ctrl+Enter (see <see cref="LineFeedKey"/>).</summary>
+    /// <param name="key">The key.</param>
+    private static bool IsFollowKey(Key key) => key == Key.Enter || key == Key.Enter.WithCtrl || key == LineFeedKey;
 
     /// <summary>Shows the message of a Tab or Shift+Tab that wrapped or found no link. A move that did not wrap shows the link's URL, as the status does.</summary>
     private void ShowLinkMove(LinkMove move, bool forward)

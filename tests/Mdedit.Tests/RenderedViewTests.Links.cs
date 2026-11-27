@@ -74,7 +74,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.PlaceCaret(Offset(Linked, "Section"), null),
-            v => v.HandleKey(Key.Space),
+            v => v.HandleKey(RenderedView.ToggleFoldKey),
             v => v.PlaceCaret(Offset(Linked, "two"), null),
             v => moves.Add(v.MoveToLink(forward: true)));
 
@@ -149,7 +149,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.PlaceCaret(Offset(Linked, "Guide"), null),
-            v => v.HandleKey(Key.Space),
+            v => v.HandleKey(RenderedView.ToggleFoldKey),
             v => v.GoTo(Offset(Linked, "Section"), Offset(Linked, "Section")));
 
         Assert.Equal(Offset(Linked, "Section"), result.Snaps[^1].Offset);

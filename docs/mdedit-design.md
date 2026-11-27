@@ -105,17 +105,18 @@ errors exit 2.
 
 | Key | |
 |---|---|
-| PgUp/PgDn, g/G, Ctrl+Home/End | Page, first / last line |
-| Tab / Shift+Tab | Next / previous link; Enter follows it |
-| Enter or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself |
-| `o` | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters. Alt+O in edit mode |
-| `/`, Ctrl+F; n/N, F3/Shift+F3 | Find in the rendered text (SearchBar); the match is selected and scrolled into view |
-| `y`, Ctrl+C / `Y` | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor |
+| PgUp/PgDn, Ctrl+Home/End | Page, first / last line |
+| Typed characters, Backspace, Delete | Edit the rendered text (see Rendered-view editing) |
+| Tab / Shift+Tab | Next / previous link (in a table, the next / previous cell) |
+| Ctrl+Enter (or Ctrl+J), Enter, or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself. Enter becomes an edit key in M6b |
+| Alt+O | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters. Alt+O in edit mode too |
+| Ctrl+F; F3/Shift+F3 | Find in the rendered text (SearchBar); the match is selected and scrolled into view |
+| Ctrl+C / Alt+C | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor |
 | Arrows, Home/End (with Shift to select) | Move the cursor in the rendered text (see Cursor). In a table, Left/Right at a cell's edge go to the next cell |
-| Space | Fold or unfold the section or code block under the cursor (see Folding) |
-| `*` / `-` | Unfold everything under the cursor's section / fold the section the cursor is in |
-| `1`–`6`, `0` | Show headings down to that level, folding the deeper sections / unfold all |
-| `<` / `>` in a table | Scroll the table horizontally (the cursor's cell stays visible). Shift+arrows select, everywhere |
+| Alt+F | Fold or unfold the section or code block under the cursor (see Folding) |
+| Right-click menu: Unfold all inside / Fold section | Unfold everything under the cursor's unit / fold the section the cursor is in |
+| Alt+1–Alt+6, Alt+0 | Show headings down to that level, folding the deeper sections / unfold all |
+| Shift+wheel in a table | Scroll the table horizontally (moving the cursor keeps its cell visible) |
 | F2 in a table cell (Enter too, when not on a link) | Edit the cell (M5) |
 | Alt+Up/Down, Alt+Left/Right in a table | Move the row / column (M5) |
 | Alt+T in a table | Table menu: rows, columns, alignment (M5) |
@@ -225,7 +226,7 @@ A pipe table is laid out as a grid with box-drawing borders, sized by its column
    shift, and the rest of the document stays put. A dim `◂` / `▸` at the row edges shows hidden columns on that side.
 
 Each table has its own horizontal offset in the view, keyed like fold state (below). Moving the cursor
-into a hidden column scrolls the table to show it; `<`/`>`, Shift+wheel and the edge markers scroll it.
+into a hidden column scrolls the table to show it; Shift+wheel and the edge markers scroll it.
 A table that fits has no offset.
 
 ### Table editing (M5)
@@ -261,7 +262,7 @@ The fold units are sections (a heading and everything up to the next heading of 
 
 ## Copy
 
-The selection is held as a source range. Copy works the same with the keyboard (`y` / `Y`) and the right-click menu.
+The selection is held as a source range. Copy works the same with the keyboard (Ctrl+C / Alt+C) and the right-click menu.
 
 - **Plain text** is the rendered text of the selection: wrapped lines joined, soft breaks as spaces, hard breaks and block
   boundaries as line breaks, bullets as `-` and numbers as written, task boxes as `[ ]`/`[x]`, tables as tab-separated rows,

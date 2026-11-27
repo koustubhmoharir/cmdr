@@ -85,4 +85,66 @@ public sealed partial class MainWindowTests
         Assert.Null(session.Window.View.SelectionRange);
         Assert.Equal(Copyable.IndexOf("Title", StringComparison.Ordinal), session.Window.View.CursorOffset);
     }
+
+    [Fact]
+    public void A_right_click_on_a_heading_offers_Unfold_all_inside_and_Fold_section_after_Fold()
+    {
+        OpenedFile file = Opened("notes.md", Small);
+
+        Session session = Run(
+            file,
+            40,
+            12,
+            (_, window) => window.View.HandleMouse(new Mouse { Flags = MouseFlags.RightButtonClicked, Position = new Point(3, 0), ScreenPosition = new Point(5, 3) }));
+
+        TerminalScreen screen = session.Screens[^1];
+        Assert.Contains("Fold", screen.Text(5), StringComparison.Ordinal);
+        Assert.Contains("Unfold all inside", screen.Text(6), StringComparison.Ordinal);
+        Assert.Contains("Fold section", screen.Text(7), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Choosing_Fold_section_folds_the_section_around_the_caret()
+    {
+        OpenedFile file = Opened("notes.md", Small);
+
+        Session session = Run(
+            file,
+            40,
+            12,
+            (_, window) => window.View.HandleMouse(new Mouse { Flags = MouseFlags.RightButtonClicked, Position = new Point(3, 0), ScreenPosition = new Point(5, 3) }),
+            (app, _) =>
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    app.Keyboard.RaiseKeyDownEvent(Key.CursorDown);
+                }
+            },
+            (app, _) => app.Keyboard.RaiseKeyDownEvent(Key.Enter));
+
+        Assert.True(session.Window.View.IsFolded(session.Window.View.Units[0]));
+    }
+
+    [Fact]
+    public void Choosing_Unfold_all_inside_unfolds_the_unit_under_the_click_and_what_is_inside_it()
+    {
+        OpenedFile file = Opened("notes.md", Small);
+
+        Session session = Run(
+            file,
+            40,
+            12,
+            (_, window) => window.View.ToggleFold(window.View.Units[0]),
+            (_, window) => window.View.HandleMouse(new Mouse { Flags = MouseFlags.RightButtonClicked, Position = new Point(3, 0), ScreenPosition = window.View.ViewportToScreen(new Point(3, 0)) }),
+            (app, _) =>
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    app.Keyboard.RaiseKeyDownEvent(Key.CursorDown);
+                }
+            },
+            (app, _) => app.Keyboard.RaiseKeyDownEvent(Key.Enter));
+
+        Assert.False(session.Window.View.IsFolded(session.Window.View.Units[0]));
+    }
 }

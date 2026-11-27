@@ -218,6 +218,7 @@ internal sealed partial class MainWindow : Window, ISearchHost
 
         _view.PositionChanged += ShowStatus;
         _view.KeyPressed += ClearMessage;
+        _view.CommandPressed += EndRun;
         _view.ContextMenuRequested += ShowContextMenu;
         _view.LinkActivated += FollowLink;
         _editor.BufferChanged += OnBufferChanged;
@@ -305,8 +306,9 @@ internal sealed partial class MainWindow : Window, ISearchHost
     /// <summary>
     /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
     /// both modes, and Alt+O opens the outline (see <see cref="HandleOutlineKey"/>). In edit mode Esc closes an open search or else
-    /// returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see <see cref="HandleEditKey"/>). In view mode Esc is swallowed (or closes an
-    /// open search), Ctrl+Z and Ctrl+Y undo and redo, and the view's search and copy keys apply.
+    /// returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see <see cref="HandleEditKey"/>). In view mode typed characters, Backspace and
+    /// Delete edit the text (see <c>MainWindow.ViewEditing.cs</c>), Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and
+    /// redo, and the view's search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
@@ -351,8 +353,19 @@ internal sealed partial class MainWindow : Window, ISearchHost
             return HandleEditKey(key) || base.OnKeyDown(key);
         }
 
+        // Ctrl+Z drops a pending insertion before it undoes anything; any other command ends the typing run (see ViewEditing).
+        if (ReleaseTypingFor(key))
+        {
+            return true;
+        }
+
         // The table keys come before the links, so that Alt+Left moves the column in a table, and Enter edits a cell unless it is on a link.
         if (HandleTableKey(key))
+        {
+            return true;
+        }
+
+        if (HandleViewEditKey(key))
         {
             return true;
         }
@@ -458,6 +471,8 @@ internal sealed partial class MainWindow : Window, ISearchHost
         int offset = _view.CursorOffset;
         int? anchor = _view.SelectionAnchor;
         _search.Close();
+        EndRun();
+        _view.SetPending(null);
         _editing = true;
         _view.Visible = false;
         _editor.Visible = true;
@@ -489,6 +504,8 @@ internal sealed partial class MainWindow : Window, ISearchHost
         }
 
         _search.Close();
+        EndRun();
+        _view.SetPending(null);
         int offset = _editor.CaretOffset;
         int? anchor = _editor.SelectionAnchor;
         CancelFoldTimer();
@@ -627,29 +644,28 @@ internal sealed partial class MainWindow : Window, ISearchHost
     // ----- Search and copy -----
 
     /// <summary>
-    /// The keys of the view's search and copy: <c>/</c> and Ctrl+F open the bar, <c>n</c> and F3 go to the next match, <c>N</c> and
-    /// Shift+F3 to the previous one, <c>y</c> and Ctrl+C copy the selection (or the block under the cursor) as plain text, and <c>Y</c>
-    /// as Markdown. Returns false for a key they do not bind.
+    /// The keys of the view's search and copy: Ctrl+F opens the bar, F3 goes to the next match and Shift+F3 to the previous one, Ctrl+C copies
+    /// the selection (or the block under the cursor) as plain text, and Alt+C as Markdown. Returns false for a key they do not bind.
     /// </summary>
     private bool HandleSearchKey(Key key)
     {
-        if (IsPlain(key, 'y') || key == Key.C.WithCtrl)
+        if (key == Key.C.WithCtrl)
         {
             CopyView(markdown: false);
         }
-        else if (IsPlain(key, 'Y'))
+        else if (key == Key.C.WithAlt)
         {
             CopyView(markdown: true);
         }
-        else if (key == Key.F.WithCtrl || IsPlain(key, '/'))
+        else if (key == Key.F.WithCtrl)
         {
             _search.Open(focusBar: true);
         }
-        else if (key == Key.F3 || IsPlain(key, 'n'))
+        else if (key == Key.F3)
         {
             _search.Find(next: true);
         }
-        else if (key == Key.F3.WithShift || IsPlain(key, 'N'))
+        else if (key == Key.F3.WithShift)
         {
             _search.Find(next: false);
         }
@@ -694,9 +710,9 @@ internal sealed partial class MainWindow : Window, ISearchHost
 
     /// <summary>
     /// Opens the context menu at a screen position, the mouse's for a right-click and the cursor's for the menu key. The entries are Copy
-    /// text and Copy Markdown, Fold or Unfold (labelled by the state of the unit at that position) when a unit is there, and the table items
-    /// (see <see cref="TableItems"/>) when the caret is in a table cell. The menu is built for each opening, since its entries depend on the
-    /// position.
+    /// text and Copy Markdown; Fold or Unfold (labelled by the state of the unit at that position), Unfold all inside, and Fold section (the
+    /// section around the caret) when they apply; and the table items (see <see cref="TableItems"/>) when the caret is in a table cell. The
+    /// menu is built for each opening, since its entries depend on the position.
     /// </summary>
     /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
     private void ShowContextMenu(Point screen)
@@ -710,6 +726,12 @@ internal sealed partial class MainWindow : Window, ISearchHost
         {
             string label = _view.IsFolded(unit) ? "Unfold" : "Fold";
             items.Add(new MenuItem(commandText: label, action: () => _view.ToggleFold(unit)));
+            items.Add(new MenuItem(commandText: "Unfold all inside", action: () => _view.UnfoldInside(unit)));
+        }
+
+        if (_view.SectionAroundCaret() is { } section)
+        {
+            items.Add(new MenuItem(commandText: "Fold section", action: () => _view.FoldSection(section)));
         }
 
         if (_view.TableCellAtCaret() is { } cell)
@@ -782,9 +804,6 @@ internal sealed partial class MainWindow : Window, ISearchHost
 
         base.Dispose(disposing);
     }
-
-    /// <summary>A key with no modifier, that types the character.</summary>
-    private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;
 
     /// <summary>
     /// The heading path above the top line: the headings that start at or before the top line's text, outermost first, each heading
@@ -1019,6 +1038,7 @@ internal sealed partial class MainWindow : Window, ISearchHost
     /// </summary>
     private bool ReplaceBufferWithFile()
     {
+        EndRun();
         TextDocument buffer = _editor.Buffer;
         bool hadHistory = buffer.UndoStack.CanUndo;
         string current = buffer.Text;

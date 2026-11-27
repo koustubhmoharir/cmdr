@@ -24,13 +24,13 @@ public sealed partial class MainWindowTests
     private static readonly Color ActiveBackground = new(ColorName16.BrightCyan);
 
     [Fact]
-    public void Slash_opens_the_bar_above_the_message_line_with_the_focus_in_it()
+    public void Ctrl_F_opens_the_bar_above_the_message_line_with_the_focus_in_it()
     {
         OpenedFile file = Opened("notes.md", Found);
 
         bool fieldFocus = false;
 
-        Session session = Run(file, 40, 12, (_, window) => window.NewKeyDownEvent(new Key('/')), (_, window) => fieldFocus = window.Search.Bar.HasFieldFocus);
+        Session session = Run(file, 40, 12, (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl), (_, window) => fieldFocus = window.Search.Bar.HasFieldFocus);
 
         TerminalScreen screen = session.Screens[1];
         Assert.StartsWith("Find:", screen.Text(BarRow), StringComparison.Ordinal);
@@ -50,7 +50,7 @@ public sealed partial class MainWindowTests
             file,
             40,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "web"),
             (_, window) => window.NewKeyDownEvent(Key.Enter),
             (_, window) => viewFocus = window.View.HasFocus);
@@ -70,10 +70,10 @@ public sealed partial class MainWindowTests
             file,
             40,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "web"),
             (_, window) => window.NewKeyDownEvent(Key.Enter),
-            (_, window) => window.NewKeyDownEvent(new Key('n')));
+            (_, window) => window.NewKeyDownEvent(Key.F3));
 
         TerminalScreen after = session.Screens[^1];
         Assert.Equal(new[] { "web", "web" }, Highlighted(after));
@@ -82,7 +82,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void n_and_N_and_F3_and_Shift_F3_move_through_the_matches_and_wrap_with_a_message()
+    public void F3_and_Shift_F3_move_through_the_matches_and_wrap_with_a_message()
     {
         OpenedFile file = Opened("notes.md", Found);
         int first = Found.IndexOf("web", StringComparison.Ordinal);
@@ -94,15 +94,15 @@ public sealed partial class MainWindowTests
             file,
             40,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "web"),
             (_, window) => window.NewKeyDownEvent(Key.Enter),
-            (_, window) => { window.NewKeyDownEvent(new Key('n')); Record(window); },
-            (_, window) => { window.NewKeyDownEvent(new Key('n')); Record(window); },
+            (_, window) => { window.NewKeyDownEvent(Key.F3); Record(window); },
+            (_, window) => { window.NewKeyDownEvent(Key.F3); Record(window); },
             (_, window) => { window.NewKeyDownEvent(Key.F3.WithShift); Record(window); },
             (_, window) => { window.NewKeyDownEvent(Key.F3.WithShift); Record(window); },
             (_, window) => { window.NewKeyDownEvent(Key.F3); Record(window); },
-            (_, window) => { window.NewKeyDownEvent(new Key('N')); Record(window); });
+            (_, window) => { window.NewKeyDownEvent(Key.F3.WithShift); Record(window); });
 
         // After Enter the first match is selected; n goes to the second, n wraps to the first, Shift+F3 wraps to the second, Shift+F3
         // goes to the first, F3 goes to the second, and N goes back to the first.
@@ -124,7 +124,7 @@ public sealed partial class MainWindowTests
             40,
             12,
             (_, window) => window.View.SelectRange(new SourceRange(Found.IndexOf("Other", StringComparison.Ordinal), Found.IndexOf("Other", StringComparison.Ordinal) + 1)),
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "web"),
             (_, window) => window.NewKeyDownEvent(Key.Enter));
 
@@ -140,7 +140,7 @@ public sealed partial class MainWindowTests
             file,
             40,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "zzz"),
             (_, window) => window.NewKeyDownEvent(Key.Enter));
 
@@ -158,7 +158,7 @@ public sealed partial class MainWindowTests
             file,
             80,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => window.NewKeyDownEvent(Key.R.WithAlt),
             (_, window) => Type(window, "("));
 
@@ -177,7 +177,7 @@ public sealed partial class MainWindowTests
             file,
             40,
             12,
-            (_, window) => window.NewKeyDownEvent(new Key('/')),
+            (_, window) => window.NewKeyDownEvent(Key.F.WithCtrl),
             (_, window) => Type(window, "web"),
             (_, window) => window.NewKeyDownEvent(Key.Esc),
             (_, window) => window.NewKeyDownEvent(Key.Esc),

@@ -17,7 +17,7 @@ public sealed partial class MainWindowTests
     private const string Copyable = "# Title\n\nSome **bold** text.\n\nSecond paragraph.\n";
 
     [Fact]
-    public void y_with_a_selection_copies_its_plain_text_and_says_so()
+    public void Ctrl_C_with_a_selection_copies_its_plain_text_and_says_so()
     {
         OpenedFile file = Opened("notes.md", Copyable);
         var written = new List<string>();
@@ -32,7 +32,7 @@ public sealed partial class MainWindowTests
                 window.WriteRaw = written.Add;
                 window.View.SelectRange(new SourceRange(bold, bold + 4));
             },
-            (_, window) => window.NewKeyDownEvent(new Key('y')));
+            (_, window) => window.NewKeyDownEvent(Key.C.WithCtrl));
 
         Assert.Equal(new[] { Osc52.Build("bold") }, written);
         Assert.Equal("bold", Decoded(written[0]));
@@ -40,7 +40,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Y_with_a_selection_copies_its_Markdown_with_the_delimiters_of_the_strong_text_it_cuts()
+    public void Alt_C_with_a_selection_copies_its_Markdown_with_the_delimiters_of_the_strong_text_it_cuts()
     {
         OpenedFile file = Opened("notes.md", Copyable);
         var written = new List<string>();
@@ -55,7 +55,7 @@ public sealed partial class MainWindowTests
                 window.WriteRaw = written.Add;
                 window.View.SelectRange(new SourceRange(bold, bold + 4));
             },
-            (_, window) => window.NewKeyDownEvent(new Key('Y')));
+            (_, window) => window.NewKeyDownEvent(Key.C.WithAlt));
 
         Assert.Equal(new[] { Osc52.Build("**bold**") }, written);
         Assert.Equal("**bold**", Decoded(written[0]));
@@ -63,7 +63,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void y_without_a_selection_copies_the_block_under_the_cursor()
+    public void Ctrl_C_without_a_selection_copies_the_block_under_the_cursor()
     {
         OpenedFile file = Opened("notes.md", Copyable);
         var written = new List<string>();
@@ -76,7 +76,7 @@ public sealed partial class MainWindowTests
             (_, window) => window.WriteRaw = written.Add,
             (_, window) => window.View.HandleKey(Key.CursorDown),
             (_, window) => window.View.HandleKey(Key.CursorDown),
-            (_, window) => window.NewKeyDownEvent(new Key('y')));
+            (_, window) => window.NewKeyDownEvent(Key.C.WithCtrl));
 
         int second = Copyable.IndexOf("Second", StringComparison.Ordinal);
         string block = Copyable.Substring(second, "Second paragraph.".Length);
@@ -85,7 +85,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Ctrl_C_copies_like_y()
+    public void Ctrl_C_copies_a_selected_range_as_plain_text()
     {
         OpenedFile file = Opened("notes.md", Copyable);
         var written = new List<string>();
@@ -106,7 +106,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void y_after_Shift_End_on_a_paragraph_copies_through_its_last_letter()
+    public void Ctrl_C_after_Shift_End_on_a_paragraph_copies_through_its_last_letter()
     {
         OpenedFile file = Opened("notes.md", Copyable);
         var written = new List<string>();
@@ -121,7 +121,7 @@ public sealed partial class MainWindowTests
             (_, window) => window.View.HandleKey(Key.CursorDown),
             (_, window) => window.View.HandleKey(Key.Home),
             (_, window) => window.View.HandleKey(Key.End.WithShift),
-            (_, window) => window.NewKeyDownEvent(new Key('y')));
+            (_, window) => window.NewKeyDownEvent(Key.C.WithCtrl));
 
         Assert.Equal(new[] { Osc52.Build("Second paragraph.") }, written);
     }
@@ -139,7 +139,7 @@ public sealed partial class MainWindowTests
             40,
             12,
             (_, window) => window.WriteRaw = written.Add,
-            (_, window) => window.NewKeyDownEvent(new Key('y')));
+            (_, window) => window.NewKeyDownEvent(Key.C.WithCtrl));
 
         Assert.Empty(written);
         Assert.Equal(MainWindow.TooLargeToCopy, session.Screens[^1].Text(10));

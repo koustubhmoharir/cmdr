@@ -31,6 +31,8 @@ internal sealed partial class RenderedView
     {
         ArgumentNullException.ThrowIfNull(document);
 
+        // A new document (an edit's render, or an undo) drops the pending insertion, whose offsets were the old document's.
+        SetPending(null);
         bool visible = IsCursorVisible();
         bool hadCursor = HasCursor;
         int anchor = visible || !hadCursor ? _offset : TopOffset;

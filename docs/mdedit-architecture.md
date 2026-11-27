@@ -467,7 +467,7 @@ means "edit").
   pushed per followed file link. Alt+Left with an empty stack: "No previous file". Else the unsaved-changes flow, then the
   previous file is loaded again (from disk) and its window opens with the caret and top line at the saved offsets (clamped).
   A load error: the message line, and the entry is dropped. Ctrl+O and the picker clear the stack.
-- **Outline dialog** (Alt+O in both modes; also `o` in view mode until M6 moves the view's letter keys to modifiers): a dialog with a filter field over a list of `Outline.Of`
+- **Outline dialog** (Alt+O in both modes): a dialog with a filter field over a list of `Outline.Of`
   entries, two spaces of indent per level below 1. Typing filters (case-insensitive substring of the text; the indent is
   kept); Up/Down/PgUp/PgDn move in the list while the field has the focus; Enter or a double-click goes to the selected
   heading; Esc cancels. The initial selection is the heading of the section the caret is in. Going to a heading: in view
@@ -608,10 +608,21 @@ Decisions taken while building it:
 ### View and window (Mdedit)
 
 - **Keys (M6a)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
-  Ctrl+Home / Ctrl+End; Alt+O outline; Tab / Shift+Tab next / previous link, or cell in a table; Ctrl+Enter follows a
-  link; `*` and `-` folding only in the right-click menu; `<` / `>` removed. F2 still edits a table cell in its field
-  (M5) until M6c; Enter edits from M6b on (until then it keeps following a link and opening the cell field).
-- **Undo grouping**: consecutive typed characters with no caret move in between are one undo step, closed by a space or a
-  line break after a word, a caret move, a command or a mode switch (the buffer's `UndoStack` groups).
-- Typing on a synthetic position (a fold summary, a code label, a table border) or in a folded unit's head is refused with
-  a message; typing in edit mode is the editor's.
+  Ctrl+Home / Ctrl+End; Alt+O outline; Tab / Shift+Tab next / previous cell in a table, else next / previous link; Ctrl+Enter
+  and Ctrl+J (a line feed, which many terminals send for Ctrl+Enter) follow a link; `*` and `-` folding only in the
+  right-click menu, as "Unfold all inside" and "Fold section"; `<` / `>` removed. F2 still edits a table cell in its field
+  (M5) until M6c; Enter edits from M6b on (until then it keeps following a link and opening the cell field). Tab leaves a
+  table after its last cell, for the next link, so that the caret is never held in a table.
+- **Undo grouping**: a run is a series of typed characters, of Backspaces or of Deletes, each starting where the last one
+  left the caret. A typed non-space after a typed space starts a step; a selection replaced starts one; any other key, a
+  mouse caret move, a table edit, an undo or a mode switch ends the run. The window decides whether an edit continues the
+  run's step. `UndoStack.StartContinuedUndoGroup` does not compare descriptors: it continues the last closed group
+  whenever the last action was not an undo or a redo, so a new run starts its step with `StartUndoGroup`, and only a run
+  that goes on uses the continued form. A pending space writes no step of its own; it joins the step of the character
+  that writes it.
+- **Pending insertion**: the view draws it at the caret, with the rest of the caret's line moved right and clipped, and the
+  cursor after it. The view drops it on any caret move (keys and presses), on a new document and on a fold change; the
+  window drops it for any other command, and Ctrl+Z drops it without an undo.
+- Typing on a synthetic position (a fold summary, a code label, a table border) is refused by the engine. Typing on a folded
+  unit's head is refused by the window, since the engine does not know folds, with the message "Unfold to edit; Ctrl+T
+  edits source". Typing in edit mode is the editor's.

@@ -108,22 +108,20 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void G_and_the_document_end_keys_go_to_the_first_cell_and_the_end_position_of_the_last_block()
+    public void Ctrl_Home_and_Ctrl_End_go_to_the_first_cell_and_the_end_position_of_the_last_block()
     {
         RenderedView view = View(Numbered(30));
 
         Result result = Run(
             view,
             v => v.HandleKey(Key.CursorDown),
-            v => v.HandleKey(Key.G.WithShift),
-            v => v.HandleKey(Key.Home.WithCtrl),
             v => v.HandleKey(Key.End.WithCtrl),
-            v => v.HandleKey(Key.G));
+            v => v.HandleKey(Key.Home.WithCtrl),
+            v => v.HandleKey(Key.End.WithCtrl));
 
         Assert.Equal(Offset(Numbered(30), "p30") + 3, result.Snaps[1].Offset);
         Assert.Equal(0, result.Snaps[2].Offset);
         Assert.Equal(Offset(Numbered(30), "p30") + 3, result.Snaps[3].Offset);
-        Assert.Equal(0, result.Snaps[4].Offset);
     }
 
     [Fact]
@@ -184,7 +182,7 @@ public sealed partial class RenderedViewTests
             view,
             v =>
             {
-                v.HandleKey(Key.G.WithShift);
+                v.HandleKey(Key.End.WithCtrl);
                 needed.Add(v.NeedsDraw);
             },
             v =>

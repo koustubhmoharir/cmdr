@@ -110,7 +110,7 @@ public sealed partial class MainWindowTests
         Session session = RunLinked(
             file,
             (_, window) => window.View.PlaceCaret(Index(Linked, "Guide"), null),
-            (_, window) => window.View.HandleKey(Key.Space),
+            (_, window) => window.View.HandleKey(RenderedView.ToggleFoldKey),
             (_, window) => window.View.PlaceCaret(Index(Linked, "four"), null),
             (_, window) => window.NewKeyDownEvent(Key.Enter));
 

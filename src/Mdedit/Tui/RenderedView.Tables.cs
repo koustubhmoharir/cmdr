@@ -170,12 +170,6 @@ internal sealed partial class RenderedView
     }
 
     /// <summary>
-    /// Moves the offset of the block under the cursor, for <c>&lt;</c> and <c>&gt;</c>. Returns false when the cursor's block does not scroll.
-    /// </summary>
-    /// <param name="delta">The columns to move by; negative to the left.</param>
-    private bool ScrollCursorBlock(int delta) => HasCursor && ScrollBlock(_line, delta);
-
-    /// <summary>
     /// Makes the caret's cell visible in its block by the least scrolling: a cell that starts left of the view moves the block so that it
     /// starts at the first column after the left marker; a cell that ends right of it moves the block so that it ends at the last column
     /// before the right marker. Does nothing for a caret outside a scrolling block.

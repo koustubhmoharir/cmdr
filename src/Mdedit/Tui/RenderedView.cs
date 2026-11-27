@@ -85,6 +85,12 @@ internal sealed partial class RenderedView : View
     public event Action? KeyPressed;
 
     /// <summary>
+    /// Raised when a key that is not a text edit (see <see cref="IsEditKey"/>) reaches the view, or the mouse places the cursor, before the
+    /// view handles it. The window ends the undo run of typed text then, since the cursor may move or a command may run.
+    /// </summary>
+    public event Action? CommandPressed;
+
+    /// <summary>
     /// Raised by a right-click on the view, with the mouse's screen position, so that the window can open its context menu there. The
     /// cursor and the selection are settled before it is raised (a right-click outside the selection places the cursor).
     /// </summary>
@@ -127,8 +133,11 @@ internal sealed partial class RenderedView : View
     /// <summary>The screen position of the cursor's cell, for a menu opened from the keyboard.</summary>
     public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, _line - _top));
 
-    /// <summary>The caret's screen column, kept inside the viewport: an end position on a full line sits on the last column.</summary>
-    private int VisibleColumn => CaretScreenColumn();
+    /// <summary>
+    /// The cursor's screen column, kept inside the viewport: an end position on a full line sits on the last column. The pending insertion
+    /// (see <see cref="Pending"/>) is drawn before the cursor, so the cursor is after it.
+    /// </summary>
+    private int VisibleColumn => Math.Min(CaretScreenColumn() + PendingWidth, Math.Max(0, Viewport.Width - 1));
 
     /// <summary>
     /// True when the document has a caret stop to rest the cursor on. A document with none (empty, or only rules) has no cursor.
@@ -161,12 +170,18 @@ internal sealed partial class RenderedView : View
 
     /// <summary>
     /// Handles a key on the cursor: the movements of <see cref="HandleKey"/> are the arrows, Home and End (with Ctrl for the document's
-    /// ends), PgUp and PgDn, and g and G. Other keys are not handled, so the window sees them.
+    /// ends) and PgUp and PgDn, and the folding keys. Other keys are not handled, so the window sees them; a key that is not a text edit
+    /// raises <see cref="CommandPressed"/> first.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
     {
         KeyPressed?.Invoke();
+        if (!IsEditKey(key))
+        {
+            CommandPressed?.Invoke();
+        }
+
         return HandleKey(key) || base.OnKeyDown(key);
     }
 
@@ -223,6 +238,8 @@ internal sealed partial class RenderedView : View
             return false;
         }
 
+        // A move or a fold change drops the pending insertion, which is written by the next typed character only.
+        SetPending(null);
         // A move can scroll, and later the selection and highlights follow the cursor, so the content is drawn again.
         SetNeedsDraw();
         return true;
@@ -247,16 +264,6 @@ internal sealed partial class RenderedView : View
         if (!HasCursor)
         {
             return false;
-        }
-
-        if (IsPlain(key, '<'))
-        {
-            return ScrollCursorBlock(-ScrollColumns);
-        }
-
-        if (IsPlain(key, '>'))
-        {
-            return ScrollCursorBlock(ScrollColumns);
         }
 
         bool extend = key.IsShift && IsExtendable(key.NoShift);
@@ -290,11 +297,11 @@ internal sealed partial class RenderedView : View
         {
             MoveVertical(1);
         }
-        else if (move == Key.Home.WithCtrl || IsPlain(move, 'g'))
+        else if (move == Key.Home.WithCtrl)
         {
             MoveTo(FirstMapped());
         }
-        else if (move == Key.End.WithCtrl || IsPlain(move, 'G'))
+        else if (move == Key.End.WithCtrl)
         {
             MoveTo(LastStop());
         }
@@ -328,18 +335,24 @@ internal sealed partial class RenderedView : View
         key == Key.CursorLeft || key == Key.CursorRight || key == Key.CursorUp || key == Key.CursorDown
         || key == Key.Home || key == Key.End || key == Key.PageUp || key == Key.PageDown;
 
-    /// <summary>The keys that move the cursor: the extendable keys, the document's ends, and g and G.</summary>
-    private static bool IsMovement(Key key) =>
-        IsExtendable(key) || key == Key.Home.WithCtrl || key == Key.End.WithCtrl || IsPlain(key, 'g') || IsPlain(key, 'G');
+    /// <summary>The keys that move the cursor: the extendable keys and the document's ends (Ctrl+Home and Ctrl+End).</summary>
+    private static bool IsMovement(Key key) => IsExtendable(key) || key == Key.Home.WithCtrl || key == Key.End.WithCtrl;
 
     /// <summary>
     /// Handles a mouse event: the wheel scrolls without moving the cursor; a left press places the cursor and starts a drag, a drag
     /// (motion with the button down) extends the selection, a release ends it, and a double-click selects the word under the mouse;
-    /// a right-click asks for the context menu. Returns false for any other event.
+    /// a right-click asks for the context menu. A press, a double-click or a right-click places the cursor, so it drops the pending insertion
+    /// and raises <see cref="CommandPressed"/> first. Returns false for any other event.
     /// </summary>
     /// <param name="mouse">The event.</param>
     internal bool HandleMouse(Mouse mouse)
     {
+        if (PlacesCursor(mouse))
+        {
+            SetPending(null);
+            CommandPressed?.Invoke();
+        }
+
         if (!ApplyMouse(mouse))
         {
             return false;
@@ -674,6 +687,7 @@ internal sealed partial class RenderedView : View
             return;
         }
 
+        SetPending(null);
         int before = _offset;
         int topBefore = _top;
         if (UnfoldHiding(offset))
@@ -1377,6 +1391,11 @@ internal sealed partial class RenderedView : View
             }
         }
 
+        if (line == _line && HasCursor)
+        {
+            ShowPending(texts, attributes, CaretRawColumn(), normal);
+        }
+
         (bool leftMarker, bool rightMarker) = MarkersOf(line);
         Attribute marker = MdColors.For(new CellStyle(StyleRole.TableBorder), normal);
         if (leftMarker)
@@ -1532,6 +1551,4 @@ internal sealed partial class RenderedView : View
             AddStr(new string(' ', width));
         }
     }
-
-    private static bool IsPlain(Key key, char ch) => !key.IsCtrl && !key.IsAlt && key.AsRune.Value == ch;
 }

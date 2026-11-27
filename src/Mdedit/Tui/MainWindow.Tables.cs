@@ -42,9 +42,10 @@ internal sealed partial class MainWindow
     private delegate TableEditResult TableOperation(string text, RenderBlock table, RenderedView.TableCell cell);
 
     /// <summary>
-    /// The window's table keys in view mode: F2 and Enter (not on a link) edit the caret's cell, Alt+Up and Alt+Down move its row, Alt+Left and
-    /// Alt+Right its column, and the table menu key opens the menu. The arrows return false outside a table, so that Alt+Left is Back there.
-    /// Returns false for a key it does not bind.
+    /// The window's table keys in view mode: F2 and Enter (not on a link) edit the caret's cell, Tab and Shift+Tab move the caret to the next or
+    /// previous cell, Alt+Up and Alt+Down move the caret's row, Alt+Left and Alt+Right its column, and the table menu key opens the menu. The
+    /// arrows and the Tab keys return false outside a table (and Tab on the table's last or first cell), so that Alt+Left is Back there and Tab
+    /// moves to a link. Returns false for a key it does not bind.
     /// </summary>
     private bool HandleTableKey(Key key)
     {
@@ -62,6 +63,11 @@ internal sealed partial class MainWindow
         {
             ShowTableMenu();
             return true;
+        }
+
+        if (key == Key.Tab || key == Key.Tab.WithShift)
+        {
+            return MoveToNeighbourCell(forward: key == Key.Tab);
         }
 
         if (key == Key.CursorUp.WithAlt)
@@ -96,6 +102,22 @@ internal sealed partial class MainWindow
 
     /// <summary>The result with its target column set to a column: see <see cref="AtRow"/>.</summary>
     private static TableEditResult AtColumn(TableEditResult result, int column) => result.IsRefused ? result : result with { Column = column };
+
+    /// <summary>
+    /// Moves the caret to the next or previous cell of the table the caret is in, without opening a field. Returns false, and does nothing, when
+    /// the caret is not in a table cell or is on the table's last (or first) cell.
+    /// </summary>
+    /// <param name="forward">True for the next cell, false for the previous one.</param>
+    private bool MoveToNeighbourCell(bool forward)
+    {
+        if (_view.TableCellAtCaret() is not { } cell || NeighbourCell(cell, forward) is not { } next)
+        {
+            return false;
+        }
+
+        _view.PlaceTableCell(next.Block, next.Row, next.Column);
+        return true;
+    }
 
     /// <summary>Opens the inline field on the caret's cell. Returns false, and does nothing, when the caret is not in a table cell.</summary>
     private bool OpenCellAtCaret()
@@ -192,6 +214,8 @@ internal sealed partial class MainWindow
             return null;
         }
 
+        // A table edit is a step of its own, which a typing run does not continue.
+        EndRun();
         // The table starts where it did: an edit changes only its own text, so the block is found again by its start.
         int start = _view.Document.Blocks[block].Start;
         _editor.Buffer.Replace(result.Start, result.Length, result.Text);

@@ -228,7 +228,7 @@ public sealed partial class MainWindowTests
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl));
 
         Assert.Equal(Status("^T View  ^S Save  ^F Find  Alt+Z\u2026", "^Q Quit"), session.Screens[1].Text(11));
-        Assert.Equal(Status("^T Edit  ^S Save  / Find  y Copy…", "^Q Quit"), session.Screens[^1].Text(11));
+        Assert.Equal(Status("^T Source  ^S Save  ^F Find  ^C …", "^Q Quit"), session.Screens[^1].Text(11));
     }
 
     [Fact]
@@ -324,7 +324,7 @@ public sealed partial class MainWindowTests
             40,
             12,
             (_, window) => window.View.PlaceCaret(Index(Wide, "Bcdefghij"), null),
-            (_, window) => window.NewKeyDownEvent((Key)'>'),
+            (_, window) => window.View.HandleMouse(new Mouse { Flags = MouseFlags.WheeledDown | MouseFlags.Shift, Position = new System.Drawing.Point(0, 0) }),
             (_, window) => window.NewKeyDownEvent(Key.T.WithCtrl),
             (_, window) => window.Editor.CaretOffset = 0,
             (_, window) =>

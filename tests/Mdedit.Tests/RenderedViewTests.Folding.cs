@@ -10,7 +10,7 @@ using Point = System.Drawing.Point;
 namespace Mdedit.Tests;
 
 /// <summary>
-/// The folding of the view at 40 columns: Space, <c>*</c>, <c>-</c>, <c>0</c> to <c>6</c>, the glyph and summary clicks, the caret that a fold
+/// The folding of the view at 40 columns: Alt+F, Alt+0 to Alt+6, the menu's fold entries, the glyph and summary clicks, the caret that a fold
 /// moves, the screen row kept above the caret, the fold state across a width change, the search into folded content, and a folded code
 /// block. The summaries count the source lines a fold hides, read from the source text.
 /// </summary>
@@ -36,9 +36,9 @@ public sealed partial class RenderedViewTests
     ];
 
     [Fact]
-    public void Space_on_a_heading_folds_its_section_and_a_second_Space_unfolds_it()
+    public void Alt_F_on_a_heading_folds_its_section_and_a_second_Alt_F_unfolds_it()
     {
-        Result result = Run(View(Sections), v => v.HandleKey(Key.Space), v => v.HandleKey(Key.Space));
+        Result result = Run(View(Sections), v => v.HandleKey(RenderedView.ToggleFoldKey), v => v.HandleKey(RenderedView.ToggleFoldKey));
 
         // One's section hides the source lines 1 to 6: the blank after the heading, the paragraph, Sub and its paragraph.
         Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[1]));
@@ -46,12 +46,12 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void Space_inside_a_paragraph_folds_its_section_and_moves_the_caret_to_the_heading()
+    public void Alt_F_inside_a_paragraph_folds_its_section_and_moves_the_caret_to_the_heading()
     {
         RenderedView view = View(Sections);
 
         // One Down reaches the paragraph "  First section text.", which is in One and not in Sub.
-        Result result = Run(view, v => v.HandleKey(Key.CursorDown), v => v.HandleKey(Key.Space));
+        Result result = Run(view, v => v.HandleKey(Key.CursorDown), v => v.HandleKey(RenderedView.ToggleFoldKey));
 
         Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[3]));
         Assert.Equal(Offset(Sections, "One"), result.Snaps[1].Offset);
@@ -59,11 +59,11 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void The_digit_keys_show_the_headings_down_to_their_level_and_zero_unfolds_everything()
+    public void The_Alt_digit_keys_show_the_headings_down_to_their_level_and_Alt_zero_unfolds_everything()
     {
         const string nested = "# A\n\n## B\n\n### C\n\ntext\n\n# D\n\nd text\n";
 
-        Result result = Run(View(nested), v => v.HandleKey((Key)'1'), v => v.HandleKey((Key)'0'));
+        Result result = Run(View(nested), v => v.HandleKey(Key.D1.WithAlt), v => v.HandleKey(Key.D0.WithAlt));
 
         // The level-2 heading B folds the level-3 C inside it, which the digit 1 folds too: B hides source lines 3 to 6.
         Assert.Equal(Pad(["▾ A", "", "▸ B … 4 lines", "", "▾ D", "", "  d text"]), Rows(result.Screens[1]));
@@ -71,22 +71,22 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void Minus_folds_the_innermost_section_and_star_unfolds_the_target_and_every_unit_inside_it()
+    public void The_menu_fold_section_folds_the_innermost_section_and_unfold_all_inside_unfolds_the_unit_and_every_unit_inside_it()
     {
         RenderedView view = View(Sections);
 
         Result result = Run(
             view,
             v => { v.HandleKey(Key.CursorDown); v.HandleKey(Key.CursorDown); v.HandleKey(Key.CursorDown); },
-            v => v.HandleKey((Key)'-'),
+            v => v.FoldSection(v.SectionAroundCaret()!),
             v => v.HandleKey(Key.CursorUp),
-            v => v.HandleKey(Key.Space),
-            v => v.HandleKey((Key)'*'));
+            v => v.HandleKey(RenderedView.ToggleFoldKey),
+            v => v.UnfoldInside(v.Units[0]));
 
         // Sub is the section around "Sub text here.": only Sub folds, and the caret goes to its heading.
         Assert.Equal(Pad(["▾ One", "", "  First section text.", "", "▸ Sub … 2 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[3]));
         Assert.Equal(Offset(Sections, "Sub"), result.Snaps[1].Offset);
-        // Space on the paragraph folds One, which holds the folded Sub; then * on One's heading unfolds One and Sub together.
+        // Alt+F on the paragraph folds One, which holds the folded Sub; then Unfold all inside on One unfolds One and Sub together.
         Assert.Equal(Pad(["▸ One … 6 lines", "", "▾ Two", "", "  Two text."]), Rows(result.Screens[7]));
         Assert.Equal(Pad(OpenSections()), Rows(result.Screens[9]));
     }
@@ -113,7 +113,7 @@ public sealed partial class RenderedViewTests
         const string code = "```cs\nvar x = 1;\nvar y = 2;\n```\n\nafter\n";
         RenderedView view = View(code);
 
-        Result result = Run(view, v => v.HandleKey(Key.Space));
+        Result result = Run(view, v => v.HandleKey(RenderedView.ToggleFoldKey));
 
         Assert.Equal(Pad(["▸ cs … 2 lines", "", "  after"]), Rows(result.Screens[1]));
         Assert.Equal(Offset(code, "```"), view.CursorOffset);
@@ -141,12 +141,12 @@ public sealed partial class RenderedViewTests
     }
 
     [Fact]
-    public void Down_reaches_a_folded_code_header_and_Space_there_unfolds_it()
+    public void Down_reaches_a_folded_code_header_and_Alt_F_there_unfolds_it()
     {
         const string code = "para\n\n```cs\nvar x = 1;\n```\n\nafter\n";
 
-        // The block is folded first; Down from the paragraph lands on its header, where Space unfolds it.
-        Result result = Run(View(code), v => v.ToggleFold(v.Units[0]), v => v.HandleKey(Key.CursorDown), v => v.HandleKey(Key.Space));
+        // The block is folded first; Down from the paragraph lands on its header, where Alt+F unfolds it.
+        Result result = Run(View(code), v => v.ToggleFold(v.Units[0]), v => v.HandleKey(Key.CursorDown), v => v.HandleKey(RenderedView.ToggleFoldKey));
 
         Assert.Equal(Offset(code, "```"), result.Snaps[2].Offset);
         Assert.Equal(Pad(["  para", "", "▾ cs", "  var x = 1;", "", "  after"]), Rows(result.Screens[5]));
@@ -185,7 +185,7 @@ public sealed partial class RenderedViewTests
         view.Height = Dim.Fill();
         window.Add(view);
 
-        Result result = RunResizing(app, window, view, v => v.HandleKey(Key.Space), _ => window.Width = 25);
+        Result result = RunResizing(app, window, view, v => v.HandleKey(RenderedView.ToggleFoldKey), _ => window.Width = 25);
 
         Assert.Equal("▸ One … 6 lines", result.Screens[^1].Text(0));
         Assert.Equal("▾ Two", result.Screens[^1].Text(2));

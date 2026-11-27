@@ -82,7 +82,7 @@ public sealed partial class RenderedViewTests
         Result result = Run(
             view,
             v => v.PlaceCaret(Offset(WideTable, "Bcdefghij"), null),
-            v => v.HandleKey(Greater),
+            v => ShiftWheelAtCaret(v, MouseFlags.WheeledDown),
             v =>
             {
                 tracker.Insert(0, lead.Length);

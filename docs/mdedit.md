@@ -44,7 +44,7 @@ on Linux (`$XDG_DATA_HOME/mdedit/recent.json` when set).
 │  • Add the binary to your PATH                           │
 ╰──────────────────────────────────────────────────────────╯
 Install › Linux                                          All
-^T Edit  / Find  y Copy  Space Fold  ^O Open         ^Q Quit
+^T Source  ^S Save  ^F Find  ^C Copy  Alt+F Fold   ^Q Quit
 ```
 
 The message line shows, on the left, the path of the headings above the top line, and, on the right, the scroll
@@ -58,23 +58,23 @@ or until the next key. The last line lists the main keys.
 | Up/Down, Left/Right | Move the caret through the rendered text. The caret is a bar before a character. Right from a paragraph's last character goes to the end of the paragraph, after that character, and Right again to the next paragraph; Left goes back the same way |
 | Home/End | First cell of the line / last cell of the line. On the last line of a paragraph, End goes to the end of the paragraph, after its last character |
 | PgUp/PgDn | Page up / down, with the caret |
-| g / G, Ctrl+Home/End | First cell of the document / the end of the last paragraph |
+| Ctrl+Home/End | First cell of the document / the end of the last paragraph |
 | Shift with a movement key | Extend the selection. The selection is the text from where the movement started up to the caret, not including the character the caret is before: Shift+Right three times selects three characters |
-| `/`, Ctrl+F | Find in the rendered text. Enter goes to the first match after the cursor; Esc closes the bar |
-| n, F3 / N, Shift+F3 | Next / previous match, wrapping at the ends with a message |
-| `y`, Ctrl+C | Copy the selection as plain text, or the block under the cursor when nothing is selected |
-| `Y` | Copy the selection, or the block under the cursor, as Markdown |
-| Space | Fold or unfold the section or code block under the caret (see Folding) |
-| `*` / `-` | `*` unfolds the section or code block under the caret and everything inside it; `-` folds the innermost section around the caret |
-| `1`–`6` / `0` | Show the headings down to that level, folding the deeper sections; `0` unfolds everything |
-| `<` / `>` | In a table, scroll the table by eight columns to the left / right (see Tables) |
+| Ctrl+F | Find in the rendered text. Enter goes to the first match after the cursor; Esc closes the bar |
+| F3 / Shift+F3 | Next / previous match, wrapping at the ends with a message |
+| Ctrl+C / Alt+C | Copy the selection as plain text, or the block under the cursor when nothing is selected; Alt+C copies it as Markdown |
+| Alt+F | Fold or unfold the section or code block under the caret (see Folding) |
+| Alt+1–Alt+6 / Alt+0 | Show the headings down to that level, folding the deeper sections; Alt+0 unfolds everything |
+| Letters, digits, punctuation, Space | Type the character at the caret (see Editing in the view). Letters and digits are no longer commands |
+| Backspace / Delete | Delete the character before / after the caret, or the selection (see Editing in the view) |
+| Ctrl+Enter | Follow the link under the caret (see Links) |
 | Shift+F10 | Open the menu at the cursor |
 | Ctrl+T | Edit mode, with the caret on the source character under the view's caret (see Edit mode) |
 | Ctrl+S | Save the file (see Saving) |
 | Ctrl+Z / Ctrl+Y | Undo / redo the source, in either mode (see Edit mode) |
 | Esc | Close the search bar |
 | Ctrl+O | Open another file |
-| `o`, Alt+O | Open the outline of the headings (see Outline) |
+| Alt+O | Open the outline of the headings (see Outline) |
 | Ctrl+Q | Quit |
 
 Any movement without Shift clears the selection. Copying writes the text to the clipboard through the terminal (OSC 52),
@@ -91,7 +91,7 @@ so the terminal must allow it. A copy over 1,000,000 bytes is not written, and t
 | Click | Place the caret before the character under the mouse, and clear the selection. A click past the text of a paragraph's last line puts the caret at its end |
 | Drag | Select from the press to the caret under the mouse; the selection stops before that character. Above or below the view, the text scrolls one line for each move |
 | Double-click | Select the word under the mouse, from its first character to its last (nothing on a space) |
-| Right-click | Open the menu: Copy text, Copy Markdown, and Fold or Unfold for the section or code block at the mouse (when there is one). Choose with the mouse, or with the arrow keys and Enter |
+| Right-click | Open the menu: Copy text, Copy Markdown, and Fold or Unfold, Unfold all inside, and Fold section, for the section or code block at the mouse and the section around the caret (when there are any). Choose with the mouse, or with the arrow keys and Enter |
 
 A right-click inside the selection keeps it; outside, it moves the cursor there, as a click does.
 
@@ -101,10 +101,11 @@ A table wider than the window scrolls sideways on its own: the rest of the docum
 show, and a dim `▸` in the last column says that more follows to the right (a `◂` in the first column says so for the left).
 Each table keeps its own offset, so scrolling one table does not move another.
 
-- `>` and `<` scroll the table under the caret by eight columns.
 - Shift+wheel, or the horizontal wheel, scrolls the table under the mouse by eight columns.
 - A click on a `◂` or `▸` scrolls the table by eight columns toward that side.
 - Moving the caret into a column that is out of view scrolls the table by the least it takes to show the caret's cell.
+- Tab and Shift+Tab in view mode move the caret to the next or previous cell, without opening a field. After the last cell,
+  Tab goes on to the next link, as it does outside a table.
 - A click or a drag on a scrolled table selects the cells that are drawn under the mouse.
 
 The container of a table in a quote or a list stays in place while the table scrolls. A table that fits has no offset.
@@ -180,7 +181,7 @@ own line ending (a CRLF file gets CRLF).
 - **Search.** The matches are the source text, markup included: `**b` finds the start of bold text. They follow the edits while
   the bar is open. The search text carries over when the mode changes, and the active match does not: the bar closes when the
   mode changes, and Ctrl+F, F3 or Shift+F3 in the other mode searches again with the same text.
-- **Hints.** View mode shows `^T Edit` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold`, `Alt+O Outline` and `^Q Quit`.
+- **Hints.** View mode shows `^T Source` and `^S Save` first. Edit mode shows `^T View`, `^S Save`, `^F Find`, `Alt+Z Wrap`, `Alt+F Fold`, `Alt+O Outline` and `^Q Quit`.
 - **Folds and tables** keep their state through edits: a folded section stays folded where it moved when text is inserted
   above it, and a table keeps its scroll.
 - **The caret's screen row** is not kept across Ctrl+T: the editor's scroll position cannot be set from outside, so the caret
@@ -229,6 +230,27 @@ creates again, or to close it. Close discards unsaved changes and returns to the
 The check waits while a dialog, the context menu or the picker is open, and is done as soon as they close. A file that cannot
 be read is reported once on the message line, and not again until the file changes state.
 
+## Editing in the view
+
+The rendered view is editable, and the view shows each change as it is made. What works now:
+
+- Typing puts a character at the caret, in the style of the text before it: typed before the space after a bold word, it
+  goes inside the bold. Typed at the end of a link, it does not extend the link. A character that would be Markdown markup
+  is written escaped (a typed `*` is written `\*`).
+- Backspace deletes the character before the caret, and Delete the one after it. A bold or italic span left with no text
+  goes with its markers, and a link left with no text goes with its destination.
+- A selection inside one block, such as a paragraph or a heading, is replaced by what is typed, or deleted by Backspace or Delete.
+- A space that would not show (at the start or end of a paragraph) is held until the next character is typed, so that
+  the file gets no empty space. Moving the caret drops it.
+- Ctrl+Z and Ctrl+Y undo and redo. Typed characters with no move between them are one undo step, so are consecutive
+  Backspaces and consecutive Deletes, and a word with the space after it is one step.
+- An edit that the view cannot write as it reads is refused with a message, and nothing changes. Typing in a table cell is
+  refused (F2 edits the cell), and so is typing on the heading of a folded section or code block (unfold it first).
+
+Not yet: Enter, which splits a paragraph or adds a block; Backspace at a block's start and Delete at its end, which join
+blocks; typing directly in table cells (F2 edits a cell for now); paste; and a selection that crosses blocks or lines.
+Ctrl+T edits the source for those, in the same window and with the same undo history.
+
 ## Folding
 
 Sections (a heading and everything up to the next heading of the same or a higher level) and code blocks fold. A folded
@@ -238,18 +260,19 @@ column.
 
 | Key | |
 |---|---|
-| Space | Fold or unfold the section or code block whose heading or header line the caret is on. Elsewhere, the innermost section (or code block) around the caret. A caret inside what folds moves to the heading |
-| `*` | Unfold the section or code block at the caret and every section and code block inside it |
-| `-` | Fold the innermost section around the caret |
-| `1`–`6` | Fold every section whose heading is deeper than the digit and unfold the others, so that the headings down to that level show. Code blocks keep their state |
-| `0` | Unfold everything |
+| Alt+F | Fold or unfold the section or code block whose heading or header line the caret is on. Elsewhere, the innermost section (or code block) around the caret. A caret inside what folds moves to the heading |
+| Alt+1–Alt+6 | Fold every section whose heading is deeper than the digit and unfold the others, so that the headings down to that level show. Code blocks keep their state |
+| Alt+0 | Unfold everything |
+
+The right-click menu also has Unfold all inside, which unfolds the unit at the mouse and every unit inside it, and Fold section,
+which folds the innermost section around the caret.
 
 Folding keeps the caret's row on the screen when the fold is above it. Search unfolds what hides a match before it selects
 the match, and the search still finds text in folded content. Folds stay when the window is resized.
 
 **Edit mode.** The editor shows the same folds, in a fold gutter of its own: a folded section shows its heading line with
-`▸` and `… n lines`, and a folded code block its fence line. Alt+F folds or unfolds the section or code block at the caret
-(Space types a space), and a click on a `▾` or `▸` in the gutter does the same. Folds made in either mode carry over to the
+`▸` and `… n lines`, and a folded code block its fence line. Alt+F folds or unfolds the section or code block at the caret,
+and a click on a `▾` or `▸` in the gutter does the same. Folds made in either mode carry over to the
 other. Typing keeps a fold while its heading or fence line keeps its start, as in view
 mode. The editor's folds are brought up to date a moment after a change that is not only letters (a space, a marker, a
 line break), and before the view is shown again.
@@ -264,8 +287,8 @@ under the caret in place of the heading path, with an arrow in front.
 
 | Key | |
 |---|---|
-| Tab / Shift+Tab | The caret goes to the next / previous link, in the order of the text. Links that a fold hides are skipped. Past the last link, Tab wraps to the first one with a message, and Shift+Tab past the first wraps to the last. A document with no link says so |
-| Enter | Follow the link under the caret (see below) |
+| Tab / Shift+Tab | The caret goes to the next / previous link, in the order of the text. Links that a fold hides are skipped. Past the last link, Tab wraps to the first one with a message, and Shift+Tab past the first wraps to the last. A document with no link says so. In a table, Tab moves to the next cell instead (see Tables) |
+| Enter, Ctrl+Enter | Follow the link under the caret (see below). Terminals that send Ctrl+Enter as a line feed also follow it with Ctrl+J |
 | Alt+Left | Go back to the file that the last followed link left (see Back) |
 
 | Mouse | |
@@ -291,7 +314,7 @@ place is dropped from the list.
 
 ## Outline
 
-`o` in view mode, or Alt+O in either mode, opens the outline: a list of the headings of the document, with a filter field
+Alt+O, in either mode, opens the outline: a list of the headings of the document, with a filter field
 above it. Each heading is indented by two spaces for each level below the first, so a level-2 heading sits under the level-1
 heading before it. The list starts on the heading of the section the caret is in.
 

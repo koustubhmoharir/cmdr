@@ -5,7 +5,7 @@ using Terminal.Gui.Input;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The outline of the window, in both modes: Alt+O, and <c>o</c> in view mode, open the <see cref="OutlineDialog"/> over the document's
+/// The outline of the window, in both modes: Alt+O opens the <see cref="OutlineDialog"/> over the document's
 /// headings. The chosen heading is gone to as an anchor link is in view mode, and in edit mode the editor's caret goes to it with the folds
 /// that hide it opened.
 /// </summary>
@@ -29,11 +29,11 @@ internal sealed partial class MainWindow
     internal const string NoHeadings = "No headings";
 
     /// <summary>
-    /// The window's outline key: Alt+O in both modes, and <c>o</c> in view mode (in edit mode it is text). Returns false for a key it does not bind.
+    /// The window's outline key: Alt+O, in both modes. Returns false for a key it does not bind.
     /// </summary>
     private bool HandleOutlineKey(Key key)
     {
-        if (key != OutlineKey && (_editing || !IsPlain(key, 'o')))
+        if (key != OutlineKey)
         {
             return false;
         }
