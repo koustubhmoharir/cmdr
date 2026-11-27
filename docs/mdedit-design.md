@@ -111,13 +111,15 @@ errors exit 2.
 | Ctrl+Enter (or Ctrl+J), or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself. Enter is not a link key: it edits the text (M6b) |
 | Alt+O | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters. Alt+O in edit mode too |
 | Ctrl+F; F3/Shift+F3 | Find in the rendered text (SearchBar); the match is selected and scrolled into view |
-| Ctrl+C / Alt+C | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor |
+| Ctrl+C / Alt+C | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor. The text also goes to the application clipboard when there is one |
+| Ctrl+X / Ctrl+V | Cut the selection (copied as Markdown, then deleted, one undo step) / paste the application clipboard's text as Markdown source (M6c) |
+| Terminal paste (bracketed) | Inserted as Markdown source, as Ctrl+V inserts the clipboard text (M6c) |
 | Arrows, Home/End (with Shift to select) | Move the cursor in the rendered text (see Cursor). In a table, Left/Right at a cell's edge go to the next cell |
 | Alt+F | Fold or unfold the section or code block under the cursor (see Folding) |
 | Right-click menu: Unfold all inside / Fold section | Unfold everything under the cursor's unit / fold the section the cursor is in |
 | Alt+1–Alt+6, Alt+0 | Show headings down to that level, folding the deeper sections / unfold all |
 | Shift+wheel in a table | Scroll the table horizontally (moving the cursor keeps its cell visible) |
-| F2 or Enter in a table cell | Edit the cell (M5). Enter elsewhere edits the text (M6b) |
+| F2 in a table cell | Edit the cell in its field (M5). Enter in a table cell moves down a row, or adds one below the last row (M6c) |
 | Alt+Up/Down, Alt+Left/Right in a table | Move the row / column (M5) |
 | Alt+T in a table | Table menu: rows, columns, alignment (M5) |
 | Ctrl+Z / Ctrl+Y | Undo / redo: the same history as edit mode (see Source buffer and undo) |

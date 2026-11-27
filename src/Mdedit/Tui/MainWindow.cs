@@ -220,6 +220,7 @@ internal sealed partial class MainWindow : Window, ISearchHost
         _view.KeyPressed += ClearMessage;
         _view.CommandPressed += EndRun;
         _view.ContextMenuRequested += ShowContextMenu;
+        _view.PasteRequested += PasteInView;
         _view.LinkActivated += FollowLink;
         _editor.BufferChanged += OnBufferChanged;
         _editor.CaretChanged += (_, _) =>
@@ -307,8 +308,8 @@ internal sealed partial class MainWindow : Window, ISearchHost
     /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
     /// both modes, and Alt+O opens the outline (see <see cref="HandleOutlineKey"/>). In edit mode Esc closes an open search or else
     /// returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see <see cref="HandleEditKey"/>). In view mode typed characters, Backspace and
-    /// Delete, and Enter, edit the text (see <c>MainWindow.ViewEditing.cs</c>), Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and
-    /// redo, and the view's search and copy keys apply.
+    /// Delete, and Enter, edit the text (see <c>MainWindow.ViewEditing.cs</c>), Ctrl+V and Ctrl+X paste and cut (see <c>MainWindow.ViewPaste.cs</c>),
+    /// Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and redo, and the view's search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
     protected override bool OnKeyDown(Key key)
@@ -359,7 +360,12 @@ internal sealed partial class MainWindow : Window, ISearchHost
             return true;
         }
 
-        // The table keys come before the links, so that Alt+Left moves the column in a table, and Enter opens a cell in a table.
+        if (HandleClipboardKey(key))
+        {
+            return true;
+        }
+
+        // The table keys come before the links, so that Alt+Left moves the column in a table.
         if (HandleTableKey(key))
         {
             return true;
@@ -678,8 +684,9 @@ internal sealed partial class MainWindow : Window, ISearchHost
     }
 
     /// <summary>
-    /// Writes the selection (or the block under the cursor) to the clipboard with OSC 52, as plain text or as Markdown, and says what was
-    /// copied. A copy with nothing in it does nothing; a text over <see cref="Osc52.MaxBytes"/> is not copied.
+    /// Writes the selection (or the block under the cursor) to the clipboard with OSC 52, as plain text or as Markdown, and to the application
+    /// clipboard when there is one (so that Ctrl+V pastes it back in this session), and says what was copied. A copy with nothing in it does
+    /// nothing; a text over <see cref="Osc52.MaxBytes"/> is not copied.
     /// </summary>
     /// <param name="markdown">True for the Markdown of the source, false for the plain rendered text.</param>
     internal void CopyView(bool markdown)
@@ -705,14 +712,16 @@ internal sealed partial class MainWindow : Window, ISearchHost
         }
 
         WriteRaw(Osc52.Build(text));
+        WriteApplicationClipboard(text);
         ShowMessage(markdown ? CopiedMarkdown : CopiedText, error: false);
     }
 
     /// <summary>
     /// Opens the context menu at a screen position, the mouse's for a right-click and the cursor's for the menu key. The entries are Copy
-    /// text and Copy Markdown; Fold or Unfold (labelled by the state of the unit at that position), Unfold all inside, and Fold section (the
-    /// section around the caret) when they apply; and the table items (see <see cref="TableItems"/>) when the caret is in a table cell. The
-    /// menu is built for each opening, since its entries depend on the position.
+    /// text and Copy Markdown; Cut when there is a selection, and Paste when the application clipboard holds text; Fold or Unfold (labelled by
+    /// the state of the unit at that position), Unfold all inside, and Fold section (the section around the caret) when they apply; and the
+    /// table items (see <see cref="TableItems"/>) when the caret is in a table cell. The menu is built for each opening, since its entries
+    /// depend on the position.
     /// </summary>
     /// <param name="screen">The position of the menu's top-left corner, on the screen.</param>
     private void ShowContextMenu(Point screen)
@@ -722,6 +731,16 @@ internal sealed partial class MainWindow : Window, ISearchHost
             new MenuItem(commandText: "Copy text", action: () => CopyView(markdown: false)),
             new MenuItem(commandText: "Copy Markdown", action: () => CopyView(markdown: true)),
         };
+        if (_view.SelectionRange is not null)
+        {
+            items.Add(new MenuItem(commandText: "Cut", action: () => CutSelection()));
+        }
+
+        if (ClipboardHasText())
+        {
+            items.Add(new MenuItem(commandText: "Paste", action: () => PasteFromClipboard()));
+        }
+
         if (_view.FoldUnitAtScreen(screen) is { } unit)
         {
             string label = _view.IsFolded(unit) ? "Unfold" : "Fold";

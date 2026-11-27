@@ -6,7 +6,7 @@ using Terminal.Gui.Views;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The tables of the window, in view mode: F2 and Enter edit the cell at the caret in the <see cref="TableCellField"/>; Alt+Up and
+/// The tables of the window, in view mode: F2 edits the cell at the caret in the <see cref="TableCellField"/>; Alt+Up and
 /// Alt+Down move the caret's row, Alt+Left and Alt+Right its column (outside a table Alt+Left is Back, see <see cref="HandleLinkKey"/>);
 /// Alt+T opens the table menu at the caret, and the right-click menu over a table has the same items. Edit mode has none of them.
 /// </summary>
@@ -42,8 +42,8 @@ internal sealed partial class MainWindow
     private delegate TableEditResult TableOperation(string text, RenderBlock table, RenderedView.TableCell cell);
 
     /// <summary>
-    /// The window's table keys in view mode: F2 and Enter edit the caret's cell (Enter elsewhere is an edit of the text, see
-    /// <c>MainWindow.ViewEditing.cs</c>), Tab and Shift+Tab move the caret to the next or previous cell, Alt+Up and Alt+Down move the caret's row,
+    /// The window's table keys in view mode: F2 edits the caret's cell in the field. Enter is an edit of the text (in a cell it moves the caret to
+    /// the next row, see <c>MainWindow.ViewEditing.cs</c>), Tab and Shift+Tab move the caret to the next or previous cell, Alt+Up and Alt+Down move the caret's row,
     /// Alt+Left and Alt+Right its column, and the table menu key opens the menu. The arrows and the Tab keys return false outside a table (and Tab on
     /// the table's last or first cell), so that Alt+Left is Back there and Tab moves to a link. Returns false for a key it does not bind.
     /// </summary>
@@ -54,7 +54,7 @@ internal sealed partial class MainWindow
             return false;
         }
 
-        if (key == Key.F2 || key == Key.Enter)
+        if (key == Key.F2)
         {
             return OpenCellAtCaret();
         }

@@ -96,6 +96,12 @@ internal sealed partial class RenderedView : View
     /// </summary>
     public event Action<Point>? ContextMenuRequested;
 
+    /// <summary>
+    /// Raised with the text of a paste that reaches the focused view (a bracketed paste from the terminal), sanitized as the view sanitizes it. The
+    /// window writes the text as Markdown source (see <c>MainWindow.ViewPaste.cs</c>).
+    /// </summary>
+    public event Action<string>? PasteRequested;
+
     /// <summary>The document shown.</summary>
     public RenderDocument Document => _document;
 
@@ -203,6 +209,21 @@ internal sealed partial class RenderedView : View
 
     /// <inheritdoc/>
     protected override bool OnMouseEvent(Mouse mouse) => HandleMouse(mouse) || base.OnMouseEvent(mouse);
+
+    /// <summary>
+    /// Takes a paste that the focused view receives: the text is handed to <see cref="PasteRequested"/>, and the paste is consumed. The base class
+    /// has already sanitized the text (see <c>OnSanitizingPaste</c>).
+    /// </summary>
+    /// <param name="text">The sanitized text.</param>
+    protected override bool OnPaste(string text)
+    {
+        PasteRequested?.Invoke(text);
+        return true;
+    }
+
+    /// <summary>The text of a paste as the view sanitizes it (control characters removed), for a paste the window reads from the clipboard.</summary>
+    /// <param name="raw">The text as read.</param>
+    internal string SanitizePaste(string raw) => OnSanitizingPaste(raw);
 
     /// <summary>The viewport's width changed: the layout is rebuilt for it, and the cursor and top line are placed (see the remarks).</summary>
     /// <param name="e">The change.</param>

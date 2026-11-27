@@ -62,11 +62,15 @@ or until the next key. The last line lists the main keys.
 | Shift with a movement key | Extend the selection. The selection is the text from where the movement started up to the caret, not including the character the caret is before: Shift+Right three times selects three characters |
 | Ctrl+F | Find in the rendered text. Enter goes to the first match after the cursor; Esc closes the bar |
 | F3 / Shift+F3 | Next / previous match, wrapping at the ends with a message |
-| Ctrl+C / Alt+C | Copy the selection as plain text, or the block under the cursor when nothing is selected; Alt+C copies it as Markdown |
+| Ctrl+C / Alt+C | Copy the selection as plain text, or the block under the cursor when nothing is selected; Alt+C copies it as Markdown. The text also goes to the application clipboard when there is one, so Ctrl+V pastes it back |
+| Ctrl+X | Cut the selection: copy it as Markdown, then delete it, as one undo step. With no selection, says so (see Editing in the view) |
+| Ctrl+V | Paste the application clipboard's text as Markdown source, at the caret or over the selection. Says so when there is no clipboard here, or it holds no text |
+| Terminal paste | The text that the terminal pastes (bracketed paste) is inserted as Markdown source, as Ctrl+V inserts the clipboard's. In edit mode the editor takes it |
 | Alt+F | Fold or unfold the section or code block under the caret (see Folding) |
 | Alt+1–Alt+6 / Alt+0 | Show the headings down to that level, folding the deeper sections; Alt+0 unfolds everything |
 | Letters, digits, punctuation, Space | Type the character at the caret (see Editing in the view). Letters and digits are no longer commands |
-| Enter | Split the block at the caret, or start a new block below or above it, or replace the selection (see Editing in the view). In a table cell, Enter opens the cell instead |
+| Enter | Split the block at the caret, or start a new block below or above it, or replace the selection (see Editing in the view). In a table cell, Enter moves the caret down a row, or adds a row below the last one |
+| F2 | In a table cell, open the cell's field (see Tables) |
 | Backspace / Delete | Delete the character before / after the caret, or the selection; at a block's start / end they join or unwrap blocks (see Editing in the view) |
 | Ctrl+Enter | Follow the link under the caret (see Links). Ctrl+J does the same |
 | Shift+F10 | Open the menu at the cursor |
@@ -81,6 +85,11 @@ or until the next key. The last line lists the main keys.
 Any movement without Shift clears the selection. Copying writes the text to the clipboard through the terminal (OSC 52),
 so the terminal must allow it. A copy over 1,000,000 bytes is not written, and the message says so.
 
+Ctrl+V and Ctrl+X use the application clipboard. On Windows, macOS and WSL it is the system clipboard; on Linux it is the
+`xclip` clipboard when `xclip` is installed. Without xclip, the application keeps its own clipboard: Ctrl+V pastes what this
+session copied or cut, and text copied in another program comes in through the terminal's paste. When the clipboard cannot
+be read, Ctrl+V says that the clipboard is not available here.
+
 ## Mouse
 
 | Action | |
@@ -92,7 +101,7 @@ so the terminal must allow it. A copy over 1,000,000 bytes is not written, and t
 | Click | Place the caret before the character under the mouse, and clear the selection. A click past the text of a paragraph's last line puts the caret at its end |
 | Drag | Select from the press to the caret under the mouse; the selection stops before that character. Above or below the view, the text scrolls one line for each move |
 | Double-click | Select the word under the mouse, from its first character to its last (nothing on a space) |
-| Right-click | Open the menu: Copy text, Copy Markdown, and Fold or Unfold, Unfold all inside, and Fold section, for the section or code block at the mouse and the section around the caret (when there are any). Choose with the mouse, or with the arrow keys and Enter |
+| Right-click | Open the menu: Copy text, Copy Markdown, Cut (when there is a selection), Paste (when the clipboard holds text), and Fold or Unfold, Unfold all inside, and Fold section, for the section or code block at the mouse and the section around the caret (when there are any). Choose with the mouse, or with the arrow keys and Enter |
 
 A right-click inside the selection keeps it; outside, it moves the cursor there, as a click does.
 
@@ -114,11 +123,13 @@ Code blocks do not scroll: a long line in a code block wraps.
 
 ### Editing a table
 
-In view mode, F2, or Enter with the caret in a cell, opens a field over the cell, with the cell's source
+In view mode, F2 with the caret in a cell opens a field over the cell, with the cell's source
 text (an escaped `\|` shows as `|`). Enter writes the cell, Esc cancels, and Tab or Shift+Tab writes it and opens the next or
 previous cell: the next row's first cell after the last column, and the previous row's last cell before the first. After the
 last cell, Tab writes the cell and closes the field. A write is one undo step (Ctrl+Z), and the caret goes to the cell.
 
+- Enter in a cell moves the caret to the same column of the next row. On the last row it adds a row below and moves there,
+  as one undo step. Typing, Backspace and Delete change a cell's text directly, without a field (see Editing in the view).
 - Alt+Up and Alt+Down move the caret's row up and down; Alt+Left and Alt+Right move its column left and right. The caret
   moves with the row or column. Outside a table Alt+Left is still Back (see Links).
 - Alt+T opens the table menu at the caret, and the right-click menu over a table has the same items: Edit cell, Insert row
@@ -241,11 +252,24 @@ The rendered view is editable, and the view shows each change as it is made. Wha
 - Backspace deletes the character before the caret, and Delete the one after it. A bold or italic span left with no text
   goes with its markers, and a link left with no text goes with its destination.
 - A selection inside one block, such as a paragraph or a heading, is replaced by what is typed, or deleted by Backspace or Delete.
+- A selection across blocks is replaced by what is typed, or deleted by Backspace or Delete; Enter over it splits the block
+  where the selection began. The blocks that the selection covers whole go, and the first and last blocks keep the text
+  outside it and are joined into the first block's kind, as Backspace at a block's start joins them. A selection that starts
+  or ends in a code block or a table, without covering it whole, is refused.
+- Typing, Backspace and Delete in a table cell change the cell's text. An aligned table is written aligned again; any other
+  table changes only the cell's line. Backspace at a cell's start and Delete at its end do nothing.
+- Paste inserts Markdown source: the text is written as it is, not escaped, so a pasted `**x**` is bold. Its lines end with
+  the document's line ending, and each line after the first takes the container of the block it lands in (a quote's bars,
+  a list item's indent). A paste over a selection replaces it. The terminal's paste and Ctrl+V both paste this way (see
+  Keys). A paste is one undo step, and it ends a typing run. In a table cell a paste takes one line, with any `|` escaped.
+- Ctrl+X copies the selection as Markdown, through the clipboard as Ctrl+C does, and deletes it as one undo step, so Ctrl+Z
+  brings it back. A cut that is refused copies nothing.
 - Enter splits the block at the caret: a paragraph, a heading or a list item becomes two of the same kind (a new list item is
   numbered after the old one, and a task item starts unchecked). At the end of a block, Enter holds a new block below it, a
   paragraph or, after a list item, a new item; at its start, it holds one above. The new block is drawn on a line of its
   own, and it is written when a character is typed. Enter on a new item that is still empty ends the list, and Enter on a
-  new paragraph in a quote ends the quote. In a code block, Enter writes a line break. In a table cell it opens the cell.
+  new paragraph in a quote ends the quote. In a code block, Enter writes a line break. In a table cell it moves the caret
+  down a row, or adds a row below the last one (see Tables).
 - Backspace at a block's start unwraps a heading into a paragraph, unwraps the first item of a list, or joins the block to
   the text before it (the two keep the previous block's kind). Delete at a block's end joins the text after it. A line
   break inside a paragraph (a hard break) is removed by Backspace at the start of the next line or by Delete at the end of
@@ -256,8 +280,8 @@ The rendered view is editable, and the view shows each change as it is made. Wha
 - Ctrl+Z and Ctrl+Y undo and redo. Typed characters with no move between them are one undo step, so are consecutive
   Backspaces and consecutive Deletes, and a word with the space after it is one step. Each Enter is a step of its own, and
   so is a Backspace or Delete at the start or end of a line, since it joins or unwraps blocks.
-- An edit that the view cannot write as it reads is refused with a message, and nothing changes. Typing in a table cell is
-  refused (F2 edits the cell), and so is typing on the heading of a folded section or code block (unfold it first).
+- An edit that the view cannot write as it reads is refused with a message, and nothing changes. Typing on the heading of a
+  folded section or code block is refused (unfold it first).
 
 Some edits are still refused with a message, and Ctrl+T edits the source for them, in the same window and with the same
 undo history:
@@ -266,9 +290,16 @@ undo history:
 - Enter at the start or end of a line inside a paragraph (next to a hard break), and Enter inside a link's text, are refused.
 - Backspace at the start of a list item nested in another item is refused; only a top-level item unwraps into a paragraph.
 - Backspace at the start of a block inside a quote unwraps it only when the quote is the block's only container.
-- A selection that crosses blocks is refused.
-
-Typing directly in table cells is not done yet (F2 and Enter edit a cell in its field for now), and neither is paste.
+- A table cell takes one line: a paste with a line break into a cell is refused.
+- A row shorter than the header has no caret place in its missing columns, so Enter there is refused.
+- A cell has no caret place after its last character, so text cannot be typed at a cell's end: Right from the last character
+  goes to the next cell. Typing at a cell's start writes into that cell.
+- Deleting a selection that covers a bold or italic span's text and both its markers is refused ("Can't type here").
+- After typing in an aligned table, Ctrl+Z puts the caret in the next cell, not in the cell that was typed in: the undo of a
+  table's rewrite places the caret at the end of the restored text.
+- Enter over a selection inside a table cell is refused when the Enter after the removal is.
+- A join across blocks whose last block continues over lines with container prefixes (a quote or a list) is refused.
+- What a paste renders (a list marker in the middle of a paragraph, say) is not checked: the paste writes the source as given.
 
 ## Folding
 

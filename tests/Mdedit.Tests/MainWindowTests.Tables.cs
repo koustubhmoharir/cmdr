@@ -8,7 +8,7 @@ using Point = System.Drawing.Point;
 namespace Mdedit.Tests;
 
 /// <summary>
-/// The table keys and the inline field of the window in view mode: F2 and Enter edit a cell, Enter, Esc, Tab and Shift+Tab in the field, the
+/// The table keys and the inline field of the window in view mode: F2 edits a cell in its field, Enter moves between rows (and adds one on the last row), Enter, Esc, Tab and Shift+Tab in the field, the
 /// edit as one undo step with the caret on its cell, the refusals, the row and column moves, the table menu (Alt+T and the right-click), the
 /// keys that edit mode leaves alone, the external-change check that waits for the field, and an aligned table that stays aligned.
 /// </summary>
@@ -28,6 +28,54 @@ public sealed partial class MainWindowTests
 
     private const int TableWidth = 60;
     private const int TableHeight = 14;
+
+    [Fact]
+    public void Typing_at_the_start_of_a_cell_of_an_aligned_table_realigns_the_table_on_screen_and_in_the_text()
+    {
+        Session session = RunTable(
+            Opened("notes.md", Aligned),
+            (_, window) => window.View.PlaceCaret(Index(Aligned, "pear"), null),
+            (_, window) => Type(window, "ZZZZZZ"));
+
+        // The first column grows to fit the new text, and the table stays aligned.
+        Assert.Equal(
+            "| Name       | Qty |\n| :--------- | --: |\n| apple      |   3 |\n| ZZZZZZpear |  10 |\n\nAfter.\n",
+            session.Window.Editor.Buffer.Text);
+        Assert.True(TableSource.Parse(session.Window.Editor.Buffer.Text, session.Window.View.Document.Blocks.Single(block => block.Table is not null)).IsAligned);
+
+        // On the screen the dividers of the rows fall in the same columns.
+        TerminalScreen screen = session.Screens[^1];
+        int apple = screen.RowOf("apple");
+        int pear = screen.RowOf("ZZZZZZpear");
+        Assert.Equal(Dividers(screen.Text(apple)), Dividers(screen.Text(pear)));
+        Assert.Equal(Dividers(screen.Text(screen.RowOf("Name"))), Dividers(screen.Text(apple)));
+    }
+
+    // The columns of the vertical dividers in a row of the screen.
+    private static int[] Dividers(string row) => row.Select((c, column) => (c, column)).Where(cell => cell.c == '\u2502').Select(cell => cell.column).ToArray();
+
+    [Fact]
+    public void Enter_on_the_last_row_adds_a_row_below_and_moves_the_caret_into_it_as_one_undo_step()
+    {
+        string added = string.Empty;
+        RenderedView.TableCell? caret = null;
+        Session session = RunTable(
+            Opened("notes.md", Plain),
+            (_, window) => window.View.PlaceCaret(Index(Plain, "3"), null),
+            (_, window) => window.NewKeyDownEvent(Key.Enter),
+            (_, window) =>
+            {
+                added = window.Editor.Buffer.Text;
+                caret = window.View.TableCellAtCaret();
+            },
+            (_, window) => window.NewKeyDownEvent(Key.Z.WithCtrl));
+
+        string[] lines = added.Split('\n');
+        Assert.Equal("| 3 | 4 |", lines[3]);
+        Assert.Equal("After.", lines[^2]);
+        Assert.Equal(new RenderedView.TableCell(0, 3, 0), caret);
+        Assert.Equal(Plain, session.Window.Editor.Buffer.Text);
+    }
 
     [Fact]
     public void F2_on_a_table_cell_opens_the_field_with_the_cells_source_text()
@@ -72,15 +120,17 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Enter_on_a_table_cell_off_a_link_opens_the_field()
+    public void Enter_on_a_table_cell_moves_the_caret_down_a_row_and_opens_no_field()
     {
         Session session = RunTable(
-            Opened("notes.md", Markup),
-            (_, window) => window.View.PlaceCaret(Index(Markup, "bold"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            Opened("notes.md", Plain),
+            (_, window) => window.View.PlaceCaret(Index(Plain, "1"), null),
+            (_, window) => window.NewKeyDownEvent(Key.Enter),
+            (_, window) => Type(window, "Z"));
 
-        TerminalScreen screen = session.Screens[^1];
-        Assert.Contains("**bold**", screen.Text(screen.RowOf("**bold**")), StringComparison.Ordinal);
+        // The caret moves to the cell below; the text is not changed by Enter, and a typed character goes into that cell, not into a field.
+        Assert.Equal(new RenderedView.TableCell(0, 2, 0), session.Window.View.TableCellAtCaret());
+        Assert.Equal("| a | b |\n|---|---|\n| 1 | 22 |\n| Z3 | 4 |\n\nAfter.\n", session.Window.Editor.Buffer.Text);
     }
 
     [Fact]

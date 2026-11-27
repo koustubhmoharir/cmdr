@@ -288,13 +288,13 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Enter_in_a_table_cell_still_opens_the_field()
+    public void F2_in_a_table_cell_still_opens_the_field()
     {
         const string empty = "| a |  |\n|---|---|\n| 1 | 2 |\n\nAfter.\n";
         Session session = RunTable(
             Opened("notes.md", empty),
             (_, window) => Assert.True(window.View.PlaceTableCell(0, 0, 1)),
-            (_, window) => window.NewKeyDownEvent(Key.Enter),
+            (_, window) => window.NewKeyDownEvent(Key.F2),
             (_, window) => Type(window, "Z"),
             (_, window) => window.NewKeyDownEvent(Key.Enter));
 

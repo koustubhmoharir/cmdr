@@ -20,7 +20,8 @@ namespace Mdedit.Tui;
 /// </para>
 /// <para>
 /// <b>Structure.</b> Enter is a step of its own, and so is a Backspace or Delete at the edge of a display line (see <see cref="DeleteInView"/>), since
-/// those edits join, split or unwrap blocks. Such an edit never continues a run, and no run continues from it.
+/// those edits join, split or unwrap blocks. Such an edit never continues a run, and no run continues from it. A paste or a cut is a step of its
+/// own too (see <c>MainWindow.ViewPaste.cs</c>), and a caret move that Enter makes in a table cell writes nothing and is no step.
 /// </para>
 /// <para>
 /// <b>Pending insertions.</b> A typed space that would not show is held by the view, with no step of its own; the next typed character writes it
@@ -236,8 +237,8 @@ internal sealed partial class MainWindow
             : null;
 
     /// <summary>
-    /// Applies the result of a view edit: a refusal shows its message and ends the run; a pending insertion is held by the view; a replacement is
-    /// written as one undo step (continuing <paramref name="shared"/>'s when it is not null).
+    /// Applies the result of a view edit: a refusal shows its message and ends the run; a pending insertion is held by the view; a move places the
+    /// caret and writes nothing; a replacement is written as one undo step (continuing <paramref name="shared"/>'s when it is not null).
     /// </summary>
     /// <param name="result">The result of a <see cref="ViewEdit"/> operation.</param>
     /// <param name="kind">The kind of the edit.</param>
@@ -254,6 +255,9 @@ internal sealed partial class MainWindow
             case ViewEditResult.Pending pending:
                 _view.SetPending(pending);
                 _run = new ViewRun(kind, Group: null, _view.CursorOffset, typedSpace);
+                break;
+            case ViewEditResult.Move move:
+                _view.PlaceCaret(move.Caret, null);
                 break;
             case ViewEditResult.Replacement replacement:
                 WriteReplacement(replacement, kind, shared, typedSpace);

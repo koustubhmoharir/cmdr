@@ -1,4 +1,3 @@
-using Mdedit.Core.Editing;
 using Mdedit.Core.Render;
 using Mdedit.Tui;
 using Terminal.Gui.App;

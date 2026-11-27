@@ -607,14 +607,28 @@ Decisions taken while building it:
 
 ### View and window (Mdedit)
 
-- **Keys (M6a, M6b)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
+- **Keys (M6a, M6b, M6c)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
   Ctrl+Home / Ctrl+End; Alt+O outline; Tab / Shift+Tab next / previous cell in a table, else next / previous link; Ctrl+Enter
   and Ctrl+J (a line feed, which many terminals send for Ctrl+Enter) follow a link, and Enter follows none; `*` and `-`
-  folding only in the right-click menu, as "Unfold all inside" and "Fold section"; `<` / `>` removed. F2 and Enter edit a
-  table cell in its field (M5) until M6c; Enter elsewhere edits the text (M6b). Tab leaves a table after its last cell, for
-  the next link, so that the caret is never held in a table.
+  folding only in the right-click menu, as "Unfold all inside" and "Fold section"; `<` / `>` removed. F2 edits a table cell
+  in its field (M5); Enter in a table cell moves the caret to the next row, or adds a row on the last one (M6c); Enter
+  elsewhere edits the text (M6b). Tab leaves a table after its last cell, for the next link, so that the caret is never
+  held in a table. Ctrl+V pastes and Ctrl+X cuts (M6c, see below); the terminal's bracketed paste is a paste.
+- **Paste and cut (M6c)**: the driver's bracketed paste reaches the focused view as `Command.Paste`; `View` sanitizes it and
+  calls `OnPaste`, which `RenderedView` raises as `PasteRequested` and consumes, so the window's keys never see it and it is
+  never typed key by key. The window writes it with `ViewEdit.Paste` (over the selection when there is one), as one undo
+  step that ends the typing run. Ctrl+V reads `IApplication.Clipboard` through `TryGetClipboardData`: no clipboard, or one
+  that cannot be read, says "The clipboard isn't available here; use the terminal's paste"; an empty one says "Nothing to
+  paste". On Linux without `xclip` the fork's clipboard is the in-process `FakeClipboard`, which reports itself supported, so
+  Ctrl+V there pastes what this session copied or cut. Ctrl+X copies the selection as Markdown (OSC 52, and the application
+  clipboard when there is one) and then deletes it through `ViewEdit.ReplaceSelection`; a refused deletion copies nothing,
+  and too large a copy cuts nothing. With no selection it says "Nothing is selected". Ctrl+C and Alt+C also write the
+  application clipboard, so a copy in this session can be pasted back. The right-click menu adds Cut (with a selection) and
+  Paste (with clipboard text) after the copy entries. The view binds neither Ctrl+V nor Ctrl+X, so both reach the window.
+  In edit mode pasting is the editor's.
 - **Undo grouping**: a run is a series of typed characters, of Backspaces or of Deletes, each starting where the last one
-  left the caret. A typed non-space after a typed space starts a step; a selection replaced starts one; any other key, a
+  left the caret. M6c: a paste and a cut are each a step of their own, and end the run; a caret move that Enter makes in a
+  table cell writes nothing and is not a step (`ViewEditResult.Move` places the caret). A typed non-space after a typed space starts a step; a selection replaced starts one; any other key, a
   mouse caret move, a table edit, an undo or a mode switch ends the run. M6b: Enter is a step of its own; a Backspace
   at a display line's first cell, or a Delete at its end position, is a step of its own too, since it may join or unwrap
   blocks (the window decides this from the caret's place, not from the edit, so a Backspace at a wrapped line's start is
