@@ -723,3 +723,33 @@ emphasis that spans the edges may be refused; Enter on a pending paragraph that 
 ending anything; Enter inside a link's text is refused (the split would cut the link, which would need closing it and opening it again in
 the new block); a code line has no caret stop at its end, so Delete cannot join code lines (Backspace at the next line's start does). The view must draw an Above pending above the caret's line and a Below pending below it, use `Display` for both and for the held
 marker of an empty document, and pass the pending back on the next insertion at the same `Offset`.
+
+### Tables, paste and cross-block selections (M6c)
+
+M6c keeps the engine's shape (pure functions, one replacement, a reparse and a verification, a refusal otherwise).
+
+- **Typing in a table cell.** A typed character, Backspace or Delete in a cell edits the cell's inline source as typing
+  in a paragraph does (the insertion point, continuation, escapes, with `|` escaped as `\|` too), and the new cell source
+  is written with `TableEdit`'s cell writer, so an aligned table stays aligned (the whole table is the replacement) and a
+  minimal one changes only the cell. The caret goes to the place after the typed text in the rewritten cell, found by
+  scanning the new table source. A space that would not show at a cell's edge is held as an `Inline` pending. Backspace
+  at a cell's start and Delete at its end do nothing (cells are not joined). A selection inside one cell is replaced; one
+  across cells is refused. Verification is `TableEdit`'s plus the M6a check of the cell's plain text.
+- **Enter in a table cell** moves the caret to the same column of the next row; on the last row it inserts a row below
+  (`TableEdit.InsertRow`) and moves there, as one undo step. F2 still opens the inline field.
+- **Paste** inserts Markdown source (the user's decision). `ViewEdit.Paste(doc, start, end, text)` removes the selection
+  (as Backspace over it would, across blocks too) and writes the text at the insertion point, unescaped: its line breaks
+  become the document's line ending, and each line after the first gets the container continuation of the caret's
+  block (quote bars, item indentation), so a paste inside a quote or item stays in it. In a code block the text is raw
+  with the same prefixes. In a table cell only a one-line paste is accepted, with `|` escaped; a multi-line one is
+  refused. A pending insertion is written in front of it. Verification: the blocks wholly before and wholly after the
+  pasted range must be unchanged; what the paste itself renders is not judged.
+- **Delete across blocks.** `ReplaceSelection` (and Backspace / Delete with a selection) across blocks removes the
+  selected source: blocks wholly inside go with their separators; the first and last blocks keep their text outside the
+  selection and are joined into the first block's kind and containers, as Backspace at a block's start joins. A selection
+  that ends inside a code block or a table without covering it wholly is refused. Typed text goes where the selection
+  started. Verification expects the blocks before, the joined block, and the blocks after.
+- **Keys.** Pastes come from the terminal's bracketed paste (the driver's paste event) and from Ctrl+V, which reads the
+  application clipboard where the driver has one (Windows; on Linux only when a clipboard tool is present). Ctrl+X copies
+  the selection as Markdown and deletes it, as one undo step, so that cut and paste round-trip. Each paste or cut is one
+  undo step and ends a typing run.
