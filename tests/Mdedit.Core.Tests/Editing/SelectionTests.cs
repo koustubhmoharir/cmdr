@@ -50,9 +50,10 @@ public sealed class SelectionTests
     }
 
     [Fact]
-    public void A_selection_across_blocks_is_refused_until_M6c()
+    public void A_selection_from_a_block_start_into_the_next_block_removes_the_first_block()
     {
-        Assert.Equal(EditMessages.AcrossBlocks, EditCase.Refusal(ViewEdit.ReplaceSelection(RenderDocument.Parse("a\n\nb"), 0, 3, "")));
+        // "a" is covered wholly and goes with its separator; the rest of "b" is what is left, with its own kind.
+        Assert.Equal(new EditCase.Outcome("b", 0), EditCase.Replace("a\n\nb", 0, 3, string.Empty));
     }
 
     [Fact]
@@ -69,10 +70,10 @@ public sealed class SelectionTests
     }
 
     [Fact]
-    public void A_selection_in_a_table_is_refused_until_M6c()
+    public void A_selection_across_table_cells_is_refused_with_a_message()
     {
         const string source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
 
-        Assert.Equal(EditMessages.Table, EditCase.Refusal(ViewEdit.ReplaceSelection(RenderDocument.Parse(source), source.IndexOf('1'), source.IndexOf('2'), "")));
+        Assert.Equal(EditMessages.CellSelection, EditCase.Refusal(ViewEdit.ReplaceSelection(RenderDocument.Parse(source), source.IndexOf('1'), source.IndexOf('2'), "")));
     }
 }

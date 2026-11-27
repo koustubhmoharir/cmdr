@@ -36,6 +36,13 @@ public abstract record ViewEditResult
         public string DisplayText => Display ?? SourceText;
     }
 
+    /// <summary>
+    /// The caret moves to another stop of the same document, and nothing is written. Enter in a table cell that is not on the last row moves
+    /// the caret to the same column of the next row.
+    /// </summary>
+    /// <param name="Caret">The caret's source offset: a stop of the document, as a cell's offset or an empty cell's place.</param>
+    public sealed record Move(int Caret) : ViewEditResult;
+
     /// <summary>An edit that is not made, with the message to show.</summary>
     /// <param name="Message">The message to show.</param>
     public sealed record Refusal(string Message) : ViewEditResult;

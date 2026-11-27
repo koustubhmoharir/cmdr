@@ -36,7 +36,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Typing_in_a_table_cell_is_refused_with_its_message_and_changes_nothing()
+    public void Typing_in_a_table_cell_writes_the_cell()
     {
         OpenedFile file = Opened("notes.md", Wide);
 
@@ -47,8 +47,8 @@ public sealed partial class MainWindowTests
             (_, window) => window.View.PlaceCaret(Index(Wide, "one"), null),
             (_, window) => window.NewKeyDownEvent(new Key('x')));
 
-        Assert.StartsWith(EditMessages.Table, session.Screens[^1].Text(10), StringComparison.Ordinal);
-        Assert.Equal(Wide, session.Window.Editor.Buffer.Text);
+        // The table is not aligned, so only the cell changes.
+        Assert.Equal(Wide.Replace("| one |", "| xone |", StringComparison.Ordinal), session.Window.Editor.Buffer.Text);
     }
 
     [Fact]

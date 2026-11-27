@@ -25,8 +25,7 @@ public static partial class ViewEdit
         string text = doc.Text;
         string newline = LineEnding.Of(text);
         bool item = block.Containers.Length > 0 && IsItem(block.Containers[^1]);
-        string shape = (block.Kind == BlockKind.Heading ? new string('#', block.HeadingLevel) + " " : string.Empty)
-            + (block.Runs.Length > 0 && block.Runs[0].Cells.Any(cell => cell.IsMapped && cell.Style.Role == StyleRole.TaskBox) ? "[ ] " : string.Empty);
+        string shape = BlockMarker(block);
         ImmutableArray<Container> chain = item ? block.Containers[..^1] : block.Containers;
 
         if (index + 1 < doc.Blocks.Length)
@@ -44,9 +43,7 @@ public static partial class ViewEdit
             // The only block: its source goes, and what is left (blank lines, say) has no block. The pending is inline, at the line's start,
             // with the block's prefix and marker, so that typing writes the block back into the empty document.
             int start = LineStart(text, block.Start);
-            string held = EditSite.LinePrefix(text, block.Start) + shape;
-            string display = ShapeDisplay(doc, index) + (block.Kind == BlockKind.Heading ? new string('#', block.HeadingLevel) + " " : string.Empty);
-            var pending = new ViewEditResult.Pending(start, held, PendingPlacement.Inline, display);
+            ViewEditResult.Pending pending = OnlyBlockPending(doc, index, start);
             return CommitText(doc, text.Remove(start, block.End - start), start, expected, pending);
         }
 
@@ -60,6 +57,30 @@ public static partial class ViewEdit
         }
 
         return Refuse(EditMessages.CantEdit);
+    }
+
+    /// <summary>
+    /// The source a removed block's shape keeps: a heading's marker and a task item's box, which a typed character writes back. The
+    /// containers' prefix is not in it, since the pending block is drawn with its own containers.
+    /// </summary>
+    /// <param name="block">The block whose shape is kept.</param>
+    private static string BlockMarker(RenderBlock block) =>
+        (block.Kind == BlockKind.Heading ? new string('#', block.HeadingLevel) + " " : string.Empty)
+        + (block.Runs.Length > 0 && block.Runs[0].Cells.Any(cell => cell.IsMapped && cell.Style.Role == StyleRole.TaskBox) ? "[ ] " : string.Empty);
+
+    /// <summary>
+    /// The inline pending that holds the shape of a document's only block once its text is gone: its line prefix and marker, written at the line's
+    /// start, so that typing writes the block back into the empty document.
+    /// </summary>
+    /// <param name="doc">The document, whose only block is removed.</param>
+    /// <param name="index">The index of the block (0).</param>
+    /// <param name="start">The offset of the line the block's source started on, where the pending is held.</param>
+    private static ViewEditResult.Pending OnlyBlockPending(RenderDocument doc, int index, int start)
+    {
+        RenderBlock block = doc.Blocks[index];
+        string held = EditSite.LinePrefix(doc.Text, block.Start) + BlockMarker(block);
+        string display = ShapeDisplay(doc, index) + (block.Kind == BlockKind.Heading ? new string('#', block.HeadingLevel) + " " : string.Empty);
+        return new ViewEditResult.Pending(start, held, PendingPlacement.Inline, display);
     }
 
     /// <summary>Whether two blocks are items of the same list: both are items, in the same containers outside their own items.</summary>

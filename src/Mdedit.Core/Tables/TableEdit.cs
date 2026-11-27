@@ -58,6 +58,28 @@ public static class TableEdit
         return Commit(text, table, grid => grid.SetCell(row, column, written), row, column);
     }
 
+    /// <summary>
+    /// Sets a cell's source: the text written between its pipes, which is taken as it is. Unlike <see cref="SetCell"/>, nothing is trimmed or
+    /// escaped, so an escape already in the source stays as written. The caller writes the escapes; the result is verified like any other edit.
+    /// </summary>
+    /// <param name="text">The document's source text.</param>
+    /// <param name="table">The table block.</param>
+    /// <param name="row">The row, 0 for the header.</param>
+    /// <param name="column">The column.</param>
+    /// <param name="source">The cell's source content, with its escapes and without the padding around it.</param>
+    public static TableEditResult SetCellSource(string text, RenderBlock table, int row, int column, string source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        CheckRow(table, row);
+        CheckColumn(table, column);
+        if (source.Contains('\n') || source.Contains('\r'))
+        {
+            return TableEditResult.Refuse(OneLine);
+        }
+
+        return Commit(text, table, grid => grid.SetCell(row, column, source), row, column);
+    }
+
     /// <summary>Inserts an empty body row, so that it takes row index <paramref name="at"/>.</summary>
     /// <param name="text">The document's source text.</param>
     /// <param name="table">The table block.</param>

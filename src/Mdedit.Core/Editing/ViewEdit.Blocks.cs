@@ -14,12 +14,13 @@ public static partial class ViewEdit
     /// two list items (the new one numbered after the old, a task item unchecked) or two headings of the same level. At the block's end it holds
     /// a pending block below it (a paragraph, or a new item after a list item's text); at its start, a pending block above it (a paragraph, or a
     /// new item before a list item). In a code, HTML or raw block it writes a line break with the containers' prefixes. Enter on a pending
-    /// item at the block's end ends the list; on a pending paragraph in a quote, it ends the quote.
+    /// item at the block's end ends the list; on a pending paragraph in a quote, it ends the quote. In a table cell it moves to the same column of
+    /// the next row, or adds a row on the last one (see <c>EnterInCell</c>).
     /// </summary>
     /// <param name="doc">The document.</param>
     /// <param name="caret">The caret's source offset: a cell's offset, or a block's end position.</param>
     /// <param name="pending">The pending block the view holds at <paramref name="caret"/>, or null. An inline pending space is dropped.</param>
-    /// <returns>A replacement, a pending block, or a refusal (a table, or a place inside a paragraph's line that cannot split).</returns>
+    /// <returns>A replacement, a move (in a table), a pending block, or a refusal (a place inside a paragraph's line that cannot split).</returns>
     public static ViewEditResult Enter(RenderDocument doc, int caret, ViewEditResult.Pending? pending = null)
     {
         ArgumentNullException.ThrowIfNull(doc);
@@ -31,7 +32,7 @@ public static partial class ViewEdit
         RenderBlock block = doc.Blocks[site.BlockIndex];
         if (block.Kind == BlockKind.Table)
         {
-            return Refuse(EditMessages.Table);
+            return EnterInCell(doc, site);
         }
 
         if (block.Runs[site.Run].Cells.Length > site.Cell && block.Runs[site.Run].Cells[site.Cell].Style.Role == StyleRole.TaskBox)
@@ -97,6 +98,7 @@ public static partial class ViewEdit
         {
             ViewEditResult.Replacement split => Combine(doc, edit, split),
             ViewEditResult.Pending held => new ViewEditResult.Replacement(edit.Start, edit.Length, edit.Text, held.Offset, held),
+            ViewEditResult.Move move => new ViewEditResult.Replacement(edit.Start, edit.Length, edit.Text, move.Caret),
             _ => next,
         };
     }

@@ -9,14 +9,17 @@ internal static class EditMessages
     /// <summary>The caret is not on text the view can edit (a synthetic position, or a block the engine does not handle).</summary>
     public const string NoPlace = "Can't type here";
 
-    /// <summary>A table cell: typing is the table editor's until M6c.</summary>
-    public const string Table = "F2 edits a table cell";
+    /// <summary>A selection that starts and ends in different table cells.</summary>
+    public const string CellSelection = "A selection can't cover more than one table cell; Ctrl+T edits the source";
 
-    /// <summary>A selection that starts and ends in different blocks.</summary>
-    public const string AcrossBlocks = "Deleting across blocks isn't supported yet; Ctrl+T edits the source";
+    /// <summary>Pasted text with a line break into a table cell, which holds one line.</summary>
+    public const string CellOneLine = "A table cell takes one line of text; Ctrl+T edits the source";
 
-    /// <summary>A typed line break, which is Enter, or a pasted one (paste is M6c).</summary>
-    public const string LineBreak = "A line break isn't supported yet; Ctrl+T edits the source";
+    /// <summary>A selection that ends or starts inside a code block, HTML or raw block, or table without covering it wholly.</summary>
+    public const string WholeOnly = "A code block or table can only be deleted whole; Ctrl+T edits the source";
+
+    /// <summary>A typed line break, which is Enter, or a line break typed in some other way.</summary>
+    public const string LineBreak = "A line break isn't supported here; Ctrl+T edits the source";
 
     /// <summary>A join of two blocks that would change their structure (their containers, or a code block, table or HTML block).</summary>
     public const string CantJoin = "Can't join these blocks; Ctrl+T edits the source";

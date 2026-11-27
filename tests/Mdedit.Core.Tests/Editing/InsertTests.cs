@@ -201,12 +201,12 @@ public sealed class InsertTests
     }
 
     [Fact]
-    public void Typing_in_a_table_cell_is_refused_until_M6c()
+    public void Typing_in_a_table_cell_writes_the_cell()
     {
+        // The "x" goes after the "1" at 22; the table is aligned, so it is written aligned, with the caret after the "x" at 32.
         const string source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
-        int cell = source.IndexOf('1');
 
-        Assert.Equal(EditMessages.Table, EditCase.Refusal(ViewEdit.Insert(RenderDocument.Parse(source), cell, "x")));
+        Assert.Equal(new EditCase.Outcome("| a   | b   |\n| --- | --- |\n| 1x  | 2   |\n", 32), EditCase.Type(source, 23, "x"));
     }
 
     [Fact]

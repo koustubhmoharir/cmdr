@@ -104,13 +104,14 @@ internal static class BlockText
     /// <param name="at">The absolute source offset that splits the block.</param>
     public static (string Before, string After) Split(RenderBlock block, int at)
     {
-        int run = block.Runs.Length - 1;
+        // The caret is in the last run that starts at or before it: a caret at the end of a run is in that run, not at the start of the next,
+        // so the line break after it is not counted in front of the caret.
+        int run = 0;
         for (int index = 0; index < block.Runs.Length; index++)
         {
-            if (block.Runs[index].Cells.Any(cell => Mapped(cell) && block.Start + cell.Offset >= at))
+            if (RunStart(block, index) is { } first && first <= at)
             {
                 run = index;
-                break;
             }
         }
 
@@ -135,6 +136,19 @@ internal static class BlockText
         }
 
         return (string.Join('\n', before), string.Join('\n', after));
+    }
+
+    /// <summary>The absolute offset of the first mapped cell of a run, or of its empty table cell's place; null when neither.</summary>
+    private static int? RunStart(RenderBlock block, int run)
+    {
+        Cell[] cells = block.Runs[run].Cells.Where(Mapped).ToArray();
+        if (cells.Length > 0)
+        {
+            return block.Start + cells.Min(cell => cell.Offset);
+        }
+
+        int empty = EditSite.EmptyCellOffset(block, run);
+        return empty >= 0 ? empty : null;
     }
 
     /// <summary>The rendered text of each run of a block, in order.</summary>

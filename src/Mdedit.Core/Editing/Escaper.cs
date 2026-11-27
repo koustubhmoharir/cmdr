@@ -5,7 +5,7 @@ namespace Mdedit.Core.Editing;
 /// <summary>
 /// Writes a typed character as source that renders as that character. Inline text escapes the characters Markdown reads as markup
 /// everywhere; the ones that only start a line are escaped where the line they are typed on begins, which is the only place they
-/// would be read as markup. Code spans and code, HTML and raw blocks take the character as it is.
+/// would be read as markup. A pipe is escaped in a table cell. Code spans and code, HTML and raw blocks take the character as it is.
 /// </summary>
 internal static class Escaper
 {
@@ -27,8 +27,9 @@ internal static class Escaper
     /// <param name="typed">The typed text. Only a single character is escaped; anything longer is written as it is.</param>
     /// <param name="linePrefix">The source of the line from its start to the insertion point, with any text written in front of the typed one.</param>
     /// <param name="raw">Whether the text is written raw (a code span, or a code, HTML or raw block).</param>
+    /// <param name="table">Whether the text is in a table cell, where a pipe would end the cell and so is escaped too.</param>
     /// <returns>The typed text, or the same character with the backslash that makes it literal.</returns>
-    public static string Escape(string typed, string linePrefix, bool raw)
+    public static string Escape(string typed, string linePrefix, bool raw, bool table = false)
     {
         if (raw || typed.Length != 1)
         {
@@ -36,6 +37,11 @@ internal static class Escaper
         }
 
         char c = typed[0];
+        if (table && c == '|')
+        {
+            return @"\|";
+        }
+
         if (Everywhere.Contains(c))
         {
             return @"\" + typed;

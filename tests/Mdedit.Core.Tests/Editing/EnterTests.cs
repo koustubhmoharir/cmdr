@@ -243,10 +243,10 @@ public sealed class EnterTests
     }
 
     [Fact]
-    public void Enter_in_a_table_cell_is_refused_until_M6c()
+    public void Enter_in_a_table_cell_moves_to_the_next_row_and_writes_nothing()
     {
         const string source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
 
-        Assert.Equal(EditMessages.Table, EditCase.Refusal(EditCase.EnterAt(source, source.IndexOf('1'))));
+        Assert.Equal(new ViewEditResult.Move(source.IndexOf('1')), EditCase.EnterAt(source, source.IndexOf('a')));
     }
 }

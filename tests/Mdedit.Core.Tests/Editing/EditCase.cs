@@ -28,6 +28,10 @@ internal static class EditCase
     public static Outcome Replace(string source, int start, int end, string typed) =>
         Apply(source, ViewEdit.ReplaceSelection(RenderDocument.Parse(source), start, end, typed));
 
+    /// <summary>Pastes text at a caret or over a selection, which must be a replacement.</summary>
+    public static Outcome Paste(string source, int start, int end, string text, ViewEditResult.Pending? pending = null) =>
+        Apply(source, ViewEdit.Paste(RenderDocument.Parse(source), start, end, text, pending));
+
     /// <summary>Enter at a caret, with the pending block the view holds there, if any.</summary>
     public static ViewEditResult EnterAt(string source, int caret, ViewEditResult.Pending? pending = null) =>
         ViewEdit.Enter(RenderDocument.Parse(source), caret, pending);

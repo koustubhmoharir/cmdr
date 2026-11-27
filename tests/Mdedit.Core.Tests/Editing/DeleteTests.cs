@@ -125,11 +125,12 @@ public sealed class DeleteTests
     }
 
     [Fact]
-    public void Backspace_in_a_table_cell_is_refused_until_M6c()
+    public void Backspace_in_an_aligned_table_cell_removes_the_character_and_rewrites_the_table_aligned()
     {
+        // The "2" at 26 goes, so the cell is empty. The table is aligned, so it is written at the widths of its columns (3 each), and the empty
+        // cell's place is its closing pipe at 40 on the new row.
         const string source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
-        int cell = source.IndexOf('2');
 
-        Assert.Equal(EditMessages.Table, EditCase.Refusal(ViewEdit.DeleteBackward(RenderDocument.Parse(source), cell + 1)));
+        Assert.Equal(new EditCase.Outcome("| a   | b   |\n| --- | --- |\n| 1   |     |\n", 40), EditCase.Backspace(source, 27));
     }
 }

@@ -12,8 +12,9 @@ namespace Mdedit.Core.Editing;
 /// <remarks>
 /// Typed text goes in front of the text of the stop the caret is on: after the previous mapped cell of its run, so it takes that cell's style,
 /// except that a link is not grown at its end. Text typed in a code span, or in a code, HTML or raw block, is written as it is; inline text is
-/// escaped (see <see cref="Escaper"/>). Typing in a table, and a selection across blocks, belong to M6c and are refused. A refusal with an empty
-/// message means there is nothing to do (Backspace at the document's start, Delete at its end).
+/// escaped (see <see cref="Escaper"/>). A table cell is one run of its table, and its edits are written through the table's cell writer (see
+/// <c>ViewEdit.Tables.cs</c>); a selection across blocks is removed by <c>ViewEdit.Across.cs</c>. A refusal with an empty message means there is
+/// nothing to do (Backspace at the document's start, Delete at its end, or at a table cell's edge).
 /// </remarks>
 public static partial class ViewEdit
 {
@@ -56,18 +57,10 @@ public static partial class ViewEdit
         }
 
         RenderBlock block = doc.Blocks[site.BlockIndex];
-        if (block.Kind == BlockKind.Table)
-        {
-            return Refuse(EditMessages.Table);
-        }
-
-        Run run = block.Runs[site.Run];
         RemovalSet none = RemovalSet.Of(doc, block, [], trimEdges: false);
-        int previous = EditSite.PreviousMapped(run, site.Cell, none, site.Run);
-        int next = site.Cell < run.Cells.Length ? site.Cell : -1;
-        int at = EditSite.InsertionPoint(doc, block, run, previous, next);
+        int at = InsertionAt(doc, site);
         string held = pending is not null && pending.Offset == caret ? pending.SourceText : string.Empty;
-        return Write(new EditRequest(doc, site.BlockIndex, caret, none, at, typed, held));
+        return Write(new EditRequest(doc, site.BlockIndex, site.Run, caret, none, at, typed, held));
     }
 
     /// <summary>
@@ -88,11 +81,6 @@ public static partial class ViewEdit
         }
 
         RenderBlock block = doc.Blocks[site.BlockIndex];
-        if (block.Kind == BlockKind.Table)
-        {
-            return Refuse(EditMessages.Table);
-        }
-
         if (IsTaskBox(block, site))
         {
             return Refuse(EditMessages.CantEdit);
@@ -101,7 +89,12 @@ public static partial class ViewEdit
         int previous = EditSite.PreviousMapped(block.Runs[site.Run], site.Cell, RemovalSet.Of(doc, block, [], trimEdges: false), site.Run);
         if (previous >= 0)
         {
-            return Delete(doc, caret, site.BlockIndex, block, [(site.Run, previous)]);
+            return Delete(doc, caret, site, block, [(site.Run, previous)]);
+        }
+
+        if (block.Kind == BlockKind.Table)
+        {
+            return Refuse(string.Empty);
         }
 
         return site.Run > 0 ? JoinLines(doc, site.BlockIndex, site.Run) : BackspaceAtStart(doc, site.BlockIndex);
@@ -122,11 +115,6 @@ public static partial class ViewEdit
         }
 
         RenderBlock block = doc.Blocks[site.BlockIndex];
-        if (block.Kind == BlockKind.Table)
-        {
-            return Refuse(EditMessages.Table);
-        }
-
         if (IsTaskBox(block, site))
         {
             return Refuse(EditMessages.CantEdit);
@@ -134,7 +122,12 @@ public static partial class ViewEdit
 
         if (site.Cell < block.Runs[site.Run].Cells.Length)
         {
-            return Delete(doc, caret, site.BlockIndex, block, [(site.Run, site.Cell)]);
+            return Delete(doc, caret, site, block, [(site.Run, site.Cell)]);
+        }
+
+        if (block.Kind == BlockKind.Table)
+        {
+            return Refuse(string.Empty);
         }
 
         return site.Run < LastTextRun(block) ? JoinLines(doc, site.BlockIndex, site.Run + 1) : DeleteAtBlockEnd(doc, site.BlockIndex);
@@ -145,8 +138,9 @@ public static partial class ViewEdit
         site.Cell < block.Runs[site.Run].Cells.Length && block.Runs[site.Run].Cells[site.Cell].Style.Role == StyleRole.TaskBox;
 
     /// <summary>
-    /// Replaces the text between two source offsets with typed text, or deletes it when the text is empty. The selection must lie in one block
-    /// and the blocks of a selection across lines are joined with the line breaks removed. The typed text is written where the selection started, as typing there would.
+    /// Replaces the text between two source offsets with typed text, or deletes it when the text is empty. A selection across the lines of one block
+    /// removes the line breaks between them, and a selection across blocks is removed by <c>ViewEdit.Across.cs</c>. Within a table, a selection must
+    /// lie in one cell. The typed text is written where the selection started, as typing there would.
     /// </summary>
     /// <param name="doc">The document.</param>
     /// <param name="start">The selection's start (either end may be given first).</param>
@@ -175,13 +169,13 @@ public static partial class ViewEdit
 
         if (first.BlockIndex != last.BlockIndex)
         {
-            return Refuse(EditMessages.AcrossBlocks);
+            return ReplaceAcrossBlocks(doc, first, last, start, end, typed);
         }
 
         RenderBlock block = doc.Blocks[first.BlockIndex];
-        if (block.Kind == BlockKind.Table)
+        if (block.Kind == BlockKind.Table && first.Run != last.Run)
         {
-            return Refuse(EditMessages.Table);
+            return Refuse(EditMessages.CellSelection);
         }
 
         List<(int Run, int Cell)> selected = SelectedCells(block, start, end);
@@ -199,15 +193,19 @@ public static partial class ViewEdit
         int run = selected[0].Run;
         int previous = EditSite.PreviousMapped(block.Runs[run], selected[0].Cell, removals, run);
         int next = EditSite.NextMapped(block.Runs[run], selected[^1].Cell, removals, run);
-        int at = EditSite.InsertionPoint(doc, block, block.Runs[run], previous, next);
-        return Write(new EditRequest(doc, first.BlockIndex, start, removals, at, typed, string.Empty));
+
+        // A table cell whose text is all selected has no neighbour to insert by, so the text goes where the cell's text began.
+        int at = block.Kind == BlockKind.Table && previous < 0 && next < 0
+            ? block.Start + block.Runs[run].Cells[selected[0].Cell].Offset
+            : EditSite.InsertionPoint(doc, block, block.Runs[run], previous, next);
+        return Write(new EditRequest(doc, first.BlockIndex, run, start, removals, at, typed, string.Empty));
     }
 
     /// <summary>A deletion of the given cells, written at the start of what it removes.</summary>
-    private static ViewEditResult Delete(RenderDocument doc, int caret, int blockIndex, RenderBlock block, IEnumerable<(int Run, int Cell)> cells)
+    private static ViewEditResult Delete(RenderDocument doc, int caret, Site site, RenderBlock block, IEnumerable<(int Run, int Cell)> cells)
     {
         RemovalSet removals = RemovalSet.Of(doc, block, cells);
-        return Write(new EditRequest(doc, blockIndex, caret, removals, removals.Start, string.Empty, string.Empty));
+        return Write(new EditRequest(doc, site.BlockIndex, site.Run, caret, removals, removals.Start, string.Empty, string.Empty));
     }
 
     /// <summary>The mapped cells of a block whose offsets are in <c>[start, end)</c>, in order.</summary>
@@ -244,8 +242,14 @@ public static partial class ViewEdit
         string before = removals.Apply(request.Doc.Text);
         int anchor = removals.Shift(request.At);
         RenderBlock block = request.Doc.Blocks[request.BlockIndex];
+        bool table = block.Kind == BlockKind.Table;
         string prefix = EditSite.LinePrefix(before, anchor) + request.Held;
-        string inserted = request.Held + Escaper.Escape(request.Typed, prefix, EditSite.IsRaw(block, request.At));
+        string inserted = request.Held + Escaper.Escape(request.Typed, prefix, EditSite.IsRaw(block, request.At), table);
+        if (table)
+        {
+            return WriteCell(request, before, anchor, inserted);
+        }
+
         string text = before.Insert(anchor, inserted);
         RenderDocument after = RenderDocument.Parse(text);
 
@@ -296,10 +300,11 @@ public static partial class ViewEdit
     /// <summary>What one edit writes.</summary>
     /// <param name="Doc">The document before the edit.</param>
     /// <param name="BlockIndex">The index of the edited block.</param>
+    /// <param name="Run">The index of the run the edit is in: for a table, the cell's run.</param>
     /// <param name="Caret">The caret's offset (the offset a pending insertion is held at).</param>
     /// <param name="Removals">The source the edit removes.</param>
     /// <param name="At">The insertion point, in the source before the edit; for a deletion, where the removal starts.</param>
     /// <param name="Typed">The typed text; empty for a deletion.</param>
     /// <param name="Held">The source of a pending insertion written in front of the typed text.</param>
-    private sealed record EditRequest(RenderDocument Doc, int BlockIndex, int Caret, RemovalSet Removals, int At, string Typed, string Held);
+    private sealed record EditRequest(RenderDocument Doc, int BlockIndex, int Run, int Caret, RemovalSet Removals, int At, string Typed, string Held);
 }

@@ -45,6 +45,18 @@ internal static class EditSite
             RenderBlock block = doc.Blocks[b];
             for (int r = 0; r < block.Runs.Length; r++)
             {
+                if (EmptyCellOffset(block, r) == offset)
+                {
+                    return new Site(b, r, 0);
+                }
+            }
+        }
+
+        for (int b = 0; b < doc.Blocks.Length; b++)
+        {
+            RenderBlock block = doc.Blocks[b];
+            for (int r = 0; r < block.Runs.Length; r++)
+            {
                 Run run = block.Runs[r];
                 int k = Array.FindLastIndex(run.Cells.ToArray(), cell => cell.IsMapped && cell.Style.Role != StyleRole.TaskBox);
                 if (k >= 0 && block.Start + run.Cells[k].Offset + SourceLength.Of(doc, block, run, k) == offset)
@@ -70,6 +82,25 @@ internal static class EditSite
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The absolute offset of the caret stop of an empty table cell: its place between its pipes, where the layout draws a blank for it. -1 when
+    /// the run is not an empty cell of a table, or the row has no such column.
+    /// </summary>
+    /// <param name="block">The block that owns the run.</param>
+    /// <param name="run">The index of the run; a table's runs are its cells, row by row.</param>
+    public static int EmptyCellOffset(RenderBlock block, int run)
+    {
+        if (block.Table is not { } table || block.Runs[run].Cells.Any(cell => cell.IsMapped))
+        {
+            return -1;
+        }
+
+        int columns = table.Alignments.Length;
+        TableRowModel row = table.Rows[run / columns];
+        int position = row.Positions.IsDefault || run % columns >= row.Positions.Length ? Cell.Synthetic : row.Positions[run % columns];
+        return position == Cell.Synthetic ? -1 : block.Start + position;
     }
 
     /// <summary>

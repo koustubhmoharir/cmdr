@@ -753,3 +753,28 @@ M6c keeps the engine's shape (pure functions, one replacement, a reparse and a v
   application clipboard where the driver has one (Windows; on Linux only when a clipboard tool is present). Ctrl+X copies
   the selection as Markdown and deletes it, as one undo step, so that cut and paste round-trip. Each paste or cut is one
   undo step and ends a typing run.
+
+**As built (M6c core).** `ViewEdit.Paste(doc, start, end, text, pending)` pastes over a selection (removed first, with `ReplaceSelection`, across
+blocks too) or at a caret; empty text does nothing, without a message. `ViewEdit.Enter` in a table cell returns the new `ViewEditResult.Move(Caret)` (a
+caret move that writes nothing) to the same column of the next row, or a replacement that adds a row (`TableEdit.InsertRow`) below the last one and
+puts the caret in its cell. Typing, Backspace, Delete and `ReplaceSelection` inside one cell write the cell's source through the new
+`TableEdit.SetCellSource(text, table, row, column, source)`, which takes the cell's source as written: `TableEdit.SetCell` takes the shown text (it trims
+it and escapes its pipes itself), so it could not write an escape already in a source. Both write through the same aligned or minimal writer, and
+the caret is found from the rewritten table's source. `EditSite.Find` also finds the caret stop of an empty table cell, its place between the pipes.
+Decisions where the spec was silent: a move goes to the target cell's first stop (its first character, or the empty cell's place); a typed space at a
+cell's edge is held when the trimmed cell text would not change; a pipe typed in a cell is escaped, and a pasted pipe is escaped unless a backslash
+already precedes it; a paste's lines after the first take the caret block's containers, or for a pending block the containers its source shows (the
+quote bars kept, other marker characters as spaces, a task box not indented), and an indented code block takes four more spaces; a blank pasted line
+takes the prefix without its trailing spaces; pasted text is written even when a space in it would not show; a selection that covers every block removes
+them and holds the only-block pending (the rule of M6b's last character). A selection that starts or ends in a code, HTML or raw block or a table
+without covering it wholly is refused ("A code block or table can only be deleted whole"), and a whole one is removed with its separators. A
+cross-block join keeps the first block's kind and containers; the last block's remainder keeps its own when the first is removed. The caret after a
+cross-block edit is after the typed text, else at the start of the remainder, else at the end of the block before, else at the start of the block after.
+`BlockText.Split` now takes a caret at the end of a run as belonging to that run (the line break after it is not counted before the caret), which is
+what a table's cells need. The paste's verification compares the blocks wholly before and after the pasted range (kind, heading level, text and
+containers, but not container identity), and requires at least one block between them: so a paste that would swallow the blocks after it (an unclosed
+fence) is refused. Known limits: a table cell takes one line (a line break, even a trailing one, is refused); a row shorter than the header has no
+stop in its missing columns, so Enter there is refused; a cross-block join whose last block's remainder spans lines with container prefixes is refused
+by the verifier, not joined; what a paste renders (a list marker in the middle of a paragraph, say) is not judged; an Enter over a selection in a cell
+is refused as a whole when the Enter after the removal is. The view must handle `ViewEditResult.Move` (the window's result switch has no case for it
+yet, so the result is ignored), and send a bracketed paste or Ctrl+V to `Paste`; in a table cell, F2 still opens the field.
