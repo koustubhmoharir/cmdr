@@ -56,9 +56,10 @@ public sealed class SelectionTests
     }
 
     [Fact]
-    public void A_selection_across_a_hard_line_break_is_refused_until_M6b()
+    public void A_selection_across_a_hard_line_break_removes_the_selected_text_with_the_break_between_its_lines()
     {
-        Assert.Equal(EditMessages.AcrossLines, EditCase.Refusal(ViewEdit.ReplaceSelection(RenderDocument.Parse("a  \nb"), 0, 5, "")));
+        // "b" and "c" are selected; the break after "b" goes with them, so the lines join into "ad".
+        Assert.Equal(new EditCase.Outcome("ad", 1), EditCase.Replace("ab  \ncd", 1, 6, ""));
     }
 
     [Fact]

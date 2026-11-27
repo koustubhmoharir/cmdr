@@ -3,7 +3,8 @@ using Mdedit.Core.Render;
 namespace Mdedit.Core.Editing;
 
 /// <summary>
-/// The rendered-view edits of M6a: typing, Backspace and Delete inside a block, and replacing a selection inside one block. Each is a pure function
+/// The rendered-view edits: typing, Backspace and Delete, replacing a selection, and the structure edits of M6b (Enter, the joins at a block's edges,
+/// the joins across a line break, and the removal of a block's last character; see <c>ViewEdit.Blocks.cs</c>). Each is a pure function
 /// of the document and the caret or selection, given as source offsets: the offsets the view holds, which are a cell's offset or a block's end
 /// position (see <c>RenderedView.CursorOffset</c>). Each returns one replacement of the source, or a pending insertion, or a refusal; it is
 /// verified by reparsing (see <see cref="EditVerifier"/>) before it is returned.
@@ -11,9 +12,10 @@ namespace Mdedit.Core.Editing;
 /// <remarks>
 /// Typed text goes in front of the text of the stop the caret is on: after the previous mapped cell of its run, so it takes that cell's style,
 /// except that a link is not grown at its end. Text typed in a code span, or in a code, HTML or raw block, is written as it is; inline text is
-/// escaped (see <see cref="Escaper"/>). Typing in a table, a selection across blocks and the block edges belong to later milestones and are refused.
+/// escaped (see <see cref="Escaper"/>). Typing in a table, and a selection across blocks, belong to M6c and are refused. A refusal with an empty
+/// message means there is nothing to do (Backspace at the document's start, Delete at its end).
 /// </remarks>
-public static class ViewEdit
+public static partial class ViewEdit
 {
     /// <summary>
     /// Types text at the caret.
@@ -36,6 +38,16 @@ public static class ViewEdit
         if (typed.Contains('\n') || typed.Contains('\r'))
         {
             return Refuse(EditMessages.LineBreak);
+        }
+
+        if (pending is { Placement: not PendingPlacement.Inline } blockPending && blockPending.Offset == caret)
+        {
+            return InsertBlock(doc, caret, typed, blockPending);
+        }
+
+        if (doc.Blocks.Length == 0 && pending is { Placement: PendingPlacement.Inline } emptyPending && emptyPending.Offset == caret)
+        {
+            return InsertIntoEmpty(doc, caret, typed, emptyPending);
         }
 
         if (EditSite.Find(doc, caret) is not { } site)
@@ -63,7 +75,10 @@ public static class ViewEdit
     /// </summary>
     /// <param name="doc">The document.</param>
     /// <param name="caret">The caret's source offset.</param>
-    /// <returns>A replacement or a refusal; at the start of a block's line (no mapped cell before the caret in its run) the refusal is M6b.</returns>
+    /// <returns>
+    /// A replacement, or a refusal. At a line's start inside a block the line break goes (a hard break, or a code line); at a block's start the block
+    /// is unwrapped or joined (see <c>BackspaceAtStart</c>).
+    /// </returns>
     public static ViewEditResult DeleteBackward(RenderDocument doc, int caret)
     {
         ArgumentNullException.ThrowIfNull(doc);
@@ -78,8 +93,18 @@ public static class ViewEdit
             return Refuse(EditMessages.Table);
         }
 
+        if (IsTaskBox(block, site))
+        {
+            return Refuse(EditMessages.CantEdit);
+        }
+
         int previous = EditSite.PreviousMapped(block.Runs[site.Run], site.Cell, RemovalSet.Of(doc, block, [], trimEdges: false), site.Run);
-        return previous < 0 ? Refuse(EditMessages.BackspaceAtStart) : Delete(doc, caret, site.BlockIndex, block, [(site.Run, previous)]);
+        if (previous >= 0)
+        {
+            return Delete(doc, caret, site.BlockIndex, block, [(site.Run, previous)]);
+        }
+
+        return site.Run > 0 ? JoinLines(doc, site.BlockIndex, site.Run) : BackspaceAtStart(doc, site.BlockIndex);
     }
 
     /// <summary>
@@ -87,7 +112,7 @@ public static class ViewEdit
     /// </summary>
     /// <param name="doc">The document.</param>
     /// <param name="caret">The caret's source offset.</param>
-    /// <returns>A replacement or a refusal; at the end position of a block the refusal is M6b.</returns>
+    /// <returns>A replacement or a refusal. At a line's end the break goes; at a block's end the next block is joined to it (see <c>DeleteAtBlockEnd</c>).</returns>
     public static ViewEditResult DeleteForward(RenderDocument doc, int caret)
     {
         ArgumentNullException.ThrowIfNull(doc);
@@ -102,14 +127,26 @@ public static class ViewEdit
             return Refuse(EditMessages.Table);
         }
 
-        return site.Cell >= block.Runs[site.Run].Cells.Length
-            ? Refuse(EditMessages.DeleteAtEnd)
-            : Delete(doc, caret, site.BlockIndex, block, [(site.Run, site.Cell)]);
+        if (IsTaskBox(block, site))
+        {
+            return Refuse(EditMessages.CantEdit);
+        }
+
+        if (site.Cell < block.Runs[site.Run].Cells.Length)
+        {
+            return Delete(doc, caret, site.BlockIndex, block, [(site.Run, site.Cell)]);
+        }
+
+        return site.Run < LastTextRun(block) ? JoinLines(doc, site.BlockIndex, site.Run + 1) : DeleteAtBlockEnd(doc, site.BlockIndex);
     }
+
+    /// <summary>Whether the caret is on a task box, which the edits do not write.</summary>
+    private static bool IsTaskBox(RenderBlock block, Site site) =>
+        site.Cell < block.Runs[site.Run].Cells.Length && block.Runs[site.Run].Cells[site.Cell].Style.Role == StyleRole.TaskBox;
 
     /// <summary>
     /// Replaces the text between two source offsets with typed text, or deletes it when the text is empty. The selection must lie in one block
-    /// and one line of it (no hard break between its cells). The typed text is written where the selection started, as typing there would.
+    /// and the blocks of a selection across lines are joined with the line breaks removed. The typed text is written where the selection started, as typing there would.
     /// </summary>
     /// <param name="doc">The document.</param>
     /// <param name="start">The selection's start (either end may be given first).</param>
@@ -155,7 +192,7 @@ public static class ViewEdit
 
         if (selected.Select(position => position.Run).Distinct().Count() > 1)
         {
-            return Refuse(EditMessages.AcrossLines);
+            return ReplaceAcrossLines(doc, first.BlockIndex, start, end, selected, typed);
         }
 
         RemovalSet removals = RemovalSet.Of(doc, block, selected, typed.Length == 0);
@@ -218,9 +255,11 @@ public static class ViewEdit
             return new ViewEditResult.Pending(request.Caret, inserted);
         }
 
-        if (after.Blocks.Length != request.Doc.Blocks.Length && request.Typed.Length == 0)
+        bool emptied = after.Blocks.Length != request.Doc.Blocks.Length
+            || BlockText.Of(after.Blocks[request.BlockIndex]).Length == 0;
+        if (emptied && request.Typed.Length == 0)
         {
-            return Refuse(EditMessages.BlockEmptied);
+            return RemoveBlock(request.Doc, request.BlockIndex);
         }
 
         if (!EditVerifier.Holds(request.Doc, after, request.BlockIndex, removals.RemovedText, Visible(request), end))

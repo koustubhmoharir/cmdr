@@ -601,7 +601,7 @@ Decisions taken while building it:
 - A removal in a paragraph or heading also removes the spaces it leaves at the block's edges (Markdown strips them, so
   the verification could not tell them apart), unless text is typed in its place.
 - A typed space that would not show is held as pending; a space typed over a selection is written.
-- Until M6b, a selection across a hard break and deleting a block's only character are refused (the block would go).
+- A selection across a hard break and deleting a block's only character were refused in M6a; M6b made them edits.
 - A typed bare URL becomes an autolink; its plain text is unchanged, so it is allowed.
 - Each edit reparses the whole document, as table edits do.
 
@@ -672,3 +672,33 @@ pure functions, one replacement, a reparse and a verification, a refusal otherwi
 
 In the view, Enter becomes an edit key (except in a table cell, where it opens the field until M6c), so only Ctrl+Enter,
 Ctrl+J and Ctrl+click follow a link. Each Enter, join and unwrap is an undo step of its own and ends a typing run.
+
+**As built (M6b core).** `ViewEdit.Enter(doc, caret, pending)` and `ViewEdit.EnterOver(doc, start, end)` (Enter over a selection: the selection is removed,
+then Enter acts where it started, and a pending block rides on the replacement as `Then`). `DeleteBackward` and `DeleteForward` take the
+structure branches at a block's edges and at a line break inside a block. `Pending` gained `Placement` (`Inline`, `Below`, `Above`), `Display` (the text
+drawn before the caret on the pending's line, built by `LinePrefix.Containers`; null means `SourceText`, which is how inline spaces are drawn), and
+`Tail` (the source an Above pending writes after the typed text). `Replacement` gained `Then`. Pending `Offset` is always the caret the view holds,
+which for Above is the block's first text; the write for Above is at the block's start (`Block.Start`), before the block's marker, so that the typed
+block is a paragraph in front of it. Line endings use `LineEnding.Of` (the first line break of the text, else `\n`), not `SourceText.Newline`, which
+takes the most common break. Verification compares the whole block list (`BlockShape`: kind, heading level, containers with identities, rendered text)
+with the list the edit expects; identities are canonical, so a renumbered instance is the same one. Tightness is not compared. Decisions where the spec
+was silent: a pending below a heading is a paragraph, and a pending above a heading is a paragraph too (the coordinator's answer); a new item is made
+only after the last leaf of its innermost item, else a paragraph of the same containers, which makes a tight list loose (a known effect); the number
+of a new ordered item is the old number plus one, and an Above item keeps the old number; the bullet character of a new item is copied from its list;
+a task item's new item is unchecked (`[ ] `, drawn as `[ ] `); Backspace at a heading's start removes its `#` marker; a hard break or code line join
+removes the break and the next line's prefix with nothing between; a soft break removal does the same, which fixes the M6a bug where deleting a soft
+break inside a quote or a list item left the next line's prefix behind; a refusal with an empty message means nothing is before or after the block; a
+block whose last character is removed goes with its separator, and the pending holds its marker (a heading's `#`, a task box) so that typing writes it
+back. A split escapes the new block's first text where it would be block syntax (a list marker, a heading, a quote, a rule; a number's `.` or `)`
+after its digits), as typing there would: the backslash goes before that character, and the caret follows the text. A typed space into a pending block
+returns the same pending: nothing is written and nothing is refused. Removing the only block of a document removes its line and keeps what is outside
+it (blank lines, say, since a document with no block has nothing else); the replacement holds an `Inline` pending at the line's start, whose
+`SourceText` is the block's line prefix and marker (`# `, `- `, `> `) and whose `Display` is the drawn prefix (`# ` for a heading, which the layout
+does not draw); typing into an empty document writes that marker and the escaped text, and the result must be one block showing exactly the typed
+text. Known limits: Enter at a line's start or end inside a paragraph (after or before a hard break) is refused; Backspace in a nested first item is
+refused (only a top-level item unwraps into a paragraph before its list); Backspace in a quote unwraps only a block whose only container is the quote;
+a pending block made from a removed block is verified leniently (the other blocks must be unchanged and the new block must show exactly the typed
+text), since its shape is not known from its source at typing time; a multi-line selection removes everything between its first and last cell, so
+emphasis that spans the edges may be refused; Enter on a pending paragraph that is not in a quote and not at the top level acts at the caret instead of
+ending anything. The view must draw an Above pending above the caret's line and a Below pending below it, use `Display` for both and for the held
+marker of an empty document, and pass the pending back on the next insertion at the same `Offset`.

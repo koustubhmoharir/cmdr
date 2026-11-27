@@ -43,6 +43,20 @@ internal static class EditSite
         for (int b = 0; b < doc.Blocks.Length; b++)
         {
             RenderBlock block = doc.Blocks[b];
+            for (int r = 0; r < block.Runs.Length; r++)
+            {
+                Run run = block.Runs[r];
+                int k = Array.FindLastIndex(run.Cells.ToArray(), cell => cell.IsMapped && cell.Style.Role != StyleRole.TaskBox);
+                if (k >= 0 && block.Start + run.Cells[k].Offset + SourceLength.Of(doc, block, run, k) == offset)
+                {
+                    return new Site(b, r, run.Cells.Length);
+                }
+            }
+        }
+
+        for (int b = 0; b < doc.Blocks.Length; b++)
+        {
+            RenderBlock block = doc.Blocks[b];
             if (LastMapped(block) is not { } last)
             {
                 continue;
@@ -69,7 +83,7 @@ internal static class EditSite
     {
         for (int index = Math.Min(before, run.Cells.Length) - 1; index >= 0; index--)
         {
-            if (run.Cells[index].IsMapped && !removals.Removes(runIndex, index))
+            if (run.Cells[index].IsMapped && run.Cells[index].Style.Role != StyleRole.TaskBox && !removals.Removes(runIndex, index))
             {
                 return index;
             }
@@ -132,6 +146,19 @@ internal static class EditSite
     public static bool IsRaw(RenderBlock block, int at) =>
         block.Kind is BlockKind.Code or BlockKind.Html or BlockKind.Raw
         || block.InlineSpans.Any(span => span.Kind == InlineSpanKind.Code && block.Start + span.InnerStart <= at && at <= block.Start + span.InnerEnd);
+
+    /// <summary>
+    /// The offset an insertion at a cell's source must use: before the backslash of an escape, so that the escape stays whole.
+    /// </summary>
+    /// <param name="doc">The document.</param>
+    /// <param name="block">The block the cell is in.</param>
+    /// <param name="absolute">The absolute source offset of the cell.</param>
+    public static int EscapeStart(RenderDocument doc, RenderBlock block, int absolute) =>
+        absolute - 1 >= block.Start && doc.Text[absolute - 1] == '\\' && !IsMappedAt(block, absolute - 1) ? absolute - 1 : absolute;
+
+    /// <summary>Whether a mapped cell of the block is at an absolute offset.</summary>
+    private static bool IsMappedAt(RenderBlock block, int absolute) =>
+        block.Runs.Any(run => run.Cells.Any(cell => cell.IsMapped && block.Start + cell.Offset == absolute));
 
     /// <summary>The source of the line from its start to <paramref name="at"/>.</summary>
     /// <param name="text">The source text.</param>

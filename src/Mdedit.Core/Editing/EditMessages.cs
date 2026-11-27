@@ -12,23 +12,14 @@ internal static class EditMessages
     /// <summary>A table cell: typing is the table editor's until M6c.</summary>
     public const string Table = "F2 edits a table cell";
 
-    /// <summary>Backspace with nothing before the caret in its line.</summary>
-    public const string BackspaceAtStart = "Backspace at a block's start isn't supported yet; Ctrl+T edits the source";
-
-    /// <summary>Delete with nothing after the caret in its line.</summary>
-    public const string DeleteAtEnd = "Delete at a block's end isn't supported yet; Ctrl+T edits the source";
-
     /// <summary>A selection that starts and ends in different blocks.</summary>
     public const string AcrossBlocks = "Deleting across blocks isn't supported yet; Ctrl+T edits the source";
 
-    /// <summary>A selection that spans a hard line break inside one block.</summary>
-    public const string AcrossLines = "Deleting across a line break isn't supported yet; Ctrl+T edits the source";
-
-    /// <summary>A typed line break, which is Enter.</summary>
+    /// <summary>A typed line break, which is Enter, or a pasted one (paste is M6c).</summary>
     public const string LineBreak = "A line break isn't supported yet; Ctrl+T edits the source";
 
-    /// <summary>A removal that takes all the text of a block, which would remove the block itself: its merging is M6b's.</summary>
-    public const string BlockEmptied = "Deleting a block's last character isn't supported yet; Ctrl+T edits the source";
+    /// <summary>A join of two blocks that would change their structure (their containers, or a code block, table or HTML block).</summary>
+    public const string CantJoin = "Can't join these blocks; Ctrl+T edits the source";
 
     /// <summary>A replacement with nothing selected and nothing typed.</summary>
     public const string NothingSelected = "Nothing is selected";

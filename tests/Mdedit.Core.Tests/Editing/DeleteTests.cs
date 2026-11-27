@@ -43,9 +43,12 @@ public sealed class DeleteTests
     }
 
     [Fact]
-    public void Deleting_the_only_character_of_a_block_is_refused_until_M6b_because_the_block_would_go()
+    public void Deleting_the_only_character_of_the_only_block_removes_the_block_and_holds_its_marker_inline()
     {
-        Assert.Equal(EditMessages.BlockEmptied, EditCase.Refusal(ViewEdit.DeleteBackward(RenderDocument.Parse("*a*"), 2)));
+        ViewEditResult.Replacement edit = (ViewEditResult.Replacement)ViewEdit.DeleteBackward(RenderDocument.Parse("*a*"), 2);
+
+        Assert.Equal(new EditCase.Outcome(string.Empty, 0), EditCase.Apply("*a*", edit));
+        Assert.Equal(new ViewEditResult.Pending(0, string.Empty, PendingPlacement.Inline, string.Empty), edit.Then);
     }
 
     [Fact]
@@ -73,9 +76,9 @@ public sealed class DeleteTests
     }
 
     [Fact]
-    public void Backspace_at_the_start_of_a_block_is_refused_until_M6b()
+    public void Backspace_at_the_start_of_the_document_does_nothing()
     {
-        Assert.Equal(EditMessages.BackspaceAtStart, EditCase.Refusal(ViewEdit.DeleteBackward(RenderDocument.Parse("ab"), 0)));
+        Assert.Equal(string.Empty, EditCase.Refusal(ViewEdit.DeleteBackward(RenderDocument.Parse("ab"), 0)));
     }
 
     [Fact]
@@ -85,9 +88,9 @@ public sealed class DeleteTests
     }
 
     [Fact]
-    public void Delete_at_the_end_of_a_block_is_refused_until_M6b()
+    public void Delete_at_the_end_of_the_document_does_nothing()
     {
-        Assert.Equal(EditMessages.DeleteAtEnd, EditCase.Refusal(ViewEdit.DeleteForward(RenderDocument.Parse("ab"), 2)));
+        Assert.Equal(string.Empty, EditCase.Refusal(ViewEdit.DeleteForward(RenderDocument.Parse("ab"), 2)));
     }
 
     [Fact]

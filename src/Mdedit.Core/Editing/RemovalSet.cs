@@ -14,11 +14,12 @@ internal sealed class RemovalSet
     private readonly ImmutableArray<SourceRange> _ranges;
     private readonly string _removedText;
 
-    private RemovalSet(RenderDocument doc, RenderBlock block, IEnumerable<(int Run, int Cell)> cells, bool trimEdges)
+    private RemovalSet(RenderDocument doc, RenderBlock block, IEnumerable<(int Run, int Cell)> cells, bool trimEdges, IEnumerable<SourceRange> breaks)
     {
         IEnumerable<(int Run, int Cell)> all = trimEdges ? WithEdgeSpaces(block, cells) : cells;
         _cells = all.OrderBy(cell => cell.Run).ThenBy(cell => cell.Cell).ToImmutableArray();
         var ranges = _cells.Select(cell => CellRange(doc, block, cell.Run, cell.Cell)).ToList();
+        ranges.AddRange(breaks);
         ranges.AddRange(EmptiedSpans(block));
         _ranges = Merge(ranges);
         var text = new StringBuilder();
@@ -38,8 +39,9 @@ internal sealed class RemovalSet
     /// Whether the spaces that would lead or trail the text after the removal go too (see <see cref="WithEdgeSpaces"/>). Not when text is typed
     /// in the removal's place, since that text then sits at the edge.
     /// </param>
-    public static RemovalSet Of(RenderDocument doc, RenderBlock block, IEnumerable<(int Run, int Cell)> cells, bool trimEdges = true) =>
-        new(doc, block, cells, trimEdges);
+    /// <param name="breaks">Source ranges removed as well: the line breaks between the runs of a selection across lines.</param>
+    public static RemovalSet Of(RenderDocument doc, RenderBlock block, IEnumerable<(int Run, int Cell)> cells, bool trimEdges = true, IEnumerable<SourceRange>? breaks = null) =>
+        new(doc, block, cells, trimEdges, breaks ?? []);
 
     /// <summary>
     /// The cells to remove with the given ones: in a paragraph or heading, the spaces left at either edge of the text too. Markdown strips
@@ -133,8 +135,33 @@ internal sealed class RemovalSet
     {
         Run owner = block.Runs[run];
         int absolute = block.Start + owner.Cells[cell].Offset;
-        int start = absolute - 1 >= block.Start && doc.Text[absolute - 1] == '\\' && !IsMappedAt(block, absolute - 1) ? absolute - 1 : absolute;
-        return new SourceRange(start, absolute + SourceLength.Of(doc, block, owner, cell));
+        int start = EditSite.EscapeStart(doc, block, absolute);
+        int end = absolute + SourceLength.Of(doc, block, owner, cell);
+        if (doc.Text[absolute] is '\n' or '\r')
+        {
+            // A soft line break goes with the next line's prefix and indentation, so that the words join with nothing between.
+            end = Math.Max(end, NextTextOffset(block, run, cell) ?? end);
+        }
+
+        return new SourceRange(start, end);
+    }
+
+    /// <summary>The absolute offset of the next text cell of the block after a cell, or null when there is none.</summary>
+    private static int? NextTextOffset(RenderBlock block, int run, int cell)
+    {
+        for (int r = run; r < block.Runs.Length; r++)
+        {
+            for (int c = r == run ? cell + 1 : 0; c < block.Runs[r].Cells.Length; c++)
+            {
+                Cell next = block.Runs[r].Cells[c];
+                if (next.IsMapped && next.Style.Role != StyleRole.TaskBox)
+                {
+                    return block.Start + next.Offset;
+                }
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
