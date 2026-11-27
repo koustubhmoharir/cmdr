@@ -434,7 +434,7 @@ public sealed partial class MainWindowTests
 
         Session session = Run(
             file,
-            40,
+            60,
             12,
             (_, window) => window.NewKeyDownEvent(RenderedView.ToggleFoldKey),
             (_, window) => window.NewKeyDownEvent(new Key('x')),
