@@ -56,6 +56,7 @@ or until the next key. The last line lists the main keys.
 | Key | |
 |---|---|
 | Up/Down, Left/Right | Move the caret through the rendered text. The caret is a bar before a character. Right from a paragraph's last character goes to the end of the paragraph, after that character, and Right again to the next paragraph; Left goes back the same way |
+| Ctrl+Left/Right | The start of the previous / next word. Punctuation counts as a word of its own and spaces are skipped; the caret also stops at the end of a paragraph |
 | Home/End | First cell of the line / last cell of the line. On the last line of a paragraph, End goes to the end of the paragraph, after its last character |
 | PgUp/PgDn | Page up / down, with the caret |
 | Ctrl+Home/End | First cell of the document / the end of the last paragraph |

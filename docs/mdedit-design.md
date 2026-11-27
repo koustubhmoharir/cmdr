@@ -114,7 +114,7 @@ errors exit 2.
 | Ctrl+C / Alt+C | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor. The text also goes to the application clipboard when there is one |
 | Ctrl+X / Ctrl+V | Cut the selection (copied as Markdown, then deleted, one undo step) / paste the application clipboard's text as Markdown source (M6c) |
 | Terminal paste (bracketed) | Inserted as Markdown source, as Ctrl+V inserts the clipboard text (M6c) |
-| Arrows, Home/End (with Shift to select) | Move the cursor in the rendered text (see Cursor). In a table, Left/Right at a cell's edge go to the next cell |
+| Arrows, Ctrl+Left/Right, Home/End (with Shift to select) | Move the cursor in the rendered text (see Cursor); Ctrl+Left/Right go by word (punctuation is a word, spaces are skipped, a paragraph's end is a stop). In a table, Left/Right at a cell's edge go to the next cell |
 | Alt+F | Fold or unfold the section or code block under the cursor (see Folding) |
 | Right-click menu: Unfold all inside / Fold section | Unfold everything under the cursor's unit / fold the section the cursor is in |
 | Alt+1–Alt+6, Alt+0 | Show headings down to that level, folding the deeper sections / unfold all |

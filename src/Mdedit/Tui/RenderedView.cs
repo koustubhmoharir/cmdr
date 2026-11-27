@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using Mdedit.Core.Render;
 using Shared.Tui;
 using Terminal.Gui.Drawing;
@@ -338,6 +339,14 @@ internal sealed partial class RenderedView : View
         {
             MoveHorizontal(1);
         }
+        else if (move == Key.CursorLeft.WithCtrl)
+        {
+            MoveWord(forward: false);
+        }
+        else if (move == Key.CursorRight.WithCtrl)
+        {
+            MoveWord(forward: true);
+        }
         else if (move == Key.CursorUp)
         {
             MoveVertical(-1);
@@ -379,9 +388,10 @@ internal sealed partial class RenderedView : View
         return true;
     }
 
-    /// <summary>The keys that a Shift extends the selection with: the arrows, Home, End, PgUp and PgDn.</summary>
+    /// <summary>The keys that a Shift extends the selection with: the arrows, Ctrl+Left and Ctrl+Right, Home, End, PgUp and PgDn.</summary>
     private static bool IsExtendable(Key key) =>
         key == Key.CursorLeft || key == Key.CursorRight || key == Key.CursorUp || key == Key.CursorDown
+        || key == Key.CursorLeft.WithCtrl || key == Key.CursorRight.WithCtrl
         || key == Key.Home || key == Key.End || key == Key.PageUp || key == Key.PageDown;
 
     /// <summary>The keys that move the cursor: the extendable keys and the document's ends (Ctrl+Home and Ctrl+End).</summary>
@@ -1296,6 +1306,104 @@ internal sealed partial class RenderedView : View
         }
 
         Settle(before, topBefore);
+    }
+
+    /// <summary>
+    /// Ctrl+Right and Ctrl+Left: the caret goes to the start of the next word, or to the start of the word it is in or the one before. A word is a
+    /// run of letters, digits and underscores, or a run of other visible characters; spaces and blanks between words are skipped. A block's end
+    /// position is a stop of its own, so the caret pauses at the end of a paragraph before it goes to the next one, as a word processor's does.
+    /// </summary>
+    /// <param name="forward">True for Ctrl+Right.</param>
+    private void MoveWord(bool forward)
+    {
+        if (_cell < 0)
+        {
+            return;
+        }
+
+        (int Line, int Cell) at = (_line, _cell);
+        (int Line, int Cell)? Step((int Line, int Cell) from) => forward ? NextStop(from.Line, from.Cell) : PrevStop(from.Line, from.Cell);
+
+        if (forward)
+        {
+            // Past the rest of the word (or the end position) the caret is on, then past the blanks after it.
+            WordClass word = ClassAt(at);
+            if (Step(at) is not { } next)
+            {
+                return;
+            }
+
+            at = next;
+            while (word is WordClass.Letters or WordClass.Symbols && ClassAt(at) == word && Step(at) is { } further)
+            {
+                at = further;
+            }
+
+            while (ClassAt(at) == WordClass.Blank && Step(at) is { } further)
+            {
+                at = further;
+            }
+        }
+        else
+        {
+            // Back over the blanks before the caret, then to the start of the word found there (an end position is a stop of its own).
+            if (Step(at) is not { } previous)
+            {
+                return;
+            }
+
+            at = previous;
+            while (ClassAt(at) == WordClass.Blank && Step(at) is { } further)
+            {
+                at = further;
+            }
+
+            WordClass word = ClassAt(at);
+            while (word is WordClass.Letters or WordClass.Symbols && Step(at) is { } further && ClassAt(further) == word)
+            {
+                at = further;
+            }
+        }
+
+        MoveTo(at);
+    }
+
+    /// <summary>
+    /// The class of a caret stop for word moves: a block's (or hard-broken line's) end position, a letter, digit or underscore, another visible
+    /// character, or a blank (a space, or a cell that shows nothing).
+    /// </summary>
+    private WordClass ClassAt((int Line, int Cell) stop)
+    {
+        ImmutableArray<Cell> cells = Built.Line(stop.Line).Cells;
+        if (stop.Cell >= cells.Length)
+        {
+            return WordClass.End;
+        }
+
+        string text = cells[stop.Cell].Text;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return WordClass.Blank;
+        }
+
+        Rune rune = Rune.GetRuneAt(text, 0);
+        return Rune.IsLetterOrDigit(rune) || rune.Value == '_' ? WordClass.Letters : WordClass.Symbols;
+    }
+
+    /// <summary>The classes of caret stops that word moves go by (see <see cref="ClassAt"/>).</summary>
+    private enum WordClass
+    {
+        /// <summary>A space, or a cell that shows nothing.</summary>
+        Blank,
+
+        /// <summary>A letter, a digit or an underscore.</summary>
+        Letters,
+
+        /// <summary>Another visible character, such as punctuation.</summary>
+        Symbols,
+
+        /// <summary>The end position of a block, or of a line that a hard break ends.</summary>
+        End,
     }
 
     private void MoveVertical(int direction)
