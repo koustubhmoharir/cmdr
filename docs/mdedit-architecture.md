@@ -624,5 +624,51 @@ Decisions taken while building it:
   cursor after it. The view drops it on any caret move (keys and presses), on a new document and on a fold change; the
   window drops it for any other command, and Ctrl+Z drops it without an undo.
 - Typing on a synthetic position (a fold summary, a code label, a table border) is refused by the engine. Typing on a folded
-  unit's head is refused by the window, since the engine does not know folds, with the message "Unfold to edit; Ctrl+T
-  edits source". Typing in edit mode is the editor's.
+  unit's head is refused by the window, since the engine does not know folds, with the message "Unfold to edit here;
+  Ctrl+T edits the source". Typing in edit mode is the editor's.
+
+### Structure edits (M6b)
+
+M6b adds `ViewEdit.Enter(doc, caret, pending)` and makes Backspace at a block's (or line's) start, Delete at its end, a
+selection across lines of one block and the removal of a block's last character into edits. They keep the M6a rules:
+pure functions, one replacement, a reparse and a verification, a refusal otherwise.
+
+- **Line breaks** are the document's dominant line ending (the first one in its text, else `\n`). New lines carry the
+  container prefixes of the block they continue (`> ` per quote, the item's indentation), and a new block is separated by
+  a blank line carrying the quote prefixes, except between items of a tight list.
+- **Enter in a block's middle** splits it, both halves keeping the kind and containers: two paragraphs, two headings of
+  the same level, two list items (the new item's marker is the old one's bullet, or its number plus one, with `[ ] ` for a
+  task item; later numbers are left as written, since the rendering numbers from the list's start). In a code block (and
+  any raw block) Enter writes a line break with the container prefixes. With a selection, the selection is removed first
+  (one block only, as in M6a). In a table, Enter keeps opening the cell field (M5) until M6c.
+- **Enter at a block's end** holds a pending new block below: after a heading or a paragraph, a paragraph with the same
+  containers; after a list item's text, a new item. **Enter at a block's start** (a non-empty block) holds a pending new
+  block above, of the same shape. Enter again on a pending new item ends the list: the pending becomes a paragraph after
+  the list (in the parent item, for a nested list); on a pending paragraph in a quote it becomes a paragraph after the
+  quote; on a pending top-level paragraph it changes nothing.
+- **Backspace at a block's start**, in order: in a heading, the heading becomes a paragraph (its marker goes); in the
+  first leaf of a list item, the item joins the previous item's last text block when there is one, else it becomes a
+  paragraph before the list; in the first leaf of a quote with a block before it in the quote, it joins that block, else
+  it leaves the quote; otherwise the block joins the previous text block (paragraph or heading) with the same containers,
+  its text appended with nothing between, keeping the previous block's kind. A previous thematic break is removed. A
+  previous code block, table, HTML block or a different container nesting refuses ("Can't join these blocks; Ctrl+T
+  edits the source"). At the document's start nothing happens.
+- **Delete at a block's end** is the mirror: the next text block's text is appended (its marker, prefix and kind go),
+  a next thematic break is removed, anything else refuses. At the document's end nothing happens.
+- **Inside a block**: Backspace at the start of a line after a hard break removes the break (backslash or trailing spaces)
+  and joins the lines; Delete at the end of such a line does the same; in a code block they join the lines. A selection
+  across lines of one block is removed with the breaks between them.
+- **A block's last character**: removing it removes the block with its separator, and holds a pending block of the same
+  shape where it was (a heading's marker, an item's marker), so typing writes the block back and a caret move leaves it
+  gone. This replaces M6a's refusal.
+- **Pending results** gain a placement: `Inline` (M6a's held spaces), `Below` (a new line under the caret's screen line)
+  and `Above` (a new line over it), and the text the view draws before the caret on that line: the rendered prefix of the
+  new block (quote bars, a bullet or number, the `☐` of a task item, the heading's level mark as the view shows it), built
+  by the layout's prefix code. A replacement may carry a pending to hold after it (the removed last character). The
+  next typed character writes the pending source with the escaped text, the line-start escapes applying.
+- **Verification** compares the whole block list with the expected one: the old blocks with the edit's change (a block
+  split in two, two blocks joined into one, a block's kind or containers changed, a block removed or added), each block's
+  kind, containers and plain text. Container identity follows the edit (a new item is a new container).
+
+In the view, Enter becomes an edit key (except in a table cell, where it opens the field until M6c), so only Ctrl+Enter,
+Ctrl+J and Ctrl+click follow a link. Each Enter, join and unwrap is an undo step of its own and ends a typing run.
