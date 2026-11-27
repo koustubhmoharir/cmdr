@@ -91,5 +91,5 @@ The first version is M0–M3.
 - [x] M6a: the key remap; typing, Backspace, Delete and selection replacement inside a block, with verification and
       pending insertions; undo grouping. (ed7d11e, 175e2b6)
 - [x] M6b: Enter, Backspace at a block's start, Delete at its end. (14f2b36, a3112e0)
-- [ ] M6c: typing in table cells, paste as Markdown, deleting a selection across blocks.
+- [x] M6c: typing in table cells, paste as Markdown, deleting a selection across blocks. (3a7a0db, d76ea77, 212f056)
 - [ ] Windows acceptance pass. *(Windows)*
