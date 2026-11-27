@@ -591,6 +591,20 @@ after it, or a refusal message. The window applies the replacement to the buffer
   written). M6b's new paragraphs and list items start as pending insertions too (a new item shows its marker), so
   Markdown never holds an empty block.
 
+**As built (M6a core).** `ViewEdit.Insert(doc, caret, typed, pending)`, `DeleteBackward`, `DeleteForward` and
+`ReplaceSelection(doc, start, end, typed)` return `ViewEditResult.Replacement(Start, Length, Text, Caret)`, `Pending(Offset,
+SourceText)` or `Refusal(Message)`. The view keeps a `Pending` and hands it back to the next `Insert` at the same offset;
+the engine ignores one held at another offset. The cell source length is `Render.SourceLength` (shared with search).
+Decisions taken while building it:
+
+- `~` is escaped everywhere (strikethrough is on), and HTML and raw blocks are written raw like code.
+- A removal in a paragraph or heading also removes the spaces it leaves at the block's edges (Markdown strips them, so
+  the verification could not tell them apart), unless text is typed in its place.
+- A typed space that would not show is held as pending; a space typed over a selection is written.
+- Until M6b, a selection across a hard break and deleting a block's only character are refused (the block would go).
+- A typed bare URL becomes an autolink; its plain text is unchanged, so it is allowed.
+- Each edit reparses the whole document, as table edits do.
+
 ### View and window (Mdedit)
 
 - **Keys (M6a)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;

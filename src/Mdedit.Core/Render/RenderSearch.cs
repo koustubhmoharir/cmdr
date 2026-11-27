@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
-using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using Shared.Core;
 
 namespace Mdedit.Core.Render;
@@ -14,9 +12,6 @@ namespace Mdedit.Core.Render;
 /// </summary>
 public static class RenderSearch
 {
-    /// <summary>An HTML entity in the source: a named, decimal or hexadecimal reference, with its semicolon.</summary>
-    private static readonly Regex EntityPattern = new(@"\G&(?:#[0-9]+|#[xX][0-9A-Fa-f]+|[A-Za-z][A-Za-z0-9]*);", RegexOptions.CultureInvariant);
-
     /// <summary>
     /// The matches of a pattern in the rendered text of the document, in document order, as absolute source ranges. A match
     /// covering only synthetic cells is dropped. A match whose first or last cell is synthetic is trimmed to its mapped cells.
@@ -80,37 +75,8 @@ public static class RenderSearch
             }
 
             int start = block.Start + run.Cells[first].Offset;
-            int end = block.Start + run.Cells[last].Offset + SourceLength(doc, block, run, last);
+            int end = block.Start + run.Cells[last].Offset + SourceLength.Of(doc, block, run, last);
             matches.Add(new SourceRange(start, end));
         }
-    }
-
-    /// <summary>
-    /// The length in the source of the cell at <paramref name="index"/>: an entity is its whole reference (when no other cell of the
-    /// run is inside it, so that an escaped ampersand followed by text is not one), and any other cell is the grapheme of the source
-    /// at its offset. The markup around a cell (emphasis delimiters, the backslash of an escape) is not part of the cell's length.
-    /// </summary>
-    private static int SourceLength(RenderDocument doc, RenderBlock block, Run run, int index)
-    {
-        Cell cell = run.Cells[index];
-        int absolute = block.Start + cell.Offset;
-        int limit = Math.Min(doc.Text.Length, block.End);
-        if (absolute >= limit)
-        {
-            return 1;
-        }
-
-        if (doc.Text[absolute] == '&')
-        {
-            Match entity = EntityPattern.Match(doc.Text, absolute);
-            int length = entity.Success ? Math.Min(entity.Length, limit - absolute) : 0;
-            bool otherCellInside = run.Cells.Any(other => other.IsMapped && other.Offset > cell.Offset && other.Offset < cell.Offset + length);
-            if (length > 0 && !otherCellInside)
-            {
-                return length;
-            }
-        }
-
-        return StringInfo.GetNextTextElementLength(doc.Text.AsSpan(absolute, limit - absolute));
     }
 }
