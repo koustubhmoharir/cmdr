@@ -9,7 +9,7 @@ using Point = System.Drawing.Point;
 namespace Mdedit.Tests;
 
 /// <summary>
-/// The links of the window: the message line shows the caret's link URL, Tab and Shift+Tab move between links with their messages, Enter and a
+/// The links of the window: the message line shows the caret's link URL, Tab and Shift+Tab move between links with their messages, Ctrl+Enter and a
 /// Ctrl+click follow a link (an anchor goes to its heading, an external URL is copied, a file opens in a new window after the unsaved-changes
 /// flow), and Alt+Left goes back to the file a followed link left, at its caret and top line. Dialogs are answered by <see cref="DialogWatch"/>.
 /// </summary>
@@ -89,21 +89,21 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Enter_on_an_anchor_link_moves_the_caret_to_the_heading()
+    public void Ctrl_Enter_on_an_anchor_link_moves_the_caret_to_the_heading()
     {
         OpenedFile file = Opened("notes.md", Linked);
 
         Session session = RunLinked(
             file,
             (_, window) => window.View.PlaceCaret(Index(Linked, "two"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Equal(Index(Linked, "Guide"), session.Window.View.CursorOffset);
         Assert.False(session.Window.Stopped);
     }
 
     [Fact]
-    public void Enter_on_an_anchor_link_unfolds_the_section_that_hides_the_heading()
+    public void Ctrl_Enter_on_an_anchor_link_unfolds_the_section_that_hides_the_heading()
     {
         OpenedFile file = Opened("notes.md", Linked);
 
@@ -112,7 +112,7 @@ public sealed partial class MainWindowTests
             (_, window) => window.View.PlaceCaret(Index(Linked, "Guide"), null),
             (_, window) => window.View.HandleKey(RenderedView.ToggleFoldKey),
             (_, window) => window.View.PlaceCaret(Index(Linked, "four"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Equal(Index(Linked, "Section"), session.Window.View.CursorOffset);
     }
@@ -125,14 +125,14 @@ public sealed partial class MainWindowTests
         Session session = RunLinked(
             file,
             (_, window) => window.View.PlaceCaret(Index("# Top\n\nSee [lost](#nowhere).\n", "lost"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Equal("No heading #nowhere", session.Screens[^1].Text(10));
         Assert.True(session.Window.Message.HasMessage);
     }
 
     [Fact]
-    public void Enter_on_an_external_link_copies_its_URL_with_OSC_52_and_says_so()
+    public void Ctrl_Enter_on_an_external_link_copies_its_URL_with_OSC_52_and_says_so()
     {
         const string text = "See [site](https://example.com/a).\n";
         OpenedFile file = Opened("notes.md", text);
@@ -145,7 +145,7 @@ public sealed partial class MainWindowTests
                 window.WriteRaw = written.Add;
                 window.View.PlaceCaret(Index(text, "site"), null);
             },
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Equal([Osc52.Build("https://example.com/a")], written);
         Assert.Equal("Copied link: https://example.com/a", session.Screens[^1].Text(10));
@@ -153,7 +153,7 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Enter_on_a_link_with_no_destination_says_Empty_link_and_copies_nothing()
+    public void Ctrl_Enter_on_a_link_with_no_destination_says_Empty_link_and_copies_nothing()
     {
         const string text = "See [nothing]().\n";
         OpenedFile file = Opened("notes.md", text);
@@ -166,7 +166,7 @@ public sealed partial class MainWindowTests
                 window.WriteRaw = written.Add;
                 window.View.PlaceCaret(Index(text, "nothing"), null);
             },
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Empty(written);
         Assert.Equal("Empty link", session.Screens[^1].Text(10));
@@ -210,7 +210,7 @@ public sealed partial class MainWindowTests
         Session session = RunLinked(
             MdeditHost.Load(notes),
             (_, window) => window.View.PlaceCaret(Index("See [gone](gone.md).\n", "gone"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         Assert.Equal("Not found: gone.md", session.Screens[^1].Text(10));
         Assert.False(File.Exists(missing));
@@ -240,7 +240,7 @@ public sealed partial class MainWindowTests
                     Type(window, "x");
                     window.NewKeyDownEvent(Key.T.WithCtrl);
                     window.View.PlaceCaret(Index(text, "other"), null);
-                    window.NewKeyDownEvent(Key.Enter);
+                    window.NewKeyDownEvent(Key.Enter.WithCtrl);
                     prompt.Finish();
                 },
             ]);
@@ -264,7 +264,7 @@ public sealed partial class MainWindowTests
         Session session = RunLinkedWith(
             MdeditHost.Load(notesPath),
             back: back,
-            steps: [(_, window) => window.View.PlaceCaret(Index(text, "other"), null), (_, window) => window.NewKeyDownEvent(Key.Enter)]);
+            steps: [(_, window) => window.View.PlaceCaret(Index(text, "other"), null), (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl)]);
 
         Assert.True(session.Window.Stopped);
         Assert.Equal(Path.Combine(dir, "other.md"), session.Window.SwitchTo!.Path);
@@ -284,7 +284,7 @@ public sealed partial class MainWindowTests
         Session follow = RunLinkedWith(
             MdeditHost.Load(notesPath),
             back: new BackStack(),
-            steps: [(_, window) => window.View.PlaceCaret(Index(text, "other"), null), (_, window) => window.NewKeyDownEvent(Key.Enter)]);
+            steps: [(_, window) => window.View.PlaceCaret(Index(text, "other"), null), (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl)]);
         Session next = RunLinkedWith(follow.Window.SwitchTo!, fragment: follow.Window.GoToFragment);
 
         Assert.Equal(Index(Other, "Part"), next.Window.View.CursorOffset);
@@ -319,7 +319,7 @@ public sealed partial class MainWindowTests
             [
                 (_, window) => window.View.PlaceCaret(link, null),
                 (_, window) => window.View.HandleMouse(new Mouse { Flags = MouseFlags.WheeledDown }),
-                (_, window) => window.NewKeyDownEvent(Key.Enter),
+                (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl),
             ]);
         BackEntry entry = back.Peek()!;
         Assert.NotEqual(entry.CaretOffset, entry.TopOffset);
@@ -380,7 +380,7 @@ public sealed partial class MainWindowTests
             MdeditHost.Load(notesPath),
             back: back,
             width: 120,
-            steps: [(_, window) => window.View.PlaceCaret(Index("See [bad](bad.md).\n", "bad"), null), (_, window) => window.NewKeyDownEvent(Key.Enter)]);
+            steps: [(_, window) => window.View.PlaceCaret(Index("See [bad](bad.md).\n", "bad"), null), (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl)]);
 
         Assert.False(session.Window.Stopped);
         Assert.Null(session.Window.SwitchTo);

@@ -23,7 +23,7 @@ namespace Mdedit.Tui;
 /// view mode: the window has nothing to go back to here (see <b>Links</b> for Alt+Left).
 /// </para>
 /// <para>
-/// <b>Links.</b> In view mode Tab and Shift+Tab move between links, Enter and a Ctrl+click follow one, and Alt+Left goes back to the file a
+/// <b>Links.</b> In view mode Tab and Shift+Tab move between links, Ctrl+Enter and a Ctrl+click follow one, and Alt+Left goes back to the file a
 /// followed link left. A file link stops the window with <see cref="SwitchTo"/> set, as Ctrl+O does; the host shows the file in a new window
 /// (see <c>MainWindow.Navigation.cs</c>).
 /// </para>
@@ -307,7 +307,7 @@ internal sealed partial class MainWindow : Window, ISearchHost
     /// The window's keys that the view and the editor do not take. Ctrl+Q quits, Ctrl+O opens the picker and Ctrl+T switches the mode, in
     /// both modes, and Alt+O opens the outline (see <see cref="HandleOutlineKey"/>). In edit mode Esc closes an open search or else
     /// returns to view mode, and Ctrl+F, F3 and Shift+F3 search (see <see cref="HandleEditKey"/>). In view mode typed characters, Backspace and
-    /// Delete edit the text (see <c>MainWindow.ViewEditing.cs</c>), Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and
+    /// Delete, and Enter, edit the text (see <c>MainWindow.ViewEditing.cs</c>), Esc is swallowed (or closes an open search), Ctrl+Z and Ctrl+Y undo and
     /// redo, and the view's search and copy keys apply.
     /// </summary>
     /// <inheritdoc/>
@@ -359,7 +359,7 @@ internal sealed partial class MainWindow : Window, ISearchHost
             return true;
         }
 
-        // The table keys come before the links, so that Alt+Left moves the column in a table, and Enter edits a cell unless it is on a link.
+        // The table keys come before the links, so that Alt+Left moves the column in a table, and Enter opens a cell in a table.
         if (HandleTableKey(key))
         {
             return true;

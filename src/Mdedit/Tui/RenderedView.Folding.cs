@@ -60,7 +60,7 @@ internal sealed partial class RenderedView
         }
 
         Point viewport = ScreenToViewport(screen);
-        return InView(viewport.Y) ? TargetOfLine(_top + viewport.Y) : null;
+        return InView(viewport.Y) ? TargetOfLine(LineAtRow(viewport.Y)) : null;
     }
 
     /// <summary>The fold units of the document in order of their heads, for the tests.</summary>

@@ -13,6 +13,14 @@ public sealed class EnterTests
     }
 
     [Fact]
+    public void Enter_writes_neither_the_spaces_before_the_split_nor_those_after_it()
+    {
+        // Before the space and after it: Markdown would strip the space at either edge, so it is not kept in the file.
+        Assert.Equal(new EditCase.Outcome("one\n\ntwo", 5), EditCase.Enter("one two", 3));
+        Assert.Equal(new EditCase.Outcome("one\n\ntwo", 5), EditCase.Enter("one  two", 5));
+    }
+
+    [Fact]
     public void Enter_in_a_heading_splits_it_into_two_headings_of_the_same_level()
     {
         // "# a" + blank line + "# " + "b": the caret is before the "b", at 7.

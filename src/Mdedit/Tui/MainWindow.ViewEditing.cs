@@ -5,9 +5,10 @@ using Terminal.Gui.Input;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// Editing in the view, in view mode: typed characters, Backspace and Delete are the edits of <see cref="ViewEdit"/>. Each replacement is applied
-/// to the buffer as one change and the view is rendered from it, with the caret where the edit put it. A pending insertion (see
-/// <see cref="RenderedView.Pending"/>) is handed back to the next typed character. A refusal shows its message and changes nothing.
+/// Editing in the view, in view mode: typed characters, Enter, Backspace and Delete are the edits of <see cref="ViewEdit"/>. Each replacement is
+/// applied to the buffer as one change and the view is rendered from it, with the caret where the edit put it. A pending insertion (see
+/// <see cref="RenderedView.Pending"/>) is handed back to the next typed character or Enter. A refusal shows its message and changes nothing; a
+/// refusal with an empty message changes nothing and shows nothing.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,8 +19,17 @@ namespace Mdedit.Tui;
 /// descriptors), so a new run starts its group with <c>StartUndoGroup</c> and only a run that continues uses <c>StartContinuedUndoGroup</c>.
 /// </para>
 /// <para>
+/// <b>Structure.</b> Enter is a step of its own, and so is a Backspace or Delete at the edge of a display line (see <see cref="DeleteInView"/>), since
+/// those edits join, split or unwrap blocks. Such an edit never continues a run, and no run continues from it.
+/// </para>
+/// <para>
 /// <b>Pending insertions.</b> A typed space that would not show is held by the view, with no step of its own; the next typed character writes it
-/// in front of its own text, so the held space joins that character's step.
+/// in front of its own text, so the held space joins that character's step. A block pending (from Enter) is written by the next typed character.
+/// </para>
+/// <para>
+/// <b>The empty document.</b> A document with no block has a caret at its start, which every typed character writes into: when the view holds no
+/// pending, the window gives <see cref="ViewEdit"/> an empty inline pending there (see <see cref="TypingPending"/>). Enter, Backspace and Delete do
+/// nothing in it.
 /// </para>
 /// </remarks>
 internal sealed partial class MainWindow
@@ -27,12 +37,13 @@ internal sealed partial class MainWindow
     /// <summary>The message of an edit on the head of a folded unit, which the view does not edit while it is folded.</summary>
     internal const string FoldedHeadRefusal = "Unfold to edit here; Ctrl+T edits the source";
 
-    // The kinds of edit that an undo run can hold.
+    // The kinds of edit that an undo run can hold. Enter is not a run: it is a step of its own, so the kind only marks it.
     private enum RunKind
     {
         Typing,
         Backspace,
         Delete,
+        Structure,
     }
 
     // An undo run in progress: its kind, the group descriptor of its undo step (null while it has none, after a pending insertion), the caret
@@ -58,6 +69,12 @@ internal sealed partial class MainWindow
         if (key == Key.Delete)
         {
             DeleteInView(backward: false);
+            return true;
+        }
+
+        if (key == Key.Enter)
+        {
+            EnterInView();
             return true;
         }
 
@@ -91,6 +108,13 @@ internal sealed partial class MainWindow
     /// <summary>Ends the undo run in progress, so that the next edit starts a step of its own.</summary>
     private void EndRun() => _run = null;
 
+    /// <summary>
+    /// The pending insertion that a typed character is written with: the view's pending, or in a document with no block, the empty inline pending at
+    /// its start (the document's caret, which has no caret stop of its own).
+    /// </summary>
+    private ViewEditResult.Pending? TypingPending() =>
+        _view.Pending ?? (_view.Document.Blocks.Length == 0 ? new ViewEditResult.Pending(0, string.Empty) : null);
+
     /// <summary>Types a character at the caret, or over the selection, which it replaces.</summary>
     /// <param name="typed">The typed text: one character.</param>
     private void TypeInView(string typed)
@@ -108,36 +132,79 @@ internal sealed partial class MainWindow
         }
 
         object? shared = SharedGroup(RunKind.Typing, breaksWord: typed != " ");
-        ViewEditResult result = ViewEdit.Insert(_view.Document, _view.CursorOffset, typed, _view.Pending);
+        ViewEditResult result = ViewEdit.Insert(_view.Document, _view.CursorOffset, typed, TypingPending());
         ApplyViewEdit(result, RunKind.Typing, shared, typedSpace: typed == " ");
     }
 
     /// <summary>
-    /// Deletes the mapped character before the caret (Backspace) or after it (Delete), or the selection. The pending insertion is dropped first.
+    /// Enter: splits the block at the caret, holds a new block below or above it, ends a list or a quote, or replaces the selection first (see
+    /// <see cref="ViewEdit.Enter"/> and <see cref="ViewEdit.EnterOver"/>). Each Enter is an undo step of its own, and it ends the typing run. Nothing
+    /// happens in a document with no block.
+    /// </summary>
+    private void EnterInView()
+    {
+        EndRun();
+        if (RefusedOnFoldedHead() || _view.Document.Blocks.Length == 0)
+        {
+            return;
+        }
+
+        ViewEditResult result = _view.SelectionRange is { } selection
+            ? ViewEdit.EnterOver(_view.Document, selection.Start, selection.End)
+            : ViewEdit.Enter(_view.Document, _view.CursorOffset, _view.Pending);
+        _view.SetPending(null);
+        ApplyViewEdit(result, RunKind.Structure, shared: null, typedSpace: false);
+        EndRun();
+    }
+
+    /// <summary>
+    /// Deletes the mapped character before the caret (Backspace) or after it (Delete), or the selection. An edit at the edge of a display line
+    /// (Backspace at the first character of a line, Delete at its end) may join or unwrap blocks, so it is a step of its own; any other one
+    /// continues the run. A refusal with an empty message does nothing: the pending insertion stays and nothing is shown. Nothing happens in a
+    /// document with no block. With a pending insertion (a held space, or the new block of an Enter) the key takes that back and does nothing else,
+    /// since what it would delete is not written yet.
     /// </summary>
     /// <param name="backward">True for Backspace.</param>
     private void DeleteInView(bool backward)
     {
         RunKind kind = backward ? RunKind.Backspace : RunKind.Delete;
-        _view.SetPending(null);
-        if (RefusedOnFoldedHead())
+        if (_view.Pending is not null)
+        {
+            _view.SetPending(null);
+            EndRun();
+            return;
+        }
+
+        if (RefusedOnFoldedHead() || _view.Document.Blocks.Length == 0)
         {
             return;
         }
 
+        ViewEditResult result;
+        bool edge = _view.CursorAtLineEdge(start: backward);
         if (_view.SelectionRange is { } selection)
         {
-            ViewEditResult deleting = ViewEdit.ReplaceSelection(_view.Document, selection.Start, selection.End, string.Empty);
-            ApplyViewEdit(deleting, kind, shared: null, typedSpace: false);
+            result = ViewEdit.ReplaceSelection(_view.Document, selection.Start, selection.End, string.Empty);
+        }
+        else
+        {
+            result = backward
+                ? ViewEdit.DeleteBackward(_view.Document, _view.CursorOffset)
+                : ViewEdit.DeleteForward(_view.Document, _view.CursorOffset);
+        }
+
+        if (result is ViewEditResult.Refusal { Message.Length: 0 })
+        {
             return;
         }
 
-        object? shared = SharedGroup(kind, breaksWord: false);
-        int caret = _view.CursorOffset;
-        ViewEditResult result = backward
-            ? ViewEdit.DeleteBackward(_view.Document, caret)
-            : ViewEdit.DeleteForward(_view.Document, caret);
+        _view.SetPending(null);
+        object? shared = (edge || _view.SelectionRange is not null) ? null : SharedGroup(kind, breaksWord: false);
         ApplyViewEdit(result, kind, shared, typedSpace: false);
+        if (edge)
+        {
+            EndRun();
+        }
     }
 
     /// <summary>
@@ -220,7 +287,11 @@ internal sealed partial class MainWindow
         RenderBuffer();
         RefreshDirty();
         _view.PlaceCaret(edit.Caret, null);
-        _run = new ViewRun(kind, group, _view.CursorOffset, typedSpace);
+
+        // A pending block that the edit holds (the block its last character was) is drawn where the caret is, and the next typed character writes it.
+        // A run does not go on from it: the next edit starts a step of its own.
+        _view.SetPending(edit.Then);
+        _run = edit.Then is null ? new ViewRun(kind, group, _view.CursorOffset, typedSpace) : null;
         ShowStatus();
     }
 }

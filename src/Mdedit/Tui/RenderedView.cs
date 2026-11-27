@@ -130,14 +130,22 @@ internal sealed partial class RenderedView : View
     /// </summary>
     public int? SelectionAnchor => SelectionRange is { } range ? _offset == range.End ? range.Start : range.End : null;
 
-    /// <summary>The screen position of the cursor's cell, for a menu opened from the keyboard.</summary>
-    public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, _line - _top));
+    /// <summary>The screen position of the cursor, for a menu opened from the keyboard: on the virtual line when the view shows one.</summary>
+    public Point CursorScreenPosition => ViewportToScreen(new Point(VisibleColumn, CursorRow));
 
     /// <summary>
-    /// The cursor's screen column, kept inside the viewport: an end position on a full line sits on the last column. The pending insertion
-    /// (see <see cref="Pending"/>) is drawn before the cursor, so the cursor is after it.
+    /// The cursor's screen column, kept inside the viewport: an end position on a full line sits on the last column. The inline pending insertion
+    /// (see <see cref="Pending"/>) is drawn before the cursor, so the cursor is after it. On a virtual line the cursor is after the gutter and the
+    /// pending's display text.
     /// </summary>
-    private int VisibleColumn => Math.Min(CaretScreenColumn() + PendingWidth, Math.Max(0, Viewport.Width - 1));
+    private int VisibleColumn
+    {
+        get
+        {
+            int column = HasVirtualLine ? GutterWidth + VirtualText.Length : CaretScreenColumn() + PendingWidth;
+            return Math.Min(column, Math.Max(0, Viewport.Width - 1));
+        }
+    }
 
     /// <summary>
     /// True when the document has a caret stop to rest the cursor on. A document with none (empty, or only rules) has no cursor.
@@ -146,6 +154,14 @@ internal sealed partial class RenderedView : View
 
     /// <summary>The absolute source offset of the cursor's cell, or 0 when there is no cursor.</summary>
     public int CursorOffset => _offset;
+
+    /// <summary>
+    /// Whether the cursor is at the edge of its display line: on the line's first mapped cell (when <paramref name="start"/> is set), or at its end
+    /// position. The window takes an edit there as one that may join or unwrap blocks (see <c>MainWindow.DeleteInView</c>).
+    /// </summary>
+    /// <param name="start">True for the line's start, false for its end.</param>
+    public bool CursorAtLineEdge(bool start) =>
+        HasCursor && (start ? _cell == EdgeMappedCell(_line, first: true) : _cell == Built.Line(_line).Cells.Length);
 
     /// <summary>The display line of the cursor.</summary>
     public int CursorLine => _line;
@@ -216,9 +232,21 @@ internal sealed partial class RenderedView : View
 
         ClampTop();
         int y = 0;
-        for (; y < height && _top + y < _layout.LineCount; y++)
+        for (; y < height; y++)
         {
-            DrawLine(y, _top + y, width, normal);
+            if (HasVirtualLine && y == VirtualRow)
+            {
+                DrawVirtualLine(y, width, normal);
+                continue;
+            }
+
+            int line = LineAtRow(y);
+            if (line >= _layout.LineCount)
+            {
+                break;
+            }
+
+            DrawLine(y, line, width, normal);
         }
 
         DrawBlank(y, height, width, normal);
@@ -349,11 +377,17 @@ internal sealed partial class RenderedView : View
     {
         if (PlacesCursor(mouse))
         {
-            SetPending(null);
             CommandPressed?.Invoke();
         }
 
-        if (!ApplyMouse(mouse))
+        // The rows are mapped while the pending insertion is still drawn, so that a press on the virtual line and below it lands where it is drawn.
+        bool handled = ApplyMouse(mouse);
+        if (PlacesCursor(mouse))
+        {
+            SetPending(null);
+        }
+
+        if (!handled)
         {
             return false;
         }
@@ -455,7 +489,7 @@ internal sealed partial class RenderedView : View
         SetFocus();
 
         // An edge marker scrolls its table, and a fold glyph or summary folds its unit; neither places the cursor.
-        int line = _top + y;
+        int line = LineAtRow(y);
         if (PressMarker(line, x) || ClickFold(line, x))
         {
             return true;
@@ -514,7 +548,7 @@ internal sealed partial class RenderedView : View
         }
         else
         {
-            line = Math.Min(_top + y, LineCount - 1);
+            line = Math.Min(LineAtRow(y), LineCount - 1);
         }
 
         PlaceColumn(line, Math.Max(0, x));
@@ -553,7 +587,7 @@ internal sealed partial class RenderedView : View
         if (HasCursor && InView(y))
         {
             SetFocus();
-            int offset = OffsetAtColumn(_top + y, Math.Max(0, x));
+            int offset = OffsetAtColumn(LineAtRow(y), Math.Max(0, x));
             if (SelectionRange is not { } selection || offset < selection.Start || offset >= selection.End)
             {
                 int before = _offset;
@@ -575,7 +609,7 @@ internal sealed partial class RenderedView : View
             return false;
         }
 
-        int line = _top + y;
+        int line = LineAtRow(y);
         int cell = CellAt(line, LayoutColumn(line, x));
         if (cell < 0 || WordAt(line, cell) is not { } word)
         {
@@ -591,12 +625,12 @@ internal sealed partial class RenderedView : View
     {
         _anchor = null;
         _range = null;
-        PlaceColumn(_top + y, Math.Max(0, x));
+        PlaceColumn(LineAtRow(y), Math.Max(0, x));
         _goal = _column;
     }
 
     /// <summary>Whether a view row is a row of the document on the screen.</summary>
-    private bool InView(int y) => y >= 0 && y < ViewportHeight && _top + y < LineCount;
+    private bool InView(int y) => y >= 0 && y < ViewportHeight && LineAtRow(y) < LineCount;
 
     /// <summary>The index of the cell of a line under a screen column, or -1 when no cell covers it.</summary>
     private int CellAt(int line, int column)
@@ -803,19 +837,22 @@ internal sealed partial class RenderedView : View
 
     private int ViewportHeight => Math.Max(1, Viewport.Height);
 
-    private int MaxTop() => Math.Max(0, LineCount - ViewportHeight);
+    private int MaxTop() => Math.Max(0, DisplayedLineCount - ViewportHeight);
 
     private void ClampTop() => _top = Math.Clamp(_top, 0, MaxTop());
 
-    private bool IsCursorVisible() => HasCursor && _line >= _top && _line < _top + ViewportHeight && !CaretScrolledOut();
+    private bool IsCursorVisible() =>
+        (HasCursor || HasVirtualLine) && CursorRow >= 0 && CursorRow < ViewportHeight && !(HasCursor && CaretScrolledOut());
 
-    /// <summary>Scrolls by the least amount that keeps the cursor's line in view.</summary>
+    /// <summary>Scrolls by the least amount that keeps the cursor's line, and the virtual line, in view.</summary>
     private void EnsureVisible()
     {
         if (HasCursor)
         {
             EnsureLineVisible(_line);
         }
+
+        EnsureVirtualLineVisible();
     }
 
     /// <summary>Scrolls by the least amount that brings a display line into the viewport's rows.</summary>
@@ -862,6 +899,26 @@ internal sealed partial class RenderedView : View
     }
 
     /// <summary>
+    /// Whether a line ends in a hard break: a paragraph line with mapped cells whose next line is a line of the same block that starts a new run
+    /// (not a wrap of this line). Its end is a caret stop, so that Delete there joins the lines (see <c>ViewEdit.DeleteForward</c>).
+    /// </summary>
+    private bool IsHardBreakEnd(int line)
+    {
+        if (!HasMapped(line) || line + 1 >= LineCount)
+        {
+            return false;
+        }
+
+        int block = BlockOfLine(line);
+        int next = line + 1;
+        return block >= 0 && _document.Blocks[block].Kind == BlockKind.Paragraph
+            && Built.BaseOffset(next) == Built.BaseOffset(line) && !Built.Line(next).IsContinuation && HasMapped(next);
+    }
+
+    /// <summary>Whether a line has an end position that the caret can rest on: the end of a block's last line, or a hard break's line end.</summary>
+    private bool HasEndStop(int line) => IsBlockEnd(line) || IsHardBreakEnd(line);
+
+    /// <summary>
     /// The end position of a block's last line, as an absolute source offset: the offset of its last mapped cell plus that cell's source
     /// length. It is the offset just after the block's last character.
     /// </summary>
@@ -889,7 +946,7 @@ internal sealed partial class RenderedView : View
     private bool IsStop(int line, int cell)
     {
         ImmutableArray<Cell> cells = Built.Line(line).Cells;
-        return cell < cells.Length ? cells[cell].IsMapped : IsBlockEnd(line);
+        return cell < cells.Length ? cells[cell].IsMapped : HasEndStop(line);
     }
 
     /// <summary>
@@ -898,6 +955,12 @@ internal sealed partial class RenderedView : View
     /// </summary>
     private (int Line, int Cell)? ResolveCaret(int offset)
     {
+        // A document with no line has no stop (its caret is the empty line the view draws, see RenderedView.Pending).
+        if (LineCount == 0)
+        {
+            return null;
+        }
+
         (int line, int column) = Built.PositionOf(offset);
 
         // The end offset of a block is the offset of the next character of the source, which the map places on a later line. So the end
@@ -905,7 +968,7 @@ internal sealed partial class RenderedView : View
         int previous = LineWithMappedBefore(line);
         foreach (int candidate in new[] { line, previous })
         {
-            if (candidate >= 0 && IsBlockEnd(candidate) && EndOffset(candidate) == offset)
+            if (candidate >= 0 && HasEndStop(candidate) && EndOffset(candidate) == offset)
             {
                 return (candidate, Built.Line(candidate).Cells.Length);
             }
@@ -948,7 +1011,7 @@ internal sealed partial class RenderedView : View
             }
         }
 
-        return IsBlockEnd(line) ? (line, cells.Length) : null;
+        return HasEndStop(line) ? (line, cells.Length) : null;
     }
 
     /// <summary>The source offset that a screen column of a line selects (see <see cref="TargetAtColumn"/>).</summary>
@@ -1108,7 +1171,7 @@ internal sealed partial class RenderedView : View
     private int EdgeMappedCell(int line, bool first)
     {
         ImmutableArray<Cell> cells = Built.Line(line).Cells;
-        if (!first && IsBlockEnd(line))
+        if (!first && HasEndStop(line))
         {
             return cells.Length;
         }
@@ -1165,7 +1228,7 @@ internal sealed partial class RenderedView : View
         }
 
         // The end position is a column too, at the end of the line.
-        if (IsBlockEnd(line) && Math.Abs(goal - EndColumn(line)) is int endDistance && endDistance < bestDistance)
+        if (HasEndStop(line) && Math.Abs(goal - EndColumn(line)) is int endDistance && endDistance < bestDistance)
         {
             best = cells.Length;
         }

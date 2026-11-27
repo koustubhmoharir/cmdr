@@ -66,8 +66,9 @@ or until the next key. The last line lists the main keys.
 | Alt+F | Fold or unfold the section or code block under the caret (see Folding) |
 | Alt+1–Alt+6 / Alt+0 | Show the headings down to that level, folding the deeper sections; Alt+0 unfolds everything |
 | Letters, digits, punctuation, Space | Type the character at the caret (see Editing in the view). Letters and digits are no longer commands |
-| Backspace / Delete | Delete the character before / after the caret, or the selection (see Editing in the view) |
-| Ctrl+Enter | Follow the link under the caret (see Links) |
+| Enter | Split the block at the caret, or start a new block below or above it, or replace the selection (see Editing in the view). In a table cell, Enter opens the cell instead |
+| Backspace / Delete | Delete the character before / after the caret, or the selection; at a block's start / end they join or unwrap blocks (see Editing in the view) |
+| Ctrl+Enter | Follow the link under the caret (see Links). Ctrl+J does the same |
 | Shift+F10 | Open the menu at the cursor |
 | Ctrl+T | Edit mode, with the caret on the source character under the view's caret (see Edit mode) |
 | Ctrl+S | Save the file (see Saving) |
@@ -113,7 +114,7 @@ Code blocks do not scroll: a long line in a code block wraps.
 
 ### Editing a table
 
-In view mode, F2, or Enter with the caret on a cell that is not a link, opens a field over the cell, with the cell's source
+In view mode, F2, or Enter with the caret in a cell, opens a field over the cell, with the cell's source
 text (an escaped `\|` shows as `|`). Enter writes the cell, Esc cancels, and Tab or Shift+Tab writes it and opens the next or
 previous cell: the next row's first cell after the last column, and the previous row's last cell before the first. After the
 last cell, Tab writes the cell and closes the field. A write is one undo step (Ctrl+Z), and the caret goes to the cell.
@@ -240,16 +241,34 @@ The rendered view is editable, and the view shows each change as it is made. Wha
 - Backspace deletes the character before the caret, and Delete the one after it. A bold or italic span left with no text
   goes with its markers, and a link left with no text goes with its destination.
 - A selection inside one block, such as a paragraph or a heading, is replaced by what is typed, or deleted by Backspace or Delete.
+- Enter splits the block at the caret: a paragraph, a heading or a list item becomes two of the same kind (a new list item is
+  numbered after the old one, and a task item starts unchecked). At the end of a block, Enter holds a new block below it, a
+  paragraph or, after a list item, a new item; at its start, it holds one above. The new block is drawn on a line of its
+  own, and it is written when a character is typed. Enter on a new item that is still empty ends the list, and Enter on a
+  new paragraph in a quote ends the quote. In a code block, Enter writes a line break. In a table cell it opens the cell.
+- Backspace at a block's start unwraps a heading into a paragraph, unwraps the first item of a list, or joins the block to
+  the text before it (the two keep the previous block's kind). Delete at a block's end joins the text after it. A line
+  break inside a paragraph (a hard break) is removed by Backspace at the start of the next line or by Delete at the end of
+  the line, which joins the two lines.
 - A space that would not show (at the start or end of a paragraph) is held until the next character is typed, so that
-  the file gets no empty space. Moving the caret drops it.
+  the file gets no empty space. Moving the caret drops it, and so does Backspace or Delete, which then deletes
+  nothing else. The same goes for a new block that Enter holds.
 - Ctrl+Z and Ctrl+Y undo and redo. Typed characters with no move between them are one undo step, so are consecutive
-  Backspaces and consecutive Deletes, and a word with the space after it is one step.
+  Backspaces and consecutive Deletes, and a word with the space after it is one step. Each Enter is a step of its own, and
+  so is a Backspace or Delete at the start or end of a line, since it joins or unwraps blocks.
 - An edit that the view cannot write as it reads is refused with a message, and nothing changes. Typing in a table cell is
   refused (F2 edits the cell), and so is typing on the heading of a folded section or code block (unfold it first).
 
-Not yet: Enter, which splits a paragraph or adds a block; Backspace at a block's start and Delete at its end, which join
-blocks; typing directly in table cells (F2 edits a cell for now); paste; and a selection that crosses blocks or lines.
-Ctrl+T edits the source for those, in the same window and with the same undo history.
+Some edits are still refused with a message, and Ctrl+T edits the source for them, in the same window and with the same
+undo history:
+
+- A join or unwrap next to a code block, a table, an HTML block, or a block nested differently is refused.
+- Enter at the start or end of a line inside a paragraph (next to a hard break), and Enter inside a link's text, are refused.
+- Backspace at the start of a list item nested in another item is refused; only a top-level item unwraps into a paragraph.
+- Backspace at the start of a block inside a quote unwraps it only when the quote is the block's only container.
+- A selection that crosses blocks is refused.
+
+Typing directly in table cells is not done yet (F2 and Enter edit a cell in its field for now), and neither is paste.
 
 ## Folding
 
@@ -288,7 +307,7 @@ under the caret in place of the heading path, with an arrow in front.
 | Key | |
 |---|---|
 | Tab / Shift+Tab | The caret goes to the next / previous link, in the order of the text. Links that a fold hides are skipped. Past the last link, Tab wraps to the first one with a message, and Shift+Tab past the first wraps to the last. A document with no link says so. In a table, Tab moves to the next cell instead (see Tables) |
-| Enter, Ctrl+Enter | Follow the link under the caret (see below). Terminals that send Ctrl+Enter as a line feed also follow it with Ctrl+J |
+| Ctrl+Enter | Follow the link under the caret (see below). Terminals that send Ctrl+Enter as a line feed also follow it with Ctrl+J. Enter edits the text instead (see Editing in the view) |
 | Alt+Left | Go back to the file that the last followed link left (see Back) |
 
 | Mouse | |

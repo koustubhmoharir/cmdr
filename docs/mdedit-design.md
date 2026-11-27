@@ -108,7 +108,7 @@ errors exit 2.
 | PgUp/PgDn, Ctrl+Home/End | Page, first / last line |
 | Typed characters, Backspace, Delete | Edit the rendered text (see Rendered-view editing) |
 | Tab / Shift+Tab | Next / previous link (in a table, the next / previous cell) |
-| Ctrl+Enter (or Ctrl+J), Enter, or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself. Enter becomes an edit key in M6b |
+| Ctrl+Enter (or Ctrl+J), or Ctrl+click on a link | `#anchor`: scroll to the heading (the view does this). A relative path to a file: open it in mdedit, with the unsaved-changes flow; Alt+Left returns to the previous file and its scroll position. Anything else (http, mailto): copy the URL to the clipboard and say so; mdedit opens nothing outside itself. Enter is not a link key: it edits the text (M6b) |
 | Alt+O | Outline: a list of the headings, indented by level; Enter scrolls to the heading, typing filters. Alt+O in edit mode too |
 | Ctrl+F; F3/Shift+F3 | Find in the rendered text (SearchBar); the match is selected and scrolled into view |
 | Ctrl+C / Alt+C | Copy the selection as plain text / as Markdown (see Copy); with no selection, the block under the cursor |
@@ -117,7 +117,7 @@ errors exit 2.
 | Right-click menu: Unfold all inside / Fold section | Unfold everything under the cursor's unit / fold the section the cursor is in |
 | Alt+1–Alt+6, Alt+0 | Show headings down to that level, folding the deeper sections / unfold all |
 | Shift+wheel in a table | Scroll the table horizontally (moving the cursor keeps its cell visible) |
-| F2 in a table cell (Enter too, when not on a link) | Edit the cell (M5) |
+| F2 or Enter in a table cell | Edit the cell (M5). Enter elsewhere edits the text (M6b) |
 | Alt+Up/Down, Alt+Left/Right in a table | Move the row / column (M5) |
 | Alt+T in a table | Table menu: rows, columns, alignment (M5) |
 | Ctrl+Z / Ctrl+Y | Undo / redo: the same history as edit mode (see Source buffer and undo) |

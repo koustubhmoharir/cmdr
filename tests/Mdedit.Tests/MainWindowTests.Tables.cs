@@ -84,12 +84,12 @@ public sealed partial class MainWindowTests
     }
 
     [Fact]
-    public void Enter_on_a_link_in_a_table_follows_the_link_and_opens_no_field()
+    public void Ctrl_Enter_on_a_link_in_a_table_follows_the_link_and_opens_no_field()
     {
         Session session = RunTable(
             Opened("notes.md", LinkedTable),
             (_, window) => window.View.PlaceCaret(Index(LinkedTable, "go"), null),
-            (_, window) => window.NewKeyDownEvent(Key.Enter));
+            (_, window) => window.NewKeyDownEvent(Key.Enter.WithCtrl));
 
         // The anchor goes to the heading's text, and the link's cell does not open the field.
         Assert.Equal(Index(LinkedTable, "Top"), session.Window.View.CursorOffset);

@@ -5,8 +5,8 @@ using Terminal.Gui.Input;
 namespace Mdedit.Tui;
 
 /// <summary>
-/// The links of the window, in view mode: the message line shows the link under the caret, Tab and Shift+Tab move between links, Enter, Ctrl+Enter and a
-/// Ctrl+click follow one, and Alt+Left goes back to the file that a followed link left.
+/// The links of the window, in view mode: the message line shows the link under the caret, Tab and Shift+Tab move between links, Ctrl+Enter (or Ctrl+J)
+/// and a Ctrl+click follow one, and Alt+Left goes back to the file that a followed link left. Enter edits the text, so it does not follow.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -39,7 +39,7 @@ internal sealed partial class MainWindow
     /// <summary>The message after Alt+Left with no file to go back to.</summary>
     internal const string NoPreviousFile = "No previous file";
 
-    /// <summary>The message after Enter or Ctrl+click on a link with no destination.</summary>
+    /// <summary>The message after Ctrl+Enter or Ctrl+click on a link with no destination.</summary>
     internal const string EmptyLink = "Empty link";
 
     /// <summary>The arrow before the URL of the caret's link on the message line.</summary>
@@ -70,8 +70,8 @@ internal sealed partial class MainWindow
     internal string LeftStatus() => _view.CaretLink is { } link ? LinkArrow + link.Url : HeadingPath();
 
     /// <summary>
-    /// The window's link keys in view mode: Tab and Shift+Tab (with the message of a wrap), Enter and Ctrl+Enter on a link, and Alt+Left. Returns false for a
-    /// key it does not bind. The view has already taken the keys it moves the caret with.
+    /// The window's link keys in view mode: Tab and Shift+Tab (with the message of a wrap), Ctrl+Enter and Ctrl+J on a link, and Alt+Left. Returns false
+    /// for a key it does not bind. The view has already taken the keys it moves the caret with.
     /// </summary>
     private bool HandleLinkKey(Key key)
     {
@@ -107,9 +107,9 @@ internal sealed partial class MainWindow
     /// </summary>
     internal static readonly Key LineFeedKey = Key.J.WithCtrl;
 
-    /// <summary>The keys that follow the link at the caret: Enter, Ctrl+Enter, and the line feed of Ctrl+Enter (see <see cref="LineFeedKey"/>).</summary>
+    /// <summary>The keys that follow the link at the caret: Ctrl+Enter, and the line feed of Ctrl+Enter (see <see cref="LineFeedKey"/>). Enter edits the text.</summary>
     /// <param name="key">The key.</param>
-    private static bool IsFollowKey(Key key) => key == Key.Enter || key == Key.Enter.WithCtrl || key == LineFeedKey;
+    private static bool IsFollowKey(Key key) => key == Key.Enter.WithCtrl || key == LineFeedKey;
 
     /// <summary>Shows the message of a Tab or Shift+Tab that wrapped or found no link. A move that did not wrap shows the link's URL, as the status does.</summary>
     private void ShowLinkMove(LinkMove move, bool forward)
@@ -228,7 +228,7 @@ internal sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Enter on a link, or a Ctrl+click: the link is copied when it is a URL. Copying is done as Copy is: OSC 52 when the text fits, else the
+    /// Ctrl+Enter on a link, or a Ctrl+click: the link is copied when it is a URL. Copying is done as Copy is: OSC 52 when the text fits, else the
     /// message says it is too large. An empty destination is reported.
     /// </summary>
     /// <param name="url">The URL of the link.</param>

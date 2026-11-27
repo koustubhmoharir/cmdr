@@ -607,22 +607,41 @@ Decisions taken while building it:
 
 ### View and window (Mdedit)
 
-- **Keys (M6a)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
+- **Keys (M6a, M6b)**: printable characters insert; Ctrl+C / Alt+C copy plain / Markdown; Alt+F fold; Alt+1–6, Alt+0 levels;
   Ctrl+Home / Ctrl+End; Alt+O outline; Tab / Shift+Tab next / previous cell in a table, else next / previous link; Ctrl+Enter
-  and Ctrl+J (a line feed, which many terminals send for Ctrl+Enter) follow a link; `*` and `-` folding only in the
-  right-click menu, as "Unfold all inside" and "Fold section"; `<` / `>` removed. F2 still edits a table cell in its field
-  (M5) until M6c; Enter edits from M6b on (until then it keeps following a link and opening the cell field). Tab leaves a
-  table after its last cell, for the next link, so that the caret is never held in a table.
+  and Ctrl+J (a line feed, which many terminals send for Ctrl+Enter) follow a link, and Enter follows none; `*` and `-`
+  folding only in the right-click menu, as "Unfold all inside" and "Fold section"; `<` / `>` removed. F2 and Enter edit a
+  table cell in its field (M5) until M6c; Enter elsewhere edits the text (M6b). Tab leaves a table after its last cell, for
+  the next link, so that the caret is never held in a table.
 - **Undo grouping**: a run is a series of typed characters, of Backspaces or of Deletes, each starting where the last one
   left the caret. A typed non-space after a typed space starts a step; a selection replaced starts one; any other key, a
-  mouse caret move, a table edit, an undo or a mode switch ends the run. The window decides whether an edit continues the
+  mouse caret move, a table edit, an undo or a mode switch ends the run. M6b: Enter is a step of its own; a Backspace
+  at a display line's first cell, or a Delete at its end position, is a step of its own too, since it may join or unwrap
+  blocks (the window decides this from the caret's place, not from the edit, so a Backspace at a wrapped line's start is
+  also a step of its own). A replacement that holds a pending block (its `Then`) ends the run. The window decides whether an edit continues the
   run's step. `UndoStack.StartContinuedUndoGroup` does not compare descriptors: it continues the last closed group
   whenever the last action was not an undo or a redo, so a new run starts its step with `StartUndoGroup`, and only a run
   that goes on uses the continued form. A pending space writes no step of its own; it joins the step of the character
   that writes it.
-- **Pending insertion**: the view draws it at the caret, with the rest of the caret's line moved right and clipped, and the
-  cursor after it. The view drops it on any caret move (keys and presses), on a new document and on a fold change; the
-  window drops it for any other command, and Ctrl+Z drops it without an undo.
+- **Pending insertion**: the view draws an inline one (a held space, or the marker of an empty document) at the caret, with
+  the rest of the caret's line moved right and clipped, and the cursor after it; it draws its `DisplayText`, not its source.
+  The view drops it on any caret move (keys and presses), on a new document and on a fold change; the window drops it for
+  any other command, and Ctrl+Z drops it without an undo. A refusal with an empty message drops nothing: Backspace at the
+  document's start neither changes the text nor shows a message, and keeps the pending.
+- **Virtual line (M6b)**: a Below or Above pending is drawn on a row of its own, which the layout does not have. The row
+  shows the gutter (two blanks, as a content line has), then the pending's `DisplayText`, and the cursor is on it after
+  that text. A Below pending's row is the one under the caret's row, and an Above pending's row is the caret's row; the
+  caret's line and the lines after (or before) it move down by one. `LineAtRow` maps the screen rows to layout lines, and
+  the virtual row maps to the caret's line, so a press on it places the caret on that line (the pending is dropped after
+  the press is mapped). The view's row count includes the virtual line, so the top line can scroll to the end of the
+  document, and a Below pending whose row is past the bottom scrolls the top line by the rows it is past. The window gives
+  `Replacement.Then` to the view as its pending at the caret, after the caret is placed.
+- **Caret stops (M6b)**: a paragraph line that a hard break ends has an end position, after its last mapped cell, as the
+  last line of a block has (`IsHardBreakEnd`); Delete there joins the lines. Code lines have no such stop yet.
+- **Empty document**: a document with no block has no caret stop, so the view draws an empty line of its own with the
+  caret on it (after the gutter, and after the pending's display text when it holds one). The window gives typing the
+  empty inline pending at offset 0 (`TypingPending`), so the first character writes a paragraph. Enter, Backspace and
+  Delete do nothing in it, without a message.
 - Typing on a synthetic position (a fold summary, a code label, a table border) is refused by the engine. Typing on a folded
   unit's head is refused by the window, since the engine does not know folds, with the message "Unfold to edit here;
   Ctrl+T edits the source". Typing in edit mode is the editor's.
@@ -690,7 +709,8 @@ removes the break and the next line's prefix with nothing between; a soft break 
 break inside a quote or a list item left the next line's prefix behind; a refusal with an empty message means nothing is before or after the block; a
 block whose last character is removed goes with its separator, and the pending holds its marker (a heading's `#`, a task box) so that typing writes it
 back. A split escapes the new block's first text where it would be block syntax (a list marker, a heading, a quote, a rule; a number's `.` or `)`
-after its digits), as typing there would: the backslash goes before that character, and the caret follows the text. A typed space into a pending block
+after its digits), as typing there would: the backslash goes before that character, and the caret follows the text. The spaces on either side of a split
+are not written, since Markdown would strip them at the edges of the two blocks. A typed space into a pending block
 returns the same pending: nothing is written and nothing is refused. Removing the only block of a document removes its line and keeps what is outside
 it (blank lines, say, since a document with no block has nothing else); the replacement holds an `Inline` pending at the line's start, whose
 `SourceText` is the block's line prefix and marker (`# `, `- `, `> `) and whose `Display` is the drawn prefix (`# ` for a heading, which the layout
@@ -700,5 +720,6 @@ refused (only a top-level item unwraps into a paragraph before its list); Backsp
 a pending block made from a removed block is verified leniently (the other blocks must be unchanged and the new block must show exactly the typed
 text), since its shape is not known from its source at typing time; a multi-line selection removes everything between its first and last cell, so
 emphasis that spans the edges may be refused; Enter on a pending paragraph that is not in a quote and not at the top level acts at the caret instead of
-ending anything. The view must draw an Above pending above the caret's line and a Below pending below it, use `Display` for both and for the held
+ending anything; Enter inside a link's text is refused (the split would cut the link, which would need closing it and opening it again in
+the new block); a code line has no caret stop at its end, so Delete cannot join code lines (Backspace at the next line's start does). The view must draw an Above pending above the caret's line and a Below pending below it, use `Display` for both and for the held
 marker of an empty document, and pass the pending back on the next insertion at the same `Offset`.

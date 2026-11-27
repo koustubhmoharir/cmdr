@@ -187,6 +187,20 @@ public static partial class ViewEdit
         (string before, string after) = BlockText.Split(block, at);
         before = before.TrimEnd(' ');
         after = after.TrimStart(' ');
+
+        // The spaces around the split would end the first line and start the second; Markdown strips them, so they are not written.
+        int cut = at;
+        while (cut > block.Start && doc.Text[cut - 1] == ' ')
+        {
+            cut--;
+        }
+
+        int resume = at;
+        while (resume < doc.Text.Length && doc.Text[resume] == ' ')
+        {
+            resume++;
+        }
+
         ImmutableArray<BlockShape> shapes = BlockShape.Of(doc);
         string newline = LineEnding.Of(doc.Text);
         int last = block.Containers.Length - 1;
@@ -216,10 +230,10 @@ public static partial class ViewEdit
             linePrefix += new string('#', block.HeadingLevel) + " ";
         }
 
-        LineStart(doc, block, at, linePrefix, out int first, out int escapeAt);
+        LineStart(doc, block, resume, linePrefix, out int first, out int escapeAt);
         string source = separator + linePrefix;
-        int caretAt = first + source.Length + (escapeAt == first ? 1 : 0);
-        string text = doc.Text[..at] + source + doc.Text[at..(escapeAt < 0 ? doc.Text.Length : escapeAt)]
+        int caretAt = first - (resume - cut) + source.Length + (escapeAt == first ? 1 : 0);
+        string text = doc.Text[..cut] + source + doc.Text[resume..(escapeAt < 0 ? doc.Text.Length : escapeAt)]
             + (escapeAt < 0 ? string.Empty : "\\" + doc.Text[escapeAt..]);
         var expected = shapes.ToList();
         expected[site.BlockIndex] = shapes[site.BlockIndex] with { Text = before };

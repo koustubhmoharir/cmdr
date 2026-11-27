@@ -262,6 +262,6 @@ internal sealed partial class RenderedView
     private bool WheelTable(Mouse mouse, int delta)
     {
         int y = mouse.Position?.Y ?? 0;
-        return InView(y) && ScrollBlock(_top + y, delta);
+        return InView(y) && ScrollBlock(LineAtRow(y), delta);
     }
 }
